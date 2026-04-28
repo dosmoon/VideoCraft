@@ -7,6 +7,7 @@ principle 1. Default prompts are inlined here; M3+ L16 Prompt hub will
 replace these with file-backed templates without changing the public API.
 """
 
+import json
 import os
 import re
 import srt
@@ -15,6 +16,35 @@ from core import ai
 from core import prompts as _prompts
 from core.ai.tiers import TIER_PREMIUM
 from core.subtitle_ops import read_srt
+
+
+# JSON schema for the one-shot "subtitle pack" AI call: titles + segments
+# (each with timestamp, title, ≤128-char refined summary). Used by
+# generate_subtitle_pack() to enforce structured output.
+SUBTITLE_PACK_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "titles": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+        },
+        "segments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "time_str": {"type": "string"},
+                    "title": {"type": "string"},
+                    "refined": {"type": "string"},
+                },
+                "required": ["time_str", "title", "refined"],
+            },
+            "minItems": 1,
+        },
+    },
+    "required": ["titles", "segments"],
+}
 
 
 # ── Subtitle → plain text helpers ────────────────────────────────────────────
@@ -146,7 +176,7 @@ def generate_youtube_segments(srt_path, prompt=None, tier=None):
 
     _tier = tier or TIER_PREMIUM
     try:
-        return ai.complete(final_prompt, task="subtitle.segments", tier=_tier)
+        return ai.complete(final_prompt, task="subtitle.post", tier=_tier)
     except Exception as e:
         raise RuntimeError(f"调用AI生成失败 (tier={_tier}): {e}")
 
@@ -230,7 +260,7 @@ def generate_video_titles(subs_path, prompt=None, tier=None):
 
     _tier = tier or TIER_PREMIUM
     try:
-        return ai.complete(full_prompt, task="subtitle.titles", tier=_tier)
+        return ai.complete(full_prompt, task="subtitle.post", tier=_tier)
     except Exception as e:
         raise RuntimeError(f"调用AI生成失败 (tier={_tier}): {e}")
 
@@ -315,7 +345,100 @@ def refine_segment_descriptions(paragraphs_path, prompt=None, tier=None):
         full_prompt = f"{full_prompt}\n\n以下是全部分段内容：\n{all_segments_content}"
 
     _tier = tier or TIER_PREMIUM
-    refined_text = ai.complete(full_prompt, task="subtitle.refine", tier=_tier)
+    refined_text = ai.complete(full_prompt, task="subtitle.post", tier=_tier)
     if not refined_text:
         raise RuntimeError("AI返回为空，未生成精炼结果")
     return refined_text
+
+
+def generate_subtitle_pack(srt_path, prompt=None, tier=None) -> dict:
+    """One-shot AI call: SRT -> {titles, segments[time_str/title/refined]}.
+
+    Combines the work of generate_youtube_segments + refine_segment_descriptions
+    + generate_video_titles into a single structured call. Returns the parsed
+    JSON dict directly; downstream callers decide how to write it to disk
+    (see write_subtitle_pack).
+    """
+    if not os.path.exists(srt_path):
+        raise FileNotFoundError(f"SRT文件 '{srt_path}' 不存在")
+
+    subs = list(srt.parse(read_srt(srt_path)))
+    if not subs:
+        raise ValueError("SRT文件为空或格式错误")
+
+    subtitle_content = ''
+    for sub in subs:
+        time_str = str(sub.start)[:8]
+        content = sub.content.replace('\n', ' ')
+        subtitle_content += f'[{time_str}] {content}\n'
+
+    template = prompt if prompt is not None else _prompts.get("subtitle.pack")
+    final_prompt = template.replace("{subtitle_content}", subtitle_content)
+
+    _tier = tier or TIER_PREMIUM
+    try:
+        result = ai.complete_json(
+            final_prompt,
+            schema=SUBTITLE_PACK_SCHEMA,
+            task="subtitle.post",
+            tier=_tier,
+        )
+    except Exception as e:
+        raise RuntimeError(f"调用AI生成失败 (tier={_tier}): {e}")
+
+    if not isinstance(result, dict):
+        raise RuntimeError("AI返回不是JSON对象")
+    titles = result.get("titles") or []
+    segments = result.get("segments") or []
+    if not titles or not segments:
+        raise RuntimeError("AI返回缺少 titles 或 segments 字段")
+    return result
+
+
+def write_subtitle_pack(pack: dict, base_path: str) -> dict:
+    """Persist a subtitle pack as 1 JSON + 3 plain-text companions.
+
+    base_path may include or omit an extension; the suffix is stripped and
+    four sibling files are written:
+      - <base>.json            full structured payload
+      - <base>-titles.txt      one candidate title per line
+      - <base>-segments.txt    "HH:MM:SS title" per line
+      - <base>-refined.txt     "HH:MM:SS title\\n<refined>\\n\\n" blocks
+
+    Returns a dict mapping kind -> absolute path.
+    """
+    root, _ext = os.path.splitext(base_path)
+    json_path = root + ".json"
+    titles_path = root + "-titles.txt"
+    segments_path = root + "-segments.txt"
+    refined_path = root + "-refined.txt"
+
+    parent = os.path.dirname(root)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(pack, f, ensure_ascii=False, indent=2)
+
+    titles = pack.get("titles") or []
+    with open(titles_path, 'w', encoding='utf-8') as f:
+        f.write("\n".join(str(t).strip() for t in titles) + "\n")
+
+    segments = pack.get("segments") or []
+    with open(segments_path, 'w', encoding='utf-8') as f:
+        for seg in segments:
+            f.write(f"{seg.get('time_str', '').strip()} "
+                    f"{seg.get('title', '').strip()}\n")
+
+    with open(refined_path, 'w', encoding='utf-8') as f:
+        for seg in segments:
+            f.write(f"{seg.get('time_str', '').strip()} "
+                    f"{seg.get('title', '').strip()}\n")
+            f.write(f"{seg.get('refined', '').strip()}\n\n")
+
+    return {
+        "json": json_path,
+        "titles": titles_path,
+        "segments": segments_path,
+        "refined": refined_path,
+    }

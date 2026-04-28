@@ -40,6 +40,7 @@ TOOL_MAP = {
     "srt-extract-paragraphs": {"file": "tools/subtitle/srt_tools.py", "class": "SrtExtractParagraphsApp"},
     "srt-refine":             {"file": "tools/subtitle/srt_tools.py", "class": "SrtRefineSegmentsApp"},
     "srt-gen-titles":         {"file": "tools/subtitle/srt_tools.py", "class": "SrtGenerateTitlesApp"},
+    "srt-gen-pack":           {"file": "tools/subtitle/srt_tools.py", "class": "SrtGeneratePackApp"},
     "split-workbench": {"file": "tools/video/split_workbench.py",  "class": "SplitWorkbenchApp"},
     "videotools":       {"file": "tools/video/video_tools.py", "class": "VideoToolsGUI"},
     "extract-audio":    {"file": "tools/video/video_tools.py", "class": "ExtractAudioApp"},
@@ -353,6 +354,9 @@ class VideoCraftHub:
                              command=lambda: self.open_tool("srt-refine"))
         sub_menu.add_command(label=tr("menu.subtitle.gen_titles"),
                              command=lambda: self.open_tool("srt-gen-titles"))
+        sub_menu.add_separator()
+        sub_menu.add_command(label=tr("menu.subtitle.gen_pack"),
+                             command=lambda: self.open_tool("srt-gen-pack"))
 
         # Text to Video
         t2v_menu = tk.Menu(menubar, tearoff=0)

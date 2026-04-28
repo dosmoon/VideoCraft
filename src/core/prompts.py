@@ -123,6 +123,30 @@ DEFAULTS: dict[str, str] = {
         "\n"
         "】"
     ),
+
+    "subtitle.pack": (
+        "# 一次性生成视频标题、时间戳分段与精炼描述\n"
+        "\n"
+        "请基于以下SRT字幕内容，一次性产出三类结果：\n"
+        "\n"
+        "1. titles：为该视频拟 1–3 个候选标题。要求新闻性十足、"
+        "概括核心焦点；如包含记者提问，可参考核心问题作为标题素材。\n"
+        "2. segments：按 YouTube 风格切分时间戳分段。\n"
+        "   - 时间戳格式严格为 HH:MM:SS（时:分:秒），不要使用 mm:ss。\n"
+        "   - 每段给出简短标题；如有记者提问，优先以记者提问内容作为标题。\n"
+        "   - 切分粒度参考视频自然话题转折，不要过细也不要过粗。\n"
+        "3. 每个 segment 的 refined 字段：对该段内容做精炼总结，"
+        "不超过 128 个汉字。\n"
+        "   - 对于问答段落，保留精炼后的问题与回答，并保持问答说话人的"
+        "视角，不要改写为第三方转述。\n"
+        "   - 不要复述原文，给出信息密度高的概括。\n"
+        "\n"
+        "返回严格符合调用方提供的 JSON Schema，不要附加任何解释文字。\n"
+        "\n"
+        "以下是SRT字幕内容：\n"
+        "\n"
+        "{subtitle_content}\n"
+    ),
 }
 
 
@@ -134,6 +158,7 @@ PLACEHOLDERS: dict[str, list[str]] = {
     "subtitle.segments": ["{subtitle_content}"],
     "subtitle.refine":   ["{all_segments_content}"],
     "subtitle.titles":   [],
+    "subtitle.pack":     ["{subtitle_content}"],
 }
 
 

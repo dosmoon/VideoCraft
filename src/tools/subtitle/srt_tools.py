@@ -500,3 +500,109 @@ class SrtGenerateTitlesApp(ToolBase):
 
         self.set_busy()
         threading.Thread(target=_work, daemon=True).start()
+
+
+class SrtGeneratePackApp(ToolBase):
+    """One-shot pack: titles + segments + refined in a single AI call.
+
+    Writes 4 sibling files derived from the user-chosen base path:
+      <base>.json, <base>-titles.txt, <base>-segments.txt, <base>-refined.txt
+    """
+
+    def __init__(self, master, initial_file=None):
+        self.master = master
+        master.title(tr("tool.srt.gen_pack.title"))
+        master.geometry("780x230")
+
+        self.srt_var = tk.StringVar()
+        self.output_var = tk.StringVar(value="subs_pack.json")
+        self.status_var = tk.StringVar()
+
+        if initial_file:
+            self.srt_var.set(initial_file)
+            self.output_var.set(os.path.join(os.path.dirname(initial_file),
+                                             "subs_pack.json"))
+
+        self._build_ui()
+
+    def _build_ui(self):
+        f = self.master
+
+        tk.Label(f, text=tr("tool.srt.common.srt_file")).grid(
+            row=0, column=0, padx=10, pady=10, sticky="e")
+        tk.Entry(f, textvariable=self.srt_var, width=50).grid(
+            row=0, column=1, sticky="w")
+        tk.Button(f, text=tr("tool.srt.common.browse"),
+                  command=self._select_srt).grid(row=0, column=2, padx=10)
+
+        tk.Label(f, text=tr("tool.srt.gen_pack.output_base")).grid(
+            row=1, column=0, padx=10, pady=5, sticky="e")
+        tk.Entry(f, textvariable=self.output_var, width=50).grid(
+            row=1, column=1, sticky="w")
+        tk.Button(f, text=tr("tool.srt.common.browse"),
+                  command=self._select_output).grid(row=1, column=2, padx=10)
+
+        self._btn = tk.Button(f, text=tr("tool.srt.gen_pack.btn_run"),
+                              command=self._run, width=24)
+        self._btn.grid(row=2, column=1, pady=20)
+
+        tk.Label(f, textvariable=self.status_var, fg="blue", wraplength=720,
+                 justify="left").grid(row=3, column=0, columnspan=3, pady=10)
+
+    def _select_srt(self):
+        path = filedialog.askopenfilename(
+            title=tr("tool.srt.common.select_srt_title"),
+            filetypes=[(tr("tool.srt.common.filter.srt"), "*.srt")])
+        if path:
+            self.srt_var.set(path)
+            self.output_var.set(os.path.join(os.path.dirname(path),
+                                             "subs_pack.json"))
+
+    def _select_output(self):
+        path = filedialog.asksaveasfilename(
+            title=tr("tool.srt.common.select_output_title"),
+            defaultextension=".json",
+            filetypes=[(tr("tool.srt.common.filter.json"), "*.json"),
+                       (tr("tool.srt.common.filter.txt"), "*.txt")])
+        if path:
+            self.output_var.set(path)
+
+    def _run(self):
+        srt_path = self.srt_var.get()
+        if not srt_path or not os.path.exists(srt_path):
+            self.status_var.set(tr("tool.srt.common.error_no_srt"))
+            return
+        output_path = _resolve_output(srt_path, self.output_var,
+                                      "subs_pack.json")
+        try:
+            _ensure_dir(output_path)
+        except Exception as e:
+            self.status_var.set(
+                tr("tool.srt.common.error_cannot_create_dir", e=e))
+            return
+
+        self.status_var.set(tr("tool.srt.gen_pack.status_running"))
+        self._btn.config(state="disabled")
+
+        def _work():
+            try:
+                pack = srt_ops.generate_subtitle_pack(srt_path)
+                paths = srt_ops.write_subtitle_pack(pack, output_path)
+                self.status_var.set(tr(
+                    "tool.srt.gen_pack.status_done",
+                    json_name=os.path.basename(paths["json"]),
+                    titles_name=os.path.basename(paths["titles"]),
+                    segments_name=os.path.basename(paths["segments"]),
+                    refined_name=os.path.basename(paths["refined"]),
+                ))
+                logger.info(tr("tool.srt.gen_pack.log_done",
+                               filename=os.path.basename(paths["json"])))
+                self.set_done()
+            except Exception as e:
+                self.set_error(tr("tool.srt.gen_pack.error_failed", e=e))
+                self.status_var.set(tr("tool.srt.gen_pack.status_fail"))
+            finally:
+                self.master.after(0, lambda: self._btn.config(state="normal"))
+
+        self.set_busy()
+        threading.Thread(target=_work, daemon=True).start()

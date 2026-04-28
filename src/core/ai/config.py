@@ -135,9 +135,7 @@ _DEFAULT_TTS_PROVIDERS = {
 
 TASKS: list[tuple[str, str, str]] = [
     ("translate",         "llm", "翻译 / Translate"),
-    ("subtitle.segments", "llm", "字幕分段 / Subtitle segments"),
-    ("subtitle.refine",   "llm", "字幕精炼 / Subtitle refine"),
-    ("subtitle.titles",   "llm", "视频标题 / Video titles"),
+    ("subtitle.post",     "llm", "字幕后处理 / Subtitle post-process"),
     ("asr.transcribe",    "asr", "语音转字幕 / ASR"),
     ("tts.synthesize",    "tts", "文本转语音 / TTS"),
 ]
@@ -352,6 +350,22 @@ def _migrate_task_routing(task_routing: dict | None, tier_routing: dict) -> tupl
                 if cat == "llm":
                     task_routing[tid] = copy.deepcopy(std_cell)
         return task_routing, True
+
+    # Collapse the legacy three subtitle.* entries into the consolidated
+    # `subtitle.post` task. If the user already customized any of them, the
+    # first non-empty cell wins; the old keys are then removed from disk.
+    legacy_subtitle_keys = ("subtitle.segments", "subtitle.refine",
+                            "subtitle.titles")
+    if any(k in task_routing for k in legacy_subtitle_keys):
+        if "subtitle.post" not in task_routing:
+            for k in legacy_subtitle_keys:
+                cell = task_routing.get(k)
+                if isinstance(cell, dict) and cell.get("provider"):
+                    task_routing["subtitle.post"] = copy.deepcopy(cell)
+                    break
+        for k in legacy_subtitle_keys:
+            task_routing.pop(k, None)
+        dirty = True
 
     # Detect + collapse old 3-tier nested structure
     flattened: dict = {}
