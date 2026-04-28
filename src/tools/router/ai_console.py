@@ -354,67 +354,52 @@ class AIConsoleApp(ToolBase):
                 row=r, column=1, columnspan=3, pady=8, sticky="w")
             r += 1
 
-        # Models text area + Refresh-from-API button
-        tk.Label(dlg, text=tr("tool.router.label_models"),
+        # Selected-models list + "Refresh & Pick…" button. Replaces the
+        # legacy Text-area-of-comma-separated-names where API refresh dumped
+        # 20+ Gemini models flat. Picker dialog (below) handles the curation.
+        tk.Label(dlg, text=tr("tool.router.label_active_models"),
                  anchor="ne", width=12).grid(
             row=r, column=0, padx=10, pady=8, sticky="ne")
-        models_text = tk.Text(dlg, height=6, width=46, wrap="word")
-        models_text.grid(row=r, column=1, columnspan=2, pady=8, sticky="w")
-        models_text.insert("1.0", ", ".join(cfg.get("models", [])))
 
-        refresh_status_var = tk.StringVar(value="")
+        selected_models: list[str] = list(cfg.get("models", []))
 
-        def refresh_models():
-            new_key = key_var.get().strip()
-            new_url = url_var.get().strip() if url_var is not None else cfg.get("base_url", "")
-            if not new_key:
-                messagebox.showerror(tr("dialog.common.error"),
-                                     tr("tool.router.error_key_empty"), parent=dlg)
+        list_frame = tk.Frame(dlg)
+        list_frame.grid(row=r, column=1, columnspan=2, pady=8, sticky="w")
+        models_listbox = tk.Listbox(list_frame, height=6, width=44,
+                                    exportselection=False, font=("", 9))
+        models_listbox.pack(side="left", fill="both")
+        lb_vsb = ttk.Scrollbar(list_frame, orient="vertical",
+                               command=models_listbox.yview)
+        models_listbox.configure(yscrollcommand=lb_vsb.set)
+        lb_vsb.pack(side="right", fill="y")
+
+        def _redraw_selected():
+            models_listbox.delete(0, "end")
+            for m in selected_models:
+                models_listbox.insert("end", m)
+        _redraw_selected()
+
+        def _remove_selected():
+            sel = models_listbox.curselection()
+            if not sel:
                 return
-            refresh_status_var.set(tr("tool.router.refresh_models_busy"))
-            refresh_btn.configure(state="disabled")
-            dlg.update_idletasks()
+            del selected_models[sel[0]]
+            _redraw_selected()
 
-            def _do():
-                try:
-                    # Inject the (possibly unsaved) key+url into a temp config
-                    # call. Easiest: write the key file first, update base_url,
-                    # then call list_models. But that has side effects. Cleaner:
-                    # call the provider module directly.
-                    if cfg.get("type") == "gemini":
-                        from core.ai.providers import gemini as _g
-                        models = _g.list_models(new_key)
-                    elif cfg.get("type") == "openai_compatible":
-                        if not new_url:
-                            raise RuntimeError(tr("tool.router.error_no_base_url"))
-                        from core.ai.providers import openai_compat as _oc
-                        models = _oc.list_models(new_key, new_url)
-                    else:
-                        raise RuntimeError(tr("tool.router.refresh_unsupported"))
-                    self.master.after(0, lambda m=models: _apply(m))
-                except Exception as e:
-                    err = str(e)
-                    self.master.after(0,
-                        lambda em=err: refresh_status_var.set(
-                            tr("tool.router.refresh_models_fail", e=em[:120])))
-                finally:
-                    self.master.after(0, lambda: refresh_btn.configure(state="normal"))
+        def _on_picked(new_list: list[str]):
+            # Mutate in place so the save() closure sees the new content.
+            selected_models[:] = new_list
+            _redraw_selected()
 
-            def _apply(models):
-                models_text.delete("1.0", "end")
-                models_text.insert("1.0", ", ".join(models))
-                refresh_status_var.set(tr("tool.router.refresh_models_ok", count=len(models)))
-
-            threading.Thread(target=_do, daemon=True).start()
-
-        refresh_btn = tk.Button(dlg, text=tr("tool.router.btn_refresh_models"),
-                                command=refresh_models, width=14)
-        refresh_btn.grid(row=r, column=3, padx=6, pady=8, sticky="n")
-        r += 1
-
-        tk.Label(dlg, textvariable=refresh_status_var,
-                 fg="#228B22", font=("", 8), anchor="w",
-                 ).grid(row=r, column=1, columnspan=3, sticky="w", padx=8)
+        btn_col = tk.Frame(dlg)
+        btn_col.grid(row=r, column=3, padx=6, pady=8, sticky="n")
+        tk.Button(btn_col, text=tr("tool.router.btn_pick_models"),
+                  command=lambda: self._open_model_picker_dialog(
+                      dlg, name, cfg, key_var, url_var,
+                      list(selected_models), _on_picked),
+                  width=18).pack(pady=2, fill="x")
+        tk.Button(btn_col, text=tr("tool.router.btn_remove_model"),
+                  command=_remove_selected, width=18).pack(pady=2, fill="x")
         r += 1
 
         def save():
@@ -431,8 +416,7 @@ class AIConsoleApp(ToolBase):
             kwargs = {}
             if url_var is not None:
                 kwargs["base_url"] = url_var.get().strip()
-            raw = models_text.get("1.0", "end").strip()
-            kwargs["models"] = [m.strip() for m in raw.split(",") if m.strip()]
+            kwargs["models"] = list(selected_models)
             router.update_provider(name, **kwargs)
             messagebox.showinfo(tr("tool.router.saved_title"),
                                 tr("tool.router.saved_config_msg", name=name), parent=dlg)
@@ -445,6 +429,194 @@ class AIConsoleApp(ToolBase):
                   width=10).pack(side="left", padx=10)
         tk.Button(btn_row, text=tr("tool.router.btn_cancel"), command=dlg.destroy,
                   width=10).pack(side="left")
+
+    def _open_model_picker_dialog(self, parent_dlg, name: str, cfg: dict,
+                                  key_var: tk.StringVar,
+                                  url_var: tk.StringVar | None,
+                                  current_selected: list[str],
+                                  on_save):
+        """Modal model-picker. Fetches the API list, lets the user toggle
+        checkboxes, supports search, and a manual-add row at the bottom for
+        models that aren't returned by list_models() (or when no API call is
+        possible). on_save(new_list) is invoked when the user confirms.
+        """
+        dlg = tk.Toplevel(parent_dlg)
+        dlg.title(tr("tool.router.picker_title", name=name))
+        dlg.geometry("520x560")
+        dlg.transient(parent_dlg)
+        dlg.grab_set()
+
+        # State: API-returned models (display order) + per-model BooleanVar.
+        # Pre-seed checks for currently-selected models so they remain
+        # checked even if list_models() doesn't return them.
+        api_models: list[str] = []
+        check_vars: dict[str, tk.BooleanVar] = {
+            m: tk.BooleanVar(value=True) for m in current_selected
+        }
+
+        # Top row: search
+        top = tk.Frame(dlg)
+        top.pack(fill="x", padx=10, pady=(10, 4))
+        tk.Label(top, text=tr("tool.router.picker_search")).pack(side="left")
+        search_var = tk.StringVar()
+        search_entry = tk.Entry(top, textvariable=search_var)
+        search_entry.pack(side="left", fill="x", expand=True, padx=(6, 0))
+
+        # Status line (loading / loaded / error)
+        status_var = tk.StringVar(value=tr("tool.router.refresh_models_busy"))
+        tk.Label(dlg, textvariable=status_var, fg="#555", font=("", 8),
+                 anchor="w").pack(fill="x", padx=10, pady=(0, 4))
+
+        # Middle: scrollable list of checkboxes
+        list_outer = tk.Frame(dlg, bd=1, relief="sunken")
+        list_outer.pack(fill="both", expand=True, padx=10, pady=4)
+        list_canvas = tk.Canvas(list_outer, highlightthickness=0)
+        list_vsb = ttk.Scrollbar(list_outer, orient="vertical",
+                                 command=list_canvas.yview)
+        list_canvas.configure(yscrollcommand=list_vsb.set)
+        list_canvas.pack(side="left", fill="both", expand=True)
+        list_vsb.pack(side="right", fill="y")
+        list_inner = tk.Frame(list_canvas)
+        list_canvas.create_window((0, 0), window=list_inner, anchor="nw")
+        list_inner.bind(
+            "<Configure>",
+            lambda e: list_canvas.configure(scrollregion=list_canvas.bbox("all")),
+        )
+
+        # Scoped wheel binding (don't leak through to background canvas).
+        def _wheel(e):
+            bbox = list_canvas.bbox("all")
+            if not bbox:
+                return
+            if bbox[3] - bbox[1] <= list_canvas.winfo_height():
+                return
+            list_canvas.yview_scroll(int(-e.delta / 120), "units")
+        list_canvas.bind("<Enter>",
+                         lambda _e: list_canvas.bind_all("<MouseWheel>", _wheel))
+        list_canvas.bind("<Leave>",
+                         lambda _e: list_canvas.unbind_all("<MouseWheel>"))
+        list_canvas.bind("<Destroy>",
+                         lambda _e: list_canvas.unbind_all("<MouseWheel>"))
+
+        def _redraw():
+            for w in list_inner.winfo_children():
+                w.destroy()
+            q = search_var.get().lower().strip()
+            # Stable order: API first, then preselected-not-in-API, then manual.
+            seen: set[str] = set()
+            order: list[str] = []
+            for m in api_models:
+                order.append(m)
+                seen.add(m)
+            for m in current_selected:
+                if m not in seen:
+                    order.append(m)
+                    seen.add(m)
+            for m in check_vars.keys():
+                if m not in seen:
+                    order.append(m)
+                    seen.add(m)
+
+            shown = 0
+            for m in order:
+                if q and q not in m.lower():
+                    continue
+                if m not in check_vars:
+                    check_vars[m] = tk.BooleanVar(value=False)
+                ttk.Checkbutton(list_inner, text=m,
+                                variable=check_vars[m]).pack(
+                    anchor="w", padx=4, pady=1, fill="x")
+                shown += 1
+            if shown == 0:
+                tk.Label(list_inner, text=tr("tool.router.picker_no_match"),
+                         fg="#888", font=("", 9, "italic")).pack(
+                    anchor="w", padx=8, pady=8)
+
+        search_var.trace_add("write", lambda *_: _redraw())
+
+        # Bottom: manual add row
+        add_row = tk.Frame(dlg)
+        add_row.pack(fill="x", padx=10, pady=(4, 4))
+        tk.Label(add_row, text=tr("tool.router.picker_manual_label")
+                 ).pack(side="left")
+        manual_var = tk.StringVar()
+        manual_entry = tk.Entry(add_row, textvariable=manual_var)
+        manual_entry.pack(side="left", fill="x", expand=True, padx=(6, 6))
+
+        def _manual_add():
+            m = manual_var.get().strip()
+            if not m:
+                return
+            if m not in check_vars:
+                check_vars[m] = tk.BooleanVar(value=True)
+            else:
+                check_vars[m].set(True)
+            manual_var.set("")
+            _redraw()
+
+        tk.Button(add_row, text=tr("tool.router.picker_btn_add"),
+                  command=_manual_add, width=6).pack(side="left")
+        manual_entry.bind("<Return>", lambda _e: _manual_add())
+
+        # Save / Cancel
+        btn_row = tk.Frame(dlg)
+        btn_row.pack(fill="x", padx=10, pady=(8, 12))
+
+        def _do_save():
+            new_list = [m for m, v in check_vars.items() if v.get()]
+            on_save(new_list)
+            dlg.destroy()
+
+        tk.Button(btn_row, text=tr("tool.router.picker_btn_save"),
+                  command=_do_save, width=14).pack(side="right")
+        tk.Button(btn_row, text=tr("tool.router.btn_cancel"),
+                  command=dlg.destroy, width=10).pack(side="right", padx=6)
+
+        # Initial render so preselected models show up immediately
+        _redraw()
+
+        # Background API fetch — best-effort. If key empty or fetch fails,
+        # the picker still works for manual-add only.
+        new_key = key_var.get().strip()
+        new_url = (url_var.get().strip() if url_var is not None
+                   else cfg.get("base_url", ""))
+        if not new_key:
+            status_var.set(tr("tool.router.error_key_empty"))
+            return
+
+        def _do_fetch():
+            try:
+                ptype = cfg.get("type")
+                if ptype == "gemini":
+                    from core.ai.providers import gemini as _g
+                    models = _g.list_models(new_key)
+                elif ptype == "openai_compatible":
+                    if not new_url:
+                        raise RuntimeError(tr("tool.router.error_no_base_url"))
+                    from core.ai.providers import openai_compat as _oc
+                    models = _oc.list_models(new_key, new_url)
+                else:
+                    raise RuntimeError(tr("tool.router.refresh_unsupported"))
+                dlg.after(0, lambda m=models: _on_loaded(m))
+            except Exception as e:
+                err = str(e)
+                dlg.after(0,
+                    lambda em=err: status_var.set(
+                        tr("tool.router.refresh_models_fail", e=em[:100])))
+
+        def _on_loaded(models):
+            nonlocal api_models
+            api_models = list(models)
+            for m in api_models:
+                if m not in check_vars:
+                    check_vars[m] = tk.BooleanVar(value=False)
+            sel_count = sum(1 for v in check_vars.values() if v.get())
+            status_var.set(tr("tool.router.picker_status_loaded",
+                              api_count=len(api_models),
+                              sel_count=sel_count))
+            _redraw()
+
+        threading.Thread(target=_do_fetch, daemon=True).start()
 
     def _open_claude_code_dialog(self, name: str, cfg: dict):
         dlg = tk.Toplevel(self.master)
