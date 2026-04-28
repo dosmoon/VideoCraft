@@ -1,13 +1,16 @@
-"""AI Console — single-tab provider/key/routing matrix + call stats.
+"""AI Console — provider management + task-routing dropdowns + prompts + stats.
 
 UI layout:
-  Tab 1 (Routing): one big grid where every row is a (provider, model)
-    pair. Each row shows the provider's key status / Edit / Test buttons
-    on its first model row, and a column of radio buttons per task. The
-    column-grouped radios make "task → exactly one provider+model" the
-    natural interaction. ASR/TTS providers occupy a single row each.
-    Providers without auth render with disabled radios (greyed out).
-  Tab 2 (Stats): per-provider call counters; unchanged from M6.
+  Tab 1 (Provider & Routing):
+    - Top section "Task Routing": one row per task in TASKS, with a
+      provider dropdown and a model dropdown. Picking either auto-saves
+      via router.set_task_routing(). ASR/TTS rows render an em-dash in
+      the model column (provider-only routing).
+    - Bottom section "Providers": one compact row per configured
+      provider — name, key status, Edit and Test buttons. Edit opens
+      the existing per-type dialogs (LLM / claude_code / ASR-TTS).
+  Tab 2 (Prompts): per-task prompt editor with override management.
+  Tab 3 (Stats): per-provider call counters.
 
 Per architecture principle 1, this tool is an "infrastructure console"
 and is allowed to import core.ai directly.
@@ -41,24 +44,6 @@ def _parse_int_range(value: str, *, minimum: int, maximum: int, field_label: str
     return parsed
 
 
-def _task_short_label(task_id: str) -> str:
-    """Short i18n header label for a task (matrix column heading)."""
-    return tr(f"tool.router.task_header.{task_id}")
-
-
-def _row_value(provider: str, model: str) -> str:
-    """Encode a (provider, model) pair as a single radio value string."""
-    return f"{provider}::{model}"
-
-
-def _decode_value(value: str) -> tuple[str, str]:
-    """Inverse of _row_value."""
-    if "::" in value:
-        p, m = value.split("::", 1)
-        return p, m
-    return value, ""
-
-
 # ── AI Console tool ─────────────────────────────────────────────────────────
 
 class AIConsoleApp(ToolBase):
@@ -88,20 +73,20 @@ class AIConsoleApp(ToolBase):
         if nb.index(nb.select()) == 2:  # Stats tab (now index 2 after Prompts)
             self._refresh_stats()
 
-    # ── Routing tab (the merged matrix) ─────────────────────────────────────
+    # ── Routing tab: top section + bottom section ──────────────────────────
 
     def _build_routing_tab(self):
         tab = self.tab_routing
 
-        # Top help line
+        # Help line
         tk.Label(tab,
                  text=tr("tool.router.routing_prompt"),
                  font=("", 9), fg="#555", wraplength=1000, justify="left",
                  ).pack(anchor="w", pady=(0, 8))
 
-        # Scrollable grid container — provider list can grow as users add
-        # custom OpenAI-compat endpoints / new providers. Embed in a Canvas
-        # for vertical scrolling.
+        # Scrollable container — providers list can grow as users add
+        # custom OpenAI-compat endpoints. Routing section is always 4 rows
+        # so it doesn't need scrolling; both share one canvas for simplicity.
         outer = tk.Frame(tab)
         outer.pack(fill="both", expand=True)
 
@@ -111,174 +96,213 @@ class AIConsoleApp(ToolBase):
         canvas.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
 
-        grid_holder = tk.Frame(canvas)
-        canvas.create_window((0, 0), window=grid_holder, anchor="nw")
-        grid_holder.bind("<Configure>",
-                         lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        body = tk.Frame(canvas)
+        canvas.create_window((0, 0), window=body, anchor="nw")
+        body.bind("<Configure>",
+                  lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
 
-        # Mouse-wheel scroll on Windows/macOS
+        # Scope mousewheel to this canvas only: bind_all would also fire on
+        # modal Edit dialogs, leaking scroll events through to the background.
         def _on_wheel(e):
+            # Only scroll if content actually exceeds the viewport
+            bbox = canvas.bbox("all")
+            if not bbox:
+                return
+            if bbox[3] - bbox[1] <= canvas.winfo_height():
+                return
             canvas.yview_scroll(int(-e.delta / 120), "units")
-        canvas.bind_all("<MouseWheel>", _on_wheel)
 
-        self._build_routing_grid(grid_holder)
+        def _bind_wheel(_e):
+            canvas.bind_all("<MouseWheel>", _on_wheel)
 
-    def _build_routing_grid(self, parent):
-        # Per-task selected value StringVars (each holds "provider::model")
-        current_routing = router.get_task_routing()
-        self._task_vars: dict[str, tk.StringVar] = {}
-        for tid, _cat, _label in _ai_cfg.TASKS:
-            cell = current_routing.get(tid, {})
-            self._task_vars[tid] = tk.StringVar(
-                value=_row_value(cell.get("provider", ""), cell.get("model", ""))
-            )
+        def _unbind_wheel(_e):
+            canvas.unbind_all("<MouseWheel>")
 
-        # Provider button widgets keyed by provider name (so refresh / test
-        # state changes can target them without rebuilding the whole grid).
+        canvas.bind("<Enter>", _bind_wheel)
+        canvas.bind("<Leave>", _unbind_wheel)
+        # Also unbind when the tab/window is destroyed so wheel events don't
+        # target a dead canvas after closing the console.
+        canvas.bind("<Destroy>", _unbind_wheel)
+
+        # Track widgets that need rebuilding/refresh after edits
         self._test_buttons: dict[str, tk.Button] = {}
+        self._task_provider_vars: dict[str, tk.StringVar] = {}
+        self._task_model_vars: dict[str, tk.StringVar] = {}
+        self._task_model_combos: dict[str, ttk.Combobox] = {}
+
+        # ── Top: task routing ──
+        routing_frame = tk.LabelFrame(
+            body, text=tr("tool.router.section_routing_title"),
+            padx=10, pady=8, font=("", 10, "bold"),
+        )
+        routing_frame.pack(fill="x", pady=(0, 12), anchor="w")
+        self._build_routing_section(routing_frame)
+
+        # ── Bottom: providers ──
+        providers_frame = tk.LabelFrame(
+            body, text=tr("tool.router.section_providers_title"),
+            padx=10, pady=8, font=("", 10, "bold"),
+        )
+        providers_frame.pack(fill="x", anchor="w")
+        self._build_providers_section(providers_frame)
+
+    # ── Top section: 4-row task routing table ──────────────────────────────
+
+    def _build_routing_section(self, parent):
+        current_routing = router.get_task_routing()
 
         # Header row
-        col = 0
+        tk.Label(parent, text=tr("tool.router.col_task"),
+                 font=("", 9, "bold"), anchor="w", width=22,
+                 ).grid(row=0, column=0, sticky="w", padx=4, pady=(0, 4))
+        tk.Label(parent, text=tr("tool.router.col_provider"),
+                 font=("", 9, "bold"), anchor="w", width=18,
+                 ).grid(row=0, column=1, sticky="w", padx=4, pady=(0, 4))
+        tk.Label(parent, text=tr("tool.router.col_model"),
+                 font=("", 9, "bold"), anchor="w", width=28,
+                 ).grid(row=0, column=2, sticky="w", padx=4, pady=(0, 4))
+
+        for i, (tid, cat, label) in enumerate(_ai_cfg.TASKS, start=1):
+            tk.Label(parent, text=label, anchor="w").grid(
+                row=i, column=0, sticky="w", padx=4, pady=4)
+
+            cell = current_routing.get(tid, {})
+            prov_var = tk.StringVar(value=cell.get("provider", ""))
+            model_var = tk.StringVar(value=cell.get("model", ""))
+            self._task_provider_vars[tid] = prov_var
+            self._task_model_vars[tid] = model_var
+
+            prov_choices = self._provider_choices_for(cat)
+            prov_cb = ttk.Combobox(
+                parent, textvariable=prov_var, values=prov_choices,
+                state="readonly", width=22,
+            )
+            prov_cb.grid(row=i, column=1, sticky="w", padx=4, pady=4)
+            prov_cb.bind("<<ComboboxSelected>>",
+                         lambda _e, t=tid: self._on_routing_provider_changed(t))
+
+            if cat == "llm":
+                model_choices = self._models_for(prov_var.get())
+                model_cb = ttk.Combobox(
+                    parent, textvariable=model_var, values=model_choices,
+                    state="normal", width=30,
+                )
+                model_cb.grid(row=i, column=2, sticky="w", padx=4, pady=4)
+                self._task_model_combos[tid] = model_cb
+                model_cb.bind("<<ComboboxSelected>>",
+                              lambda _e, t=tid: self._on_routing_model_changed(t))
+                # Persist manually-typed model on focus-out / Return
+                model_cb.bind("<FocusOut>",
+                              lambda _e, t=tid: self._on_routing_model_changed(t))
+                model_cb.bind("<Return>",
+                              lambda _e, t=tid: self._on_routing_model_changed(t))
+            else:
+                tk.Label(parent, text="—", fg="#999", anchor="w",
+                         ).grid(row=i, column=2, sticky="w", padx=4, pady=4)
+
+    def _provider_choices_for(self, category: str) -> list[str]:
+        """Return a list of provider names available for this category.
+
+        Includes providers that lack auth — the user can still pick them,
+        but the call will fail until they configure a key (visible in the
+        Providers section below).
+        """
+        src: dict
+        if category == "llm":
+            src = router._providers
+        elif category == "asr":
+            src = router._asr_providers
+        elif category == "tts":
+            src = router._tts_providers
+        else:
+            return []
+        return list(src.keys())
+
+    def _models_for(self, provider: str) -> list[str]:
+        cfg = router._providers.get(provider, {})
+        return list(cfg.get("models", []))
+
+    def _on_routing_provider_changed(self, task_id: str):
+        prov = self._task_provider_vars[task_id].get()
+        cat = _ai_cfg.task_category(task_id)
+        if cat == "llm":
+            models = self._models_for(prov)
+            cb = self._task_model_combos.get(task_id)
+            if cb is not None:
+                cb.configure(values=models)
+            cur = self._task_model_vars[task_id].get()
+            if cur not in models:
+                self._task_model_vars[task_id].set(models[0] if models else "")
+            router.set_task_routing(
+                task_id, prov, self._task_model_vars[task_id].get())
+        else:
+            router.set_task_routing(task_id, prov, "")
+
+    def _on_routing_model_changed(self, task_id: str):
+        prov = self._task_provider_vars[task_id].get()
+        model = self._task_model_vars[task_id].get().strip()
+        router.set_task_routing(task_id, prov, model)
+
+    # ── Bottom section: provider management list ───────────────────────────
+
+    def _build_providers_section(self, parent):
+        # Header
         tk.Label(parent, text=tr("tool.router.col_provider_model"),
                  font=("", 9, "bold"), anchor="w", width=22,
-                 ).grid(row=0, column=col, sticky="w", padx=4, pady=(0, 4))
-        col += 1
+                 ).grid(row=0, column=0, sticky="w", padx=4, pady=(0, 4))
         tk.Label(parent, text=tr("tool.router.col_key_status"),
-                 font=("", 9, "bold"), anchor="w", width=18,
-                 ).grid(row=0, column=col, sticky="w", padx=4, pady=(0, 4))
-        col += 1
-        tk.Label(parent, text="", width=6,
-                 ).grid(row=0, column=col, padx=2)  # Edit
-        col += 1
-        tk.Label(parent, text="", width=6,
-                 ).grid(row=0, column=col, padx=2)  # Test
-        col += 1
-        # Task header columns
-        self._task_col_index: dict[str, int] = {}
-        for tid, _cat, _label in _ai_cfg.TASKS:
-            self._task_col_index[tid] = col
-            tk.Label(parent, text=_task_short_label(tid),
-                     font=("", 9, "bold"), anchor="center", width=11,
-                     wraplength=80, justify="center",
-                     ).grid(row=0, column=col, padx=2, pady=(0, 4))
-            col += 1
+                 font=("", 9, "bold"), anchor="w", width=22,
+                 ).grid(row=0, column=1, sticky="w", padx=4, pady=(0, 4))
 
-        # Separator
         ttk.Separator(parent, orient="horizontal").grid(
-            row=1, column=0, columnspan=col, sticky="ew", pady=2)
+            row=1, column=0, columnspan=4, sticky="ew", pady=2)
 
-        # Provider rows. Iterate in a stable display order:
-        #   LLM providers first (in router._providers order), then ASR, then TTS.
         row_idx = 2
-        # LLM providers
-        for name, cfg in router._providers.items():
-            row_idx = self._build_provider_block(parent, row_idx, name, cfg, "llm")
-        # ASR providers
-        for name, cfg in router._asr_providers.items():
-            row_idx = self._build_provider_block(parent, row_idx, name, cfg, "asr")
-        # TTS providers
-        for name, cfg in router._tts_providers.items():
-            row_idx = self._build_provider_block(parent, row_idx, name, cfg, "tts")
+        for category, src in (
+            ("llm", router._providers),
+            ("asr", router._asr_providers),
+            ("tts", router._tts_providers),
+        ):
+            for name, cfg in src.items():
+                row_idx = self._build_provider_row(
+                    parent, row_idx, name, cfg, category)
 
-    def _build_provider_block(self, parent, row_start: int, name: str,
-                              cfg: dict, category: str) -> int:
-        """Render the rows for one provider. LLM providers list every model
-        as a separate row; ASR/TTS get one row each.
-
-        Returns the next available row index after this block.
-        """
-        # Determine the model list to render rows for
-        if category == "llm":
-            models = list(cfg.get("models", []))
-            if not models:
-                models = [""]   # Render a single placeholder row even with no models
-        else:
-            # ASR / TTS — single row, model field unused (provider-only routing)
-            models = [""]
-
-        is_available = self._provider_available(cfg)
-        key_status_text, key_status_color = self._key_status(cfg)
+    def _build_provider_row(self, parent, row: int, name: str,
+                            cfg: dict, category: str) -> int:
+        is_available = _ai_cfg.has_auth(cfg)
+        key_text, key_color = self._key_status(cfg)
         display_name = cfg.get("name", name)
 
-        for i, model in enumerate(models):
-            row = row_start + i
-            # First row of the provider block carries name + key + buttons
-            if i == 0:
-                # Provider/model label cell: bold provider name + model below
-                label_frame = tk.Frame(parent)
-                label_frame.grid(row=row, column=0, sticky="w", padx=4, pady=2)
-                tk.Label(label_frame, text=display_name,
-                         font=("", 9, "bold"), anchor="w",
-                         ).pack(anchor="w")
-                if model and category == "llm":
-                    tk.Label(label_frame, text=f"  {model}",
-                             font=("", 8), fg="#555",
-                             ).pack(anchor="w")
+        # Name + LLM model count hint (e.g. "Gemini · 2 models")
+        label_frame = tk.Frame(parent)
+        label_frame.grid(row=row, column=0, sticky="w", padx=4, pady=2)
+        tk.Label(label_frame, text=display_name,
+                 font=("", 9, "bold"), anchor="w").pack(anchor="w")
+        if category == "llm":
+            n_models = len(cfg.get("models", []))
+            if n_models:
+                tk.Label(label_frame, text=f"  · {n_models} models",
+                         font=("", 8), fg="#777").pack(anchor="w")
 
-                # Key status
-                tk.Label(parent, text=key_status_text,
-                         fg=key_status_color, anchor="w", font=("", 9),
-                         ).grid(row=row, column=1, sticky="w", padx=4, pady=2)
+        tk.Label(parent, text=key_text, fg=key_color, anchor="w",
+                 font=("", 9)).grid(row=row, column=1, sticky="w",
+                                    padx=4, pady=2)
 
-                # Edit button
-                tk.Button(parent, text=tr("tool.router.btn_edit"), width=5,
-                          command=lambda n=name, c=cfg, cat=category:
-                                  self._open_edit_dialog(n, c, cat)
-                          ).grid(row=row, column=2, padx=2)
+        tk.Button(parent, text=tr("tool.router.btn_edit"), width=5,
+                  command=lambda n=name, c=cfg, cat=category:
+                          self._open_edit_dialog(n, c, cat)
+                  ).grid(row=row, column=2, padx=2)
 
-                # Test button
-                test_btn = tk.Button(
-                    parent, text=tr("tool.router.btn_test"), width=5,
-                    command=lambda n=name, cat=category:
-                            self._run_provider_test(n, cat),
-                )
-                # Phase 1: only LLM providers support quick test;
-                # disable Test for non-LLM (with tooltip via state)
-                # and for any provider without auth.
-                if category != "llm" or not is_available:
-                    test_btn.configure(state="disabled")
-                test_btn.grid(row=row, column=3, padx=2)
-                self._test_buttons[name] = test_btn
-            else:
-                # Subsequent rows: indented model label, no key/buttons
-                tk.Label(parent, text=f"   {model}",
-                         font=("", 9), anchor="w", fg="#333",
-                         ).grid(row=row, column=0, sticky="w", padx=4, pady=2)
-
-            # Task radio cells
-            row_value = _row_value(name, model) if category == "llm" else _row_value(name, "")
-            for tid, cat, _label in _ai_cfg.TASKS:
-                col = self._task_col_index[tid]
-                if cat != category:
-                    # Wrong category for this task — show a dash, no widget
-                    tk.Label(parent, text="—", fg="#bbb",
-                             ).grid(row=row, column=col, padx=2, pady=2)
-                    continue
-                rb = ttk.Radiobutton(
-                    parent, value=row_value, variable=self._task_vars[tid],
-                    command=lambda t=tid, v=row_value: self._on_radio_change(t, v),
-                )
-                if not is_available:
-                    rb.configure(state="disabled")
-                rb.grid(row=row, column=col, padx=2, pady=2)
-
-        # Trailing thin separator between providers for readability
-        sep_row = row_start + len(models)
-        ttk.Separator(parent, orient="horizontal").grid(
-            row=sep_row, column=0, columnspan=4 + len(_ai_cfg.TASKS),
-            sticky="ew", pady=1,
+        test_btn = tk.Button(
+            parent, text=tr("tool.router.btn_test"), width=5,
+            command=lambda n=name, cat=category:
+                    self._run_provider_test(n, cat),
         )
-        return sep_row + 1
-
-    @staticmethod
-    def _provider_available(cfg: dict) -> bool:
-        """Return True if this provider can actually be used (auth present
-        for non-claude_code, always-True for claude_code)."""
-        return _ai_cfg.has_auth(cfg)
-
-    def _on_radio_change(self, task_id: str, row_value: str):
-        provider, model = _decode_value(row_value)
-        router.set_task_routing(task_id, provider, model)
+        if category != "llm" or not is_available:
+            test_btn.configure(state="disabled")
+        test_btn.grid(row=row, column=3, padx=2)
+        self._test_buttons[name] = test_btn
+        return row + 1
 
     def _rebuild_routing_tab(self):
         for w in self.tab_routing.winfo_children():
