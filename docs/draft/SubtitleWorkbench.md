@@ -2,6 +2,8 @@
 
 把字幕菜单下多个独立窗口合并为一个工作台，对标 [split_workbench.py](../../src/tools/video/split_workbench.py)：一次载入 SRT，串联完成「提取文字 / 生成分段 / 提取段落 / 精炼分段 / 生成标题」全流程，避免用户在多个独立窗口间来回切换。老入口保留以便平滑迁移，稳定后再删。
 
+> **2026-04 进展**：新增的菜单项「一键分段+精炼+标题（结构化）」（[srt_tools.py `SrtGeneratePackApp`](../../src/tools/subtitle/srt_tools.py)）已经把 ②③④⑤ 四个 AI 步骤的"快通道"用一次 `ai.complete_json()` 解决了，输出 1 份 JSON + 3 份 TXT。本工作台仍有价值（手工 review / 编辑 / 局部重跑 / 与视频分割工作台联动），但范围调整为：(a) 加载 pack 输出 JSON 直接进 review 模式；(b) 任意环节可单独重跑、手工编辑后再合成；(c) 与 split_workbench 联动。Router task 维度上，四个 AI 调用现已统一为 `task="subtitle.post"`。
+
 ---
 
 ## 数据流
@@ -67,7 +69,7 @@ flowchart LR
 | 工具注册 | [src/VideoCraftHub.py](../../src/VideoCraftHub.py) `TOOL_MAP` | 新增工作台加一行；老的 5 个 key 暂不删 |
 | 菜单注册 | [src/VideoCraftHub.py](../../src/VideoCraftHub.py) Subtitle 菜单 | 顶部加「字幕处理综合工作台」+ 分隔线 + 保留 5 个老入口 |
 | i18n | `src/i18n/{zh,en}.json` | 新 key 加到两边，`tr("...")` 调用；Phase 1-7 已 806 keys |
-| Router 入口 | 工作台级保留 1 个，等 BACKLOG 的 Router 改 Tab 落地后联动范式 |
+| Router 入口 | Router 已是 Hub Tab（`AIConsoleApp`，2026-04 落地），工作台不再需要独立 Router 按钮 |
 
 ---
 

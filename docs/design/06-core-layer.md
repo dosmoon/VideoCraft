@@ -53,7 +53,7 @@ def _work():
 
 | 模块 | 状态 |
 |------|------|
-| `core/srt_ops.py` | ✅ 已完成（SRT 解析、统计、YouTube 分段、段落提取、AI 精炼、标题生成） |
+| `core/srt_ops.py` | ✅ 已完成（SRT 解析、统计、YouTube 分段、段落提取、AI 精炼、标题生成；2026-04 末新增 `generate_subtitle_pack()` + `write_subtitle_pack()` + `SUBTITLE_PACK_SCHEMA`，一次 `ai.complete_json()` 产出 titles + segments + refined 的 JSON） |
 | `core/subtitle_ops.py` | ✅ 已完成（`split_srt_to_file`、`build_subtitle_style`、`escape_ffmpeg_path`、`hex_color_to_ass` 等） |
 | `core/video_ops.py` | ⚠️ 部分抽取——主要的 ffmpeg utilities 目前仍定义在 [tools/video/video_tools.py](../../src/tools/video/video_tools.py) 顶部（`extract_audio_to_mp3` 等），与 UI 类同文件但已是无 tkinter 依赖的纯函数。未来可能迁到 `core/video_ops.py` |
 | `core/segment_model.py` | ✅ 已完成（`Segment` dataclass、`parse_timestamp`/`format_timestamp`、`load_from_file`/`save_to_file`、`end_of`/`duration_of`、`validate`、`safe_filename`）。为分段综合工作台服务，兼容 AI 生成的 `subs.txt` 格式 |

@@ -134,7 +134,8 @@ open_tool(key)
 └── 提取 MP3 / 调整音量 / 视频片段提取 / 自动分割 / 码率转换
 
 字幕
-└── 提取字幕文字 / 生成分段描述 / 提取段落内容 / 精炼分段 / 生成标题
+├── 提取字幕文字 / 生成分段描述 / 提取段落内容 / 精炼分段 / 生成标题
+└── 一键分段+精炼+标题（结构化）   # 新：一次 AI 调用产出 JSON + 3 份 TXT
 
 文字转视频
 ├── ① 文字合成语音 / ② 生成字幕 SRT / ③ 合成视频
@@ -158,7 +159,7 @@ AI            → Router 管理
 - `class: None` → subprocess 启动（当前无此类工具）
 - `class: "ClassName"` → 嵌入 Tab（`_open_in_tab`）
 
-当前 25 个工具注册，分布在 `src/tools/{download,speech,translate,subtitle,video,text2video,publish,preferences}/` 各子包下。首选项面板 (`preferences`) 也是一个普通 Tab 工具，和业务工具统一处理——没有专属对话框机制。
+当前 26 个工具注册，分布在 `src/tools/{download,speech,translate,subtitle,video,text2video,publish,preferences}/` 各子包下。首选项面板 (`preferences`) 也是一个普通 Tab 工具，和业务工具统一处理——没有专属对话框机制。
 
 ---
 
