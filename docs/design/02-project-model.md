@@ -4,13 +4,14 @@
 
 **Project = 文件夹**，与 VS Code 相同：
 - 打开任意文件夹即为打开工程
-- 若文件夹内无 `videocraft.json`，自动创建
-- 文件夹内的所有文件由 Sidebar 浏览
+- 元数据写入隐藏子目录 `.videocraft/project.json`（仿 VSCode 的 `.vscode/`），首次打开自动生成
+- 若仍存在旧版本的根级 `videocraft.json`，`Project.open()` 会一次性把内容搬入 `.videocraft/project.json` 并删除旧文件
+- 文件夹内其他文件由 Sidebar 浏览（`.videocraft/` 在 Sidebar 中隐藏）
 - 拷贝文件夹 = 转移整个工程
 
 ---
 
-## videocraft.json 结构
+## .videocraft/project.json 结构
 
 ### 当前版本（v1）
 
@@ -67,18 +68,23 @@ def load_and_migrate(data: dict) -> dict:
 ```python
 class Project:
     folder: str          # 文件夹绝对路径
-    data: dict           # videocraft.json 内容
+    data: dict           # .videocraft/project.json 内容
+
+    MARKER_DIR    = ".videocraft"
+    MARKER_FILE   = "project.json"
+    LEGACY_MARKER = "videocraft.json"   # pre-2026-04-末 layout
 
     @staticmethod
     def open(folder_path: str) -> "Project"
-    # 打开文件夹：读 json（不存在则自动创建 v1 最小内容）
+    # 打开文件夹：迁移遗留的根级 videocraft.json（如有）→ 读
+    # .videocraft/project.json（不存在则自动创建 v1 最小内容）
 
     def get_files(self) -> list[dict]
-    # 返回文件夹内文件列表，格式：
+    # 返回文件夹内文件列表（隐藏 .videocraft/ 目录），格式：
     # [{"name": "video.mp4", "path": "...", "ext": ".mp4"}, ...]
 
     def save(self)
-    # 写回 videocraft.json
+    # 写回 .videocraft/project.json（自动 mkdir -p）
 
 # 最近工程（存 ~/.videocraft/recent.json，最多保留 10 条）
 def get_recent_projects() -> list[str]

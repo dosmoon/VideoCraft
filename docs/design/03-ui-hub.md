@@ -118,7 +118,7 @@ open_tool(key)
 
 ```
 文件 (File)
-├── 打开文件夹...            对话框选择任意文件夹，自动生成 videocraft.json
+├── 打开文件夹...            对话框选择任意文件夹，自动生成 .videocraft/project.json（旧版本根级 videocraft.json 自动迁入）
 ├── 最近工程 ▶               子菜单，最多 10 条历史（postcommand 驱动刷新）
 ├── ─────────
 ├── 首选项...                以 Tab 形式打开 PreferencesApp（语言切换等）

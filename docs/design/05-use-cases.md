@@ -8,7 +8,7 @@
 1. 打开 VideoCraftHub
 2. `File > Open Folder...` → 选择或新建目标文件夹（如 `D:\Videos\my_project\`）
 3. Hub 打开该文件夹：
-   - 自动生成 `videocraft.json`（若不存在）
+   - 自动生成 `.videocraft/project.json`（若不存在；旧版本根级 `videocraft.json` 自动迁入）
    - Sidebar 显示文件夹内容（初始为空）
    - 状态栏显示当前工程路径
 4. `Download > yt-dlp 下载器` → 弹出下载工具 Toplevel

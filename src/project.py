@@ -1,7 +1,9 @@
 """
 project.py - VideoCraft Project 模型
 
-Project = 文件夹。打开任意文件夹即为打开工程，自动生成 videocraft.json。
+Project = 文件夹。打开任意文件夹即为打开工程，元数据写入隐藏子目录
+`.videocraft/project.json`（仿 VSCode 的 `.vscode/`，避免与素材文件混在一起）。
+旧版本的 `<folder>/videocraft.json` 在 open() 时自动迁入新位置并删除。
 """
 
 import json
@@ -45,7 +47,11 @@ def file_icon(name: str, is_dir: bool = False) -> str:
 # ── Project 类 ────────────────────────────────────────────────────────────────
 
 class Project:
-    MARKER = "videocraft.json"
+    # New layout: <folder>/.videocraft/project.json (hidden, like VSCode's .vscode/)
+    MARKER_DIR  = ".videocraft"
+    MARKER_FILE = "project.json"
+    # Pre-2026-04 layout: <folder>/videocraft.json. open() migrates if found.
+    LEGACY_MARKER = "videocraft.json"
 
     def __init__(self, folder: str, data: dict):
         self.folder = os.path.abspath(folder)
@@ -54,14 +60,34 @@ class Project:
     # -- 工厂方法 ---------------------------------------------------------------
 
     @staticmethod
-    def open(folder_path: str) -> "Project":
-        """打开文件夹作为工程。若无 videocraft.json，自动创建。"""
-        folder = os.path.abspath(folder_path)
-        json_path = os.path.join(folder, Project.MARKER)
+    def _marker_path(folder: str) -> str:
+        return os.path.join(folder, Project.MARKER_DIR, Project.MARKER_FILE)
 
-        if os.path.exists(json_path):
+    @staticmethod
+    def open(folder_path: str) -> "Project":
+        """打开文件夹作为工程。若无 .videocraft/project.json，自动创建。
+        遗留的根级 videocraft.json 会被一次性搬入 .videocraft/project.json。
+        """
+        folder = os.path.abspath(folder_path)
+        new_path = Project._marker_path(folder)
+        legacy_path = os.path.join(folder, Project.LEGACY_MARKER)
+
+        # One-shot migration from the old root-level layout
+        if os.path.exists(legacy_path) and not os.path.exists(new_path):
             try:
-                with open(json_path, "r", encoding="utf-8") as f:
+                with open(legacy_path, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                os.makedirs(os.path.dirname(new_path), exist_ok=True)
+                with open(new_path, "w", encoding="utf-8") as f:
+                    json.dump(raw, f, ensure_ascii=False, indent=2)
+                os.remove(legacy_path)
+            except (json.JSONDecodeError, OSError):
+                # Best-effort: fall through to normal load/default-create.
+                pass
+
+        if os.path.exists(new_path):
+            try:
+                with open(new_path, "r", encoding="utf-8") as f:
                     raw = json.load(f)
                 data = _load_and_migrate(raw)
             except (json.JSONDecodeError, KeyError):
@@ -70,7 +96,7 @@ class Project:
             data = Project._default_data()
 
         project = Project(folder, data)
-        project.save()   # 确保 json 写入（新建 or 迁移后写回）
+        project.save()   # ensure file written (new project or post-migration)
         return project
 
     @staticmethod
@@ -84,9 +110,9 @@ class Project:
 
     def get_files(self) -> list:
         """
-        返回工程文件夹内的条目列表（单层，不递归），
+        返回工程文件夹内的条目列表（单层，不递归）。
         格式：[{"name": str, "path": str, "ext": str, "icon": str, "is_dir": bool}]
-        videocraft.json 排在最后。
+        隐藏 `.videocraft/` 元数据目录（用户素材列表里看不到它）。
         """
         entries = []
         try:
@@ -95,6 +121,8 @@ class Project:
             return []
 
         for name in names:
+            if name == Project.MARKER_DIR:
+                continue
             full = os.path.join(self.folder, name)
             is_dir = os.path.isdir(full)
             ext = "" if is_dir else os.path.splitext(name)[1].lower()
@@ -106,16 +134,17 @@ class Project:
                 "is_dir": is_dir,
             })
 
-        # videocraft.json 排到末尾
-        entries.sort(key=lambda e: (e["name"] == Project.MARKER, not e["is_dir"], e["name"].lower()))
+        # Directories first, then files, both alphabetical.
+        entries.sort(key=lambda e: (not e["is_dir"], e["name"].lower()))
         return entries
 
     # -- 持久化 -----------------------------------------------------------------
 
     def save(self):
-        """将 data 写回 videocraft.json。"""
-        json_path = os.path.join(self.folder, Project.MARKER)
-        with open(json_path, "w", encoding="utf-8") as f:
+        """将 data 写回 .videocraft/project.json。"""
+        path = Project._marker_path(self.folder)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
 
     # -- 便捷属性 ---------------------------------------------------------------

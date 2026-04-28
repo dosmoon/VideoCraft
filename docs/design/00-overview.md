@@ -32,7 +32,7 @@ Menu + Sidebar + Tab 嵌入式工具架构；底部可拖拽日志面板；5 色
 
 ## 核心设计原则
 
-1. **Project = 文件夹**，任意文件夹均可打开，自动生成 `videocraft.json` 作为标识
+1. **Project = 文件夹**，任意文件夹均可打开，自动生成 `.videocraft/project.json` 作为标识（旧版本根级 `videocraft.json` 在 open 时一次性迁入）
 2. **功能原子独立**，每个工具仍可单独运行（双模式：嵌入 Hub Tab / 独立 Tk）
 3. **单进程 + 嵌入 Tab**，工具以 Tab 形式嵌入 Hub 内容区，共享 AI Router 统计和状态
 4. **增量演进**，不做大爆炸重构，每步完成即可验证
@@ -46,7 +46,7 @@ Menu + Sidebar + Tab 嵌入式工具架构；底部可拖拽日志面板；5 色
 ```
 src/
 ├── VideoCraftHub.py              # 主入口（Menu + Sidebar + Tab + 底部日志）
-├── project.py                    # Project 模型，文件夹 + videocraft.json
+├── project.py                    # Project 模型，文件夹 + .videocraft/project.json
 ├── hub_layout.py                 # Hub 布局持久化（geometry/sash/zoom）
 ├── hub_logger.py                 # 线程安全全局 logger（底部日志面板消费者）
 ├── i18n.py                       # tr(key) 本地化入口
