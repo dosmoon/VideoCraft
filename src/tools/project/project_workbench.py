@@ -225,7 +225,7 @@ _STEP_DISPLAY_NUM: dict[str, str] = {
 
 # Known fields (rendered with widgets). Anything else lands in raw section.
 _KNOWN_FIELDS: dict[str, list[str]] = {
-    "step1_download":  ["enabled", "status", "url", "output"],
+    "step1_download":  ["enabled", "status", "source", "output"],
     "step1_5_select":  ["enabled", "status", "source", "start", "end", "output"],
     "step2_asr":       ["enabled", "status", "language", "source", "output"],
     "step3_translate": ["enabled", "status", "source_lang", "targets",
@@ -248,7 +248,7 @@ _KNOWN_FIELDS: dict[str, list[str]] = {
 
 # Field type per (step, field). Drives widget choice in _add_field.
 _FIELD_TYPE: dict[tuple[str, str], str] = {
-    ("step1_download", "url"):           "string",
+    ("step1_download", "source"):        "url_or_path",
     ("step1_download", "output"):        "readonly_list",
     ("step1_5_select", "source"):        "filepath",
     ("step1_5_select", "start"):         "time",
@@ -613,7 +613,6 @@ class ProjectWorkbenchApp(ToolBase):
         self._maybe_seed_burn_from_preset()
         self._suppress_dirty = True
         try:
-            self._build_source_card()
             for step_key, label_key in _STEPS:
                 self._build_step_card(step_key, label_key)
         finally:
@@ -623,65 +622,6 @@ class ProjectWorkbenchApp(ToolBase):
             self._refresh_run_state(sk)
         self._refresh_run_all_state()
         self._cards_canvas.yview_moveto(0)
-
-    def _build_source_card(self) -> None:
-        """Top-level 'source' field: a local file path used as the chain
-        starting input when step1_download is disabled. Steps fall back to
-        the chain (most recent enabled+done step's output[0]) and finally to
-        this top-level source when their own source field is empty."""
-        assert self._buffer is not None
-        card = tk.Frame(self._cards_frame, bg=S["card_bg"],
-                        highlightbackground=S["card_border"],
-                        highlightthickness=1)
-        card.pack(fill="x", padx=10, pady=6)
-        header = tk.Frame(card, bg=S["header_bg"])
-        header.pack(fill="x")
-        tk.Label(header, text=tr("tool.project_workbench.section.source"),
-                 bg=S["header_bg"], fg=S["value_fg"], font=S["title_font"],
-                 anchor="w").pack(side="left", padx=12, pady=8)
-        tk.Frame(card, bg=S["card_border"], height=1).pack(fill="x")
-        body = tk.Frame(card, bg=S["card_bg"])
-        body.pack(fill="x", padx=10, pady=(6, 8))
-        body.columnconfigure(1, weight=1)
-
-        # Top-level "source" — like _add_filepath_field but writes to buffer["source"]
-        cur = str(self._buffer.get("source", ""))
-        var = tk.StringVar(value=cur)
-        self._label_cell(body, 0, tr("tool.project_workbench.field.source") + ":")
-        wrap = tk.Frame(body, bg=S["card_bg"])
-        wrap.grid(row=0, column=1, sticky="ew", pady=2)
-        wrap.columnconfigure(0, weight=1)
-        ent = tk.Entry(wrap, textvariable=var, font=S["value_font"])
-        ent.grid(row=0, column=0, sticky="ew")
-        def browse():
-            initial = var.get() or (self.project.folder if self.project else "")
-            if os.path.isfile(initial):
-                initial = os.path.dirname(initial)
-            path = filedialog.askopenfilename(initialdir=initial)
-            if path:
-                var.set(path)
-        tk.Button(wrap, text=tr("tool.project_workbench.browse"),
-                  command=browse).grid(row=0, column=1, padx=(4, 0))
-        def on_write(*_):
-            if self._suppress_dirty or self._buffer is None:
-                return
-            v = var.get()
-            if v:
-                self._buffer["source"] = v
-            else:
-                self._buffer.pop("source", None)
-            self._mark_dirty()
-            for sk in _RUNNABLE_STEPS:
-                self._refresh_run_state(sk)
-            self._refresh_run_all_state()
-        var.trace_add("write", on_write)
-        self._field_vars.append(var)
-
-        tk.Label(body, text=tr("tool.project_workbench.source_hint"),
-                 bg=S["card_bg"], fg=S["section_fg"],
-                 font=S["section_font"], anchor="w", justify="left",
-                 wraplength=700).grid(row=1, column=0, columnspan=2,
-                                       sticky="w", pady=(4, 0))
 
     def _build_step_card(self, step_key: str, label_key: str) -> None:
         assert self._buffer is not None
@@ -807,6 +747,8 @@ class ProjectWorkbenchApp(ToolBase):
             self._add_color_field(parent, r, step_key, fname, label)
         elif ftype == "date":
             self._add_date_field(parent, r, step_key, fname, label)
+        elif ftype == "url_or_path":
+            self._add_url_or_path_field(parent, r, step_key, fname, label)
         elif ftype == "preset":
             self._add_preset_field(parent, r, step_key, fname, label)
         else:
@@ -1151,6 +1093,36 @@ class ProjectWorkbenchApp(ToolBase):
             var.trace_add("write", lambda *_: self._refresh_run_state(step_key))
         self._field_vars.append(var)
 
+    def _add_url_or_path_field(self, parent, r: int, step_key: str, field: str,
+                               label: str) -> None:
+        """Single entry that accepts either a URL (http/https) or a local file
+        path. Browse button helps pick a local file. Worker dispatches based
+        on the http/https prefix."""
+        assert self._buffer is not None
+        step = self._buffer[step_key]
+        var = tk.StringVar(value=str(step.get(field, "")))
+        self._label_cell(parent, r, f"{label}:")
+        wrap = tk.Frame(parent, bg=S["card_bg"])
+        wrap.grid(row=r, column=1, sticky="ew", pady=2)
+        wrap.columnconfigure(0, weight=1)
+        ent = tk.Entry(wrap, textvariable=var, font=S["value_font"])
+        ent.grid(row=0, column=0, sticky="ew")
+        def browse():
+            initial = (self.project.folder if self.project else "")
+            path = filedialog.askopenfilename(initialdir=initial)
+            if path:
+                var.set(path)
+        tk.Button(wrap, text=tr("tool.project_workbench.browse"),
+                  command=browse).grid(row=0, column=1, padx=(4, 0))
+        tk.Label(wrap, text=tr("tool.project_workbench.hint.url_or_path"),
+                 bg=S["card_bg"], fg=S["section_fg"],
+                 font=S["section_font"], anchor="w", justify="left").grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        var.trace_add("write", lambda *_: self._on_field_change(step_key, field, var.get()))
+        if step_key in _RUNNABLE_STEPS:
+            var.trace_add("write", lambda *_: self._refresh_run_state(step_key))
+        self._field_vars.append(var)
+
     def _add_readonly_list_field(self, parent, r: int, step_key: str, field: str,
                                  label: str) -> None:
         assert self._buffer is not None
@@ -1320,20 +1292,22 @@ class ProjectWorkbenchApp(ToolBase):
           1. Explicit non-empty `source` on this step (manual override)
           2. Most recent prior step in _MEDIA_CHAIN that is enabled+done with
              output[0] populated
-          3. Top-level manifest `source` (local file input)
-          4. None — caller must surface an error
+          3. None — caller must surface an error
+
+        step1_download is the canonical seed (URL or local path); there is
+        no top-level source fallback anymore.
         """
         if self._buffer is None:
             return None
-        # 1) self override
+        # 1) self override (e.g. step2_asr.source)
         own = str(self._buffer.get(step_key, {}).get("source", "")).strip()
-        if own:
+        # step1_download.source IS the input itself, not a downstream override
+        if own and step_key != "step1_download":
             return self._abspath(own)
         # 2) walk back through media chain (only steps strictly before this one)
         for sk in reversed(self._MEDIA_CHAIN):
             if sk == step_key:
                 continue
-            # Skip steps that come after step_key in the official _STEPS order.
             if self._step_index(sk) >= self._step_index(step_key):
                 continue
             step = self._buffer.get(sk, {}) or {}
@@ -1341,10 +1315,6 @@ class ProjectWorkbenchApp(ToolBase):
                 outs = step.get("output", []) or []
                 if outs:
                     return self._abspath(str(outs[0]))
-        # 3) top-level source
-        top = str(self._buffer.get("source", "")).strip()
-        if top:
-            return self._abspath(top)
         return None
 
     def _resolve_segments_file(self, step_key: str) -> str | None:
@@ -1405,9 +1375,6 @@ class ProjectWorkbenchApp(ToolBase):
                 for path in (step.get("output", []) or []):
                     if str(path).lower().endswith(".srt"):
                         return self._abspath(str(path))
-        top = str(self._buffer.get("source", "")).strip()
-        if top.lower().endswith(".srt"):
-            return self._abspath(top)
         return None
 
     @staticmethod
@@ -1485,8 +1452,12 @@ class ProjectWorkbenchApp(ToolBase):
             return (f"{step_key}.status = {status!r} (only 'pending' or "
                     f"'failed' can run; reset to 'pending' to re-run)")
         if step_key == "step1_download":
-            if not str(step.get("url", "")).strip():
-                return "step1_download.url is empty"
+            src = str(step.get("source", "")).strip()
+            if not src:
+                return "step1_download.source is empty (URL or local path)"
+            if not src.lower().startswith(("http://", "https://")):
+                if not os.path.exists(src):
+                    return f"local file not found: {src}"
         elif step_key == "step1_5_select":
             if str(step.get("start", "")) == str(step.get("end", "")):
                 return "start == end (need a non-zero clip duration)"
@@ -1649,16 +1620,30 @@ class ProjectWorkbenchApp(ToolBase):
     def _run_download(self, basename: str) -> None:
         assert self.project is not None and self._buffer is not None
         step = self._buffer["step1_download"]
-        url = str(step.get("url", "")).strip()
-        if not url:
-            messagebox.showerror("Error", "step1_download.url is empty")
+        source = str(step.get("source", "")).strip()
+        if not source:
+            messagebox.showerror("Error", "step1_download.source is empty")
             return
-        # Step 1 only downloads. Trimming is step 2's job.
+        # Local-file mode: source is a path on disk → just register it.
+        # No copy / no re-encode (large videos shouldn't be duplicated).
+        if not source.lower().startswith(("http://", "https://")):
+            if not os.path.exists(source):
+                messagebox.showerror("Error", f"Source file not found:\n{source}")
+                return
+            self._begin_busy("step1_download", basename,
+                             f"Register local source: {basename}")
+            self._finish_step("step1_download", basename, "done",
+                              {"output": [self._project_relpath(source)],
+                               "title": None, "error": None},
+                              tr("tool.project_workbench.status.download_done",
+                                 basename=basename))
+            return
+        # URL mode: yt-dlp download into project folder.
         out_template = os.path.join(self.project.folder, f"{basename}.%(ext)s")
         self._begin_busy("step1_download", basename, f"Download running: {basename}")
         threading.Thread(
             target=self._download_worker,
-            args=(basename, url, out_template),
+            args=(basename, source, out_template),
             daemon=True,
         ).start()
 
@@ -2074,15 +2059,11 @@ class ProjectWorkbenchApp(ToolBase):
         tr_ = self._srt_from_step("step3_translate")
         if asr and tr_:
             return asr
-        # Single-language fallback: prefer translation, then ASR, then top-level
+        # Single-language fallback: prefer translation, then ASR
         if tr_:
             return tr_
         if asr:
             return asr
-        # Top-level source pointing at an .srt
-        top = str(self._buffer.get("source", "")).strip()
-        if top and top.lower().endswith(".srt"):
-            return self._abspath(top)
         return None
 
     def _run_burn(self, basename: str) -> None:

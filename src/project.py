@@ -26,6 +26,30 @@ def _load_and_migrate(data: dict) -> dict:
     data["version"] = CURRENT_VERSION
     return data
 
+
+def _migrate_manifest(data: dict) -> dict:
+    """Forward-compatibility shim for old manifests.
+
+    - `url` field on step1_download → renamed to `source` (single field
+      that auto-detects URL vs local path)
+    - Top-level `source` (the old separate seed field) → folded into
+      step1_download.source with enabled=true and status=pending so the
+      user can re-run once to register it. The top-level key is dropped.
+    """
+    step1 = data.get("step1_download", {}) or {}
+    if "url" in step1 and "source" not in step1:
+        step1["source"] = step1.pop("url")
+        data["step1_download"] = step1
+    if data.get("source"):
+        top = str(data.get("source", "")).strip()
+        if top and not (step1.get("source") or "").strip():
+            step1["source"] = top
+            step1.setdefault("enabled", True)
+            step1.setdefault("status", "pending")
+            data["step1_download"] = step1
+        data.pop("source", None)
+    return data
+
 # ── 文件图标映射 ──────────────────────────────────────────────────────────────
 
 _ICONS = {
@@ -167,9 +191,10 @@ class Project:
             return None
         try:
             with open(path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
         except (json.JSONDecodeError, OSError):
             return None
+        return _migrate_manifest(data)
 
     def save_manifest(self, basename: str, data: dict) -> None:
         path = self.manifest_path(basename)
