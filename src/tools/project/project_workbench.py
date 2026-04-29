@@ -639,16 +639,9 @@ class ProjectWorkbenchApp(ToolBase):
                  fg=S["value_fg"], font=S["title_font"], anchor="w").pack(
             side="left", padx=12, pady=8)
         if step_key in _RUNNABLE_STEPS:
-            run_label_key = {
-                "step1_download":  "tool.project_workbench.run_download",
-                "step1_5_select":  "tool.project_workbench.run_select",
-                "step2_asr":       "tool.project_workbench.run_asr",
-                "step3_translate": "tool.project_workbench.run_translate",
-                "step4_burn":      "tool.project_workbench.run_burn",
-                "step5_pack":      "tool.project_workbench.run_pack",
-                "step6_split":     "tool.project_workbench.run_split",
-            }[step_key]
-            btn = tk.Button(header, text=tr(run_label_key),
+            # Unified label across every step — the card title already names
+            # what the step does, so the button just needs to say "Run".
+            btn = tk.Button(header, text=tr("tool.project_workbench.run"),
                             command=lambda sk=step_key: self._on_run_step(sk))
             btn.pack(side="right", padx=10, pady=6)
             self._run_buttons[step_key] = btn
@@ -1276,11 +1269,17 @@ class ProjectWorkbenchApp(ToolBase):
                     return self._abspath(str(outs[0]))
         return None
 
+    # Filename suffixes that mark a step5 output as the chapter / segment
+    # list driving step6 split. Includes the legacy "-segments.txt" produced
+    # before the rename so old manifests keep splitting.
+    _SEGMENTS_SUFFIXES = ("-chapters.txt", "-segments.txt")
+
     def _resolve_segments_file(self, step_key: str) -> str | None:
         """Find the segments .txt this step should consume.
 
         1. Explicit `segments_file` on this step (override)
-        2. step5_pack output's `-segments.txt` when enabled+done
+        2. step5_pack output's `-chapters.txt` (or legacy `-segments.txt`)
+           when enabled+done
         3. None
         """
         if self._buffer is None:
@@ -1291,7 +1290,7 @@ class ProjectWorkbenchApp(ToolBase):
         pack = self._buffer.get("step5_pack", {}) or {}
         if pack.get("enabled") and pack.get("status") == "done":
             for path in (pack.get("output", []) or []):
-                if str(path).lower().endswith("-segments.txt"):
+                if str(path).lower().endswith(self._SEGMENTS_SUFFIXES):
                     return self._abspath(str(path))
         return None
 
@@ -2172,7 +2171,7 @@ class ProjectWorkbenchApp(ToolBase):
             self._abort_chain()
             return
         # Output base: <project>/<basename>_pack — write_subtitle_pack will
-        # append .json / -titles.txt / -segments.txt / -refined.txt
+        # append -postprocess.json / -titles.txt / -chapters.txt / -description.txt
         # Pack outputs are user-shippable (titles / chapters / description /
         # structured payload) → land in the unit's output/ folder. Drop the
         # legacy "_pack-" prefix; the file stems now describe their role
@@ -2251,7 +2250,8 @@ class ProjectWorkbenchApp(ToolBase):
                     "fast": SplitMode.FAST,
                     "accurate": SplitMode.ACCURATE}
         mode = mode_map.get(mode_str, SplitMode.KEYFRAME_SNAP)
-        out_dir = os.path.join(self.project.unit_dir(basename), "splits")
+        out_dir = os.path.join(self.project.unit_dir(basename),
+                               "output", "splits")
         self._begin_busy(
             "step6_split", basename,
             tr("tool.project_workbench.status.split_start", basename=basename))
