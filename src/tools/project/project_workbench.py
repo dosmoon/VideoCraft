@@ -178,19 +178,23 @@ def _prep_audio_for_asr(src: str, dst: str, on_status) -> str:
 # without hunting down literals scattered through widget builders.
 
 S = {
-    "canvas_bg":   "#f3f4f6",
+    "canvas_bg":   "#eef1f6",
     "card_bg":     "#ffffff",
-    "card_border": "#e5e7eb",
-    "label_fg":    "#6b7280",
-    "value_fg":    "#111827",
-    "raw_bg":      "#f9fafb",
-    "raw_fg":      "#374151",
-    "section_fg":  "#9ca3af",
+    "card_border": "#cbd5e1",
+    "header_bg":   "#f1f5f9",   # card title strip
+    "section_bg":  "#f8fafc",   # section header strip (slight tint)
+    "section_rule":"#94a3b8",   # divider above each section
+    "label_fg":    "#475569",
+    "value_fg":    "#0f172a",
+    "raw_bg":      "#f1f5f9",
+    "raw_fg":      "#334155",
+    "section_fg":  "#64748b",
     "dirty_fg":    "#d97706",
-    "title_font":   ("Segoe UI", 11, "bold"),
+    "title_font":   ("Segoe UI", 12, "bold"),
     "label_font":   ("Segoe UI", 9),
     "value_font":   ("Segoe UI", 10),
-    "section_font": ("Segoe UI", 8, "italic"),
+    "section_font": ("Segoe UI", 9, "italic"),
+    "section_header_font": ("Segoe UI", 10, "bold"),
     "mono_font":    ("Consolas", 9),
 }
 
@@ -206,6 +210,18 @@ _STEPS: list[tuple[str, str]] = [
     ("step5_pack",      "tool.project_workbench.step.pack"),
     ("step6_split",     "tool.project_workbench.step.split"),
 ]
+
+# Display number for each step — 1.5 is intentionally not in the natural order,
+# so we hard-map labels here instead of using enumerate().
+_STEP_DISPLAY_NUM: dict[str, str] = {
+    "step1_download":  "1",
+    "step1_5_select":  "2",
+    "step2_asr":       "3",
+    "step3_translate": "4",
+    "step4_burn":      "5",
+    "step5_pack":      "6",
+    "step6_split":     "7",
+}
 
 # Known fields (rendered with widgets). Anything else lands in raw section.
 _KNOWN_FIELDS: dict[str, list[str]] = {
@@ -270,7 +286,7 @@ _FIELD_TYPE: dict[tuple[str, str], str] = {
     ("step4_burn", "wm_image_path"):     "filepath",
     ("step4_burn", "wm_image_scale"):    "float",
     ("step4_burn", "wm_image_alpha"):    "int",
-    ("step4_burn", "date_text"):         "string",
+    ("step4_burn", "date_text"):         "date",
     ("step4_burn", "date_color"):        "color",
     ("step4_burn", "date_fontsize"):     "int",
     ("step4_burn", "date_alpha"):        "int",
@@ -394,6 +410,7 @@ class ProjectWorkbenchApp(ToolBase):
         self._current_basename: str | None = None
         self._dirty: bool = False
         self._busy: bool = False
+        self._current_step: str | None = None
 
         self._field_vars: list = []
         self._suppress_dirty: bool = False
@@ -621,12 +638,12 @@ class ProjectWorkbenchApp(ToolBase):
                         highlightbackground=S["card_border"],
                         highlightthickness=1)
         card.pack(fill="x", padx=10, pady=6)
-        header = tk.Frame(card, bg=S["card_bg"])
-        header.pack(fill="x", padx=10, pady=(8, 4))
+        header = tk.Frame(card, bg=S["header_bg"])
+        header.pack(fill="x")
         tk.Label(header, text=tr("tool.project_workbench.section.source"),
-                 bg=S["card_bg"], fg=S["value_fg"], font=S["title_font"],
-                 anchor="w").pack(side="left")
-        tk.Frame(card, bg=S["card_border"], height=1).pack(fill="x", padx=10)
+                 bg=S["header_bg"], fg=S["value_fg"], font=S["title_font"],
+                 anchor="w").pack(side="left", padx=12, pady=8)
+        tk.Frame(card, bg=S["card_border"], height=1).pack(fill="x")
         body = tk.Frame(card, bg=S["card_bg"])
         body.pack(fill="x", padx=10, pady=(6, 8))
         body.columnconfigure(1, weight=1)
@@ -690,11 +707,15 @@ class ProjectWorkbenchApp(ToolBase):
                         highlightthickness=thickness)
         card.pack(fill="x", padx=10, pady=6)
 
-        # Header bar: title + Run button
-        header = tk.Frame(card, bg=S["card_bg"])
-        header.pack(fill="x", padx=10, pady=(8, 4))
-        tk.Label(header, text=tr(label_key), bg=S["card_bg"], fg=S["value_fg"],
-                 font=S["title_font"], anchor="w").pack(side="left")
+        # Header bar: numbered title + Run button on a tinted strip
+        header = tk.Frame(card, bg=S["header_bg"])
+        header.pack(fill="x")
+        num = _STEP_DISPLAY_NUM.get(step_key, "")
+        title_text = (f"Step {num} · {tr(label_key)}"
+                      if num else tr(label_key))
+        tk.Label(header, text=title_text, bg=S["header_bg"],
+                 fg=S["value_fg"], font=S["title_font"], anchor="w").pack(
+            side="left", padx=12, pady=8)
         if step_key in _RUNNABLE_STEPS:
             run_label_key = {
                 "step1_download":  "tool.project_workbench.run_download",
@@ -707,11 +728,11 @@ class ProjectWorkbenchApp(ToolBase):
             }[step_key]
             btn = tk.Button(header, text=tr(run_label_key),
                             command=lambda sk=step_key: self._on_run_step(sk))
-            btn.pack(side="right")
+            btn.pack(side="right", padx=10, pady=6)
             self._run_buttons[step_key] = btn
 
-        # Subtle divider
-        tk.Frame(card, bg=S["card_border"], height=1).pack(fill="x", padx=10)
+        # Subtle divider between header strip and body
+        tk.Frame(card, bg=S["card_border"], height=1).pack(fill="x")
 
         # Body
         body = tk.Frame(card, bg=S["card_bg"])
@@ -788,6 +809,8 @@ class ProjectWorkbenchApp(ToolBase):
             self._add_float_field(parent, r, step_key, fname, label)
         elif ftype == "color":
             self._add_color_field(parent, r, step_key, fname, label)
+        elif ftype == "date":
+            self._add_date_field(parent, r, step_key, fname, label)
         elif ftype == "preset":
             self._add_preset_field(parent, r, step_key, fname, label)
         else:
@@ -1053,12 +1076,15 @@ class ProjectWorkbenchApp(ToolBase):
         self._field_vars.append(var)
 
     def _add_section_header(self, parent, r: int, label: str) -> int:
-        """Draws a separator + small bold label. Returns next row index."""
-        tk.Frame(parent, bg=S["card_border"], height=1).grid(
-            row=r, column=0, columnspan=2, sticky="ew", pady=(8, 2))
-        tk.Label(parent, text=label, bg=S["card_bg"], fg=S["label_fg"],
-                 font=("Segoe UI", 9, "bold"), anchor="w").grid(
-            row=r + 1, column=0, columnspan=2, sticky="w")
+        """Draws a tinted band with a bold label. Returns next row index."""
+        tk.Frame(parent, bg=S["section_rule"], height=2).grid(
+            row=r, column=0, columnspan=2, sticky="ew", pady=(10, 0))
+        band = tk.Frame(parent, bg=S["section_bg"])
+        band.grid(row=r + 1, column=0, columnspan=2, sticky="ew",
+                  pady=(0, 4))
+        tk.Label(band, text=label, bg=S["section_bg"], fg=S["value_fg"],
+                 font=S["section_header_font"], anchor="w").pack(
+            side="left", padx=8, pady=3)
         return r + 2
 
     def _add_csv_iso_field(self, parent, r: int, step_key: str, field: str,
@@ -1098,6 +1124,32 @@ class ProjectWorkbenchApp(ToolBase):
         self._label_cell(parent, r, f"{label}:")
         ent = tk.Entry(parent, textvariable=var, font=S["value_font"])
         ent.grid(row=r, column=1, sticky="ew", pady=2)
+        var.trace_add("write", lambda *_: self._on_field_change(step_key, field, var.get()))
+        if step_key in _RUNNABLE_STEPS:
+            var.trace_add("write", lambda *_: self._refresh_run_state(step_key))
+        self._field_vars.append(var)
+
+    def _add_date_field(self, parent, r: int, step_key: str, field: str,
+                        label: str) -> None:
+        """Free-text date entry + 'Today' button + 'Clear' button. Stored as
+        whatever string the user types (legacy field is freeform — could be
+        '2026-04-29' or '2026年4月29日'). Empty string disables date overlay."""
+        from datetime import date as _date
+        assert self._buffer is not None
+        step = self._buffer[step_key]
+        var = tk.StringVar(value=str(step.get(field, "")))
+        self._label_cell(parent, r, f"{label}:")
+        wrap = tk.Frame(parent, bg=S["card_bg"])
+        wrap.grid(row=r, column=1, sticky="ew", pady=2)
+        wrap.columnconfigure(0, weight=1)
+        ent = tk.Entry(wrap, textvariable=var, font=S["value_font"])
+        ent.grid(row=0, column=0, sticky="ew")
+        tk.Button(wrap, text=tr("tool.project_workbench.date_today"),
+                  command=lambda: var.set(_date.today().isoformat())).grid(
+            row=0, column=1, padx=(4, 0))
+        tk.Button(wrap, text=tr("tool.project_workbench.date_clear"),
+                  command=lambda: var.set("")).grid(
+            row=0, column=2, padx=(4, 0))
         var.trace_add("write", lambda *_: self._on_field_change(step_key, field, var.get()))
         if step_key in _RUNNABLE_STEPS:
             var.trace_add("write", lambda *_: self._refresh_run_state(step_key))
@@ -1531,6 +1583,22 @@ class ProjectWorkbenchApp(ToolBase):
         elif step_key == "step6_split":
             self._run_split(basename)
 
+    def _step_prefix(self, step_key: str | None = None) -> str:
+        """Returns '[Step N · Label] ' for the current/given step, else ''."""
+        sk = step_key if step_key is not None else self._current_step
+        if not sk:
+            return ""
+        for k, label_key in _STEPS:
+            if k == sk:
+                num = _STEP_DISPLAY_NUM.get(k, "")
+                return (f"[Step {num} · {tr(label_key)}] "
+                        if num else f"[{tr(label_key)}] ")
+        return ""
+
+    def _step_status(self, msg: str) -> None:
+        """Set status with the current step's prefix prepended."""
+        self._status_var.set(self._step_prefix() + msg)
+
     def _begin_busy(self, step_key: str, basename: str, status_msg: str) -> dict:
         """Mark step running on disk, refresh UI, and return the manifest."""
         assert self.project is not None
@@ -1541,8 +1609,9 @@ class ProjectWorkbenchApp(ToolBase):
         self.project.save_manifest(basename, manifest)
         self._buffer = manifest
         self._busy = True
+        self._current_step = step_key
         self.set_busy()
-        self._status_var.set(status_msg)
+        self._status_var.set(self._step_prefix(step_key) + status_msg)
         self._render_step_cards()
         return manifest
 
@@ -1561,7 +1630,8 @@ class ProjectWorkbenchApp(ToolBase):
                 step[k] = v
         manifest[step_key] = step
         self.project.save_manifest(basename, manifest)
-        self._status_var.set(msg)
+        self._status_var.set(self._step_prefix(step_key) + msg)
+        self._current_step = None
         if status == "done":
             self.set_done()
         elif status == "failed":
@@ -1622,9 +1692,9 @@ class ProjectWorkbenchApp(ToolBase):
                     eta = (d.get("_eta_str") or "").strip()
                     msg = tr("tool.project_workbench.status.download_progress",
                              basename=basename, pct=pct, speed=speed, eta=eta)
-                    self.master.after(0, self._status_var.set, msg)
+                    self.master.after(0, self._step_status, msg)
                 elif d.get("status") == "finished":
-                    self.master.after(0, self._status_var.set,
+                    self.master.after(0, self._step_status,
                                       tr("tool.project_workbench.status.download_merging",
                                          basename=basename))
 
@@ -1639,7 +1709,7 @@ class ProjectWorkbenchApp(ToolBase):
                 "fragment_retries": 5,
                 "progress_hooks": [hook],
             }
-            self.master.after(0, self._status_var.set,
+            self.master.after(0, self._step_status,
                               tr("tool.project_workbench.status.download_start",
                                  basename=basename))
             with yt_dlp.YoutubeDL(opts) as ydl:
@@ -1654,7 +1724,7 @@ class ProjectWorkbenchApp(ToolBase):
                 # Trim full download into the canonical <basename>.mp4
                 assert self.project is not None
                 trimmed = os.path.join(self.project.folder, f"{basename}.mp4")
-                self.master.after(0, self._status_var.set,
+                self.master.after(0, self._step_status,
                                   tr("tool.project_workbench.status.download_trimming",
                                      basename=basename, start=start, end=end))
                 extract_clip(raw_path, start, end, output_path=trimmed)
@@ -1707,7 +1777,7 @@ class ProjectWorkbenchApp(ToolBase):
         try:
             extract_clip(source, start, end, output_path=output,
                          progress_callback=lambda m: self.master.after(
-                             0, self._status_var.set,
+                             0, self._step_status,
                              tr("tool.project_workbench.status.clip_progress",
                                 basename=basename, msg=m)))
             rel = self._project_relpath(output)
@@ -1763,7 +1833,7 @@ class ProjectWorkbenchApp(ToolBase):
             # know its bitrate, so we re-encode for predictability.
             prep_path = os.path.join(self.project.folder, f"{basename}.mp3")
             on_status = lambda msg: self.master.after(
-                0, self._status_var.set,
+                0, self._step_status,
                 tr("tool.project_workbench.status.asr_audio_prep",
                    basename=basename, msg=msg))
             audio_path = _prep_audio_for_asr(source, prep_path, on_status)
@@ -1772,7 +1842,7 @@ class ProjectWorkbenchApp(ToolBase):
                 audio_path, output_srt,
                 expected_lang_iso=expected_iso, language=language_hint,
                 on_event=lambda evt, **kw: self.master.after(
-                    0, self._status_var.set,
+                    0, self._step_status,
                     tr("tool.project_workbench.status.asr_progress",
                        basename=basename, evt=evt)),
             )
@@ -1836,11 +1906,11 @@ class ProjectWorkbenchApp(ToolBase):
             outputs: list[str] = []
             for tgt in targets:
                 self.master.after(
-                    0, self._status_var.set,
+                    0, self._step_status,
                     tr("tool.project_workbench.status.translate_start",
                        basename=basename, source=source_lang, target=tgt))
                 progress_cb = lambda done, total, msg, t=tgt: self.master.after(
-                    0, self._status_var.set,
+                    0, self._step_status,
                     tr("tool.project_workbench.status.translate_progress",
                        basename=basename, target=t, msg=msg))
                 out = translate_srt_file(
@@ -2135,13 +2205,16 @@ class ProjectWorkbenchApp(ToolBase):
         # core/burn_subs sends English action keys; translate them via i18n.
         # Unknown keys pass through verbatim for forward compatibility.
         def translate_inner(action: str) -> str:
-            key = f"tool.project_workbench.status.burn.{action}"
+            # `encoding 42%` → translate `encoding`, append ` 42%`
+            head, _, tail = action.partition(" ")
+            key = f"tool.project_workbench.status.burn.{head}"
             translated = tr(key)
-            return translated if translated != key else action
+            base = translated if translated != key else head
+            return f"{base} {tail}" if tail else base
 
         try:
             on_status = lambda msg: self.master.after(
-                0, self._status_var.set,
+                0, self._step_status,
                 tr("tool.project_workbench.status.burn_progress",
                    basename=basename, msg=translate_inner(msg)))
             burn_subtitles(video, output, on_status=on_status, **kwargs)
@@ -2184,14 +2257,14 @@ class ProjectWorkbenchApp(ToolBase):
     def _pack_worker(self, basename: str, srt_in: str, base: str) -> None:
         try:
             self.master.after(
-                0, self._status_var.set,
+                0, self._step_status,
                 tr("tool.project_workbench.status.pack_ai", basename=basename))
             # tier= is a no-op in the router since commit 58e6414 (drop tier
             # dimension). Routing is task-based now: subtitle.post is
             # configured per-task in the AI Console.
             pack = generate_subtitle_pack(srt_in)
             self.master.after(
-                0, self._status_var.set,
+                0, self._step_status,
                 tr("tool.project_workbench.status.pack_writing", basename=basename))
             paths = write_subtitle_pack(pack, base)
             outputs = [self._project_relpath(p) for p in
@@ -2259,18 +2332,18 @@ class ProjectWorkbenchApp(ToolBase):
                       mode, out_dir: str) -> None:
         try:
             self.master.after(
-                0, self._status_var.set,
+                0, self._step_status,
                 tr("tool.project_workbench.status.split_probing",
                    basename=basename))
             duration = _video_duration_seconds(video)
             if duration <= 0:
                 raise RuntimeError("Cannot read video duration via ffprobe")
             on_probe = lambda: self.master.after(
-                0, self._status_var.set,
+                0, self._step_status,
                 tr("tool.project_workbench.status.split_keyframes",
                    basename=basename))
             progress = lambda done, total: self.master.after(
-                0, self._status_var.set,
+                0, self._step_status,
                 tr("tool.project_workbench.status.split_progress",
                    basename=basename, done=done, total=total))
             outputs = split_segments(

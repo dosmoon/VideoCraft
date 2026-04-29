@@ -16,6 +16,7 @@ Key parity points with subtitle_tool.py:
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from typing import Callable
 
@@ -290,9 +291,35 @@ def burn_subtitles(
     ]
 
     status("encoding")
-    proc = subprocess.run(cmd, capture_output=True, encoding="utf-8",
-                          errors="replace")
+    # Stream stderr so we can emit progress percentages. ffmpeg writes
+    # `Duration: HH:MM:SS.xx` once, then `time=HH:MM:SS.xx` per progress tick.
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.PIPE,
+                            encoding="utf-8", errors="replace")
+    duration: float | None = None
+    tail: list[str] = []
+    last_pct = -1
+    assert proc.stderr is not None
+    for line in proc.stderr:
+        tail.append(line)
+        if len(tail) > 40:
+            tail.pop(0)
+        if duration is None:
+            m = re.search(r"Duration:\s+(\d+):(\d+):(\d+\.\d+)", line)
+            if m:
+                duration = (int(m.group(1)) * 3600 + int(m.group(2)) * 60
+                            + float(m.group(3)))
+        if duration and "time=" in line:
+            m = re.search(r"time=(\d+):(\d+):(\d+\.\d+)", line)
+            if m:
+                cur = (int(m.group(1)) * 3600 + int(m.group(2)) * 60
+                       + float(m.group(3)))
+                pct = max(0, min(100, int(cur / duration * 100)))
+                if pct != last_pct:
+                    last_pct = pct
+                    status(f"encoding {pct}%")
+    proc.wait()
     if proc.returncode != 0:
         raise RuntimeError(
             f"ffmpeg burn failed ({proc.returncode}): "
-            f"{(proc.stderr or '')[-800:]}")
+            f"{''.join(tail)[-800:]}")
