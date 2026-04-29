@@ -154,13 +154,20 @@ def burn_subtitles(
     # one-liners that exceed the frame width get cropped — the burn looks
     # broken on every long sentence. Splitting writes <srt>_split.srt
     # alongside the source.
-    if show_sub1:
-        status("split sub1" if sub1_split else "skip sub1 split")
-        sub1_path = _maybe_split_srt(sub1_path, sub1_split,
+    # Status messages are English action keys; UI layer translates via tr().
+    if show_sub1 and sub1_split:
+        status("split_sub1")
+        sub1_path = _maybe_split_srt(sub1_path, True,
                                      sub1_max_chars, sub1_is_chinese)
-    if show_sub2:
-        status("split sub2" if sub2_split else "skip sub2 split")
-        sub2_path = _maybe_split_srt(sub2_path, sub2_split,
+    elif show_sub1:
+        sub1_path = _maybe_split_srt(sub1_path, False,
+                                     sub1_max_chars, sub1_is_chinese)
+    if show_sub2 and sub2_split:
+        status("split_sub2")
+        sub2_path = _maybe_split_srt(sub2_path, True,
+                                     sub2_max_chars, sub2_is_chinese)
+    elif show_sub2:
+        sub2_path = _maybe_split_srt(sub2_path, False,
                                      sub2_max_chars, sub2_is_chinese)
 
     # Geometry-dependent values (font scaling, image height, date Y position).
@@ -168,7 +175,7 @@ def burn_subtitles(
 
     orient = _resolve_orientation(orientation, width, height)
     ladder = _MARGIN_LADDER[orient]
-    status(f"orientation: {orient}")
+    status(f"orient_{orient}")
 
     # When both subs shown, sub1 floats higher. When only one, lower position
     # so it doesn't crop into the middle of the frame.
@@ -283,7 +290,7 @@ def burn_subtitles(
         "-movflags", "+faststart", os.path.abspath(output_path),
     ]
 
-    status("ffmpeg burning")
+    status("encoding")
     proc = subprocess.run(cmd, capture_output=True, encoding="utf-8",
                           errors="replace")
     if proc.returncode != 0:

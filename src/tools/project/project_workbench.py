@@ -30,6 +30,7 @@ from core.asr import transcribe_audio
 from core.translate import SUPPORTED_LANGUAGES, translate_srt_file
 from core.video_ops import extract_clip
 from core.burn_subs import burn_subtitles
+from core.srt_ops import generate_subtitle_pack, write_subtitle_pack
 from core import burn_presets
 
 
@@ -137,14 +138,15 @@ def _prep_audio_for_asr(src: str, dst: str, on_status) -> str:
     came at. Walks the bitrate ladder until the file fits."""
     last_err = None
     for br in _AUDIO_BITRATE_LADDER:
-        on_status(f"prep audio @ {br}")
+        on_status(tr("tool.project_workbench.status.audio_prep_encoding", br=br))
         try:
             _ffmpeg_to_mp3(src, dst, br)
         except Exception as e:
             last_err = e
             continue
         size = os.path.getsize(dst)
-        on_status(f"audio @ {br} = {size // (1024*1024)} MB")
+        on_status(tr("tool.project_workbench.status.audio_prep_done",
+                     br=br, mb=size // (1024 * 1024)))
         if size <= _ASR_MAX_BYTES:
             return dst
     if last_err:
@@ -207,7 +209,7 @@ _KNOWN_FIELDS: dict[str, list[str]] = {
                         "wm_image_path", "wm_image_scale", "wm_image_alpha",
                         "date_text", "date_color", "date_fontsize", "date_alpha",
                         "encode_preset", "output"],
-    "step5_pack":      ["enabled", "status"],
+    "step5_pack":      ["enabled", "status", "source_srt", "output"],
     "step6_split":     ["enabled", "status"],
 }
 
@@ -256,6 +258,8 @@ _FIELD_TYPE: dict[tuple[str, str], str] = {
     ("step4_burn", "date_alpha"):        "int",
     ("step4_burn", "encode_preset"):     "preset",
     ("step4_burn", "output"):            "readonly_list",
+    ("step5_pack", "source_srt"):        "filepath",
+    ("step5_pack", "output"):            "readonly_list",
 }
 
 # Range / default config for int / float / color / enum field types.
@@ -314,7 +318,7 @@ _STATUS_VALUES = ["pending", "running", "done", "failed"]
 
 # Steps that can be run from the workbench in M2.
 _RUNNABLE_STEPS = {"step1_download", "step1_5_select", "step2_asr",
-                   "step3_translate", "step4_burn"}
+                   "step3_translate", "step4_burn", "step5_pack"}
 
 def _parse_hms(s: str) -> tuple[int, int, int]:
     """Parse 'HH:MM:SS' (or sloppy variants) → (h, m, s). Returns (0,0,0) on
@@ -659,6 +663,7 @@ class ProjectWorkbenchApp(ToolBase):
                 "step2_asr":       "tool.project_workbench.run_asr",
                 "step3_translate": "tool.project_workbench.run_translate",
                 "step4_burn":      "tool.project_workbench.run_burn",
+                "step5_pack":      "tool.project_workbench.run_pack",
             }[step_key]
             btn = tk.Button(header, text=tr(run_label_key),
                             command=lambda sk=step_key: self._on_run_step(sk))
@@ -1341,45 +1346,81 @@ class ProjectWorkbenchApp(ToolBase):
         step_key = self._chain.pop(0)
         self._on_run_step(step_key)
 
+    def _check_run_prereqs(self, step_key: str) -> str | None:
+        """Return None if step is runnable, else a human-readable reason
+        explaining what's blocking. Used by both _refresh_run_state (sets
+        button state) and _on_run_step (shows messagebox to clarify when
+        button was clicked while not runnable)."""
+        if self._buffer is None:
+            return "no manifest loaded"
+        if self._busy:
+            return "another step is currently running"
+        step = self._buffer.get(step_key, {}) or {}
+        if not bool(step.get("enabled")):
+            return f"{step_key}.enabled is False"
+        status = step.get("status")
+        if status not in ("pending", "failed"):
+            return (f"{step_key}.status = {status!r} (only 'pending' or "
+                    f"'failed' can run; reset to 'pending' to re-run)")
+        if step_key == "step1_download":
+            if not str(step.get("url", "")).strip():
+                return "step1_download.url is empty"
+            if step.get("range_enabled"):
+                if str(step.get("start", "")) == str(step.get("end", "")):
+                    return "range_enabled but start == end"
+        elif step_key == "step1_5_select":
+            if str(step.get("start", "")) == str(step.get("end", "")):
+                return "start == end (need a non-zero clip duration)"
+            if self._resolve_input(step_key) is None:
+                return ("no input video — set step1_download / step1_5_select"
+                        ".source / top-level source")
+        elif step_key == "step2_asr":
+            if self._resolve_input(step_key) is None:
+                return ("no input audio — set step1_download / "
+                        "step1_5_select / step2_asr.source / top-level source")
+        elif step_key == "step3_translate":
+            if not (step.get("targets") or []):
+                return "step3_translate.targets is empty"
+            if self._resolve_srt_input(step_key) is None:
+                return "no input SRT — run step2_asr or set step3_translate.source_srt"
+        elif step_key == "step4_burn":
+            if self._resolve_video_input(step_key) is None:
+                return "no input video"
+            if self._resolve_burn_sub1() is None:
+                return "no input subtitle (sub1)"
+        elif step_key == "step5_pack":
+            if self._resolve_srt_input(step_key) is None:
+                return "no input SRT — run step2_asr or set step5_pack.source_srt"
+        return None
+
     def _refresh_run_state(self, step_key: str) -> None:
+        """Visually hint runnability — but the button is always clickable.
+        On click, _on_run_step re-validates and shows a precise error if
+        prerequisites aren't met (so users never face a silent disabled
+        button without knowing why)."""
         btn = self._run_buttons.get(step_key)
         if btn is None:
             return
-        if self._buffer is None or self._busy:
-            btn.config(state="disabled")
-            return
-        step = self._buffer.get(step_key, {}) or {}
-        if not bool(step.get("enabled")) or step.get("status") not in ("pending", "failed"):
-            btn.config(state="disabled")
-            return
-        # Per-step prerequisite check
-        ok = True
-        if step_key == "step1_download":
-            ok = bool(str(step.get("url", "")).strip())
-            if step.get("range_enabled"):
-                start = str(step.get("start", "00:00:00"))
-                end = str(step.get("end", "00:00:00"))
-                ok = ok and (start != end)
-        elif step_key == "step1_5_select":
-            # Source is auto-resolved via chain; only start/end and a
-            # resolvable input are required.
-            start = str(step.get("start", "00:00:00"))
-            end = str(step.get("end", "00:00:00"))
-            ok = (start != end) and (self._resolve_input(step_key) is not None)
-        elif step_key == "step2_asr":
-            ok = self._resolve_input(step_key) is not None
-        elif step_key == "step3_translate":
-            targets = step.get("targets", []) or []
-            ok = (bool(targets)
-                  and self._resolve_srt_input(step_key) is not None)
-        elif step_key == "step4_burn":
-            ok = (self._resolve_video_input(step_key) is not None
-                  and self._resolve_burn_sub1() is not None)
-        btn.config(state=("normal" if ok else "disabled"))
+        reason = self._check_run_prereqs(step_key)
+        if reason is None:
+            btn.config(bg="SystemButtonFace", fg="black")
+        else:
+            # Faded look (still clickable). On click user sees the reason.
+            btn.config(bg="#e5e7eb", fg="#9ca3af")
 
     def _on_run_step(self, step_key: str) -> None:
         if (self.project is None or self._buffer is None
                 or self._current_basename is None or self._busy):
+            return
+        # Re-validate at click time and surface the specific reason on
+        # failure (much clearer than a silently-disabled button).
+        reason = self._check_run_prereqs(step_key)
+        if reason is not None:
+            messagebox.showinfo(
+                tr("tool.project_workbench.run_blocked_title"),
+                tr("tool.project_workbench.run_blocked_msg").format(
+                    step=step_key, reason=reason),
+            )
             return
         if self._dirty:
             if not messagebox.askyesno(
@@ -1401,6 +1442,8 @@ class ProjectWorkbenchApp(ToolBase):
             self._run_translate(basename)
         elif step_key == "step4_burn":
             self._run_burn(basename)
+        elif step_key == "step5_pack":
+            self._run_pack(basename)
 
     def _begin_busy(self, step_key: str, basename: str, status_msg: str) -> dict:
         """Mark step running on disk, refresh UI, and return the manifest."""
@@ -1491,11 +1534,13 @@ class ProjectWorkbenchApp(ToolBase):
                     pct = (d.get("_percent_str") or "?").strip()
                     speed = (d.get("_speed_str") or "").strip()
                     eta = (d.get("_eta_str") or "").strip()
-                    msg = f"Download {pct} {speed} ETA {eta} — {basename}"
+                    msg = tr("tool.project_workbench.status.download_progress",
+                             basename=basename, pct=pct, speed=speed, eta=eta)
                     self.master.after(0, self._status_var.set, msg)
                 elif d.get("status") == "finished":
                     self.master.after(0, self._status_var.set,
-                                      f"Download merging… {basename}")
+                                      tr("tool.project_workbench.status.download_merging",
+                                         basename=basename))
 
             opts = {
                 "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
@@ -1509,7 +1554,8 @@ class ProjectWorkbenchApp(ToolBase):
                 "progress_hooks": [hook],
             }
             self.master.after(0, self._status_var.set,
-                              f"Download starting — {basename}")
+                              tr("tool.project_workbench.status.download_start",
+                                 basename=basename))
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
                 fpath = ydl.prepare_filename(info)
@@ -1523,18 +1569,21 @@ class ProjectWorkbenchApp(ToolBase):
                 assert self.project is not None
                 trimmed = os.path.join(self.project.folder, f"{basename}.mp4")
                 self.master.after(0, self._status_var.set,
-                                  f"Download [trim] {basename}")
+                                  tr("tool.project_workbench.status.download_trimming",
+                                     basename=basename, start=start, end=end))
                 extract_clip(raw_path, start, end, output_path=trimmed)
                 outputs = [self._project_relpath(trimmed),
                            self._project_relpath(raw_path)]
 
             self.master.after(0, self._finish_step, "step1_download", basename,
                               "done", {"output": outputs, "title": info.get("title")},
-                              f"Download done: {basename}")
+                              tr("tool.project_workbench.status.download_done",
+                                 basename=basename))
         except Exception as e:
             self.master.after(0, self._finish_step, "step1_download", basename,
                               "failed", {"error": str(e)},
-                              f"Download failed: {basename}: {e}")
+                              tr("tool.project_workbench.status.download_failed",
+                                 basename=basename, e=e))
 
     # ── Step 1.5: Select segment (single start/end clip) ─────────────────────
 
@@ -1572,15 +1621,19 @@ class ProjectWorkbenchApp(ToolBase):
         try:
             extract_clip(source, start, end, output_path=output,
                          progress_callback=lambda m: self.master.after(
-                             0, self._status_var.set, f"Clip [{m}] {basename}"))
+                             0, self._status_var.set,
+                             tr("tool.project_workbench.status.clip_progress",
+                                basename=basename, msg=m)))
             rel = self._project_relpath(output)
             self.master.after(0, self._finish_step, "step1_5_select", basename,
                               "done", {"output": [rel]},
-                              f"Clip done: {basename}")
+                              tr("tool.project_workbench.status.clip_done",
+                                 basename=basename))
         except Exception as e:
             self.master.after(0, self._finish_step, "step1_5_select", basename,
                               "failed", {"error": str(e)},
-                              f"Clip failed: {basename}: {e}")
+                              tr("tool.project_workbench.status.clip_failed",
+                                 basename=basename, e=e))
 
     # ── Step 2: ASR ──────────────────────────────────────────────────────────
 
@@ -1624,14 +1677,18 @@ class ProjectWorkbenchApp(ToolBase):
             # know its bitrate, so we re-encode for predictability.
             prep_path = os.path.join(self.project.folder, f"{basename}.mp3")
             on_status = lambda msg: self.master.after(
-                0, self._status_var.set, f"ASR [{msg}] {basename}")
+                0, self._status_var.set,
+                tr("tool.project_workbench.status.asr_audio_prep",
+                   basename=basename, msg=msg))
             audio_path = _prep_audio_for_asr(source, prep_path, on_status)
 
             result = transcribe_audio(
                 audio_path, output_srt,
                 expected_lang_iso=expected_iso, language=language_hint,
                 on_event=lambda evt, **kw: self.master.after(
-                    0, self._status_var.set, f"ASR [{evt}] {basename}"),
+                    0, self._status_var.set,
+                    tr("tool.project_workbench.status.asr_progress",
+                       basename=basename, evt=evt)),
             )
             outputs = []
             for path in (result.get("srt_path"), result.get("json_path")):
@@ -1644,11 +1701,14 @@ class ProjectWorkbenchApp(ToolBase):
             if detected:
                 updates["detected_language"] = detected
             self.master.after(0, self._finish_step, "step2_asr", basename,
-                              "done", updates, f"ASR done: {basename}")
+                              "done", updates,
+                              tr("tool.project_workbench.status.asr_done",
+                                 basename=basename))
         except Exception as e:
             self.master.after(0, self._finish_step, "step2_asr", basename,
                               "failed", {"error": str(e)},
-                              f"ASR failed: {basename}: {e}")
+                              tr("tool.project_workbench.status.asr_failed",
+                                 basename=basename, e=e))
 
     # ── Step 3: Translate ────────────────────────────────────────────────────
 
@@ -1691,10 +1751,12 @@ class ProjectWorkbenchApp(ToolBase):
             for tgt in targets:
                 self.master.after(
                     0, self._status_var.set,
-                    f"Translate [{source_lang}→{tgt}] {basename}")
+                    tr("tool.project_workbench.status.translate_start",
+                       basename=basename, source=source_lang, target=tgt))
                 progress_cb = lambda done, total, msg, t=tgt: self.master.after(
                     0, self._status_var.set,
-                    f"Translate [{t}] {msg}")
+                    tr("tool.project_workbench.status.translate_progress",
+                       basename=basename, target=t, msg=msg))
                 out = translate_srt_file(
                     srt_in,
                     source_lang=source_lang,
@@ -1716,11 +1778,13 @@ class ProjectWorkbenchApp(ToolBase):
             self.master.after(0, self._finish_step, "step3_translate", basename,
                               "done", {"output": outputs, "error": None,
                                        "source_lang_used": source_lang},
-                              f"Translate done: {basename}")
+                              tr("tool.project_workbench.status.translate_done",
+                                 basename=basename))
         except Exception as e:
             self.master.after(0, self._finish_step, "step3_translate", basename,
                               "failed", {"error": str(e)},
-                              f"Translate failed: {basename}: {e}")
+                              tr("tool.project_workbench.status.translate_failed",
+                                 basename=basename, e=e))
 
     # ── Step 4: Burn presets ─────────────────────────────────────────────────
 
@@ -1949,18 +2013,80 @@ class ProjectWorkbenchApp(ToolBase):
 
     def _burn_worker(self, basename: str, video: str, output: str,
                      kwargs: dict) -> None:
+        # core/burn_subs sends English action keys; translate them via i18n.
+        # Unknown keys pass through verbatim for forward compatibility.
+        def translate_inner(action: str) -> str:
+            key = f"tool.project_workbench.status.burn.{action}"
+            translated = tr(key)
+            return translated if translated != key else action
+
         try:
             on_status = lambda msg: self.master.after(
-                0, self._status_var.set, f"Burn [{msg}] {basename}")
+                0, self._status_var.set,
+                tr("tool.project_workbench.status.burn_progress",
+                   basename=basename, msg=translate_inner(msg)))
             burn_subtitles(video, output, on_status=on_status, **kwargs)
             self.master.after(0, self._finish_step, "step4_burn", basename,
                               "done", {"output": [self._project_relpath(output)],
                                        "error": None},
-                              f"Burn done: {basename}")
+                              tr("tool.project_workbench.status.burn_done",
+                                 basename=basename))
         except Exception as e:
             self.master.after(0, self._finish_step, "step4_burn", basename,
                               "failed", {"error": str(e)},
-                              f"Burn failed: {basename}: {e}")
+                              tr("tool.project_workbench.status.burn_failed",
+                                 basename=basename, e=e))
+
+    # ── Step 5: Subtitle pack ────────────────────────────────────────────────
+
+    def _run_pack(self, basename: str) -> None:
+        assert self.project is not None and self._buffer is not None
+        srt_in = self._resolve_srt_input("step5_pack")
+        if not srt_in:
+            messagebox.showerror("Error",
+                "Cannot resolve SRT — set step2_asr / step3_translate / "
+                "step5_pack.source_srt")
+            self._abort_chain()
+            return
+        if not os.path.exists(srt_in):
+            messagebox.showerror("Error", f"SRT not found:\n{srt_in}")
+            self._abort_chain()
+            return
+        # Output base: <project>/<basename>_pack — write_subtitle_pack will
+        # append .json / -titles.txt / -segments.txt / -refined.txt
+        base = os.path.join(self.project.folder, f"{basename}_pack")
+        self._begin_busy("step5_pack", basename, f"Pack running: {basename}")
+        threading.Thread(
+            target=self._pack_worker,
+            args=(basename, srt_in, base),
+            daemon=True,
+        ).start()
+
+    def _pack_worker(self, basename: str, srt_in: str, base: str) -> None:
+        try:
+            self.master.after(
+                0, self._status_var.set,
+                tr("tool.project_workbench.status.pack_ai", basename=basename))
+            # tier= is a no-op in the router since commit 58e6414 (drop tier
+            # dimension). Routing is task-based now: subtitle.post is
+            # configured per-task in the AI Console.
+            pack = generate_subtitle_pack(srt_in)
+            self.master.after(
+                0, self._status_var.set,
+                tr("tool.project_workbench.status.pack_writing", basename=basename))
+            paths = write_subtitle_pack(pack, base)
+            outputs = [self._project_relpath(p) for p in
+                       (paths.get("json"), paths.get("titles"),
+                        paths.get("segments"), paths.get("refined")) if p]
+            self.master.after(0, self._finish_step, "step5_pack", basename,
+                              "done", {"output": outputs, "error": None},
+                              tr("tool.project_workbench.status.pack_done",
+                                 basename=basename))
+        except Exception as e:
+            self.master.after(0, self._finish_step, "step5_pack", basename,
+                              "failed", {"error": str(e)},
+                              tr("tool.project_workbench.status.pack_failed",
+                                 basename=basename, e=e))
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
