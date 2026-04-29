@@ -50,6 +50,7 @@ class Project:
     # New layout: <folder>/.videocraft/project.json (hidden, like VSCode's .vscode/)
     MARKER_DIR  = ".videocraft"
     MARKER_FILE = "project.json"
+    MANIFEST_SUBDIR = "manifests"
     # Pre-2026-04 layout: <folder>/videocraft.json. open() migrates if found.
     LEGACY_MARKER = "videocraft.json"
 
@@ -146,6 +147,74 @@ class Project:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
+
+    # -- Manifest 流水线 -------------------------------------------------------
+    # See ~/.claude/plans/wild-riding-hanrahan.md (M1) — manifests are an
+    # opt-in scheduling layer, not a replacement for the existing tool menus.
+
+    def manifest_dir(self) -> str:
+        """Return <folder>/.videocraft/manifests/, creating it on demand."""
+        path = os.path.join(self.folder, Project.MARKER_DIR, Project.MANIFEST_SUBDIR)
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def manifest_path(self, basename: str) -> str:
+        return os.path.join(self.manifest_dir(), f"{basename}.json")
+
+    def load_manifest(self, basename: str) -> dict | None:
+        path = self.manifest_path(basename)
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    def save_manifest(self, basename: str, data: dict) -> None:
+        path = self.manifest_path(basename)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+    def list_manifests(self) -> list[str]:
+        """Return sorted basenames (without .json) of every manifest file."""
+        try:
+            names = os.listdir(self.manifest_dir())
+        except OSError:
+            return []
+        return sorted(
+            os.path.splitext(n)[0] for n in names if n.lower().endswith(".json")
+        )
+
+    def manifest_exists(self, basename: str) -> bool:
+        return os.path.exists(self.manifest_path(basename))
+
+    def delete_manifest(self, basename: str) -> bool:
+        path = self.manifest_path(basename)
+        try:
+            os.remove(path)
+            return True
+        except OSError:
+            return False
+
+    @staticmethod
+    def default_manifest(basename: str) -> dict:
+        """v1 skeleton with every step disabled — created by the workbench's
+        New action so users have something concrete to edit instead of a blank
+        file. Only `enabled` and `status` are seeded; step-specific fields are
+        added when the user enables them."""
+        return {
+            "version": 1,
+            "basename": basename,
+            "step1_download":  {"enabled": False, "status": "pending"},
+            "step1_5_select":  {"enabled": False, "status": "pending"},
+            "step2_asr":       {"enabled": False, "status": "pending"},
+            "step3_translate": {"enabled": False, "status": "pending"},
+            "step4_burn":      {"enabled": False, "status": "pending"},
+            "step5_pack":      {"enabled": False, "status": "pending"},
+            "step6_split":     {"enabled": False, "status": "pending"},
+        }
 
     # -- 便捷属性 ---------------------------------------------------------------
 

@@ -58,6 +58,7 @@ TOOL_MAP = {
     "preferences":      {"file": "tools/preferences/preferences.py", "class": "PreferencesApp"},
     "ai-console":       {"file": "tools/router/ai_console.py",       "class": "AIConsoleApp"},
     "ppt2video":        {"file": "tools/ppt2video/ppt2video.py",     "class": "PPT2VideoApp"},
+    "project-workbench": {"file": "tools/project/project_workbench.py", "class": "ProjectWorkbenchApp"},
 }
 
 # ── Tab 状态颜色 ──────────────────────────────────────────────────────────────
@@ -295,6 +296,14 @@ class VideoCraftHub:
         # Windows native menus.
         file_menu.configure(postcommand=self._rebuild_recent_menu)
         self.root.bind("<Control-o>", lambda e: self.open_folder())
+
+        # Project
+        proj_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label=tr("menu.project"), menu=proj_menu)
+        proj_menu.add_command(label=tr("menu.project.workbench"),
+                              command=lambda: self.open_tool(
+                                  "project-workbench",
+                                  initial_file=self.project.folder if self.project else None))
 
         # Download
         dl_menu = tk.Menu(menubar, tearoff=0)
