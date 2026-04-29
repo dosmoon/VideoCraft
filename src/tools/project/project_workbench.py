@@ -225,8 +225,7 @@ _STEP_DISPLAY_NUM: dict[str, str] = {
 
 # Known fields (rendered with widgets). Anything else lands in raw section.
 _KNOWN_FIELDS: dict[str, list[str]] = {
-    "step1_download":  ["enabled", "status", "url", "range_enabled",
-                        "start", "end", "output"],
+    "step1_download":  ["enabled", "status", "url", "output"],
     "step1_5_select":  ["enabled", "status", "source", "start", "end", "output"],
     "step2_asr":       ["enabled", "status", "language", "source", "output"],
     "step3_translate": ["enabled", "status", "source_lang", "targets",
@@ -250,9 +249,6 @@ _KNOWN_FIELDS: dict[str, list[str]] = {
 # Field type per (step, field). Drives widget choice in _add_field.
 _FIELD_TYPE: dict[tuple[str, str], str] = {
     ("step1_download", "url"):           "string",
-    ("step1_download", "range_enabled"): "bool",
-    ("step1_download", "start"):         "time",
-    ("step1_download", "end"):           "time",
     ("step1_download", "output"):        "readonly_list",
     ("step1_5_select", "source"):        "filepath",
     ("step1_5_select", "start"):         "time",
@@ -1491,9 +1487,6 @@ class ProjectWorkbenchApp(ToolBase):
         if step_key == "step1_download":
             if not str(step.get("url", "")).strip():
                 return "step1_download.url is empty"
-            if step.get("range_enabled"):
-                if str(step.get("start", "")) == str(step.get("end", "")):
-                    return "range_enabled but start == end"
         elif step_key == "step1_5_select":
             if str(step.get("start", "")) == str(step.get("end", "")):
                 return "start == end (need a non-zero clip duration)"
@@ -1660,27 +1653,16 @@ class ProjectWorkbenchApp(ToolBase):
         if not url:
             messagebox.showerror("Error", "step1_download.url is empty")
             return
-        # When range_enabled, download to <basename>_raw.mp4 then ffmpeg-trim
-        # to <basename>.mp4. The trimmed file is the canonical "source"
-        # downstream steps reference. The raw is kept for re-trimming.
-        range_enabled = bool(step.get("range_enabled"))
-        start = str(step.get("start", "00:00:00")) if range_enabled else None
-        end = str(step.get("end", "00:00:00")) if range_enabled else None
-        if range_enabled and start == end:
-            messagebox.showerror("Error", "start and end are equal — nothing to clip")
-            return
-        raw_basename = f"{basename}_raw" if range_enabled else basename
-        out_template = os.path.join(self.project.folder, f"{raw_basename}.%(ext)s")
+        # Step 1 only downloads. Trimming is step 2's job.
+        out_template = os.path.join(self.project.folder, f"{basename}.%(ext)s")
         self._begin_busy("step1_download", basename, f"Download running: {basename}")
         threading.Thread(
             target=self._download_worker,
-            args=(basename, url, out_template, range_enabled, start, end),
+            args=(basename, url, out_template),
             daemon=True,
         ).start()
 
-    def _download_worker(self, basename: str, url: str, out_template: str,
-                         range_enabled: bool, start: str | None,
-                         end: str | None) -> None:
+    def _download_worker(self, basename: str, url: str, out_template: str) -> None:
         try:
             import yt_dlp
 
@@ -1717,19 +1699,7 @@ class ProjectWorkbenchApp(ToolBase):
                 fpath = ydl.prepare_filename(info)
             mp4 = os.path.splitext(fpath)[0] + ".mp4"
             raw_path = mp4 if os.path.exists(mp4) else fpath
-
-            if not range_enabled:
-                outputs = [self._project_relpath(raw_path)]
-            else:
-                # Trim full download into the canonical <basename>.mp4
-                assert self.project is not None
-                trimmed = os.path.join(self.project.folder, f"{basename}.mp4")
-                self.master.after(0, self._step_status,
-                                  tr("tool.project_workbench.status.download_trimming",
-                                     basename=basename, start=start, end=end))
-                extract_clip(raw_path, start, end, output_path=trimmed)
-                outputs = [self._project_relpath(trimmed),
-                           self._project_relpath(raw_path)]
+            outputs = [self._project_relpath(raw_path)]
 
             self.master.after(0, self._finish_step, "step1_download", basename,
                               "done", {"output": outputs, "title": info.get("title")},
