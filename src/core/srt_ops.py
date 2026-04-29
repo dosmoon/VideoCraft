@@ -396,22 +396,23 @@ def generate_subtitle_pack(srt_path, prompt=None, tier=None) -> dict:
 
 
 def write_subtitle_pack(pack: dict, base_path: str) -> dict:
-    """Persist a subtitle pack as 1 JSON + 3 plain-text companions.
+    """Persist a subtitle post-process bundle as 1 JSON + 3 plain-text files.
 
     base_path may include or omit an extension; the suffix is stripped and
-    four sibling files are written:
-      - <base>.json            full structured payload
-      - <base>-titles.txt      one candidate title per line
-      - <base>-segments.txt    "HH:MM:SS title" per line
-      - <base>-refined.txt     "HH:MM:SS title\\n<refined>\\n\\n" blocks
+    four sibling files are written using descriptive role suffixes:
+      - <base>-postprocess.json   full structured payload
+      - <base>-titles.txt         one candidate title per line
+      - <base>-chapters.txt       "HH:MM:SS title" per line (drives split)
+      - <base>-description.txt    "HH:MM:SS title\\n<refined>\\n\\n" blocks
 
-    Returns a dict mapping kind -> absolute path.
+    Returns a dict mapping kind -> absolute path. Keys: json / titles /
+    chapters / description.
     """
     root, _ext = os.path.splitext(base_path)
-    json_path = root + ".json"
+    json_path = root + "-postprocess.json"
     titles_path = root + "-titles.txt"
-    segments_path = root + "-segments.txt"
-    refined_path = root + "-refined.txt"
+    chapters_path = root + "-chapters.txt"
+    description_path = root + "-description.txt"
 
     parent = os.path.dirname(root)
     if parent:
@@ -425,12 +426,12 @@ def write_subtitle_pack(pack: dict, base_path: str) -> dict:
         f.write("\n".join(str(t).strip() for t in titles) + "\n")
 
     segments = pack.get("segments") or []
-    with open(segments_path, 'w', encoding='utf-8') as f:
+    with open(chapters_path, 'w', encoding='utf-8') as f:
         for seg in segments:
             f.write(f"{seg.get('time_str', '').strip()} "
                     f"{seg.get('title', '').strip()}\n")
 
-    with open(refined_path, 'w', encoding='utf-8') as f:
+    with open(description_path, 'w', encoding='utf-8') as f:
         for seg in segments:
             f.write(f"{seg.get('time_str', '').strip()} "
                     f"{seg.get('title', '').strip()}\n")
@@ -439,6 +440,6 @@ def write_subtitle_pack(pack: dict, base_path: str) -> dict:
     return {
         "json": json_path,
         "titles": titles_path,
-        "segments": segments_path,
-        "refined": refined_path,
+        "chapters": chapters_path,
+        "description": description_path,
     }

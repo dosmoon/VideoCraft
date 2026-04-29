@@ -91,15 +91,20 @@ def _sub_style(fontsize: int, color_hex: str, *, bold: bool, margin_v: int) -> s
 
 
 def _maybe_split_srt(srt_path: str, do_split: bool, max_chars: int,
-                     is_chinese: bool) -> str:
-    """If splitting is enabled, write a `_split.srt` next to the source and
-    return its path. Otherwise return the source path unchanged. Output goes
-    next to the source so users can inspect / archive the wrapped version."""
+                     is_chinese: bool, out_dir: str | None = None) -> str:
+    """If splitting is enabled, write a `_split.srt` and return its path.
+    Otherwise return the source path unchanged. Default output location is
+    next to the source SRT (back-compat); pass out_dir to redirect — the
+    workbench uses this to land split SRTs in the unit's output/subtitles/
+    folder as a user-shippable deliverable."""
     if not do_split:
         return srt_path
     subs = process_srt_split(srt_path, max_chars, is_chinese)
-    base, _ = os.path.splitext(srt_path)
-    out = base + "_split.srt"
+    stem, _ = os.path.splitext(os.path.basename(srt_path))
+    target_dir = out_dir if out_dir else os.path.dirname(srt_path)
+    if target_dir:
+        os.makedirs(target_dir, exist_ok=True)
+    out = os.path.join(target_dir, f"{stem}_split.srt")
     with open(out, "w", encoding="utf-8") as f:
         f.write(_srt.compose(subs))
     return out
@@ -135,6 +140,7 @@ def burn_subtitles(
     date_fontsize: int = 24,
     date_alpha: int = 80,
     encode_preset: str = "veryfast",
+    split_out_dir: str | None = None,
     on_status: Callable[[str], None] | None = None,
 ) -> None:
     """Burn subtitles, watermark, and date overlay into a video.
@@ -158,14 +164,16 @@ def burn_subtitles(
     if show_sub1 and sub1_split:
         status("split_sub1")
         sub1_path = _maybe_split_srt(sub1_path, True,
-                                     sub1_max_chars, sub1_is_chinese)
+                                     sub1_max_chars, sub1_is_chinese,
+                                     split_out_dir)
     elif show_sub1:
         sub1_path = _maybe_split_srt(sub1_path, False,
                                      sub1_max_chars, sub1_is_chinese)
     if show_sub2 and sub2_split:
         status("split_sub2")
         sub2_path = _maybe_split_srt(sub2_path, True,
-                                     sub2_max_chars, sub2_is_chinese)
+                                     sub2_max_chars, sub2_is_chinese,
+                                     split_out_dir)
     elif show_sub2:
         sub2_path = _maybe_split_srt(sub2_path, False,
                                      sub2_max_chars, sub2_is_chinese)

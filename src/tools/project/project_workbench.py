@@ -1729,8 +1729,11 @@ class ProjectWorkbenchApp(ToolBase):
             return
         lang_iso = asr.get("language") or None
         suffix = lang_iso or "auto"
-        output_srt = os.path.join(self.project.unit_dir(basename),
-                                  f"{basename}_{suffix}.srt")
+        # ASR raw transcript lives in <unit>/subtitles/ (intermediate
+        # artifact); its companion JSON lands alongside automatically.
+        subs_dir = os.path.join(self.project.unit_dir(basename), "subtitles")
+        os.makedirs(subs_dir, exist_ok=True)
+        output_srt = os.path.join(subs_dir, f"{basename}_{suffix}.srt")
 
         language_hint: str | None = None
         if lang_iso and lang_iso in SUPPORTED_LANGUAGES and lang_iso != "auto":
@@ -2064,8 +2067,14 @@ class ProjectWorkbenchApp(ToolBase):
             if m and m.group(1) not in tags:
                 tags.append(m.group(1))
         suffix = "_" + "+".join(tags) if tags else ""
-        output = os.path.join(self.project.unit_dir(basename),
-                              f"{basename}_subbed{suffix}.mp4")
+        output_dir = os.path.join(self.project.unit_dir(basename), "output")
+        os.makedirs(output_dir, exist_ok=True)
+        output = os.path.join(output_dir, f"{basename}_subbed{suffix}.mp4")
+        # _split.srt files are user-shippable subtitles (line-wrapped per
+        # spec) — write them into output/subtitles/ instead of next to the
+        # source SRT so the deliverables sit together.
+        split_out_dir = os.path.join(output_dir, "subtitles")
+        os.makedirs(split_out_dir, exist_ok=True)
 
         # Resolve image watermark path (relative to project)
         wm_image_path = str(step.get("wm_image_path", "")).strip()
@@ -2108,6 +2117,7 @@ class ProjectWorkbenchApp(ToolBase):
             date_fontsize=int(step.get("date_fontsize", 24) or 24),
             date_alpha=int(step.get("date_alpha", 80) or 80),
             encode_preset=str(step.get("encode_preset", "veryfast") or "veryfast"),
+            split_out_dir=split_out_dir,
         )
 
         self._begin_busy("step4_burn", basename, f"Burn running: {basename}")
@@ -2163,7 +2173,13 @@ class ProjectWorkbenchApp(ToolBase):
             return
         # Output base: <project>/<basename>_pack — write_subtitle_pack will
         # append .json / -titles.txt / -segments.txt / -refined.txt
-        base = os.path.join(self.project.unit_dir(basename), f"{basename}_pack")
+        # Pack outputs are user-shippable (titles / chapters / description /
+        # structured payload) → land in the unit's output/ folder. Drop the
+        # legacy "_pack-" prefix; the file stems now describe their role
+        # directly.
+        output_dir = os.path.join(self.project.unit_dir(basename), "output")
+        os.makedirs(output_dir, exist_ok=True)
+        base = os.path.join(output_dir, basename)
         self._begin_busy("step5_pack", basename, f"Pack running: {basename}")
         threading.Thread(
             target=self._pack_worker,
@@ -2186,7 +2202,7 @@ class ProjectWorkbenchApp(ToolBase):
             paths = write_subtitle_pack(pack, base)
             outputs = [self._project_relpath(p) for p in
                        (paths.get("json"), paths.get("titles"),
-                        paths.get("segments"), paths.get("refined")) if p]
+                        paths.get("chapters"), paths.get("description")) if p]
             self.master.after(0, self._finish_step, "step5_pack", basename,
                               "done", {"output": outputs, "error": None},
                               tr("tool.project_workbench.status.pack_done",

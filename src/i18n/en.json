@@ -598,7 +598,7 @@
   "tool.srt.gen_pack.btn_run": "Generate pack",
   "tool.srt.gen_pack.output_base": "Output base path:",
   "tool.srt.gen_pack.status_running": "Calling AI to generate titles, segments, and refined summaries...",
-  "tool.srt.gen_pack.status_done": "Done → {json_name} / {titles_name} / {segments_name} / {refined_name}",
+  "tool.srt.gen_pack.status_done": "Done → {json_name} / {titles_name} / {chapters_name} / {description_name}",
   "tool.srt.gen_pack.status_fail": "Generation failed",
   "tool.srt.gen_pack.error_failed": "Pack generation failed: {e}",
   "tool.srt.gen_pack.log_done": "Subtitle pack generated → {filename}",
@@ -1155,6 +1155,6 @@
   "tool.project_workbench.step.asr": "ASR (Speech-to-Text)",
   "tool.project_workbench.step.translate": "Translate",
   "tool.project_workbench.step.burn": "Burn subtitles",
-  "tool.project_workbench.step.pack": "Subtitle pack",
+  "tool.project_workbench.step.pack": "Subtitle post-processing",
   "tool.project_workbench.step.split": "Long-video split"
 }

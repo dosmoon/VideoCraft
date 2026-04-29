@@ -93,6 +93,63 @@ Tucker Carlson Tonight Full Episode January 15 2024
 
 ---
 
+---
+
+## 项目工作台：unit 文件夹布局（2026-04 末）
+
+`tools/project/project_workbench.py` 走独立约定。每个 manifest = 一个独立的「processing unit」，所有步骤产物落在 `<project>/<basename>/` 子目录里，互相不串。
+
+### 目录结构
+
+```
+<project>/
+├── .videocraft/
+│   ├── project.json
+│   └── manifests/
+│       └── <basename>.json          # manifest 元数据（永远在这里）
+├── <basename>/                      # unit 文件夹
+│   ├── <basename>_raw.mp4           # step1 原料（URL 下载产物；本地模式不产生）
+│   ├── <basename>.mp4               # step2 canonical 工作版（下游链路源头）
+│   ├── <basename>.mp3               # ASR 提取的音频
+│   ├── subtitles/                   # 字幕中间产物
+│   │   ├── <basename>_<iso>.srt    # ASR 原始转录
+│   │   ├── <basename>_<iso>.json   # ASR raw json（带时间戳/置信度）
+│   │   └── <basename>_<tgt>.srt    # translate 译文（与 ASR 同 ISO 命名）
+│   └── output/                      # 用户可交付物
+│       ├── <basename>_subbed[_zh+en].mp4   # burn 烧录视频
+│       ├── <basename>-titles.txt           # 候选标题列表
+│       ├── <basename>-chapters.txt         # 章节时间表（驱动 step6 split）
+│       ├── <basename>-description.txt      # 视频简介文本
+│       ├── <basename>-postprocess.json     # step5 完整结构化 payload
+│       ├── subtitles/                      # 烧录用「按规范换行」的成品 SRT
+│       │   ├── <basename>_<iso>_split.srt
+│       │   └── ...
+│       └── splits/                         # step6 章节切片
+│           ├── 01_xxx.mp4
+│           └── 02_xxx.mp4
+└── <other-basename>/                # 多 manifest 之间互不干扰
+```
+
+### 命名规则关键点
+
+1. **canonical vs raw**：step2 占用「裸 basename」名，step1 raw 加 `_raw` 后缀。理由：下游所有步骤消费的都是 step2 的产物，让 canonical 占用最直观的命名位置
+2. **subtitles/ 与 output/subtitles/ 区分**：
+   - `<basename>/subtitles/` = 中间产物（直转字幕、翻译字幕，可能内容粗糙、行长不规整）
+   - `<basename>/output/subtitles/` = 成品（烧录用按字数换行版本，可直接上传 YouTube/B 站当字幕轨）
+3. **step5 文件命名去 `_pack-`**：早期 `_pack-titles.txt` / `_pack-segments.txt` / `_pack-refined.txt` / `_pack.json` 让人摸不着头脑（"pack" 是内部黑话）。改为 `-titles` / `-chapters` / `-description` / `-postprocess`，每个文件名直接说明内容
+4. **step2 单输出铁律**：每份 manifest 的 step2 只产 1 个 canonical 工作版。多变体处理走多 manifest（每个有自己的 unit 文件夹），不在单 manifest 里塞多产物——下游 resolver 全靠 `output[0]` 工作，多输出会让链路语义崩
+5. **manifest JSON 不进 unit 文件夹**：留在 `.videocraft/manifests/<basename>.json`，因为它是项目级元数据，不是单个 unit 的产物
+
+### resolver 行为
+
+链路 walk-back 走 `<basename>/<basename>.mp4` (step2 done) > `<basename>/<basename>_raw.mp4` (step1 done) > step1.source（用户原始输入：URL 已被 step1 消化，本地路径仍是 user 提供的绝对路径）。SRT walk-back 走 `<basename>/subtitles/<basename>_<iso>.srt`（step3 译文优先，step2 ASR 兜底）。
+
+### 兼容性
+
+- 老 manifest（含 `units/<basename>.mp4` 等旧路径）继续工作 —— resolver 字面跟着 `output[0]` 字符串
+- 重跑 step2 后产物自动落到新 unit 文件夹，老路径会被新约定的 output[0] 覆盖
+- legacy `subtitle_tool` / `srt_tools` 走自己的命名（本文上半部分），不受 unit 文件夹约定影响
+
 ## 辅助函数（实现参考）
 
 ```python
