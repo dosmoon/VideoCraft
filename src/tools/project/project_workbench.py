@@ -396,7 +396,8 @@ _LANG_ISO_TO_DISPLAY = {iso: disp for iso, disp in _LANG_CHOICES}
 
 
 class ProjectWorkbenchApp(ToolBase):
-    def __init__(self, master, initial_file: str | None = None):
+    def __init__(self, master, initial_file: str | None = None,
+                 initial_basename: str | None = None):
         self.master = master
         master.title(tr("tool.project_workbench.title"))
         master.geometry("1100x720")
@@ -420,10 +421,15 @@ class ProjectWorkbenchApp(ToolBase):
 
         if initial_file and os.path.isdir(initial_file):
             self._load_project(initial_file)
+        if initial_basename:
+            self.load_manifest(initial_basename)
 
     # ── UI construction ──────────────────────────────────────────────────────
 
     def _build_ui(self) -> None:
+        # Hub-embedded layout: a single column. Manifest list / new / delete
+        # live in the Hub sidebar's "Project" tab; this widget is the editor
+        # surface only — title bar, status banner, scrollable cards.
         m = self.master
         m.columnconfigure(0, weight=1)
         m.rowconfigure(1, weight=1)
@@ -437,46 +443,17 @@ class ProjectWorkbenchApp(ToolBase):
         tk.Label(top, textvariable=self._project_var, fg="#555", anchor="w").grid(
             row=0, column=1, sticky="ew", padx=(6, 0))
 
-        pane = tk.PanedWindow(m, orient="horizontal", sashrelief="raised")
-        pane.grid(row=1, column=0, sticky="nsew", padx=8, pady=4)
-
-        self._build_left_panel(pane)
-        self._build_right_panel(pane)
-
+        # Status var still drives the banner. When embedded, no extra
+        # bottom-of-frame status label — the Hub log panel covers that role.
         self._status_var = tk.StringVar(value="")
-        # Mirror status into the prominent banner.
+
+        right = tk.Frame(m)
+        right.grid(row=1, column=0, sticky="nsew", padx=8, pady=(0, 4))
+        self._build_right_panel(right)
         self._status_var.trace_add(
             "write", lambda *_: self._banner_var.set(self._status_var.get()))
-        tk.Label(m, textvariable=self._status_var, fg="#666", anchor="w").grid(
-            row=2, column=0, sticky="ew", padx=8, pady=(0, 4))
 
-    def _build_left_panel(self, parent) -> None:
-        left = tk.Frame(parent)
-        parent.add(left, minsize=240)
-
-        btn_bar = tk.Frame(left)
-        btn_bar.pack(fill="x", padx=4, pady=(2, 4))
-        tk.Button(btn_bar, text=tr("tool.project_workbench.new_manifest"),
-                  command=self._on_new_manifest).pack(side="left")
-        tk.Button(btn_bar, text=tr("tool.project_workbench.delete"),
-                  command=self._on_delete_manifest).pack(side="left", padx=(4, 0))
-        tk.Button(btn_bar, text=tr("tool.project_workbench.refresh"),
-                  command=self._reload_manifest_list).pack(side="right")
-
-        tree_frame = tk.Frame(left)
-        tree_frame.pack(fill="both", expand=True)
-        vsb = ttk.Scrollbar(tree_frame, orient="vertical")
-        self._tree = ttk.Treeview(tree_frame, show="tree",
-                                  yscrollcommand=vsb.set, selectmode="browse")
-        vsb.config(command=self._tree.yview)
-        self._tree.pack(side="left", fill="both", expand=True)
-        vsb.pack(side="right", fill="y")
-        self._tree.bind("<<TreeviewSelect>>", self._on_select_manifest)
-
-    def _build_right_panel(self, parent) -> None:
-        right = tk.Frame(parent)
-        parent.add(right, minsize=620)
-
+    def _build_right_panel(self, right) -> None:
         tb = tk.Frame(right)
         tb.pack(fill="x", padx=8, pady=(4, 4))
         self._title_var = tk.StringVar(value=tr("tool.project_workbench.select_hint"))
@@ -547,48 +524,41 @@ class ProjectWorkbenchApp(ToolBase):
     # ── Project / manifest loading ───────────────────────────────────────────
 
     def _load_project(self, folder: str) -> None:
+        """Legacy bootstrap when the workbench is launched standalone with an
+        initial folder (no Hub driving it). Hub-managed instances use
+        set_project() instead."""
         try:
-            self.project = Project.open(folder)
-            self._project_var.set(self.project.folder)
-            self._reload_manifest_list()
+            self.set_project(Project.open(folder))
         except Exception as e:
             self.set_error(f"Open project failed: {e}")
 
-    def _reload_manifest_list(self) -> None:
-        if self.project is None:
-            return
-        prev = self._current_basename
-        self._tree.delete(*self._tree.get_children())
-        for basename in self.project.list_manifests():
-            self._tree.insert("", "end", iid=basename, text=f"  {basename}")
-        if prev and self._tree.exists(prev):
-            self._tree.selection_set(prev)
-        else:
-            self._clear_right_panel()
+    def set_project(self, project: "Project | None") -> None:
+        """Hub calls this when the active project changes (open / close /
+        switch). Clears any open manifest from the previous project."""
+        self.project = project
+        self._project_var.set(project.folder if project else
+                              tr("tool.project_workbench.no_project"))
+        self.load_manifest(None)
 
-    def _on_select_manifest(self, _event=None) -> None:
-        sel = self._tree.selection()
-        if not sel:
-            return
-        new_basename = sel[0]
-        if new_basename == self._current_basename:
-            return
+    def load_manifest(self, basename: "str | None") -> bool:
+        """Public API used by Hub when the sidebar selects a manifest. Pass
+        None to enter the empty state (e.g. project closed). Returns False
+        if the user cancelled because of unsaved dirty buffer."""
+        if basename == self._current_basename:
+            return True
         if self._dirty and self._current_basename is not None:
             choice = self._ask_save_discard_cancel()
             if choice is None:
-                self._tree.selection_set(self._current_basename)
-                return
+                return False
             if choice is True and not self._save_buffer():
-                self._tree.selection_set(self._current_basename)
-                return
-        self._load_manifest_into_buffer(new_basename)
-
-    def _load_manifest_into_buffer(self, basename: str) -> None:
-        assert self.project is not None
+                return False
+        if basename is None or self.project is None:
+            self._clear_right_panel()
+            return True
         data = self.project.load_manifest(basename)
         if data is None:
             self.set_error(f"Failed to load manifest: {basename}")
-            return
+            return False
         self._current_basename = basename
         self._buffer = data
         self._dirty = False
@@ -597,6 +567,7 @@ class ProjectWorkbenchApp(ToolBase):
         self._render_step_cards()
         self._save_btn.config(state="normal")
         self._reload_btn.config(state="normal")
+        return True
 
     def _clear_right_panel(self) -> None:
         self._current_basename = None
@@ -607,6 +578,7 @@ class ProjectWorkbenchApp(ToolBase):
         self._clear_step_cards()
         self._save_btn.config(state="disabled")
         self._reload_btn.config(state="disabled")
+
 
     # ── Step card rendering ──────────────────────────────────────────────────
 
@@ -1234,65 +1206,38 @@ class ProjectWorkbenchApp(ToolBase):
                 tr("tool.project_workbench.confirm_reload_msg"),
             ):
                 return
-        self._load_manifest_into_buffer(self._current_basename)
-
-    # ── New / Delete ─────────────────────────────────────────────────────────
-
-    def _on_new_manifest(self) -> None:
-        if self.project is None:
-            messagebox.showinfo("VideoCraft", tr("tool.project_workbench.no_project"))
-            return
-        if self._dirty:
-            choice = self._ask_save_discard_cancel()
-            if choice is None:
-                return
-            if choice is True and not self._save_buffer():
-                return
-        basename = simpledialog.askstring(
-            tr("tool.project_workbench.new_manifest"),
-            tr("tool.project_workbench.new_manifest_prompt"),
-            parent=self.master,
-        )
-        if not basename:
-            return
-        basename = basename.strip()
-        if not basename or any(c in basename for c in r'\/:*?"<>|'):
-            messagebox.showerror("VideoCraft",
-                                 tr("tool.project_workbench.invalid_basename"))
-            return
-        if self.project.manifest_exists(basename):
-            messagebox.showerror("VideoCraft",
-                                 tr("tool.project_workbench.basename_exists").format(
-                                     name=basename))
-            return
-        try:
-            self.project.save_manifest(basename, Project.default_manifest(basename))
-        except Exception as e:
-            self.set_error(f"Create failed: {e}")
-            return
-        self._reload_manifest_list()
-        if self._tree.exists(basename):
-            self._tree.selection_set(basename)
-
-    def _on_delete_manifest(self) -> None:
-        if self.project is None or self._current_basename is None:
-            return
-        basename = self._current_basename
-        if not messagebox.askyesno(
-            tr("tool.project_workbench.confirm_delete_title"),
-            tr("tool.project_workbench.confirm_delete_msg").format(name=basename),
-            default="no",
-        ):
-            return
-        if not self.project.delete_manifest(basename):
-            self.set_error(f"Delete failed: {basename}")
-            return
+        # Force-reload bypassing the same-basename early-return + dirty check
+        bn = self._current_basename
         self._dirty = False
         self._current_basename = None
-        self._buffer = None
-        self._reload_manifest_list()
-        self._clear_right_panel()
-        self._status_var.set(tr("tool.project_workbench.deleted").format(name=basename))
+        self.load_manifest(bn)
+
+    # ── Hub-facing helpers ───────────────────────────────────────────────────
+
+    @property
+    def current_basename(self) -> "str | None":
+        return self._current_basename
+
+    @property
+    def is_dirty(self) -> bool:
+        return self._dirty
+
+    def confirm_discard(self) -> bool:
+        """Returns True if it's safe to navigate away from / mutate the
+        currently open manifest. Either clean, or user chose Save (success)
+        or Discard. Returns False on Cancel or save failure."""
+        if not self._dirty or self._current_basename is None:
+            return True
+        choice = self._ask_save_discard_cancel()
+        if choice is None:
+            return False
+        if choice is True:
+            return self._save_buffer()
+        # Discard branch — clear the dirty flag so subsequent load_manifest
+        # doesn't re-prompt the user.
+        self._dirty = False
+        self._update_dirty_indicator()
+        return True
 
     # ── Input resolution (auto-chain) ────────────────────────────────────────
 

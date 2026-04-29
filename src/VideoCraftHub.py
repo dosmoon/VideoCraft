@@ -198,6 +198,7 @@ class VideoCraftHub:
 
         self._build_menu()
         self._build_layout()
+        self._refresh_project_tab()  # show "no project" hint
         self._show_welcome()
         self._schedule_auto_refresh()
 
@@ -225,6 +226,14 @@ class VideoCraftHub:
 
             if self._layout_store.get("zoomed", True):
                 self.root.state("zoomed")
+
+            # Restore last-selected sidebar tab
+            saved_tab = self._layout_store.get("sidebar_tab", "resources")
+            if saved_tab == "project":
+                try:
+                    self._sidebar_nb.select(1)
+                except Exception:
+                    pass
         except Exception as e:
             from hub_logger import logger
             logger.error(f"应用保存的布局失败: {e}")
@@ -245,11 +254,17 @@ class VideoCraftHub:
             # Clamp log panel height to [60, 50% of window] so the tool area
             # is never starved of vertical space on next launch.
             log_h = max(60, min(raw_log_h, win_h // 2))
+            try:
+                idx = self._sidebar_nb.index(self._sidebar_nb.select())
+                sidebar_tab = "project" if idx == 1 else "resources"
+            except Exception:
+                sidebar_tab = "resources"
             payload = {
                 "geometry":      self.root.geometry(),
                 "zoomed":        zoomed,
                 "sidebar_width": self._pane.sashpos(0),
                 "log_height":    log_h,
+                "sidebar_tab":   sidebar_tab,
             }
             hub_layout.save_layout(payload)
         except Exception as e:
@@ -431,14 +446,20 @@ class VideoCraftHub:
         self._pane = ttk.PanedWindow(top_container, orient="horizontal")
         self._pane.pack(fill="both", expand=True)
 
-        # ── 左：Sidebar ──
+        # ── 左：Sidebar (tabbed) ──
         sidebar_frame = tk.Frame(self._pane, width=320, bg="#f5f5f5")
         sidebar_frame.pack_propagate(False)
         self._pane.add(sidebar_frame, weight=0)
 
-        # Sidebar 顶部工具栏
         from i18n import tr
-        sb_top = tk.Frame(sidebar_frame, bg="#e8e8e8")
+        self._sidebar_nb = ttk.Notebook(sidebar_frame)
+        self._sidebar_nb.pack(fill="both", expand=True)
+
+        # ===== Resources tab — file browser (the original sidebar) =====
+        res_tab = tk.Frame(self._sidebar_nb, bg="#f5f5f5")
+        self._sidebar_nb.add(res_tab, text=tr("hub.sidebar.tab.resources"))
+
+        sb_top = tk.Frame(res_tab, bg="#e8e8e8")
         sb_top.pack(fill="x")
         tk.Label(sb_top, text=tr("hub.sidebar.title"), font=("", 9, "bold"),
                  bg="#e8e8e8", fg="#555").pack(side="left", padx=8, pady=4)
@@ -446,8 +467,7 @@ class VideoCraftHub:
                   command=self.refresh_sidebar,
                   bg="#e8e8e8").pack(side="right", padx=4, pady=2)
 
-        # Treeview
-        tree_frame = tk.Frame(sidebar_frame)
+        tree_frame = tk.Frame(res_tab)
         tree_frame.pack(fill="both", expand=True)
         vsb = ttk.Scrollbar(tree_frame, orient="vertical")
         self._tree = ttk.Treeview(tree_frame, show="tree",
@@ -458,6 +478,11 @@ class VideoCraftHub:
         self._tree.bind("<Double-1>", self._on_tree_double_click)
         self._tree.bind("<Button-3>", self._on_tree_right_click)
         self._tree.bind("<<TreeviewOpen>>", self._on_tree_open)
+
+        # ===== Project tab — manifest list =====
+        prj_tab = tk.Frame(self._sidebar_nb, bg="#f5f5f5")
+        self._sidebar_nb.add(prj_tab, text=tr("hub.sidebar.tab.project"))
+        self._build_project_tab(prj_tab)
 
         # ── 右：内容区 ──
         self._content = tk.Frame(self._pane, bg="white")
@@ -547,6 +572,12 @@ class VideoCraftHub:
         self._status_var.set(self.project.folder)
         self._last_snapshot = self._folder_snapshot(self.project.folder)
         self.refresh_sidebar()
+        self._refresh_project_tab()
+        # If a workbench tab is already open, swap its project so it doesn't
+        # keep showing manifests from the previous project.
+        wb = self._get_workbench_app()
+        if wb is not None:
+            wb.set_project(self.project)
 
     def refresh_sidebar(self):
         self._tree.delete(*self._tree.get_children())
@@ -567,6 +598,176 @@ class VideoCraftHub:
                                      tags=("dir" if entry["is_dir"] else "file",))
             if entry["is_dir"]:
                 self._tree.insert(node, "end", tags=("_placeholder",))
+
+    # ── Sidebar: Project tab (manifest list) ────────────────────────────────
+
+    def _build_project_tab(self, parent: tk.Frame) -> None:
+        """Build the sidebar 'Project' tab: manifest list + toolbar.
+
+        Selecting a manifest opens (or focuses) the project-workbench tab in
+        the main content area and tells it to load that manifest. New /
+        Delete / Refresh act on the active project; with no project, the
+        toolbar is disabled and a hint is shown."""
+        from i18n import tr
+        bar = tk.Frame(parent, bg="#e8e8e8")
+        bar.pack(fill="x")
+        self._project_new_btn = tk.Button(
+            bar, text=tr("tool.project_workbench.new_manifest"),
+            command=self._on_new_manifest_hub, relief="flat", bg="#e8e8e8")
+        self._project_new_btn.pack(side="left", padx=2, pady=2)
+        self._project_delete_btn = tk.Button(
+            bar, text=tr("tool.project_workbench.delete"),
+            command=self._on_delete_manifest_hub, relief="flat", bg="#e8e8e8")
+        self._project_delete_btn.pack(side="left", padx=2, pady=2)
+        tk.Button(bar, text="⟳", width=3, relief="flat",
+                  command=self._refresh_project_tab,
+                  bg="#e8e8e8").pack(side="right", padx=4, pady=2)
+
+        body = tk.Frame(parent, bg="#f5f5f5")
+        body.pack(fill="both", expand=True)
+        vsb = ttk.Scrollbar(body, orient="vertical")
+        self._project_tree = ttk.Treeview(body, show="tree",
+                                          yscrollcommand=vsb.set,
+                                          selectmode="browse")
+        vsb.config(command=self._project_tree.yview)
+        self._project_tree.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+        self._project_tree.bind("<<TreeviewSelect>>",
+                                self._on_project_tree_select)
+
+        self._project_empty_lbl = tk.Label(
+            parent, text=tr("hub.sidebar.project.empty_no_project"),
+            bg="#f5f5f5", fg="#888", font=("", 9), wraplength=280, justify="left")
+        # empty label shown only when no project — set in _refresh_project_tab
+
+    def _refresh_project_tab(self):
+        """Reload the manifest list from the active project (or clear it)."""
+        from i18n import tr
+        if not hasattr(self, "_project_tree"):
+            return  # not built yet
+        sel_prev = (self._project_tree.selection()[0]
+                    if self._project_tree.selection() else None)
+        self._project_tree.delete(*self._project_tree.get_children())
+        if self.project is None:
+            self._project_new_btn.config(state="disabled")
+            self._project_delete_btn.config(state="disabled")
+            self._project_empty_lbl.config(
+                text=tr("hub.sidebar.project.empty_no_project"))
+            self._project_empty_lbl.pack(fill="x", padx=12, pady=12)
+            return
+        self._project_empty_lbl.pack_forget()
+        self._project_new_btn.config(state="normal")
+        manifests = self.project.list_manifests()
+        for basename in manifests:
+            self._project_tree.insert("", "end", iid=basename,
+                                      text=f"  {basename}")
+        if sel_prev and self._project_tree.exists(sel_prev):
+            self._project_tree.selection_set(sel_prev)
+        self._project_delete_btn.config(
+            state="normal" if self._project_tree.selection() else "disabled")
+        if not manifests:
+            self._project_empty_lbl.config(
+                text=tr("hub.sidebar.project.no_manifests"))
+            self._project_empty_lbl.pack(fill="x", padx=12, pady=12)
+
+    def _on_project_tree_select(self, _event=None):
+        sel = self._project_tree.selection()
+        self._project_delete_btn.config(
+            state="normal" if sel else "disabled")
+        if not sel:
+            return
+        basename = sel[0]
+        # Hub-level dirty check: if workbench is editing another manifest
+        # with unsaved changes, prompt before switching.
+        wb = self._get_workbench_app()
+        if wb is not None and wb.current_basename != basename:
+            if not wb.confirm_discard():
+                # User cancelled — restore the tree selection
+                if wb.current_basename:
+                    self._project_tree.selection_set(wb.current_basename)
+                return
+        self._open_or_focus_workbench(basename)
+
+    def _on_new_manifest_hub(self):
+        from i18n import tr
+        from tkinter import simpledialog
+        if self.project is None:
+            return
+        wb = self._get_workbench_app()
+        if wb is not None and not wb.confirm_discard():
+            return
+        basename = simpledialog.askstring(
+            tr("tool.project_workbench.new_manifest"),
+            tr("tool.project_workbench.new_manifest_prompt"),
+            parent=self.root,
+        )
+        if not basename:
+            return
+        basename = basename.strip()
+        if not basename or any(c in basename for c in r'\/:*?"<>|'):
+            messagebox.showerror("VideoCraft",
+                                 tr("tool.project_workbench.invalid_basename"))
+            return
+        if self.project.manifest_exists(basename):
+            messagebox.showerror(
+                "VideoCraft",
+                tr("tool.project_workbench.basename_exists").format(name=basename))
+            return
+        try:
+            self.project.save_manifest(basename, Project.default_manifest(basename))
+        except Exception as e:
+            messagebox.showerror("VideoCraft", f"Create failed: {e}")
+            return
+        self._refresh_project_tab()
+        if self._project_tree.exists(basename):
+            self._project_tree.selection_set(basename)
+        # selection event will trigger workbench load
+
+    def _on_delete_manifest_hub(self):
+        from i18n import tr
+        sel = self._project_tree.selection()
+        if not sel or self.project is None:
+            return
+        basename = sel[0]
+        if not messagebox.askyesno(
+                tr("tool.project_workbench.confirm_delete_title"),
+                tr("tool.project_workbench.confirm_delete_msg").format(name=basename),
+                default="no"):
+            return
+        if not self.project.delete_manifest(basename):
+            messagebox.showerror("VideoCraft", f"Delete failed: {basename}")
+            return
+        # If the workbench is showing this manifest, clear it
+        wb = self._get_workbench_app()
+        if wb is not None and wb.current_basename == basename:
+            wb.load_manifest(None)
+        self._refresh_project_tab()
+
+    def _get_workbench_app(self) -> "object | None":
+        """Returns the live ProjectWorkbenchApp if its tab is open, else None."""
+        tf = self._tab_frames.get("project-workbench")
+        if tf is None:
+            return None
+        for inst in self._tool_instances:
+            if getattr(inst, "master", None) is tf:
+                return inst
+        return None
+
+    def _open_or_focus_workbench(self, basename: "str | None"):
+        """Open the workbench tab if not yet open and load the given manifest;
+        otherwise focus the existing tab and switch its loaded manifest."""
+        if "project-workbench" in self._tab_frames:
+            self._select_tab("project-workbench")
+            self._show_tabs()
+            wb = self._get_workbench_app()
+            if wb is not None:
+                wb.load_manifest(basename)
+            return
+        # Open via the standard tool path, passing initial_basename
+        cfg = TOOL_MAP["project-workbench"]
+        file_path = os.path.join(_SRC, cfg["file"])
+        self._open_in_tab(file_path, cfg["class"], "project-workbench",
+                          initial_basename=basename)
 
     def _schedule_auto_refresh(self):
         """每 2 秒检查文件夹变化，有变化时自动刷新 Sidebar。"""
@@ -781,7 +982,8 @@ class VideoCraftHub:
 
     # ── 工具启动 ──────────────────────────────────────────────────────────────
 
-    def open_tool(self, key: str, initial_file: str | None = None):
+    def open_tool(self, key: str, initial_file: str | None = None,
+                  initial_basename: str | None = None):
         cfg = TOOL_MAP.get(key)
         if cfg is None:
             messagebox.showerror("错误", f"未知工具：{key}")
@@ -796,7 +998,8 @@ class VideoCraftHub:
             self._open_subprocess(file_path, initial_file=initial_file)
         else:
             self._open_in_tab(file_path, cfg["class"], key,
-                              initial_file=initial_file)
+                              initial_file=initial_file,
+                              initial_basename=initial_basename)
 
     def _open_toplevel(self, file_path: str, class_name: str, initial_file: str | None = None):
         try:
@@ -816,7 +1019,8 @@ class VideoCraftHub:
             messagebox.showerror("启动失败", str(e))
 
     def _open_in_tab(self, file_path: str, class_name: str, tool_key: str,
-                     initial_file: str | None = None):
+                     initial_file: str | None = None,
+                     initial_basename: str | None = None):
         # 去重：已打开则直接切换
         if tool_key in self._tab_registry:
             self._select_tab(tool_key)
@@ -836,7 +1040,20 @@ class VideoCraftHub:
             assert tab_bar is not None
             tf._set_status_cb = lambda s, k=tool_key: tab_bar.set_status(k, s)
 
-            app = cls(tf, initial_file=initial_file) if initial_file else cls(tf)
+            # The workbench accepts initial_basename and benefits from being
+            # told about the active project upfront. Other tools just take
+            # initial_file (or nothing).
+            kwargs: dict = {}
+            if initial_file is not None:
+                kwargs["initial_file"] = initial_file
+            if tool_key == "project-workbench":
+                if initial_basename is not None:
+                    kwargs["initial_basename"] = initial_basename
+                # Bootstrap the workbench with the Hub's active project so it
+                # doesn't have to discover one from initial_file.
+                if self.project is not None and "initial_file" not in kwargs:
+                    kwargs["initial_file"] = self.project.folder
+            app = cls(tf, **kwargs) if kwargs else cls(tf)
 
             label = tf._tool_title or class_name
             tab_bar.add_tab(tool_key, label, status="idle")
