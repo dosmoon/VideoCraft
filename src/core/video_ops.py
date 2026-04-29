@@ -64,6 +64,16 @@ def extract_mp3(video_path: str, output_path: str = None,
     return output_path
 
 
+def _hms_to_seconds(s: str) -> float:
+    """Parse 'HH:MM:SS', 'HH:MM:SS.mmm', 'MM:SS', or seconds → float seconds."""
+    parts = (s or "").strip().split(":")
+    if len(parts) == 3:
+        return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+    if len(parts) == 2:
+        return int(parts[0]) * 60 + float(parts[1])
+    return float(parts[0]) if parts and parts[0] else 0.0
+
+
 def extract_clip(video_path: str, start: str, end: str,
                  output_path: str = None,
                  progress_callback: Optional[Callable] = None) -> str:
@@ -71,6 +81,11 @@ def extract_clip(video_path: str, start: str, end: str,
     快速提取视频片段（stream copy，无重编码）。
     start / end 格式：HH:MM:SS 或 HH:MM:SS.mmm
     返回输出路径。
+
+    实现注意：用 ``-t <duration>`` 而非 ``-to <end>``。当 ``-ss`` 在 ``-i``
+    之前时（input seeking，速度快），``-to`` 是相对**输出**起点的时间，会
+    导致最终长度等于 end - 0，而不是 end - start。``-t`` 始终是持续时间，
+    无歧义。video_tools.py:270 也是这么写的。
     """
     if output_path is None:
         base, ext = os.path.splitext(video_path)
@@ -81,10 +96,11 @@ def extract_clip(video_path: str, start: str, end: str,
     if progress_callback:
         progress_callback("开始提取片段...")
 
+    duration = max(0.0, _hms_to_seconds(end) - _hms_to_seconds(start))
     cmd = [
         "ffmpeg",
         "-ss", start, "-i", video_path,
-        "-to", end,
+        "-t", f"{duration:.3f}",
         "-c", "copy",
         "-avoid_negative_ts", "make_zero",
         output_path, "-y",
