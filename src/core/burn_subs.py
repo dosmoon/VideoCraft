@@ -147,8 +147,7 @@ def burn_subtitles(
 
     show_sub1 = bool(sub1_path)
     show_sub2 = bool(sub2_path)
-    if not (show_sub1 or show_sub2):
-        raise ValueError("burn_subtitles needs at least one subtitle file")
+    # No-subs path is allowed: caller may want only watermark/date burn-in.
 
     # Pre-split long lines so they don't overflow the frame. Without this,
     # one-liners that exceed the frame width get cropped — the burn looks

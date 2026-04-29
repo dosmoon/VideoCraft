@@ -31,6 +31,9 @@ from core.translate import SUPPORTED_LANGUAGES, translate_srt_file
 from core.video_ops import extract_clip
 from core.burn_subs import burn_subtitles
 from core.srt_ops import generate_subtitle_pack, write_subtitle_pack
+from core.segment_model import load_from_file as load_segments_file
+from core.video_concat import split_segments
+from core.video_split import SplitMode
 from core import burn_presets
 
 
@@ -109,6 +112,20 @@ def _burn_to_preset(burn: dict) -> dict:
 _ASR_MAX_BYTES = 100 * 1024 * 1024
 # Bitrate ladder used when the prepared mp3 is still over the size limit.
 _AUDIO_BITRATE_LADDER = ["128k", "64k", "32k", "16k"]
+
+
+def _video_duration_seconds(path: str) -> float:
+    """ffprobe → duration in seconds. 0.0 if unreadable."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            capture_output=True, encoding="utf-8", errors="replace",
+            timeout=30,
+        )
+        return float(out.stdout.strip()) if out.returncode == 0 else 0.0
+    except (ValueError, OSError, subprocess.TimeoutExpired):
+        return 0.0
 
 
 def _ffmpeg_to_mp3(src: str, dst: str, bitrate: str) -> None:
@@ -210,7 +227,8 @@ _KNOWN_FIELDS: dict[str, list[str]] = {
                         "date_text", "date_color", "date_fontsize", "date_alpha",
                         "encode_preset", "output"],
     "step5_pack":      ["enabled", "status", "source_srt", "output"],
-    "step6_split":     ["enabled", "status"],
+    "step6_split":     ["enabled", "status", "source_video", "segments_file",
+                        "split_mode", "output"],
 }
 
 # Field type per (step, field). Drives widget choice in _add_field.
@@ -260,6 +278,10 @@ _FIELD_TYPE: dict[tuple[str, str], str] = {
     ("step4_burn", "output"):            "readonly_list",
     ("step5_pack", "source_srt"):        "filepath",
     ("step5_pack", "output"):            "readonly_list",
+    ("step6_split", "source_video"):     "filepath",
+    ("step6_split", "segments_file"):    "filepath",
+    ("step6_split", "split_mode"):       "preset",
+    ("step6_split", "output"):           "readonly_list",
 }
 
 # Range / default config for int / float / color / enum field types.
@@ -289,7 +311,24 @@ _FIELD_CONFIG: dict[tuple[str, str], dict] = {
                                           "default": "veryfast"},
     ("step4_burn", "orientation"):      {"choices": ["auto", "horizontal", "vertical"],
                                           "default": "auto"},
+    ("step6_split", "split_mode"):      {"choices": ["keyframe_snap", "fast", "accurate"],
+                                          "default": "keyframe_snap"},
 }
+
+# Inline hints rendered under specific fields to explain auto-chain behavior.
+# Without this, users see empty filepath fields and worry the chain won't
+# actually fill them at run time.
+_FIELD_HINTS: dict[tuple[str, str], str] = {
+    ("step2_asr", "source"):           "tool.project_workbench.hint.chain_video",
+    ("step3_translate", "source_srt"): "tool.project_workbench.hint.chain_srt",
+    ("step4_burn", "source_video"):    "tool.project_workbench.hint.chain_video",
+    ("step4_burn", "sub1_path"):       "tool.project_workbench.hint.burn_sub1",
+    ("step4_burn", "sub2_path"):       "tool.project_workbench.hint.burn_sub2",
+    ("step5_pack", "source_srt"):      "tool.project_workbench.hint.chain_srt",
+    ("step6_split", "source_video"):   "tool.project_workbench.hint.chain_video",
+    ("step6_split", "segments_file"):  "tool.project_workbench.hint.chain_segments",
+}
+
 
 # Section structure for step4_burn (very long card — broken into groups for
 # readability). Each entry: (section_label_key, [field_names_in_order]).
@@ -318,7 +357,7 @@ _STATUS_VALUES = ["pending", "running", "done", "failed"]
 
 # Steps that can be run from the workbench in M2.
 _RUNNABLE_STEPS = {"step1_download", "step1_5_select", "step2_asr",
-                   "step3_translate", "step4_burn", "step5_pack"}
+                   "step3_translate", "step4_burn", "step5_pack", "step6_split"}
 
 def _parse_hms(s: str) -> tuple[int, int, int]:
     """Parse 'HH:MM:SS' (or sloppy variants) → (h, m, s). Returns (0,0,0) on
@@ -664,6 +703,7 @@ class ProjectWorkbenchApp(ToolBase):
                 "step3_translate": "tool.project_workbench.run_translate",
                 "step4_burn":      "tool.project_workbench.run_burn",
                 "step5_pack":      "tool.project_workbench.run_pack",
+                "step6_split":     "tool.project_workbench.run_split",
             }[step_key]
             btn = tk.Button(header, text=tr(run_label_key),
                             command=lambda sk=step_key: self._on_run_step(sk))
@@ -825,6 +865,12 @@ class ProjectWorkbenchApp(ToolBase):
                 var.set(path)
         tk.Button(wrap, text=tr("tool.project_workbench.browse"),
                   command=browse).grid(row=0, column=1, padx=(4, 0))
+        hint_key = _FIELD_HINTS.get((step_key, field))
+        if hint_key:
+            tk.Label(wrap, text=tr(hint_key), bg=S["card_bg"],
+                     fg=S["section_fg"], font=S["section_font"],
+                     anchor="w", justify="left").grid(
+                row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
         var.trace_add("write", lambda *_: self._on_field_change(step_key, field, var.get()))
         if step_key in _RUNNABLE_STEPS:
             var.trace_add("write", lambda *_: self._refresh_run_state(step_key))
@@ -1101,6 +1147,15 @@ class ProjectWorkbenchApp(ToolBase):
         step = self._buffer.setdefault(step_key, {})
         step[field] = value
         self._mark_dirty()
+        # Field changes can flip Run All eligibility (e.g. user enables a
+        # step or pastes a URL); refresh the umbrella button alongside
+        # per-step buttons (which are refreshed by their own traces).
+        self._refresh_run_all_state()
+        # Cross-step visibility: enabling/disabling step1_download or
+        # step1_5_select changes the resolved chain for downstream steps,
+        # so refresh ALL runnable buttons, not just this step's.
+        for sk in _RUNNABLE_STEPS:
+            self._refresh_run_state(sk)
 
     def _mark_dirty(self) -> None:
         if not self._dirty:
@@ -1242,6 +1297,25 @@ class ProjectWorkbenchApp(ToolBase):
         top = str(self._buffer.get("source", "")).strip()
         if top:
             return self._abspath(top)
+        return None
+
+    def _resolve_segments_file(self, step_key: str) -> str | None:
+        """Find the segments .txt this step should consume.
+
+        1. Explicit `segments_file` on this step (override)
+        2. step5_pack output's `-segments.txt` when enabled+done
+        3. None
+        """
+        if self._buffer is None:
+            return None
+        own = str(self._buffer.get(step_key, {}).get("segments_file", "")).strip()
+        if own:
+            return self._abspath(own)
+        pack = self._buffer.get("step5_pack", {}) or {}
+        if pack.get("enabled") and pack.get("status") == "done":
+            for path in (pack.get("output", []) or []):
+                if str(path).lower().endswith("-segments.txt"):
+                    return self._abspath(str(path))
         return None
 
     def _resolve_video_input(self, step_key: str) -> str | None:
@@ -1386,11 +1460,16 @@ class ProjectWorkbenchApp(ToolBase):
         elif step_key == "step4_burn":
             if self._resolve_video_input(step_key) is None:
                 return "no input video"
-            if self._resolve_burn_sub1() is None:
-                return "no input subtitle (sub1)"
+            # No-subs case allowed (watermark-only burn).
         elif step_key == "step5_pack":
             if self._resolve_srt_input(step_key) is None:
                 return "no input SRT — run step2_asr or set step5_pack.source_srt"
+        elif step_key == "step6_split":
+            if self._resolve_video_input(step_key) is None:
+                return "no input video"
+            if self._resolve_segments_file(step_key) is None:
+                return ("no segments file — run step5_pack first or set "
+                        "step6_split.segments_file")
         return None
 
     def _refresh_run_state(self, step_key: str) -> None:
@@ -1403,10 +1482,15 @@ class ProjectWorkbenchApp(ToolBase):
             return
         reason = self._check_run_prereqs(step_key)
         if reason is None:
-            btn.config(bg="SystemButtonFace", fg="black")
+            # Ready: blue/white, obviously clickable (matches Run All visual).
+            btn.config(bg="#2563eb", fg="white",
+                       activebackground="#1d4ed8", activeforeground="white",
+                       relief="flat")
         else:
             # Faded look (still clickable). On click user sees the reason.
-            btn.config(bg="#e5e7eb", fg="#9ca3af")
+            btn.config(bg="#e5e7eb", fg="#9ca3af",
+                       activebackground="#d1d5db", activeforeground="#6b7280",
+                       relief="flat")
 
     def _on_run_step(self, step_key: str) -> None:
         if (self.project is None or self._buffer is None
@@ -1444,6 +1528,8 @@ class ProjectWorkbenchApp(ToolBase):
             self._run_burn(basename)
         elif step_key == "step5_pack":
             self._run_pack(basename)
+        elif step_key == "step6_split":
+            self._run_split(basename)
 
     def _begin_busy(self, step_key: str, basename: str, status_msg: str) -> dict:
         """Mark step running on disk, refresh UI, and return the manifest."""
@@ -1906,22 +1992,65 @@ class ProjectWorkbenchApp(ToolBase):
 
     # ── Step 4: Burn subtitles ───────────────────────────────────────────────
 
+    def _srt_from_step(self, step_key: str) -> str | None:
+        """First .srt in a done step's output list, abs path. None otherwise."""
+        if self._buffer is None:
+            return None
+        s = self._buffer.get(step_key, {}) or {}
+        if not (s.get("enabled") and s.get("status") == "done"):
+            return None
+        for path in (s.get("output", []) or []):
+            if str(path).lower().endswith(".srt"):
+                return self._abspath(str(path))
+        return None
+
     def _resolve_burn_sub1(self) -> str | None:
-        """Sub1 (primary) — own override or fall back to most-recent SRT."""
+        """Sub1 (top, translated). Returned only when bilingual (both ASR and
+        translate done) — a lone subtitle should sit on the bottom track, so
+        single-language case routes to sub2 instead. User override always wins.
+        """
         if self._buffer is None:
             return None
         own = str(self._buffer.get("step4_burn", {}).get("sub1_path", "")).strip()
         if own:
             return self._abspath(own)
-        return self._resolve_srt_input("step4_burn")
+        asr = self._srt_from_step("step2_asr")
+        tr_ = self._srt_from_step("step3_translate")
+        if asr and tr_:
+            return tr_
+        return None
+
+    def _resolve_burn_sub2(self) -> str | None:
+        """Sub2 (bottom, original). Bilingual case: ASR. Single-language case:
+        whichever SRT exists (translation alone or ASR alone) — lone subtitle
+        always goes to bottom track. User override always wins.
+        """
+        if self._buffer is None:
+            return None
+        own = str(self._buffer.get("step4_burn", {}).get("sub2_path", "")).strip()
+        if own:
+            return self._abspath(own)
+        asr = self._srt_from_step("step2_asr")
+        tr_ = self._srt_from_step("step3_translate")
+        if asr and tr_:
+            return asr
+        # Single-language fallback: prefer translation, then ASR, then top-level
+        if tr_:
+            return tr_
+        if asr:
+            return asr
+        # Top-level source pointing at an .srt
+        top = str(self._buffer.get("source", "")).strip()
+        if top and top.lower().endswith(".srt"):
+            return self._abspath(top)
+        return None
 
     def _run_burn(self, basename: str) -> None:
         assert self.project is not None and self._buffer is not None
         step = self._buffer["step4_burn"]
         video = self._resolve_video_input("step4_burn")
         sub1 = self._resolve_burn_sub1()
-        sub2 = str(step.get("sub2_path", "")).strip()
-        sub2 = self._abspath(sub2) if sub2 else None
+        sub2 = self._resolve_burn_sub2()
 
         if not video:
             messagebox.showerror("Error",
@@ -1929,21 +2058,11 @@ class ProjectWorkbenchApp(ToolBase):
                 "/ step4_burn.source_video / top-level source")
             self._abort_chain()
             return
-        if not sub1:
-            messagebox.showerror("Error",
-                "Cannot resolve primary subtitle — set step2_asr / "
-                "step3_translate / step4_burn.sub1_path")
-            self._abort_chain()
-            return
-        for path, name in ((video, "video"), (sub1, "sub1")):
-            if not os.path.exists(path):
+        for path, name in ((video, "video"), (sub1, "sub1"), (sub2, "sub2")):
+            if path and not os.path.exists(path):
                 messagebox.showerror("Error", f"{name} not found:\n{path}")
                 self._abort_chain()
                 return
-        if sub2 and not os.path.exists(sub2):
-            messagebox.showerror("Error", f"sub2 not found:\n{sub2}")
-            self._abort_chain()
-            return
 
         # Output: <project>/<basename>_subbed_<tag>.mp4 with tag = inferred
         # ISO from sub1 (and +sub2 ISO when bilingual), matching the legacy
@@ -2087,6 +2206,90 @@ class ProjectWorkbenchApp(ToolBase):
                               "failed", {"error": str(e)},
                               tr("tool.project_workbench.status.pack_failed",
                                  basename=basename, e=e))
+
+    # ── Step 6: Long-video split ─────────────────────────────────────────────
+
+    def _run_split(self, basename: str) -> None:
+        assert self.project is not None and self._buffer is not None
+        step = self._buffer["step6_split"]
+        video = self._resolve_video_input("step6_split")
+        seg_file = self._resolve_segments_file("step6_split")
+        if not video:
+            messagebox.showerror("Error", "no input video for step6_split")
+            self._abort_chain()
+            return
+        if not seg_file:
+            messagebox.showerror("Error", "no segments file for step6_split")
+            self._abort_chain()
+            return
+        if not os.path.exists(video):
+            messagebox.showerror("Error", f"Video not found:\n{video}")
+            self._abort_chain()
+            return
+        if not os.path.exists(seg_file):
+            messagebox.showerror("Error", f"Segments file not found:\n{seg_file}")
+            self._abort_chain()
+            return
+        try:
+            segments = load_segments_file(seg_file)
+        except Exception as e:
+            messagebox.showerror("Error", f"Parse segments failed: {e}")
+            self._abort_chain()
+            return
+        if not segments:
+            messagebox.showerror("Error", "Segments file is empty")
+            self._abort_chain()
+            return
+        mode_str = str(step.get("split_mode", "keyframe_snap")).lower()
+        mode_map = {"keyframe_snap": SplitMode.KEYFRAME_SNAP,
+                    "fast": SplitMode.FAST,
+                    "accurate": SplitMode.ACCURATE}
+        mode = mode_map.get(mode_str, SplitMode.KEYFRAME_SNAP)
+        out_dir = os.path.join(self.project.folder, "splits")
+        self._begin_busy(
+            "step6_split", basename,
+            tr("tool.project_workbench.status.split_start", basename=basename))
+        threading.Thread(
+            target=self._split_worker,
+            args=(basename, video, segments, mode, out_dir),
+            daemon=True,
+        ).start()
+
+    def _split_worker(self, basename: str, video: str, segments: list,
+                      mode, out_dir: str) -> None:
+        try:
+            self.master.after(
+                0, self._status_var.set,
+                tr("tool.project_workbench.status.split_probing",
+                   basename=basename))
+            duration = _video_duration_seconds(video)
+            if duration <= 0:
+                raise RuntimeError("Cannot read video duration via ffprobe")
+            on_probe = lambda: self.master.after(
+                0, self._status_var.set,
+                tr("tool.project_workbench.status.split_keyframes",
+                   basename=basename))
+            progress = lambda done, total: self.master.after(
+                0, self._status_var.set,
+                tr("tool.project_workbench.status.split_progress",
+                   basename=basename, done=done, total=total))
+            outputs = split_segments(
+                video, segments, list(range(len(segments))),
+                duration, out_dir,
+                progress_cb=progress, mode=mode, on_probe_start=on_probe,
+            )
+            rel = [self._project_relpath(p) for p in outputs]
+            self.master.after(
+                0, self._finish_step, "step6_split", basename, "done",
+                {"output": rel, "error": None, "count": len(outputs)},
+                tr("tool.project_workbench.status.split_done",
+                   basename=basename, count=len(outputs)))
+        except Exception as e:
+            self.master.after(
+                0, self._finish_step, "step6_split", basename, "failed",
+                {"error": str(e)},
+                tr("tool.project_workbench.status.split_failed",
+                   basename=basename, e=e))
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
