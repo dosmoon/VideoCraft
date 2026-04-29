@@ -20,7 +20,7 @@ DEFAULT_LAYOUT: dict = {
     "zoomed":        True,         # start maximized by default
     "sidebar_width": 320,          # horizontal PanedWindow sash (sidebar width)
     "log_height":    90,           # bottom log panel height
-    "sidebar_tab":   "resources",  # selected sidebar tab — "resources" | "project"
+    "sidebar_tab":   "project",    # selected sidebar tab — "project" | "resources"
 }
 
 

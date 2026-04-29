@@ -227,9 +227,9 @@ class VideoCraftHub:
             if self._layout_store.get("zoomed", True):
                 self.root.state("zoomed")
 
-            # Restore last-selected sidebar tab
-            saved_tab = self._layout_store.get("sidebar_tab", "resources")
-            if saved_tab == "project":
+            # Restore last-selected sidebar tab. Tab order: 0=project, 1=resources.
+            saved_tab = self._layout_store.get("sidebar_tab", "project")
+            if saved_tab == "resources":
                 try:
                     self._sidebar_nb.select(1)
                 except Exception:
@@ -256,9 +256,9 @@ class VideoCraftHub:
             log_h = max(60, min(raw_log_h, win_h // 2))
             try:
                 idx = self._sidebar_nb.index(self._sidebar_nb.select())
-                sidebar_tab = "project" if idx == 1 else "resources"
+                sidebar_tab = "resources" if idx == 1 else "project"
             except Exception:
-                sidebar_tab = "resources"
+                sidebar_tab = "project"
             payload = {
                 "geometry":      self.root.geometry(),
                 "zoomed":        zoomed,
@@ -455,7 +455,12 @@ class VideoCraftHub:
         self._sidebar_nb = ttk.Notebook(sidebar_frame)
         self._sidebar_nb.pack(fill="both", expand=True)
 
-        # ===== Resources tab — file browser (the original sidebar) =====
+        # ===== Project tab — manifest list (index 0 — primary entry point) =====
+        prj_tab = tk.Frame(self._sidebar_nb, bg="#f5f5f5")
+        self._sidebar_nb.add(prj_tab, text=tr("hub.sidebar.tab.project"))
+        self._build_project_tab(prj_tab)
+
+        # ===== Resources tab — file browser (index 1) =====
         res_tab = tk.Frame(self._sidebar_nb, bg="#f5f5f5")
         self._sidebar_nb.add(res_tab, text=tr("hub.sidebar.tab.resources"))
 
@@ -478,11 +483,6 @@ class VideoCraftHub:
         self._tree.bind("<Double-1>", self._on_tree_double_click)
         self._tree.bind("<Button-3>", self._on_tree_right_click)
         self._tree.bind("<<TreeviewOpen>>", self._on_tree_open)
-
-        # ===== Project tab — manifest list =====
-        prj_tab = tk.Frame(self._sidebar_nb, bg="#f5f5f5")
-        self._sidebar_nb.add(prj_tab, text=tr("hub.sidebar.tab.project"))
-        self._build_project_tab(prj_tab)
 
         # ── 右：内容区 ──
         self._content = tk.Frame(self._pane, bg="white")
