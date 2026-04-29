@@ -185,6 +185,14 @@ class Project:
     def manifest_path(self, basename: str) -> str:
         return os.path.join(self.manifest_dir(), f"{basename}.json")
 
+    def unit_dir(self, basename: str) -> str:
+        """Return <folder>/<basename>/, creating it on demand. All artifacts
+        for a given manifest live inside this folder so several manifests in
+        one project don't collide and the file browser shows clean grouping."""
+        path = os.path.join(self.folder, basename)
+        os.makedirs(path, exist_ok=True)
+        return path
+
     def load_manifest(self, basename: str) -> dict | None:
         path = self.manifest_path(basename)
         if not os.path.exists(path):

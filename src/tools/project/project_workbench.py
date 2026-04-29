@@ -804,7 +804,7 @@ class ProjectWorkbenchApp(ToolBase):
         ent = tk.Entry(wrap, textvariable=var, font=S["value_font"])
         ent.grid(row=0, column=0, sticky="ew")
         def browse():
-            initial = var.get() or (self.project.folder if self.project else "")
+            initial = var.get() or self._browse_initial_dir()
             if os.path.isfile(initial):
                 initial = os.path.dirname(initial)
             path = filedialog.askopenfilename(initialdir=initial)
@@ -1094,7 +1094,7 @@ class ProjectWorkbenchApp(ToolBase):
         ent = tk.Entry(wrap, textvariable=var, font=S["value_font"])
         ent.grid(row=0, column=0, sticky="ew")
         def browse():
-            initial = (self.project.folder if self.project else "")
+            initial = self._browse_initial_dir()
             path = filedialog.askopenfilename(initialdir=initial)
             if path:
                 var.set(path)
@@ -1597,10 +1597,12 @@ class ProjectWorkbenchApp(ToolBase):
                               tr("tool.project_workbench.status.download_done",
                                  basename=basename))
             return
-        # URL mode: yt-dlp download into project folder. Raw download takes
-        # the `_raw` suffix so step2's trimmed unit can occupy the canonical
-        # `<basename>.mp4` slot (which is what every downstream step consumes).
-        out_template = os.path.join(self.project.folder, f"{basename}_raw.%(ext)s")
+        # URL mode: yt-dlp download into the manifest's unit folder. Raw
+        # download takes the `_raw` suffix so step2's trimmed unit can
+        # occupy the canonical `<basename>.mp4` slot (which is what every
+        # downstream step consumes).
+        out_template = os.path.join(self.project.unit_dir(basename),
+                                    f"{basename}_raw.%(ext)s")
         self._begin_busy("step1_download", basename, f"Download running: {basename}")
         threading.Thread(
             target=self._download_worker,
@@ -1678,12 +1680,12 @@ class ProjectWorkbenchApp(ToolBase):
             self._abort_chain()
             return
         # step2 produces the canonical processing unit — exactly one output
-        # at the project root, named `<basename>.<ext>`. Multi-output flows
+        # in the unit folder, named `<basename>.<ext>`. Multi-output flows
         # (e.g. several variants of the same source) belong in separate
         # manifests; otherwise the chain semantics break down because every
         # downstream resolver assumes output[0] is "the" working file.
         ext = os.path.splitext(source)[1] or ".mp4"
-        output = os.path.join(self.project.folder, f"{basename}{ext}")
+        output = os.path.join(self.project.unit_dir(basename), f"{basename}{ext}")
         self._begin_busy("step1_5_select", basename, f"Clip running: {basename}")
         threading.Thread(
             target=self._select_worker,
@@ -1726,10 +1728,9 @@ class ProjectWorkbenchApp(ToolBase):
             self._abort_chain()
             return
         lang_iso = asr.get("language") or None
-        out_dir = os.path.join(self.project.folder, "subtitles")
-        os.makedirs(out_dir, exist_ok=True)
         suffix = lang_iso or "auto"
-        output_srt = os.path.join(out_dir, f"{basename}_{suffix}.srt")
+        output_srt = os.path.join(self.project.unit_dir(basename),
+                                  f"{basename}_{suffix}.srt")
 
         language_hint: str | None = None
         if lang_iso and lang_iso in SUPPORTED_LANGUAGES and lang_iso != "auto":
@@ -1750,7 +1751,8 @@ class ProjectWorkbenchApp(ToolBase):
             # Always normalize through ffmpeg → mp3 ≤100MB. Lemonfox's upload
             # cap is 100MB; even when the source is already an mp3, we don't
             # know its bitrate, so we re-encode for predictability.
-            prep_path = os.path.join(self.project.folder, f"{basename}.mp3")
+            prep_path = os.path.join(self.project.unit_dir(basename),
+                                     f"{basename}.mp3")
             on_status = lambda msg: self.master.after(
                 0, self._step_status,
                 tr("tool.project_workbench.status.asr_audio_prep",
@@ -2062,7 +2064,7 @@ class ProjectWorkbenchApp(ToolBase):
             if m and m.group(1) not in tags:
                 tags.append(m.group(1))
         suffix = "_" + "+".join(tags) if tags else ""
-        output = os.path.join(self.project.folder,
+        output = os.path.join(self.project.unit_dir(basename),
                               f"{basename}_subbed{suffix}.mp4")
 
         # Resolve image watermark path (relative to project)
@@ -2161,7 +2163,7 @@ class ProjectWorkbenchApp(ToolBase):
             return
         # Output base: <project>/<basename>_pack — write_subtitle_pack will
         # append .json / -titles.txt / -segments.txt / -refined.txt
-        base = os.path.join(self.project.folder, f"{basename}_pack")
+        base = os.path.join(self.project.unit_dir(basename), f"{basename}_pack")
         self._begin_busy("step5_pack", basename, f"Pack running: {basename}")
         threading.Thread(
             target=self._pack_worker,
@@ -2233,7 +2235,7 @@ class ProjectWorkbenchApp(ToolBase):
                     "fast": SplitMode.FAST,
                     "accurate": SplitMode.ACCURATE}
         mode = mode_map.get(mode_str, SplitMode.KEYFRAME_SNAP)
-        out_dir = os.path.join(self.project.folder, "splits")
+        out_dir = os.path.join(self.project.unit_dir(basename), "splits")
         self._begin_busy(
             "step6_split", basename,
             tr("tool.project_workbench.status.split_start", basename=basename))
@@ -2280,6 +2282,19 @@ class ProjectWorkbenchApp(ToolBase):
                    basename=basename, e=e))
 
     # ── Helpers ──────────────────────────────────────────────────────────────
+
+    def _browse_initial_dir(self) -> str:
+        """Initial directory for filedialog Browse buttons. Prefers the
+        current manifest's unit folder so users land on artifacts they're
+        likely picking; falls back to project root, then empty string."""
+        if self.project is None:
+            return ""
+        if self._current_basename:
+            try:
+                return self.project.unit_dir(self._current_basename)
+            except Exception:
+                pass
+        return self.project.folder
 
     def _project_relpath(self, path: str) -> str:
         if self.project is None:
