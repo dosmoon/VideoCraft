@@ -1638,8 +1638,10 @@ class ProjectWorkbenchApp(ToolBase):
                               tr("tool.project_workbench.status.download_done",
                                  basename=basename))
             return
-        # URL mode: yt-dlp download into project folder.
-        out_template = os.path.join(self.project.folder, f"{basename}.%(ext)s")
+        # URL mode: yt-dlp download into project folder. Raw download takes
+        # the `_raw` suffix so step2's trimmed unit can occupy the canonical
+        # `<basename>.mp4` slot (which is what every downstream step consumes).
+        out_template = os.path.join(self.project.folder, f"{basename}_raw.%(ext)s")
         self._begin_busy("step1_download", basename, f"Download running: {basename}")
         threading.Thread(
             target=self._download_worker,
@@ -1716,10 +1718,13 @@ class ProjectWorkbenchApp(ToolBase):
             messagebox.showerror("Error", f"Source not found:\n{source}")
             self._abort_chain()
             return
-        units_dir = os.path.join(self.project.folder, "units")
-        os.makedirs(units_dir, exist_ok=True)
+        # step2 produces the canonical processing unit — exactly one output
+        # at the project root, named `<basename>.<ext>`. Multi-output flows
+        # (e.g. several variants of the same source) belong in separate
+        # manifests; otherwise the chain semantics break down because every
+        # downstream resolver assumes output[0] is "the" working file.
         ext = os.path.splitext(source)[1] or ".mp4"
-        output = os.path.join(units_dir, f"{basename}{ext}")
+        output = os.path.join(self.project.folder, f"{basename}{ext}")
         self._begin_busy("step1_5_select", basename, f"Clip running: {basename}")
         threading.Thread(
             target=self._select_worker,
