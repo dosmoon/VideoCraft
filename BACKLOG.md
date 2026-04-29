@@ -21,7 +21,7 @@
 
 | 优先级 | 状态 | 功能 | 说明 |
 |--------|------|------|------|
-| 🟡 P2 | [~] | 视频加水印 | 🟡 水印能力已在 subtitle_tool 烧录流程中实现（图片/文字/日期三种，位置透明度可配置）；待拆成独立工具或允许空字幕场景下使用 |
+| 🟡 P2 | [x] | 视频加水印（含无字幕场景） | 烧录功能已支持图片/文字/日期三类水印 + 无字幕场景（仅水印或纯重编码）。作为独立工具的提案不再追，新工作台烧录步骤已覆盖。 |
 | 🟡 P2 | [ ] | SRT 时间轴整体偏移 | 字幕和视频对不上时，整体向前/向后偏移指定秒数 |
 | 🟡 P2 | [ ] | SRT 格式转换 | SRT ↔ VTT / ASS，不同平台（B站/YouTube/剪映）格式要求不同（注：word_subtitle 可生成 ASS 卡拉OK效果，但非通用格式转换） |
 | 🟡 P2 | [ ] | yt-dlp 下载时同步获取字幕 | yt-dlp 原生支持，加一个"同时下载字幕"选项，省去手动转录步骤 |
@@ -50,6 +50,7 @@
 
 | 完成时间 | 功能 | 备注 |
 |---------|------|------|
+| 2026-04 末 | 项目工作台 M1+：manifest 数据层 + 7-step 调度器 + 命名约定 freeze | (a) `Project` 加 manifest 助手（`.videocraft/manifests/<basename>.json`）+ 自动迁移老字段（`url→source`、顶层 `source` 折进 step1）；(b) 新工具 `tools/project/project_workbench.py`：左侧 manifest 树 + 右侧 7 个 step 卡（download / select / asr / translate / burn / pack / split），顶部状态栏带 `[Step N · Label]` 前缀；(c) step1 单字段 `source` 自动判 URL/本地（http(s) 走 yt-dlp，否则原地登记不复制）；step1→`<basename>_raw.mp4`，step2→canonical `<basename>.mp4`（项目根，约定**单输出**），多变体走多 manifest；(d) 自动接线 resolver：视频走最近 done step、字幕走 step3 译文优先 + step2 ASR 兜底，烧录字幕双轨智能路由（双语→上译下原；单语→落下轨）；(e) 烧录无字幕场景放行（仅水印/日期），ffmpeg 流式进度回写百分比；(f) UX：色带卡片头 + 强 section 分割、日期 today/clear 按钮、字段链路 hint、combobox/spinbox 隔离不再误滚表单。M2 待办：step2 多段拣选 UI（复用 `split_workbench` 播放器） |
 | 2026-04 末 | Project 元数据迁入 `.videocraft/` 隐藏目录 | 仿 VSCode 的 `.vscode/` 范式，`videocraft.json` 改写到 `.videocraft/project.json`，避免和素材文件混在文件夹根。`Project.open()` 加一次性迁移：检测到旧根级 `videocraft.json` 则把内容搬入新位置并删除旧文件；`get_files()` 隐藏 `.videocraft/` 目录避免出现在 Sidebar。docs（02-project-model / 00-overview / 03-ui-hub / 05-use-cases）同步 |
 | 2026-04 末 | 字幕一键 pack + AI Console 重做（两段式 + 模型 Picker）| 四件事打包：(a) 新增 `subtitle.pack` prompt + `core.srt_ops.generate_subtitle_pack()` + `write_subtitle_pack()`，一次 `ai.complete_json()` 调用产出 titles + segments + refined，落 1 份 JSON + 3 份 TXT（`-titles` / `-segments` / `-refined`），新菜单项「一键分段+精炼+标题（结构化）」；(b) Router task 合并：`subtitle.segments / refine / titles` 三条冗余 routing → 单一 `subtitle.post`，加迁移函数自动清理旧 providers.json 条目；(c) AI 控制台 Routing 标签从 (provider × model) × task 矩阵改为「上：Task Routing 4 行下拉 / 下：Providers 紧凑列表」两段式，同时修掉滚轮全局绑定渗透到 modal Edit 对话框的 bug；(d) LLM Edit 对话框模型部分由 textarea 改为「已启用模型 Listbox + 模型 Picker 对话框」——Picker 带搜索 + 复选 + 手动添加入口，无 key 或 list_models 失败时仍可手动加，解决 Gemini 一次刷新糊 20+ 模型的痛点。commits 813b7eb / f25614f / 9f1c939 |
 | 2026-04-18 | subprocess 编码统一 | Windows 下 text-mode subprocess 默认走 GBK，ffmpeg/ffprobe 输出含非 ASCII UTF-8 字节（如 0xb4）时 `_readerthread` 抛 `UnicodeDecodeError`；异常死在线程里被吞掉，表面功能无感但 stdout/stderr 内容静默丢失，对依赖输出解析的调用（ffprobe 时长/JSON、分辨率探测、ffmpeg stderr 诊断）是未爆雷。统一 13 处 text-mode 调用点为 `encoding="utf-8", errors="replace"`，对齐 slidev_pipeline / video_concat 等新代码风格。commit 075a1cb |
