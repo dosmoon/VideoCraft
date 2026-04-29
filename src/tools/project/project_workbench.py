@@ -474,12 +474,14 @@ class ProjectWorkbenchApp(ToolBase):
                                       activeforeground="white", relief="flat", padx=10)
         self._run_all_btn.pack(side="right", padx=(0, 8))
 
-        # Prominent status banner (above the scrollable cards).
-        banner = tk.Frame(right, bg="#eff6ff", height=36)
-        banner.pack(fill="x", padx=8, pady=(2, 4))
-        banner.pack_propagate(False)
+        # Prominent status banner (above the scrollable cards). Background
+        # color tracks state so done/failed transitions stand out without
+        # the user having to read the text.
+        self._banner_frame = tk.Frame(right, bg="#eff6ff", height=36)
+        self._banner_frame.pack(fill="x", padx=8, pady=(2, 4))
+        self._banner_frame.pack_propagate(False)
         self._banner_var = tk.StringVar(value="")
-        self._banner_lbl = tk.Label(banner, textvariable=self._banner_var,
+        self._banner_lbl = tk.Label(self._banner_frame, textvariable=self._banner_var,
                                     bg="#eff6ff", fg="#1d4ed8",
                                     font=("Segoe UI", 10, "bold"),
                                     anchor="w", padx=10)
@@ -564,6 +566,8 @@ class ProjectWorkbenchApp(ToolBase):
         self._dirty = False
         self._update_dirty_indicator()
         self._title_var.set(f"basename: {basename}")
+        self._status_var.set("")
+        self._set_banner_state("idle")
         self._render_step_cards()
         self._save_btn.config(state="normal")
         self._reload_btn.config(state="normal")
@@ -575,6 +579,8 @@ class ProjectWorkbenchApp(ToolBase):
         self._dirty = False
         self._update_dirty_indicator()
         self._title_var.set(tr("tool.project_workbench.select_hint"))
+        self._status_var.set("")
+        self._set_banner_state("idle")
         self._clear_step_cards()
         self._save_btn.config(state="disabled")
         self._reload_btn.config(state="disabled")
@@ -1521,6 +1527,20 @@ class ProjectWorkbenchApp(ToolBase):
         """Set status with the current step's prefix prepended."""
         self._status_var.set(self._step_prefix() + msg)
 
+    # Banner color palette per state — keeps done/failed visually distinct
+    # from running so the user notices the moment a step finishes.
+    _BANNER_PALETTE = {
+        "idle":    ("#eff6ff", "#1d4ed8"),  # neutral blue
+        "running": ("#dbeafe", "#1d4ed8"),  # slightly stronger blue
+        "done":    ("#dcfce7", "#15803d"),  # green
+        "failed":  ("#fee2e2", "#b91c1c"),  # red
+    }
+
+    def _set_banner_state(self, state: str) -> None:
+        bg, fg = self._BANNER_PALETTE.get(state, self._BANNER_PALETTE["idle"])
+        self._banner_frame.configure(bg=bg)
+        self._banner_lbl.configure(bg=bg, fg=fg)
+
     def _begin_busy(self, step_key: str, basename: str, status_msg: str) -> dict:
         """Mark step running on disk, refresh UI, and return the manifest."""
         assert self.project is not None
@@ -1533,6 +1553,7 @@ class ProjectWorkbenchApp(ToolBase):
         self._busy = True
         self._current_step = step_key
         self.set_busy()
+        self._set_banner_state("running")
         self._status_var.set(self._step_prefix(step_key) + status_msg)
         self._render_step_cards()
         return manifest
@@ -1552,7 +1573,11 @@ class ProjectWorkbenchApp(ToolBase):
                 step[k] = v
         manifest[step_key] = step
         self.project.save_manifest(basename, manifest)
-        self._status_var.set(self._step_prefix(step_key) + msg)
+        # Prefix banner text with a status glyph so the terminal state is
+        # readable at a glance (matters most when the next step is a no-op).
+        glyph = "✓ " if status == "done" else ("✗ " if status == "failed" else "")
+        self._status_var.set(self._step_prefix(step_key) + glyph + msg)
+        self._set_banner_state(status if status in ("done", "failed") else "idle")
         self._current_step = None
         if status == "done":
             self.set_done()
