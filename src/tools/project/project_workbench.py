@@ -527,8 +527,22 @@ class ProjectWorkbenchApp(ToolBase):
             "<Configure>",
             lambda e: canvas.itemconfigure(self._cards_window, width=e.width)
         )
-        canvas.bind_all("<MouseWheel>",
-                        lambda e: canvas.yview_scroll(int(-e.delta / 120), "units"))
+        # Mousewheel: only scroll the form when (a) the pointer is over the
+        # canvas region (Enter/Leave toggles a global binding) and (b) the
+        # event widget isn't an interactive control that owns its own wheel
+        # behaviour — without this guard, hovering a combobox/spinbox while
+        # scrolling drags the whole form along, which is jarring.
+        _NO_FORM_SCROLL = (ttk.Combobox, tk.Spinbox, ttk.Spinbox, tk.Text)
+
+        def _on_wheel(e):
+            if isinstance(e.widget, _NO_FORM_SCROLL):
+                return
+            canvas.yview_scroll(int(-e.delta / 120), "units")
+
+        canvas.bind("<Enter>",
+                    lambda e: canvas.bind_all("<MouseWheel>", _on_wheel))
+        canvas.bind("<Leave>",
+                    lambda e: canvas.unbind_all("<MouseWheel>"))
 
     # ── Project / manifest loading ───────────────────────────────────────────
 
