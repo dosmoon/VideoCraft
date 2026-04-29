@@ -1020,6 +1020,8 @@
   "tool.project_workbench.manifest_list": "Manifest 列表",
   "tool.project_workbench.select_hint": "请在左侧选择一个 manifest",
   "tool.project_workbench.run": "运行",
+  "tool.project_workbench.run_all_complete_title": "全部完成",
+  "tool.project_workbench.run_all_complete": "✓ 全部运行完成 [{basename}] — 共 {count} 步",
   "tool.project_workbench.field.segments_file": "分段文件",
   "tool.project_workbench.field.split_mode": "分割模式",
   "tool.project_workbench.run_blocked_title": "无法运行",

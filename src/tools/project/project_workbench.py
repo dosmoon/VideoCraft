@@ -416,6 +416,13 @@ class ProjectWorkbenchApp(ToolBase):
         # Run-all chain queue. Non-empty means we're running multiple steps;
         # _finish_step pops the next one on success and aborts on failure.
         self._chain: list[str] = []
+        # True from the moment Run All starts until the final step finishes
+        # (or the chain aborts). Used to emit a chain-level "all done"
+        # banner message — without it, a 7-step chain ends silently after
+        # the per-step "split done" message and the user can't tell whether
+        # a later step was supposed to follow.
+        self._chain_active: bool = False
+        self._chain_total: int = 0
 
         self._build_ui()
 
@@ -1390,6 +1397,8 @@ class ProjectWorkbenchApp(ToolBase):
         if not queue:
             return
         self._chain = queue
+        self._chain_active = True
+        self._chain_total = len(queue)
         self._run_chain_next()
 
     def _run_chain_next(self) -> None:
@@ -1589,14 +1598,30 @@ class ProjectWorkbenchApp(ToolBase):
             self._dirty = False
             self._update_dirty_indicator()
             self._render_step_cards()
-        # Advance chain on success
+        # Advance chain on success, or emit "Run All complete" if this was
+        # the last step of an active chain.
         if status == "done" and self._chain:
             self.master.after(50, self._run_chain_next)
+        elif status == "done" and self._chain_active and not self._chain:
+            count = self._chain_total
+            self._chain_active = False
+            self._chain_total = 0
+            done_msg = tr("tool.project_workbench.run_all_complete",
+                          basename=basename, count=count)
+            self._status_var.set(done_msg)
+            self._set_banner_state("done")
+            messagebox.showinfo(
+                tr("tool.project_workbench.run_all_complete_title"),
+                done_msg)
 
     def _abort_chain(self) -> None:
         if self._chain:
             self._chain = []
             self._status_var.set(tr("tool.project_workbench.chain_aborted"))
+        # Clear the chain marker even if chain was already drained — keeps
+        # _chain_active honest after a single-step failure inside a Run All.
+        self._chain_active = False
+        self._chain_total = 0
 
     # ── Step 1: Download ─────────────────────────────────────────────────────
 

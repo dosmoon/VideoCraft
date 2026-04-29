@@ -1020,6 +1020,8 @@
   "tool.project_workbench.manifest_list": "Manifests",
   "tool.project_workbench.select_hint": "Select a manifest on the left",
   "tool.project_workbench.run": "Run",
+  "tool.project_workbench.run_all_complete_title": "All steps complete",
+  "tool.project_workbench.run_all_complete": "✓ Run All finished [{basename}] — {count} steps",
   "tool.project_workbench.field.segments_file": "Segments file",
   "tool.project_workbench.field.split_mode": "Split mode",
   "tool.project_workbench.run_blocked_title": "Cannot run yet",
