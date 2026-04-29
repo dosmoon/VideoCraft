@@ -21,7 +21,7 @@ import os
 import subprocess
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
 
 from tools.base import ToolBase
 from i18n import tr
@@ -29,6 +29,79 @@ from project import Project
 from core.asr import transcribe_audio
 from core.translate import SUPPORTED_LANGUAGES, translate_srt_file
 from core.video_ops import extract_clip
+from core.burn_subs import burn_subtitles
+from core import burn_presets
+
+
+# ── Burn preset bridge ───────────────────────────────────────────────────────
+# Translates legacy subtitle_tool's preset schema to/from workbench step4_burn
+# fields so that hard-won presets in ~/.videocraft/presets/subtitle_burn.json
+# are usable directly. Legacy field names are kept in the preset store
+# (cross-tool compatibility); workbench uses its own names internally.
+
+_PRESET_TO_WB = {
+    "watermark_text":          "wm_text",
+    "watermark_color":         "wm_text_color",
+    "watermark_fontsize":      "wm_text_fontsize",
+    "watermark_txt_alpha":     "wm_text_alpha",
+    "watermark_img_path":      "wm_image_path",
+    "watermark_img_scale":     "wm_image_scale",
+    "watermark_img_alpha":     "wm_image_alpha",
+    "watermark_date_color":    "date_color",
+    "watermark_date_fontsize": "date_fontsize",
+    "watermark_date_alpha":    "date_alpha",
+    "sub1_fontsize":   "sub1_fontsize",
+    "sub1_color":      "sub1_color",
+    "sub2_fontsize":   "sub2_fontsize",
+    "sub2_color":      "sub2_color",
+    "split_sub1":      "sub1_split",
+    "sub1_max_chars":  "sub1_max_chars",
+    "sub1_is_chinese": "sub1_is_chinese",
+    "split_sub2":      "sub2_split",
+    "sub2_max_chars":  "sub2_max_chars",
+    "sub2_is_chinese": "sub2_is_chinese",
+    "orientation":     "orientation",
+    "encode_preset":   "encode_preset",
+}
+_WB_TO_PRESET = {v: k for k, v in _PRESET_TO_WB.items()}
+
+
+def _apply_preset_to_burn(preset: dict, burn: dict) -> dict:
+    """Merge a preset dict into a step4_burn dict. Returns the burn dict
+    (mutated). Honors legacy "show" toggles by clearing the corresponding
+    workbench field when False — workbench uses empty-string-as-disabled."""
+    for pkey, wkey in _PRESET_TO_WB.items():
+        if pkey in preset:
+            burn[wkey] = preset[pkey]
+    # Master toggles → empty-string convention
+    show_wm = preset.get("watermark_show", True)
+    wm_type = preset.get("watermark_type", "image")
+    if not show_wm:
+        burn["wm_text"] = ""
+        burn["wm_image_path"] = ""
+    else:
+        if wm_type == "image":
+            burn["wm_text"] = ""        # image mode hides text
+        else:
+            burn["wm_image_path"] = ""  # text mode hides image
+    if not preset.get("watermark_show_date", False):
+        burn["date_text"] = ""
+    return burn
+
+
+def _burn_to_preset(burn: dict) -> dict:
+    """Inverse: build a preset dict from current step4_burn fields. Derives
+    legacy 'show' toggles from the empty-string convention."""
+    out: dict = {}
+    for wkey, pkey in _WB_TO_PRESET.items():
+        if wkey in burn:
+            out[pkey] = burn[wkey]
+    has_text = bool(str(burn.get("wm_text", "") or "").strip())
+    has_img = bool(str(burn.get("wm_image_path", "") or "").strip())
+    out["watermark_show"] = has_text or has_img
+    out["watermark_type"] = "image" if has_img else "text"
+    out["watermark_show_date"] = bool(str(burn.get("date_text", "") or "").strip())
+    return out
 
 
 # Lemonfox upload limit (and a generally safe ASR upload size).
@@ -123,7 +196,17 @@ _KNOWN_FIELDS: dict[str, list[str]] = {
     "step2_asr":       ["enabled", "status", "language", "source", "output"],
     "step3_translate": ["enabled", "status", "source_lang", "targets",
                         "source_srt", "output"],
-    "step4_burn":      ["enabled", "status"],
+    # step4_burn fields are rendered with section headers (see _build_step_card
+    # special case). The order here matches the section grouping.
+    "step4_burn":      ["enabled", "status", "source_video", "orientation",
+                        "sub1_path", "sub1_fontsize", "sub1_color",
+                        "sub1_split", "sub1_max_chars", "sub1_is_chinese",
+                        "sub2_path", "sub2_fontsize", "sub2_color",
+                        "sub2_split", "sub2_max_chars", "sub2_is_chinese",
+                        "wm_text", "wm_text_color", "wm_text_fontsize", "wm_text_alpha",
+                        "wm_image_path", "wm_image_scale", "wm_image_alpha",
+                        "date_text", "date_color", "date_fontsize", "date_alpha",
+                        "encode_preset", "output"],
     "step5_pack":      ["enabled", "status"],
     "step6_split":     ["enabled", "status"],
 }
@@ -146,12 +229,92 @@ _FIELD_TYPE: dict[tuple[str, str], str] = {
     ("step3_translate", "targets"):      "lang_one_list",
     ("step3_translate", "source_srt"):   "filepath",
     ("step3_translate", "output"):       "readonly_list",
+    ("step4_burn", "source_video"):      "filepath",
+    ("step4_burn", "orientation"):       "preset",
+    ("step4_burn", "sub1_path"):         "filepath",
+    ("step4_burn", "sub1_fontsize"):     "int",
+    ("step4_burn", "sub1_color"):        "color",
+    ("step4_burn", "sub1_split"):        "bool",
+    ("step4_burn", "sub1_max_chars"):    "int",
+    ("step4_burn", "sub1_is_chinese"):   "bool",
+    ("step4_burn", "sub2_path"):         "filepath",
+    ("step4_burn", "sub2_fontsize"):     "int",
+    ("step4_burn", "sub2_color"):        "color",
+    ("step4_burn", "sub2_split"):        "bool",
+    ("step4_burn", "sub2_max_chars"):    "int",
+    ("step4_burn", "sub2_is_chinese"):   "bool",
+    ("step4_burn", "wm_text"):           "string",
+    ("step4_burn", "wm_text_color"):     "color",
+    ("step4_burn", "wm_text_fontsize"):  "int",
+    ("step4_burn", "wm_text_alpha"):     "int",
+    ("step4_burn", "wm_image_path"):     "filepath",
+    ("step4_burn", "wm_image_scale"):    "float",
+    ("step4_burn", "wm_image_alpha"):    "int",
+    ("step4_burn", "date_text"):         "string",
+    ("step4_burn", "date_color"):        "color",
+    ("step4_burn", "date_fontsize"):     "int",
+    ("step4_burn", "date_alpha"):        "int",
+    ("step4_burn", "encode_preset"):     "preset",
+    ("step4_burn", "output"):            "readonly_list",
 }
+
+# Range / default config for int / float / color / enum field types.
+_FIELD_CONFIG: dict[tuple[str, str], dict] = {
+    ("step4_burn", "sub1_fontsize"):    {"low": 8, "high": 128, "default": 32},
+    ("step4_burn", "sub2_fontsize"):    {"low": 8, "high": 128, "default": 28},
+    ("step4_burn", "sub1_color"):       {"default": "#FFFFFF"},
+    ("step4_burn", "sub2_color"):       {"default": "#CCCCCC"},
+    ("step4_burn", "sub1_max_chars"):   {"low": 6, "high": 120, "default": 18},
+    ("step4_burn", "sub2_max_chars"):   {"low": 6, "high": 120, "default": 42},
+    ("step4_burn", "sub1_split"):       {"default": True},
+    ("step4_burn", "sub2_split"):       {"default": True},
+    ("step4_burn", "sub1_is_chinese"):  {"default": True},
+    ("step4_burn", "sub2_is_chinese"):  {"default": False},
+    ("step4_burn", "wm_text_color"):    {"default": "#FFFFFF"},
+    ("step4_burn", "wm_text_fontsize"): {"low": 8, "high": 128, "default": 28},
+    ("step4_burn", "wm_text_alpha"):    {"low": 0, "high": 100, "default": 80},
+    ("step4_burn", "wm_image_scale"):   {"low": 0.05, "high": 0.5,
+                                          "step": 0.05, "default": 0.1},
+    ("step4_burn", "wm_image_alpha"):   {"low": 0, "high": 100, "default": 80},
+    ("step4_burn", "date_color"):       {"default": "#FFFFFF"},
+    ("step4_burn", "date_fontsize"):    {"low": 8, "high": 128, "default": 24},
+    ("step4_burn", "date_alpha"):       {"low": 0, "high": 100, "default": 80},
+    ("step4_burn", "encode_preset"):    {"choices": ["ultrafast", "superfast",
+                                                     "veryfast", "faster",
+                                                     "fast", "medium"],
+                                          "default": "veryfast"},
+    ("step4_burn", "orientation"):      {"choices": ["auto", "horizontal", "vertical"],
+                                          "default": "auto"},
+}
+
+# Section structure for step4_burn (very long card — broken into groups for
+# readability). Each entry: (section_label_key, [field_names_in_order]).
+_BURN_SECTIONS = [
+    ("tool.project_workbench.section.video",
+     ["source_video", "orientation"]),
+    ("tool.project_workbench.section.sub1",
+     ["sub1_path", "sub1_fontsize", "sub1_color",
+      "sub1_split", "sub1_max_chars", "sub1_is_chinese"]),
+    ("tool.project_workbench.section.sub2",
+     ["sub2_path", "sub2_fontsize", "sub2_color",
+      "sub2_split", "sub2_max_chars", "sub2_is_chinese"]),
+    ("tool.project_workbench.section.wm_text",
+     ["wm_text", "wm_text_color", "wm_text_fontsize", "wm_text_alpha"]),
+    ("tool.project_workbench.section.wm_image",
+     ["wm_image_path", "wm_image_scale", "wm_image_alpha"]),
+    ("tool.project_workbench.section.date",
+     ["date_text", "date_color", "date_fontsize", "date_alpha"]),
+    ("tool.project_workbench.section.encode",
+     ["encode_preset"]),
+    ("tool.project_workbench.section.output",
+     ["output"]),
+]
 
 _STATUS_VALUES = ["pending", "running", "done", "failed"]
 
 # Steps that can be run from the workbench in M2.
-_RUNNABLE_STEPS = {"step1_download", "step1_5_select", "step2_asr", "step3_translate"}
+_RUNNABLE_STEPS = {"step1_download", "step1_5_select", "step2_asr",
+                   "step3_translate", "step4_burn"}
 
 def _parse_hms(s: str) -> tuple[int, int, int]:
     """Parse 'HH:MM:SS' (or sloppy variants) → (h, m, s). Returns (0,0,0) on
@@ -387,6 +550,11 @@ class ProjectWorkbenchApp(ToolBase):
         self._clear_step_cards()
         if self._buffer is None:
             return
+        # Seed step4_burn with the last-used preset when the user newly
+        # enabled it but hasn't filled in any fields. Saves them from
+        # re-tuning every preset value on every new manifest. Only happens
+        # before the dirty-suppression block so it correctly marks dirty.
+        self._maybe_seed_burn_from_preset()
         self._suppress_dirty = True
         try:
             self._build_source_card()
@@ -490,6 +658,7 @@ class ProjectWorkbenchApp(ToolBase):
                 "step1_5_select":  "tool.project_workbench.run_select",
                 "step2_asr":       "tool.project_workbench.run_asr",
                 "step3_translate": "tool.project_workbench.run_translate",
+                "step4_burn":      "tool.project_workbench.run_burn",
             }[step_key]
             btn = tk.Button(header, text=tr(run_label_key),
                             command=lambda sk=step_key: self._on_run_step(sk))
@@ -515,13 +684,29 @@ class ProjectWorkbenchApp(ToolBase):
                              tr("tool.project_workbench.field.status"),
                              _STATUS_VALUES)
 
-        # Per-step known fields
+        # Per-step known fields. step4_burn is special-cased with section
+        # headers because of its 20+ fields; other steps render flat.
         known = _KNOWN_FIELDS.get(step_key, ["enabled", "status"])
-        for fname in known:
-            if fname in ("enabled", "status"):
-                continue
-            label = tr(f"tool.project_workbench.field.{fname}")
-            self._add_field(body, next_row(), step_key, fname, label)
+        if step_key == "step4_burn":
+            # Preset picker bar above all sections.
+            preset_holder = tk.Frame(body, bg=S["card_bg"])
+            preset_holder.grid(row=next_row(), column=0, columnspan=2,
+                                sticky="ew", pady=(2, 4))
+            self._build_burn_preset_picker(preset_holder)
+            for section_label_key, section_fields in _BURN_SECTIONS:
+                row[0] = self._add_section_header(body, row[0],
+                                                   tr(section_label_key))
+                for fname in section_fields:
+                    if fname not in known:
+                        continue
+                    label = tr(f"tool.project_workbench.field.{fname}")
+                    self._add_field(body, next_row(), step_key, fname, label)
+        else:
+            for fname in known:
+                if fname in ("enabled", "status"):
+                    continue
+                label = tr(f"tool.project_workbench.field.{fname}")
+                self._add_field(body, next_row(), step_key, fname, label)
 
         # Raw section: any unknown keys
         leftover = {k: v for k, v in step.items() if k not in known}
@@ -552,6 +737,14 @@ class ProjectWorkbenchApp(ToolBase):
             self._add_csv_iso_field(parent, r, step_key, fname, label)
         elif ftype == "lang_one_list":
             self._add_lang_one_list_field(parent, r, step_key, fname, label)
+        elif ftype == "int":
+            self._add_int_field(parent, r, step_key, fname, label)
+        elif ftype == "float":
+            self._add_float_field(parent, r, step_key, fname, label)
+        elif ftype == "color":
+            self._add_color_field(parent, r, step_key, fname, label)
+        elif ftype == "preset":
+            self._add_preset_field(parent, r, step_key, fname, label)
         else:
             self._add_string_field(parent, r, step_key, fname, label)
 
@@ -559,7 +752,9 @@ class ProjectWorkbenchApp(ToolBase):
                         label: str) -> None:
         assert self._buffer is not None
         step = self._buffer[step_key]
-        var = tk.BooleanVar(value=bool(step.get(field, False)))
+        cfg = _FIELD_CONFIG.get((step_key, field), {})
+        default = cfg.get("default", False)
+        var = tk.BooleanVar(value=bool(step.get(field, default)))
         cb = tk.Checkbutton(parent, text=label, variable=var,
                             bg=S["card_bg"], fg=S["value_fg"],
                             activebackground=S["card_bg"],
@@ -698,6 +893,122 @@ class ProjectWorkbenchApp(ToolBase):
                 self._refresh_run_state(step_key)
         var.trace_add("write", on_write)
         self._field_vars.append(var)
+
+    def _add_int_field(self, parent, r: int, step_key: str, field: str,
+                       label: str) -> None:
+        assert self._buffer is not None
+        cfg = _FIELD_CONFIG.get((step_key, field), {})
+        low, high, default = cfg.get("low", 0), cfg.get("high", 200), cfg.get("default", 0)
+        cur = int(self._buffer[step_key].get(field, default) or default)
+        var = tk.IntVar(value=cur)
+        self._label_cell(parent, r, f"{label}:")
+        sb = tk.Spinbox(parent, from_=low, to=high, textvariable=var,
+                        width=8, font=S["value_font"], justify="right")
+        sb.grid(row=r, column=1, sticky="w", pady=2)
+        def on_write(*_):
+            try:
+                self._on_field_change(step_key, field, int(var.get()))
+            except (ValueError, tk.TclError):
+                pass
+            if step_key in _RUNNABLE_STEPS:
+                self._refresh_run_state(step_key)
+        var.trace_add("write", on_write)
+        self._field_vars.append(var)
+
+    def _add_float_field(self, parent, r: int, step_key: str, field: str,
+                         label: str) -> None:
+        assert self._buffer is not None
+        cfg = _FIELD_CONFIG.get((step_key, field), {})
+        low, high = cfg.get("low", 0.0), cfg.get("high", 1.0)
+        step_v, default = cfg.get("step", 0.05), cfg.get("default", 0.0)
+        cur = float(self._buffer[step_key].get(field, default) or default)
+        var = tk.DoubleVar(value=cur)
+        self._label_cell(parent, r, f"{label}:")
+        sb = tk.Spinbox(parent, from_=low, to=high, increment=step_v,
+                        format="%.2f", textvariable=var,
+                        width=8, font=S["value_font"], justify="right")
+        sb.grid(row=r, column=1, sticky="w", pady=2)
+        def on_write(*_):
+            try:
+                self._on_field_change(step_key, field, float(var.get()))
+            except (ValueError, tk.TclError):
+                pass
+        var.trace_add("write", on_write)
+        self._field_vars.append(var)
+
+    def _add_color_field(self, parent, r: int, step_key: str, field: str,
+                         label: str) -> None:
+        """#RRGGBB hex entry with a colored swatch + native color picker.
+        Click the swatch (or the … button) to open tkinter.colorchooser."""
+        assert self._buffer is not None
+        cfg = _FIELD_CONFIG.get((step_key, field), {})
+        default = cfg.get("default", "#FFFFFF")
+        cur = str(self._buffer[step_key].get(field, default) or default)
+        var = tk.StringVar(value=cur)
+        self._label_cell(parent, r, f"{label}:")
+        wrap = tk.Frame(parent, bg=S["card_bg"])
+        wrap.grid(row=r, column=1, sticky="w", pady=2)
+        swatch = tk.Frame(wrap, width=18, height=18, bg=cur,
+                          highlightbackground="#9ca3af", highlightthickness=1,
+                          cursor="hand2")
+        swatch.pack(side="left")
+        swatch.pack_propagate(False)
+        ent = tk.Entry(wrap, textvariable=var, width=10, font=S["mono_font"])
+        ent.pack(side="left", padx=(6, 0))
+
+        def pick_color(*_):
+            try:
+                initial = var.get().strip() or default
+                _, hex_color = colorchooser.askcolor(
+                    color=initial, parent=self.master, title=label)
+            except tk.TclError:
+                hex_color = None
+            if hex_color:
+                var.set(hex_color.upper())
+
+        tk.Button(wrap, text="…", width=2, command=pick_color).pack(
+            side="left", padx=(4, 0))
+        # Click the swatch to open picker too.
+        swatch.bind("<Button-1>", pick_color)
+
+        def on_write(*_):
+            v = var.get().strip()
+            self._on_field_change(step_key, field, v)
+            if len(v) == 7 and v.startswith("#"):
+                try:
+                    int(v[1:], 16)
+                    swatch.config(bg=v)
+                except (ValueError, tk.TclError):
+                    pass
+        var.trace_add("write", on_write)
+        self._field_vars.append(var)
+
+    def _add_preset_field(self, parent, r: int, step_key: str, field: str,
+                          label: str) -> None:
+        assert self._buffer is not None
+        cfg = _FIELD_CONFIG.get((step_key, field), {})
+        choices = cfg.get("choices", [])
+        default = cfg.get("default", choices[0] if choices else "")
+        cur = str(self._buffer[step_key].get(field, default) or default)
+        if cur not in choices and cur:
+            choices = [cur] + list(choices)
+        var = tk.StringVar(value=cur)
+        self._label_cell(parent, r, f"{label}:")
+        cb = ttk.Combobox(parent, textvariable=var, values=choices,
+                          state="readonly", width=14, font=S["value_font"])
+        cb.grid(row=r, column=1, sticky="w", pady=2)
+        var.trace_add("write",
+                      lambda *_: self._on_field_change(step_key, field, var.get()))
+        self._field_vars.append(var)
+
+    def _add_section_header(self, parent, r: int, label: str) -> int:
+        """Draws a separator + small bold label. Returns next row index."""
+        tk.Frame(parent, bg=S["card_border"], height=1).grid(
+            row=r, column=0, columnspan=2, sticky="ew", pady=(8, 2))
+        tk.Label(parent, text=label, bg=S["card_bg"], fg=S["label_fg"],
+                 font=("Segoe UI", 9, "bold"), anchor="w").grid(
+            row=r + 1, column=0, columnspan=2, sticky="w")
+        return r + 2
 
     def _add_csv_iso_field(self, parent, r: int, step_key: str, field: str,
                            label: str) -> None:
@@ -928,13 +1239,26 @@ class ProjectWorkbenchApp(ToolBase):
             return self._abspath(top)
         return None
 
+    def _resolve_video_input(self, step_key: str) -> str | None:
+        """Like _resolve_input but reads `source_video` (used by step4_burn,
+        which has both source_video and source_srt and can't reuse the
+        generic `source` field name)."""
+        if self._buffer is None:
+            return None
+        own = str(self._buffer.get(step_key, {}).get("source_video", "")).strip()
+        if own:
+            return self._abspath(own)
+        return self._resolve_input(step_key)
+
     def _resolve_srt_input(self, step_key: str) -> str | None:
         """Find the SRT this step should consume.
 
         1. Explicit `source_srt` on this step (override)
-        2. The .srt path inside step2_asr.output (when enabled+done)
+        2. Most recent SRT producer strictly before this step (step3_translate
+           preferred when done, otherwise step2_asr) — gives burn the
+           translated SRT when translation has run, the original otherwise
         3. Top-level `source` if it points at a .srt file (lets users feed
-           an existing SRT straight into translate without running ASR)
+           an existing SRT straight in without running ASR)
         4. None
         """
         if self._buffer is None:
@@ -942,11 +1266,18 @@ class ProjectWorkbenchApp(ToolBase):
         own = str(self._buffer.get(step_key, {}).get("source_srt", "")).strip()
         if own:
             return self._abspath(own)
-        asr = self._buffer.get("step2_asr", {}) or {}
-        if asr.get("enabled") and asr.get("status") == "done":
-            for path in (asr.get("output", []) or []):
-                if str(path).lower().endswith(".srt"):
-                    return self._abspath(str(path))
+        # Walk SRT producers from most-recent to least-recent, restricted to
+        # steps strictly before step_key.
+        srt_producers = ["step3_translate", "step2_asr"]
+        my_idx = self._step_index(step_key)
+        for sk in srt_producers:
+            if self._step_index(sk) >= my_idx:
+                continue
+            step = self._buffer.get(sk, {}) or {}
+            if step.get("enabled") and step.get("status") == "done":
+                for path in (step.get("output", []) or []):
+                    if str(path).lower().endswith(".srt"):
+                        return self._abspath(str(path))
         top = str(self._buffer.get("source", "")).strip()
         if top.lower().endswith(".srt"):
             return self._abspath(top)
@@ -1041,6 +1372,9 @@ class ProjectWorkbenchApp(ToolBase):
             targets = step.get("targets", []) or []
             ok = (bool(targets)
                   and self._resolve_srt_input(step_key) is not None)
+        elif step_key == "step4_burn":
+            ok = (self._resolve_video_input(step_key) is not None
+                  and self._resolve_burn_sub1() is not None)
         btn.config(state=("normal" if ok else "disabled"))
 
     def _on_run_step(self, step_key: str) -> None:
@@ -1065,6 +1399,8 @@ class ProjectWorkbenchApp(ToolBase):
             self._run_asr(basename)
         elif step_key == "step3_translate":
             self._run_translate(basename)
+        elif step_key == "step4_burn":
+            self._run_burn(basename)
 
     def _begin_busy(self, step_key: str, basename: str, status_msg: str) -> dict:
         """Mark step running on disk, refresh UI, and return the manifest."""
@@ -1385,6 +1721,246 @@ class ProjectWorkbenchApp(ToolBase):
             self.master.after(0, self._finish_step, "step3_translate", basename,
                               "failed", {"error": str(e)},
                               f"Translate failed: {basename}: {e}")
+
+    # ── Step 4: Burn presets ─────────────────────────────────────────────────
+
+    def _maybe_seed_burn_from_preset(self) -> None:
+        if self._buffer is None:
+            return
+        burn = self._buffer.get("step4_burn") or {}
+        fresh = set(burn.keys()) <= {"enabled", "status"}
+        if not (fresh and burn.get("enabled")):
+            return
+        try:
+            store = burn_presets.load_store()
+            name = burn_presets.get_last_used(store)
+            preset = burn_presets.get_preset(store, name)
+        except Exception:
+            return
+        if not preset:
+            return
+        _apply_preset_to_burn(preset, burn)
+        self._buffer["step4_burn"] = burn
+        self._mark_dirty()
+        self._status_var.set(tr(
+            "tool.project_workbench.burn_preset_applied").format(name=name))
+
+    def _build_burn_preset_picker(self, parent) -> None:
+        """Top of the burn card: dropdown + Apply / Save As / Delete buttons.
+        Reads / writes the same preset store the legacy subtitle_tool uses."""
+        try:
+            store = burn_presets.load_store()
+            names = burn_presets.list_preset_names(store)
+            current = burn_presets.get_last_used(store)
+        except Exception:
+            store, names, current = burn_presets._empty_store(), ["Default"], "Default"
+
+        bar = tk.Frame(parent, bg=S["card_bg"])
+        bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+        tk.Label(bar, text=tr("tool.project_workbench.field.preset") + ":",
+                 bg=S["card_bg"], fg=S["label_fg"], font=S["label_font"]).pack(side="left")
+        var = tk.StringVar(value=current)
+        cb = ttk.Combobox(bar, textvariable=var, values=names,
+                          state="readonly", width=20, font=S["value_font"])
+        cb.pack(side="left", padx=(6, 4))
+        tk.Button(bar, text=tr("tool.project_workbench.preset_apply"),
+                  command=lambda: self._on_apply_burn_preset(var.get())).pack(side="left", padx=2)
+        tk.Button(bar, text=tr("tool.project_workbench.preset_save_as"),
+                  command=self._on_save_burn_preset_as).pack(side="left", padx=2)
+        tk.Button(bar, text=tr("tool.project_workbench.preset_delete"),
+                  command=lambda: self._on_delete_burn_preset(var.get())).pack(side="left", padx=2)
+        self._field_vars.append(var)
+
+    def _on_apply_burn_preset(self, name: str) -> None:
+        if self._buffer is None or not name:
+            return
+        try:
+            store = burn_presets.load_store()
+            preset = burn_presets.get_preset(store, name)
+        except Exception as e:
+            messagebox.showerror("Error", f"Load presets failed: {e}")
+            return
+        if not preset:
+            messagebox.showerror("Error", f"Preset not found: {name}")
+            return
+        burn = self._buffer.setdefault("step4_burn", {})
+        _apply_preset_to_burn(preset, burn)
+        burn_presets.set_last_used(store, name)
+        try:
+            burn_presets.save_store(store)
+        except Exception:
+            pass
+        self._mark_dirty()
+        self._status_var.set(tr(
+            "tool.project_workbench.burn_preset_applied").format(name=name))
+        self._render_step_cards()
+
+    def _on_save_burn_preset_as(self) -> None:
+        if self._buffer is None:
+            return
+        burn = self._buffer.get("step4_burn") or {}
+        name = simpledialog.askstring(
+            tr("tool.project_workbench.preset_save_as"),
+            tr("tool.project_workbench.preset_save_prompt"),
+            parent=self.master,
+        )
+        if not name:
+            return
+        name = name.strip()
+        if not name:
+            return
+        try:
+            store = burn_presets.load_store()
+            burn_presets.upsert_preset(store, name, _burn_to_preset(burn))
+            burn_presets.set_last_used(store, name)
+            burn_presets.save_store(store)
+        except Exception as e:
+            messagebox.showerror("Error", f"Save preset failed: {e}")
+            return
+        self._status_var.set(tr(
+            "tool.project_workbench.burn_preset_saved").format(name=name))
+        self._render_step_cards()
+
+    def _on_delete_burn_preset(self, name: str) -> None:
+        if not name or name == burn_presets.BUILTIN_DEFAULT_NAME:
+            messagebox.showerror("Error",
+                                 tr("tool.project_workbench.preset_default_protected"))
+            return
+        if not messagebox.askyesno(
+                tr("tool.project_workbench.preset_delete"),
+                tr("tool.project_workbench.preset_delete_confirm").format(name=name)):
+            return
+        try:
+            store = burn_presets.load_store()
+            ok = burn_presets.delete_preset(store, name)
+            if ok:
+                burn_presets.save_store(store)
+        except Exception as e:
+            messagebox.showerror("Error", f"Delete failed: {e}")
+            return
+        self._render_step_cards()
+
+    # ── Step 4: Burn subtitles ───────────────────────────────────────────────
+
+    def _resolve_burn_sub1(self) -> str | None:
+        """Sub1 (primary) — own override or fall back to most-recent SRT."""
+        if self._buffer is None:
+            return None
+        own = str(self._buffer.get("step4_burn", {}).get("sub1_path", "")).strip()
+        if own:
+            return self._abspath(own)
+        return self._resolve_srt_input("step4_burn")
+
+    def _run_burn(self, basename: str) -> None:
+        assert self.project is not None and self._buffer is not None
+        step = self._buffer["step4_burn"]
+        video = self._resolve_video_input("step4_burn")
+        sub1 = self._resolve_burn_sub1()
+        sub2 = str(step.get("sub2_path", "")).strip()
+        sub2 = self._abspath(sub2) if sub2 else None
+
+        if not video:
+            messagebox.showerror("Error",
+                "Cannot resolve video — set step1_download / step1_5_select "
+                "/ step4_burn.source_video / top-level source")
+            self._abort_chain()
+            return
+        if not sub1:
+            messagebox.showerror("Error",
+                "Cannot resolve primary subtitle — set step2_asr / "
+                "step3_translate / step4_burn.sub1_path")
+            self._abort_chain()
+            return
+        for path, name in ((video, "video"), (sub1, "sub1")):
+            if not os.path.exists(path):
+                messagebox.showerror("Error", f"{name} not found:\n{path}")
+                self._abort_chain()
+                return
+        if sub2 and not os.path.exists(sub2):
+            messagebox.showerror("Error", f"sub2 not found:\n{sub2}")
+            self._abort_chain()
+            return
+
+        # Output: <project>/<basename>_subbed_<tag>.mp4 with tag = inferred
+        # ISO from sub1 (and +sub2 ISO when bilingual), matching the legacy
+        # naming convention (Video_zh+en.mp4 → here qa_subbed_zh+en.mp4).
+        tags = []
+        for p in (sub1, sub2):
+            if not p:
+                continue
+            stem = os.path.splitext(os.path.basename(p))[0]
+            import re
+            m = re.search(r"_([a-z]{2,5})$", stem)
+            if m and m.group(1) not in tags:
+                tags.append(m.group(1))
+        suffix = "_" + "+".join(tags) if tags else ""
+        output = os.path.join(self.project.folder,
+                              f"{basename}_subbed{suffix}.mp4")
+
+        # Resolve image watermark path (relative to project)
+        wm_image_path = str(step.get("wm_image_path", "")).strip()
+        if wm_image_path:
+            wm_image_path = self._abspath(wm_image_path)
+            if not os.path.exists(wm_image_path):
+                wm_image_path = ""  # silently disable bad image — better than failing
+
+        # bool fields default-true when key absent — splitting on by default
+        # because un-split long lines blow past frame edges; better to wrap
+        # by default and let users untick if they really don't want it.
+        def b(key, default):
+            v = step.get(key, default)
+            return bool(v) if v is not None else default
+
+        kwargs = dict(
+            sub1_path=sub1,
+            sub1_fontsize=int(step.get("sub1_fontsize", 32) or 32),
+            sub1_color=str(step.get("sub1_color", "#FFFFFF") or "#FFFFFF"),
+            sub1_split=b("sub1_split", True),
+            sub1_max_chars=int(step.get("sub1_max_chars", 18) or 18),
+            sub1_is_chinese=b("sub1_is_chinese", True),
+            sub2_path=sub2,
+            sub2_fontsize=int(step.get("sub2_fontsize", 28) or 28),
+            sub2_color=str(step.get("sub2_color", "#CCCCCC") or "#CCCCCC"),
+            sub2_split=b("sub2_split", True),
+            sub2_max_chars=int(step.get("sub2_max_chars", 42) or 42),
+            sub2_is_chinese=b("sub2_is_chinese", False),
+            orientation=str(step.get("orientation", "auto") or "auto"),
+            wm_text=str(step.get("wm_text", "") or ""),
+            wm_text_color=str(step.get("wm_text_color", "#FFFFFF") or "#FFFFFF"),
+            wm_text_fontsize=int(step.get("wm_text_fontsize", 28) or 28),
+            wm_text_alpha=int(step.get("wm_text_alpha", 80) or 80),
+            wm_image_path=wm_image_path,
+            wm_image_scale=float(step.get("wm_image_scale", 0.1) or 0.1),
+            wm_image_alpha=int(step.get("wm_image_alpha", 80) or 80),
+            show_date=bool(str(step.get("date_text", "") or "").strip()),
+            date_text=str(step.get("date_text", "") or ""),
+            date_color=str(step.get("date_color", "#FFFFFF") or "#FFFFFF"),
+            date_fontsize=int(step.get("date_fontsize", 24) or 24),
+            date_alpha=int(step.get("date_alpha", 80) or 80),
+            encode_preset=str(step.get("encode_preset", "veryfast") or "veryfast"),
+        )
+
+        self._begin_busy("step4_burn", basename, f"Burn running: {basename}")
+        threading.Thread(
+            target=self._burn_worker,
+            args=(basename, video, output, kwargs),
+            daemon=True,
+        ).start()
+
+    def _burn_worker(self, basename: str, video: str, output: str,
+                     kwargs: dict) -> None:
+        try:
+            on_status = lambda msg: self.master.after(
+                0, self._status_var.set, f"Burn [{msg}] {basename}")
+            burn_subtitles(video, output, on_status=on_status, **kwargs)
+            self.master.after(0, self._finish_step, "step4_burn", basename,
+                              "done", {"output": [self._project_relpath(output)],
+                                       "error": None},
+                              f"Burn done: {basename}")
+        except Exception as e:
+            self.master.after(0, self._finish_step, "step4_burn", basename,
+                              "failed", {"error": str(e)},
+                              f"Burn failed: {basename}: {e}")
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 

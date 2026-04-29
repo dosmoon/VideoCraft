@@ -5,7 +5,7 @@
 """
 
 from tools.base import ToolBase
-from tools.subtitle import presets as burn_presets
+from core import burn_presets
 from i18n import tr
 import tkinter as tk
 from tkinter import filedialog, messagebox, colorchooser, simpledialog, ttk

@@ -1,10 +1,13 @@
 """
-presets.py - Subtitle burn tool preset store.
+core/burn_presets.py - Subtitle burn preset store.
 
-Pure persistence layer for named parameter presets. No Tkinter dependency
-so it can be unit-tested in isolation. Storage lives under the user's
-home directory alongside recent.json (see project.py), not in the project
-folder, because presets are cross-project user preferences.
+Pure persistence layer for named parameter presets — domain data, not UI
+data, so this lives in core. Both consumers (the legacy subtitle_tool UI
+and the project-workbench step4_burn) read/write the same store, so a
+preset tuned in one is immediately visible in the other. Storage lives
+under the user's home directory alongside recent.json (see project.py),
+not in the project folder, because presets are cross-project user
+preferences.
 """
 
 import json
