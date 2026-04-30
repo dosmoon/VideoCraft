@@ -90,12 +90,15 @@ celerybeat-schedule
 # Environments
 .env
 .venv
-env/
+/env/
 venv/
-ENV/
+/ENV/
 env.bak/
 venv.bak/
 myenv/
+
+# But our source package src/core/env/ is NOT a virtualenv — track it.
+!src/core/env/
 
 # Local test artifacts at repo root (TTS output, etc.)
 /output.mp3

@@ -3,30 +3,36 @@ tools/preferences/preferences.py - Settings panel as a Hub tab.
 
 Sections:
   1. Interface Language
-  2. Environment — Node.js / Slidev  (install deps, view status)
-  3. Environment — yt-dlp            (upgrade via pip)
-  4. Python SDK Status               (read-only version display)
+  2. Environment Health — table-driven dashboard fed by core.env registry
 """
 
-import sys
-import subprocess
 import threading
 import tkinter as tk
+import webbrowser
 from tkinter import ttk, scrolledtext
 
 import i18n
 from i18n import tr
 from tools.base import ToolBase
-from core import env_check
+from core import env
+
+
+# Color palette
+_COLOR_OK     = "#2e8b57"
+_COLOR_FAIL   = "#c0392b"
+_COLOR_DIM    = "#888"
+_COLOR_HINT   = "#c06000"
+_COLOR_ACTION = "#0078d4"
+_COLOR_ACTION_HOVER = "#1a8ae5"
 
 
 class PreferencesApp(ToolBase):
-    """Settings tab."""
+    """Settings tab: language + environment dashboard."""
 
     def __init__(self, master, initial_file=None):
         self.master = master
         master.title(tr("tool.preferences.title"))
-        master.geometry("700x860")
+        master.geometry("760x880")
         master.resizable(True, True)
 
         # Scrollable root
@@ -39,28 +45,31 @@ class PreferencesApp(ToolBase):
         root = tk.Frame(canvas, padx=24, pady=20)
         _win = canvas.create_window((0, 0), window=root, anchor="nw")
 
-        def _on_root_configure(event):
-            canvas.configure(scrollregion=canvas.bbox("all"))
+        root.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda e: canvas.itemconfig(_win, width=e.width))
+        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
 
-        def _on_canvas_configure(event):
-            canvas.itemconfig(_win, width=event.width)
+        # Per-component widgets keyed by component id, set up in _build_env_section
+        self._row_widgets: dict[str, dict] = {}
+        # Shared install/upgrade lock — only one component at a time
+        self._installing: bool = False
 
-        root.bind("<Configure>", _on_root_configure)
-        canvas.bind("<Configure>", _on_canvas_configure)
+        self._build_language_section(root)
+        self._build_env_section(root)
 
-        # Mousewheel scroll
-        def _on_wheel(event):
-            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        canvas.bind_all("<MouseWheel>", _on_wheel)
+        # Initial status refresh (background to avoid blocking UI)
+        threading.Thread(target=self._refresh_all_in_bg, daemon=True).start()
 
-        # ── Section: Language ────────────────────────────────────────────────
-        lang_section = tk.LabelFrame(
+    # ── Language ─────────────────────────────────────────────────────────────
+
+    def _build_language_section(self, root):
+        section = tk.LabelFrame(
             root, text=tr("tool.preferences.section_language"),
             padx=16, pady=12,
         )
-        lang_section.pack(fill="x")
+        section.pack(fill="x")
 
-        tk.Label(lang_section, text=tr("tool.preferences.language_label")).grid(
+        tk.Label(section, text=tr("tool.preferences.language_label")).grid(
             row=0, column=0, sticky="w", padx=(0, 8), pady=6,
         )
 
@@ -72,102 +81,22 @@ class PreferencesApp(ToolBase):
         self._lang_var = tk.StringVar(
             value=self._lang_labels.get(self._current_lang, self._lang_labels["zh"])
         )
-        combo = ttk.Combobox(
-            lang_section, textvariable=self._lang_var, state="readonly", width=16,
+        ttk.Combobox(
+            section, textvariable=self._lang_var, state="readonly", width=16,
             values=[self._lang_labels["zh"], self._lang_labels["en"]],
-        )
-        combo.grid(row=0, column=1, sticky="w", pady=6)
-
-        self._save_btn = tk.Button(
-            lang_section, text=tr("tool.preferences.save"),
-            command=self._on_save, width=14,
-            bg="#0078d4", fg="white", relief="flat",
-            activebackground="#1a8ae5", cursor="hand2",
-        )
-        self._save_btn.grid(row=0, column=2, padx=(12, 0), pady=6)
-
-        self._status_lbl = tk.Label(lang_section, text="", fg="#2e8b57", anchor="w")
-        self._status_lbl.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
-
-        # ── Section: Environment — yt-dlp ────────────────────────────────────
-        ytdlp_section = tk.LabelFrame(
-            root, text=tr("tool.preferences.section_env_ytdlp"),
-            padx=16, pady=12,
-        )
-        ytdlp_section.pack(fill="x", pady=(16, 0))
-        ytdlp_section.columnconfigure(1, weight=1)
-
-        tk.Label(ytdlp_section, text=tr("tool.preferences.env_ytdlp_label"), anchor="w", width=14).grid(
-            row=0, column=0, sticky="w", padx=(0, 8), pady=2,
-        )
-        self._ytdlp_val = tk.Label(ytdlp_section, text="…", anchor="w", fg="#888")
-        self._ytdlp_val.grid(row=0, column=1, sticky="w", pady=2)
-
-        btn_row2 = tk.Frame(ytdlp_section)
-        btn_row2.grid(row=1, column=0, columnspan=2, sticky="w", pady=(10, 4))
+        ).grid(row=0, column=1, sticky="w", pady=6)
 
         tk.Button(
-            btn_row2, text=tr("tool.preferences.btn_refresh"),
-            command=self._refresh_ytdlp_status, width=12,
-        ).pack(side="left", padx=(0, 8))
+            section, text=tr("tool.preferences.save"),
+            command=self._on_lang_save, width=14,
+            bg=_COLOR_ACTION, fg="white", relief="flat",
+            activebackground=_COLOR_ACTION_HOVER, cursor="hand2",
+        ).grid(row=0, column=2, padx=(12, 0), pady=6)
 
-        self._upgrade_ytdlp_btn = tk.Button(
-            btn_row2, text=tr("tool.preferences.btn_upgrade_ytdlp"),
-            command=self._upgrade_ytdlp,
-            bg="#0078d4", fg="white", relief="flat",
-            activebackground="#1a8ae5", cursor="hand2",
-        )
-        self._upgrade_ytdlp_btn.pack(side="left")
+        self._lang_status_lbl = tk.Label(section, text="", fg=_COLOR_OK, anchor="w")
+        self._lang_status_lbl.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
-        self._ytdlp_log = scrolledtext.ScrolledText(
-            ytdlp_section, height=4, state="disabled",
-            font=("Consolas", 9), wrap="word",
-        )
-        self._ytdlp_log.grid(
-            row=2, column=0, columnspan=2,
-            sticky="ew", pady=(4, 0),
-        )
-
-        # ── Section: Python SDK Status ───────────────────────────────────────
-        sdk_section = tk.LabelFrame(
-            root, text=tr("tool.preferences.section_env_sdks"),
-            padx=16, pady=12,
-        )
-        sdk_section.pack(fill="x", pady=(16, 0))
-
-        _sdks = [
-            ("fish-audio-sdk", env_check.check_fish_audio_sdk()),
-            ("openai",         env_check.check_openai_sdk()),
-        ]
-        for i, (pkg, ver) in enumerate(_sdks):
-            tk.Label(sdk_section, text=pkg, anchor="w", width=18).grid(
-                row=i, column=0, sticky="w", padx=(0, 8), pady=2,
-            )
-            if ver:
-                val, color = f"✓  {ver}", "#2e8b57"
-            else:
-                val, color = f"✗  pip install {pkg}", "#888"
-            tk.Label(sdk_section, text=val, fg=color, anchor="w").grid(
-                row=i, column=1, sticky="w", pady=2,
-            )
-
-        tk.Label(
-            sdk_section, text=tr("tool.preferences.sdk_install_hint"),
-            fg="#777", justify="left",
-        ).grid(row=len(_sdks), column=0, columnspan=2, sticky="w", pady=(10, 0))
-
-        # ── Coverage note ────────────────────────────────────────────────────
-        tk.Label(
-            root, text=tr("tool.preferences.coverage_note"),
-            fg="#777", wraplength=580, justify="left",
-        ).pack(fill="x", pady=(20, 0))
-
-        # Initial status refresh (in background to avoid blocking UI)
-        threading.Thread(target=self._bg_initial_refresh, daemon=True).start()
-
-    # ── Language ─────────────────────────────────────────────────────────────
-
-    def _on_save(self):
+    def _on_lang_save(self):
         selected_label = self._lang_var.get()
         code = next(
             (k for k, v in self._lang_labels.items() if v == selected_label),
@@ -176,73 +105,208 @@ class PreferencesApp(ToolBase):
         try:
             i18n.set_current_lang(code)
         except Exception as e:
-            self.set_error(f"保存设置失败: {e}")
-            self._status_lbl.config(text=f"✗ {e}", fg="#c0392b")
+            self._lang_status_lbl.config(text=f"✗ {e}", fg=_COLOR_FAIL)
             return
 
         if code == self._current_lang:
-            self._status_lbl.config(
-                text=tr("tool.preferences.saved_no_change"), fg="#2e8b57",
+            self._lang_status_lbl.config(
+                text=tr("tool.preferences.saved_no_change"), fg=_COLOR_OK,
             )
         else:
-            self._status_lbl.config(
-                text=tr("tool.preferences.saved_restart"), fg="#c06000",
+            self._lang_status_lbl.config(
+                text=tr("tool.preferences.saved_restart"), fg=_COLOR_HINT,
             )
         self.set_done()
 
-    # ── yt-dlp ───────────────────────────────────────────────────────────────
+    # ── Environment dashboard ────────────────────────────────────────────────
 
-    def _bg_initial_refresh(self):
-        self.master.after(0, self._refresh_ytdlp_status)
+    def _build_env_section(self, root):
+        section = tk.LabelFrame(
+            root, text=tr("env.section.title"),
+            padx=16, pady=12,
+        )
+        section.pack(fill="both", expand=True, pady=(16, 0))
+        section.columnconfigure(0, weight=1)
 
+        # Group components by category
+        comps = env.list_components()
+        categories: dict[str, list] = {}
+        for c in comps:
+            categories.setdefault(c.category, []).append(c)
 
-    def _refresh_ytdlp_status(self):
-        ver = env_check.check_ytdlp()
-        if ver:
-            self._ytdlp_val.config(text=f"✓  {ver}", fg="#2e8b57")
-        else:
-            self._ytdlp_val.config(
-                text=tr("tool.preferences.env_status_missing"), fg="#c0392b",
+        row_idx = 0
+        for category in ("binary", "python"):
+            if category not in categories:
+                continue
+            tk.Label(
+                section, text=tr(f"env.category.{category}"),
+                fg=_COLOR_DIM, font=("Segoe UI", 9, "bold"),
+                anchor="w",
+            ).grid(row=row_idx, column=0, sticky="ew", pady=(8, 4))
+            row_idx += 1
+
+            grid = tk.Frame(section)
+            grid.grid(row=row_idx, column=0, sticky="ew")
+            grid.columnconfigure(1, weight=1)
+            row_idx += 1
+
+            for sub_idx, comp in enumerate(categories[category]):
+                self._build_component_row(grid, sub_idx, comp)
+
+        # Refresh-all + shared log frame
+        toolbar = tk.Frame(section)
+        toolbar.grid(row=row_idx, column=0, sticky="ew", pady=(12, 4))
+        tk.Button(
+            toolbar, text=tr("env.action.refresh_all"),
+            command=lambda: threading.Thread(target=self._refresh_all_in_bg, daemon=True).start(),
+            width=14,
+        ).pack(side="left")
+        row_idx += 1
+
+        self._env_log = scrolledtext.ScrolledText(
+            section, height=8, state="disabled",
+            font=("Consolas", 9), wrap="word",
+        )
+        self._env_log.grid(row=row_idx, column=0, sticky="ew", pady=(8, 0))
+
+    def _build_component_row(self, parent, row: int, comp):
+        """Build one row: [label] [status] [action button]."""
+        label_lbl = tk.Label(parent, text=tr(comp.label_key), anchor="w", width=16)
+        label_lbl.grid(row=row, column=0, sticky="w", padx=(8, 8), pady=2)
+
+        status_lbl = tk.Label(parent, text="…", anchor="w", fg=_COLOR_DIM)
+        status_lbl.grid(row=row, column=1, sticky="w", pady=2)
+
+        action_btn = tk.Button(parent, text="", width=18, cursor="hand2")
+        action_btn.grid(row=row, column=2, sticky="e", padx=(8, 8), pady=2)
+
+        self._row_widgets[comp.id] = {
+            "comp": comp,
+            "status": status_lbl,
+            "action": action_btn,
+        }
+
+    def _render_row(self, comp_id: str, result):
+        """Update one row's status + action button based on detection result."""
+        widgets = self._row_widgets[comp_id]
+        comp = widgets["comp"]
+        status_lbl = widgets["status"]
+        action_btn = widgets["action"]
+
+        # Status text
+        if result.available:
+            ver = result.version or "?"
+            src = tr(f"env.status.{result.source}") if result.source else ""
+            status_lbl.config(
+                text=f"✓  {ver}  ({src})" if src else f"✓  {ver}",
+                fg=_COLOR_OK,
             )
+        else:
+            status_lbl.config(text=f"✗  {tr('env.status.missing')}", fg=_COLOR_FAIL)
 
-    def _upgrade_ytdlp(self):
-        self._upgrade_ytdlp_btn.config(state="disabled")
-        self._ytdlp_log.config(state="normal")
-        self._ytdlp_log.delete("1.0", "end")
-        self._ytdlp_log.config(state="disabled")
+        # Action button: depends on (has_installer, available)
+        if comp.install is not None:
+            if not result.available:
+                # Need install / setup
+                if comp.id == "node":
+                    label = tr("env.action.setup_node")
+                else:
+                    label = tr("env.action.install")
+                action_btn.config(
+                    text=label,
+                    bg=_COLOR_ACTION, fg="white", relief="flat",
+                    activebackground=_COLOR_ACTION_HOVER,
+                    command=lambda cid=comp.id: self._do_install(cid),
+                )
+            else:
+                # Already installed → upgrade option
+                action_btn.config(
+                    text=tr("env.action.upgrade"),
+                    bg="SystemButtonFace", fg="black", relief="raised",
+                    activebackground="SystemButtonFace",
+                    command=lambda cid=comp.id: self._do_install(cid),
+                )
+        else:
+            # No installer — link to install guide (when missing) or just refresh
+            if not result.available and comp.info_url:
+                action_btn.config(
+                    text=tr("env.action.install_guide"),
+                    bg="SystemButtonFace", fg=_COLOR_ACTION, relief="flat",
+                    activebackground="SystemButtonFace",
+                    command=lambda url=comp.info_url: self._open_url(url),
+                )
+            else:
+                action_btn.config(
+                    text=tr("env.action.refresh"),
+                    bg="SystemButtonFace", fg="black", relief="raised",
+                    activebackground="SystemButtonFace",
+                    command=lambda cid=comp.id: self._refresh_one(cid),
+                )
+
+    def _refresh_one(self, comp_id: str):
+        """Re-detect a single component (UI-thread safe)."""
+        def run():
+            result = env.detect_one(comp_id)
+            self.master.after(0, self._render_row, comp_id, result)
+        threading.Thread(target=run, daemon=True).start()
+
+    def _refresh_all_in_bg(self):
+        """Background refresh of all visible components."""
+        for comp_id in self._row_widgets:
+            try:
+                result = env.detect_one(comp_id)
+            except Exception as e:
+                self.master.after(0, self._append_log, f"detect({comp_id}) failed: {e}")
+                continue
+            self.master.after(0, self._render_row, comp_id, result)
+
+    def _do_install(self, comp_id: str):
+        """Trigger install/upgrade for a component. Streams pip output to log."""
+        if self._installing:
+            self._append_log("Another install is in progress; please wait.")
+            return
+        self._installing = True
+        # Disable all action buttons during install
+        for w in self._row_widgets.values():
+            w["action"].config(state="disabled")
+
+        comp = self._row_widgets[comp_id]["comp"]
+        action_label = "upgrade" if env.detect_one(comp_id).available else "install"
+        self._append_log(tr("env.log.starting", action=action_label, component=comp_id))
+
+        def on_log(line: str):
+            self.master.after(0, self._append_log, line)
 
         def run():
+            err = None
             try:
-                proc = subprocess.Popen(
-                    [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp"],
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, encoding="utf-8", errors="replace",
-                )
-                for line in proc.stdout:
-                    self.master.after(0, self._append_ytdlp_log, line.rstrip())
-                proc.wait()
-                success = proc.returncode == 0
-                self.master.after(
-                    0, self._on_ytdlp_done, success,
-                    None if success else f"exit {proc.returncode}",
-                )
+                env.install_one(comp_id, on_log)
             except Exception as e:
-                self.master.after(0, self._on_ytdlp_done, False, str(e))
+                err = str(e)
+            self.master.after(0, self._on_install_done, comp_id, err)
 
         threading.Thread(target=run, daemon=True).start()
 
-    def _append_ytdlp_log(self, line: str):
-        self._ytdlp_log.config(state="normal")
-        self._ytdlp_log.insert("end", line + "\n")
-        self._ytdlp_log.see("end")
-        self._ytdlp_log.config(state="disabled")
+    def _on_install_done(self, comp_id: str, err: str | None):
+        if err:
+            self._append_log(tr("env.log.install_failed", err=err))
+        else:
+            self._append_log(tr("env.log.install_done"))
+        self._installing = False
+        # Re-enable buttons + refresh status
+        for w in self._row_widgets.values():
+            w["action"].config(state="normal")
+        self._refresh_one(comp_id)
 
-    def _on_ytdlp_done(self, success: bool, err: str | None):
-        msg = (
-            tr("tool.preferences.ytdlp_upgrade_done")
-            if success
-            else f"{tr('tool.preferences.ytdlp_upgrade_failed')}: {err}"
-        )
-        self._append_ytdlp_log(msg)
-        self._upgrade_ytdlp_btn.config(state="normal")
-        self._refresh_ytdlp_status()
+    def _open_url(self, url: str):
+        try:
+            webbrowser.open(url)
+            self._append_log(tr("env.log.url_open", url=url))
+        except Exception as e:
+            self._append_log(f"failed to open {url}: {e}")
+
+    def _append_log(self, line: str):
+        self._env_log.config(state="normal")
+        self._env_log.insert("end", line + "\n")
+        self._env_log.see("end")
+        self._env_log.config(state="disabled")

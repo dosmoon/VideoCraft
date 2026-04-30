@@ -1,13 +1,26 @@
-yt-dlp
-requests
-srt
-ffmpeg-python==0.2.0
-deepl
-google-genai
-fish-audio-sdk
-openai>=1.0.0
-Pillow>=10.0.0
-tkcalendar
-python-pptx>=0.6.21
-pywin32>=306; sys_platform == 'win32'
-# pydub  # Optional: for Live API audio processing (may not be available on all Windows systems)
+# VideoCraft runtime dependencies — all versions pinned for reproducible builds.
+# To upgrade: bump the version, `pip install -r requirements.txt --upgrade`,
+# test, commit. Lockfile / uv migration tracked as a separate plan.
+
+# Core
+yt-dlp==2026.3.17
+requests==2.32.5
+srt==3.5.3
+
+# Translation
+deepl==1.24.0
+
+# AI providers (LLM via google-genai; legacy google-generativeai removed
+# 2026-04-30 — see commit a082151)
+google-genai==1.55.0
+fish-audio-sdk==1.3.0
+openai==2.30.0
+
+# Media
+Pillow==12.0.0
+
+# UI
+tkcalendar==1.6.1
+
+# Windows-only
+pywin32==311; sys_platform == 'win32'
