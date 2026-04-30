@@ -1108,5 +1108,6 @@
   "env.log.starting": "Starting {action} {component}...",
   "env.log.url_open": "Opened {url}",
   "env.log.install_done": "✓ Done",
-  "env.log.install_failed": "✗ Failed: {err}"
+  "env.log.install_failed": "✗ Failed: {err}",
+  "env.action.reinstall_node": "Reinstall Node.js"
 }

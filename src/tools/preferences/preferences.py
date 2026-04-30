@@ -204,22 +204,32 @@ class PreferencesApp(ToolBase):
         else:
             status_lbl.config(text=f"✗  {tr('env.status.missing')}", fg=_COLOR_FAIL)
 
-        # Action button: depends on (has_installer, available)
-        if comp.install is not None:
+        # Action button: depends on (component-kind, source)
+        if comp.id == "node":
+            # Node is special: install always means "install managed", regardless
+            # of whether system Node is present. Button label depends on whether
+            # managed (specifically) is already installed.
+            if result.source == "managed":
+                label = tr("env.action.reinstall_node")
+            else:
+                label = tr("env.action.setup_node")
+            action_btn.config(
+                text=label,
+                bg=_COLOR_ACTION, fg="white", relief="flat",
+                activebackground=_COLOR_ACTION_HOVER,
+                command=lambda cid=comp.id: self._do_install(cid),
+            )
+        elif comp.install is not None:
             if not result.available:
-                # Need install / setup
-                if comp.id == "node":
-                    label = tr("env.action.setup_node")
-                else:
-                    label = tr("env.action.install")
+                # Pip package: not installed → install
                 action_btn.config(
-                    text=label,
+                    text=tr("env.action.install"),
                     bg=_COLOR_ACTION, fg="white", relief="flat",
                     activebackground=_COLOR_ACTION_HOVER,
                     command=lambda cid=comp.id: self._do_install(cid),
                 )
             else:
-                # Already installed → upgrade option
+                # Pip package: already installed → upgrade
                 action_btn.config(
                     text=tr("env.action.upgrade"),
                     bg="SystemButtonFace", fg="black", relief="raised",
