@@ -87,6 +87,19 @@ _NAMES: dict[str, tuple[str, str]] = {
 }
 
 
+def bcp47_to_iso(code: str) -> str:
+    """Reduce a BCP47 tag to its bare ISO 639-1 (or 639-3) language part.
+
+    'en-US' -> 'en', 'zh-Hans' -> 'zh', 'pt-BR' -> 'pt', 'yue' -> 'yue'.
+    Used when storing downloaded YouTube subtitles under the project's
+    ISO-suffixed naming convention (`<basename>_<iso>.srt`). Region/script
+    info is intentionally dropped — downstream steps consume by language,
+    not locale variant. Multi-variant collisions (e.g. zh-Hans + zh-Hant)
+    are not handled here; the caller decides how to disambiguate.
+    """
+    return code.split("-")[0].lower()
+
+
 def friendly_name(code: str, locale: str = "zh") -> str:
     """Return a human-friendly name for a BCP47 code.
 

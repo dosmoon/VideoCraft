@@ -226,6 +226,10 @@ _STEP_DISPLAY_NUM: dict[str, str] = {
 # Known fields (rendered with widgets). Anything else lands in raw section.
 _KNOWN_FIELDS: dict[str, list[str]] = {
     "step1_download":  ["enabled", "status", "source", "output"],
+    # NOTE: subtitle_langs (list[BCP47]) is intentionally NOT in this list —
+    # Commit A wires the backend only; Commit B will add UI (Pick button +
+    # modal), at which point this entry gains the field. For now users can
+    # hand-edit the manifest JSON to test backend behavior.
     "step1_5_select":  ["enabled", "status", "source", "start", "end", "output"],
     "step2_asr":       ["enabled", "status", "language", "source", "output"],
     "step3_translate": ["enabled", "status", "source_lang", "targets",
@@ -1632,8 +1636,17 @@ class ProjectWorkbenchApp(ToolBase):
         if not source:
             messagebox.showerror("Error", "step1_download.source is empty")
             return
+        # Optional manual subtitle download (Phase 2 of subtitle integration).
+        # User-driven: only what's listed gets fetched. Empty/missing = no
+        # subs, exactly today's behavior. List items are BCP47 codes
+        # (en-US, zh-Hans, ...) matching what extract_info reports.
+        raw_langs = step.get("subtitle_langs") or []
+        if not isinstance(raw_langs, list):
+            raw_langs = []
+        subtitle_langs = [str(s).strip() for s in raw_langs if str(s).strip()]
         # Local-file mode: source is a path on disk → just register it.
         # No copy / no re-encode (large videos shouldn't be duplicated).
+        # Manual subtitle download is skipped — there's no URL to fetch from.
         if not source.lower().startswith(("http://", "https://")):
             if not os.path.exists(source):
                 messagebox.showerror("Error", f"Source file not found:\n{source}")
@@ -1655,11 +1668,12 @@ class ProjectWorkbenchApp(ToolBase):
         self._begin_busy("step1_download", basename, f"Download running: {basename}")
         threading.Thread(
             target=self._download_worker,
-            args=(basename, source, out_template),
+            args=(basename, source, out_template, subtitle_langs),
             daemon=True,
         ).start()
 
-    def _download_worker(self, basename: str, url: str, out_template: str) -> None:
+    def _download_worker(self, basename: str, url: str, out_template: str,
+                          subtitle_langs: list[str]) -> None:
         try:
             from core import youtube_download
 
@@ -1682,6 +1696,7 @@ class ProjectWorkbenchApp(ToolBase):
                                  basename=basename))
             info, fpath = youtube_download.download_video(
                 url, out_template, progress_hook=hook,
+                subtitle_langs=(subtitle_langs or None),
             )
             # bestvideo+bestaudio merges into mp4 (per merge_output_format),
             # which may differ from info['ext'] (e.g. webm). Prefer the .mp4
@@ -1690,8 +1705,24 @@ class ProjectWorkbenchApp(ToolBase):
             raw_path = mp4 if os.path.exists(mp4) else fpath
             outputs = [self._project_relpath(raw_path)]
 
+            extra: dict = {"output": outputs, "title": info.get("title")}
+            # Relocate yt-dlp's downloaded SRTs (named <basename>_raw.<bcp47>.srt
+            # alongside the video) into the unit's subtitles/ folder under the
+            # project naming convention (<basename>_<iso>.srt). Run a quality
+            # fingerprint on each and surface the result both in the manifest
+            # (subtitles field) and the live status log.
+            if subtitle_langs:
+                subs_records = self._relocate_and_fingerprint_subtitles(
+                    basename, raw_path)
+                if subs_records:
+                    extra["subtitles"] = subs_records
+                    for rec in subs_records:
+                        line = (f"  → {os.path.basename(rec['path'])}: "
+                                f"{rec.get('fingerprint_summary') or '(no fingerprint)'}")
+                        self.master.after(0, self._step_status, line)
+
             self.master.after(0, self._finish_step, "step1_download", basename,
-                              "done", {"output": outputs, "title": info.get("title")},
+                              "done", extra,
                               tr("tool.project_workbench.status.download_done",
                                  basename=basename))
         except Exception as e:
@@ -1699,6 +1730,65 @@ class ProjectWorkbenchApp(ToolBase):
                               "failed", {"error": str(e)},
                               tr("tool.project_workbench.status.download_failed",
                                  basename=basename, e=e))
+
+    def _relocate_and_fingerprint_subtitles(self, basename: str,
+                                              raw_video_path: str) -> list[dict]:
+        """Move yt-dlp SRTs into subtitles/ under ISO-suffixed names + fingerprint.
+
+        yt-dlp writes manual subs as `<base>_raw.<bcp47>.srt` next to the
+        video. This: (a) globs them, (b) renames to ISO 639-1 short code
+        (en-US → en, zh-Hans → zh), (c) moves into <unit>/subtitles/, and
+        (d) runs srt_quality.fingerprint() on each. Returns a list of
+        {bcp47, iso, path (project-relative), fingerprint, fingerprint_summary}
+        dicts for the manifest. Collisions (e.g. zh-Hans + zh-Hant both
+        mapping to zh) keep the BCP47 tag in the filename to disambiguate."""
+        import glob
+        from core import lang_names, srt_quality
+
+        unit_dir = self.project.unit_dir(basename)
+        subs_dir = os.path.join(unit_dir, "subtitles")
+        os.makedirs(subs_dir, exist_ok=True)
+        raw_stem = os.path.splitext(os.path.basename(raw_video_path))[0]
+        pattern = os.path.join(unit_dir, glob.escape(raw_stem) + ".*.srt")
+        srt_paths = sorted(glob.glob(pattern))
+
+        records: list[dict] = []
+        seen_iso: set[str] = set()
+        for src in srt_paths:
+            # Filename pattern: <basename>_raw.<bcp47>.srt → extract bcp47.
+            name = os.path.basename(src)
+            without_ext = os.path.splitext(name)[0]   # <basename>_raw.<bcp47>
+            try:
+                bcp47 = without_ext.rsplit(".", 1)[1]
+            except IndexError:
+                continue
+            iso = lang_names.bcp47_to_iso(bcp47)
+            # Disambiguate collisions: keep BCP47 if base ISO already taken.
+            suffix = bcp47 if iso in seen_iso else iso
+            seen_iso.add(iso)
+            dst = os.path.join(subs_dir, f"{basename}_{suffix}.srt")
+            try:
+                if os.path.abspath(src) != os.path.abspath(dst):
+                    if os.path.exists(dst):
+                        os.remove(dst)
+                    os.rename(src, dst)
+            except OSError:
+                # If rename fails (cross-volume? locked?), leave src in place
+                # but still fingerprint it from its current location.
+                dst = src
+            try:
+                fp = srt_quality.fingerprint(dst)
+            except Exception:
+                fp = None
+            records.append({
+                "bcp47": bcp47,
+                "iso": iso,
+                "path": self._project_relpath(dst),
+                "fingerprint": fp,
+                "fingerprint_summary": (srt_quality.format_fingerprint(fp)
+                                        if fp else None),
+            })
+        return records
 
     # ── Step 1.5: Select segment (single start/end clip) ─────────────────────
 
