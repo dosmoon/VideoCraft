@@ -22,9 +22,12 @@ class YouTubeDownloader(ToolBase):
         self.selected_videos = []  # Selected videos for download
         self.checkbox_vars = []    # BooleanVar per video for checkbox selection
 
-        # Network configuration
-        self.network_speed = "fast"  # fast, medium, slow
-        self.force_ipv4_var = tk.BooleanVar(value=True)
+        # Network configuration. Both default OFF: yt-dlp's own heuristics
+        # (Happy Eyeballs IPv4/IPv6 selection, single-stream TCP without
+        # http_chunk_size) outperform the previous "self-tuning" defaults
+        # on stable connections. The toggles stay so users with broken
+        # IPv6 / hotel WiFi / mobile tethering can opt in.
+        self.force_ipv4_var = tk.BooleanVar(value=False)
 
         # Progress update throttling - 避免事件队列堆积
         self.last_progress_update = {}  # {video_title: last_update_time}
@@ -133,10 +136,20 @@ class YouTubeDownloader(ToolBase):
         self.mp3_var = tk.BooleanVar()
         tk.Checkbutton(options_frame, text=tr("tool.download.extract_mp3"), variable=self.mp3_var, font=("Arial", 9)).grid(row=2, column=0, sticky="w")
 
-        # Network Speed
+        # Network mode. "Auto" = yt-dlp defaults (single-stream TCP, no
+        # forced chunking) — best on stable broadband. "Throttled" =
+        # smaller HTTP chunks for hotel WiFi / mobile tethering / unstable
+        # connections, where smaller chunks recover better from drops.
+        # The old "Fast / Medium / Slow (NN MB chunks)" options were
+        # removed: they applied http_chunk_size unconditionally, which
+        # fragments a single-stream TCP download into N Range requests
+        # and is actively slower on most networks.
         tk.Label(options_frame, text=tr("tool.download.network_label"), font=("Arial", 9, "bold")).grid(row=3, column=0, sticky="w", pady=(10,5))
-        self.network_combo = ttk.Combobox(options_frame, values=["Fast (30MB chunks)", "Medium (15MB chunks)", "Slow (5MB chunks)"],
-                                         state="readonly", width=20)
+        self.network_combo = ttk.Combobox(
+            options_frame,
+            values=["Auto (recommended)", "Throttled (slow / unstable)"],
+            state="readonly", width=24,
+        )
         self.network_combo.current(0)
         self.network_combo.grid(row=4, column=0, sticky="w", pady=(0,5))
         tk.Label(options_frame, text=tr("tool.download.network_hint"), font=("Arial", 7), fg="gray").grid(row=5, column=0, sticky="w")
@@ -378,18 +391,12 @@ class YouTubeDownloader(ToolBase):
                     
                     output_template = os.path.join(output_dir, "%(title)s.%(ext)s")
 
-                    # Map UI's network combo string to youtube_download preset key.
-                    # Actual chunk_size / buffersize / concurrent_fragment_downloads
-                    # values live in core.youtube_download.NETWORK_PRESETS so all
-                    # callers stay in sync.
+                    # Map UI's network combo to a youtube_download preset.
+                    # "Auto" → None → yt-dlp defaults. "Throttled" →
+                    # explicit small chunks for unstable connections.
                     network_choice = self.network_combo.get()
-                    if "Fast" in network_choice:
-                        net_preset = "fast"
-                    elif "Medium" in network_choice:
-                        net_preset = "medium"
-                    else:
-                        net_preset = "slow"
-                    self.root.after(0, lambda np=net_preset: self.log(f"Network preset: {np}"))
+                    net_preset = "throttled" if "Throttled" in network_choice else None
+                    self.root.after(0, lambda np=net_preset or "auto": self.log(f"Network: {np}"))
 
                     source_url = video.get('source_url')
                     playlist_index = video.get('playlist_index')

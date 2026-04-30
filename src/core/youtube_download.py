@@ -23,22 +23,24 @@ import yt_dlp
 
 
 # ── Network presets ──────────────────────────────────────────────────────────
-# Surfaced to users via Fast / Medium / Slow combobox in the legacy tool.
-# Manifest step1 uses defaults (None) — yt-dlp picks reasonable fallbacks.
+# Default (network_preset=None) means: don't override yt-dlp's own settings.
+# yt-dlp uses single-stream TCP without http_chunk_size, which is the fastest
+# path on stable broadband (Happy Eyeballs picks IPv4/IPv6 automatically).
+#
+# The previous "fast / medium / slow" trio applied http_chunk_size + buffersize
+# + concurrent_fragment_downloads as if they were throughput knobs, but they
+# aren't: http_chunk_size is documented as a workaround for per-connection
+# server throttling (irrelevant for YouTube), and forcing it fragments a
+# continuous TCP stream into N separate Range requests — measurably slower
+# on most networks. Removed in favor of yt-dlp defaults.
+#
+# Only the "throttled" preset survives: smaller chunks for hotel WiFi / mobile
+# tethering / satellite where connections drop frequently and resuming from a
+# small chunk boundary beats re-downloading megabytes.
 
 NETWORK_PRESETS: dict[str, dict] = {
-    "fast": {
-        "http_chunk_size": 31457280,   # 30 MB
-        "buffersize":      16777216,   # 16 MB
-        "concurrent_fragment_downloads": 8,
-    },
-    "medium": {
-        "http_chunk_size": 15728640,   # 15 MB
-        "buffersize":      8388608,    # 8 MB
-        "concurrent_fragment_downloads": 5,
-    },
-    "slow": {
-        "http_chunk_size": 5242880,    # 5 MB
+    "throttled": {
+        "http_chunk_size": 5242880,    # 5 MB — small enough to resume cheaply
         "buffersize":      4194304,    # 4 MB
         "concurrent_fragment_downloads": 3,
     },
