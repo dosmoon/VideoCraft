@@ -5,17 +5,18 @@ Pure persistence layer for named parameter presets — domain data, not UI
 data, so this lives in core. Both consumers (the legacy subtitle_tool UI
 and the project-workbench step4_burn) read/write the same store, so a
 preset tuned in one is immediately visible in the other. Storage lives
-under the user's home directory alongside recent.json (see project.py),
-not in the project folder, because presets are cross-project user
-preferences.
+under <repo>/user_data/presets/ (see core.user_data), not in any project
+folder, because presets are cross-project user preferences.
 """
 
 import json
 import os
 from typing import Optional
 
+from core import user_data
 
-PRESET_DIR = os.path.join(os.path.expanduser("~"), ".videocraft", "presets")
+
+PRESET_DIR = user_data.path("presets")
 PRESET_FILE = os.path.join(PRESET_DIR, "subtitle_burn.json")
 BUILTIN_DEFAULT_NAME = "Default"
 

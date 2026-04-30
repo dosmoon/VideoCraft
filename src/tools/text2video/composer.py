@@ -22,6 +22,7 @@ except ImportError:
 import core.tts as _tts
 import core.video_compose as _vcompose
 import core.video_concat as _vconcat
+from core import user_data
 from core.composer_model import ComposerProject, MediaSegment
 from i18n import tr
 from tools.base import ToolBase
@@ -31,8 +32,7 @@ _AUDIO_EXTS = (".mp3", ".wav", ".m4a", ".aac")
 _IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp")
 _TEXT_EXTS = (".txt",)
 
-_AUTOSAVE_DIR = os.path.join(os.path.expanduser("~"), ".videocraft")
-_AUTOSAVE_PATH = os.path.join(_AUTOSAVE_DIR, "composer_project.json")
+_AUTOSAVE_PATH = user_data.path("composer_project.json")
 
 
 def _sorted_by_basename(paths: list[str]) -> list[str]:
@@ -383,7 +383,7 @@ class MediaSegmentComposerApp(ToolBase):
                          daemon=True).start()
 
     def _tts_worker(self, segments: list[MediaSegment], voice_id: str):
-        audio_dir = os.path.join(_AUTOSAVE_DIR, "audio")
+        audio_dir = user_data.path("audio")
         os.makedirs(audio_dir, exist_ok=True)
         try:
             for i, seg in enumerate(segments):
@@ -495,7 +495,7 @@ class MediaSegmentComposerApp(ToolBase):
     def _do_save(self):
         self._save_timer = None
         try:
-            os.makedirs(_AUTOSAVE_DIR, exist_ok=True)
+            os.makedirs(os.path.dirname(_AUTOSAVE_PATH), exist_ok=True)
             self._project.voice_id = self._voice_var.get()
             self._project.save(_AUTOSAVE_PATH)
         except Exception as e:

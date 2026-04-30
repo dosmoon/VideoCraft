@@ -2,17 +2,17 @@
 hub_layout.py - Persistent Hub window layout.
 
 Stores the Hub main window geometry, PanedWindow sash positions, and zoom
-state across sessions. Uses the same ~/.videocraft/ convention as
-project.py's recent.json.
+state across sessions. Persisted under <repo>/user_data/ (see core.user_data).
 """
 
 import json
 import os
 from typing import Any
 
+from core import user_data
 
-LAYOUT_DIR = os.path.join(os.path.expanduser("~"), ".videocraft")
-LAYOUT_FILE = os.path.join(LAYOUT_DIR, "layout.json")
+
+LAYOUT_FILE = user_data.path("layout.json")
 
 
 DEFAULT_LAYOUT: dict = {
@@ -47,7 +47,7 @@ def load_layout() -> dict:
 
 def save_layout(layout: dict) -> None:
     """Persist layout to disk, creating the parent directory as needed."""
-    os.makedirs(LAYOUT_DIR, exist_ok=True)
+    os.makedirs(os.path.dirname(LAYOUT_FILE), exist_ok=True)
     # Only keep known keys to avoid leaking random state into the file.
     payload: dict[str, Any] = {k: layout.get(k, DEFAULT_LAYOUT[k]) for k in DEFAULT_LAYOUT}
     with open(LAYOUT_FILE, "w", encoding="utf-8") as f:

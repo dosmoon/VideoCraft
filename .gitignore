@@ -146,3 +146,6 @@ keys/
 DeepL.key
 *.key
 
+# User data (per-install state: settings, layout, recent projects, presets, autosave)
+user_data/
+

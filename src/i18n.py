@@ -3,7 +3,7 @@ i18n.py - Lightweight localization layer.
 
 Loads JSON locale tables from src/i18n/<lang>.json and exposes a single
 tr(key, **kwargs) function. Language selection is persisted to
-~/.videocraft/settings.json and applied on next startup (Tk labels are
+<repo>/user_data/settings.json and applied on next startup (Tk labels are
 fixed at widget creation time, so switching is restart-based).
 
 Fallback chain for any given key:
@@ -13,9 +13,11 @@ Fallback chain for any given key:
 import json
 import os
 
+from core import user_data
+
 
 LOCALE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "i18n")
-SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".videocraft", "settings.json")
+SETTINGS_FILE = user_data.path("settings.json")
 # Factory default is English: the first wave of open-source users is expected
 # to be English-speaking. Users can switch to Chinese via File > Preferences.
 DEFAULT_LANG = "en"

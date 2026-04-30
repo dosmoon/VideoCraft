@@ -39,7 +39,7 @@ from core import burn_presets
 
 # ── Burn preset bridge ───────────────────────────────────────────────────────
 # Translates legacy subtitle_tool's preset schema to/from workbench step4_burn
-# fields so that hard-won presets in ~/.videocraft/presets/subtitle_burn.json
+# fields so that hard-won presets in user_data/presets/subtitle_burn.json
 # are usable directly. Legacy field names are kept in the preset store
 # (cross-tool compatibility); workbench uses its own names internally.
 
