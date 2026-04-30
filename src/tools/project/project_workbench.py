@@ -35,7 +35,8 @@ from core.segment_model import load_from_file as load_segments_file
 from core.video_concat import split_segments
 from core.video_split import SplitMode
 from core import burn_presets
-from core.ai.errors import AIError
+from core.ai.errors import AIError, Kind
+from core.ai.cancellation import CancellationToken
 from ui.ai_error_dialog import show_ai_error
 
 
@@ -371,6 +372,12 @@ _BURN_SECTIONS = [
 
 _STATUS_VALUES = ["pending", "running", "done", "failed"]
 
+# Steps that pass a CancellationToken into their AI call. Currently only
+# translate has fine-grained (between-batch) cancellation; asr / pack are
+# single-call so cooperative cancel only takes effect after the current
+# call returns. Add to this set once those gain abort-callback wiring.
+_CANCELLABLE_STEPS = {"step3_translate"}
+
 # Steps that can be run from the workbench in M2.
 _RUNNABLE_STEPS = {"step1_download", "step1_5_select", "step2_asr",
                    "step3_translate", "step4_burn", "step5_pack", "step6_split"}
@@ -412,6 +419,12 @@ class ProjectWorkbenchApp(ToolBase):
         self._dirty: bool = False
         self._busy: bool = False
         self._current_step: str | None = None
+        # AI cancellation token. Created by _begin_busy when the step is in
+        # _CANCELLABLE_STEPS, passed into the worker, cleared by _finish_step.
+        # When non-None during render, the running step's Run button is
+        # rendered as a Cancel button instead.
+        self._cancel_token: CancellationToken | None = None
+        self._cancel_pending: bool = False  # set when cancel clicked, until worker exits
 
         self._field_vars: list = []
         self._suppress_dirty: bool = False
@@ -656,10 +669,26 @@ class ProjectWorkbenchApp(ToolBase):
                  fg=S["value_fg"], font=S["title_font"], anchor="w").pack(
             side="left", padx=12, pady=8)
         if step_key in _RUNNABLE_STEPS:
-            # Unified label across every step — the card title already names
-            # what the step does, so the button just needs to say "Run".
-            btn = tk.Button(header, text=tr("tool.project_workbench.run"),
-                            command=lambda sk=step_key: self._on_run_step(sk))
+            # Tri-state header button:
+            #   idle / other-step running    → "Run" (kicks off this step)
+            #   THIS step running, cancellable → "Cancel" (red, one click stops)
+            #   cancel pressed, waiting      → "Cancelling…" (disabled gray)
+            is_running_here = (self._busy and self._current_step == step_key
+                                and self._cancel_token is not None)
+            if is_running_here and self._cancel_pending:
+                btn = tk.Button(
+                    header, text=tr("tool.project_workbench.cancelling"),
+                    state="disabled", width=12)
+            elif is_running_here:
+                btn = tk.Button(
+                    header, text=tr("tool.project_workbench.cancel"),
+                    bg="#dc2626", fg="white", activebackground="#b91c1c",
+                    command=lambda sk=step_key: self._on_cancel_step(sk),
+                    width=12)
+            else:
+                btn = tk.Button(
+                    header, text=tr("tool.project_workbench.run"),
+                    command=lambda sk=step_key: self._on_run_step(sk))
             btn.pack(side="right", padx=10, pady=6)
             self._run_buttons[step_key] = btn
 
@@ -1620,6 +1649,18 @@ class ProjectWorkbenchApp(ToolBase):
                        activebackground="#d1d5db", activeforeground="#6b7280",
                        relief="flat")
 
+    def _on_cancel_step(self, step_key: str) -> None:
+        """Signal cancellation to the active worker. The worker checks the
+        token at safe points and exits with AIError(CANCELLED), which the
+        worker's except branch translates to a "pending" status reset."""
+        if self._cancel_token is None or self._current_step != step_key:
+            return
+        self._cancel_token.cancel()
+        self._cancel_pending = True
+        # Re-render to flip the button to "Cancelling..." (disabled).
+        self._render_step_cards()
+        self._status_var.set(tr("tool.project_workbench.status.cancelling"))
+
     def _on_run_step(self, step_key: str) -> None:
         if (self.project is None or self._buffer is None
                 or self._current_basename is None or self._busy):
@@ -1700,6 +1741,12 @@ class ProjectWorkbenchApp(ToolBase):
         self._buffer = manifest
         self._busy = True
         self._current_step = step_key
+        # Provision a fresh token if this step type supports cancellation;
+        # the worker reads self._cancel_token to pass into AI calls. Cleared
+        # in _finish_step regardless of outcome.
+        self._cancel_token = (CancellationToken()
+                              if step_key in _CANCELLABLE_STEPS else None)
+        self._cancel_pending = False
         self.set_busy()
         self._set_banner_state("running")
         self._status_var.set(self._step_prefix(step_key) + status_msg)
@@ -1709,6 +1756,11 @@ class ProjectWorkbenchApp(ToolBase):
     def _finish_step(self, step_key: str, basename: str, status: str,
                      updates: dict, msg: str) -> None:
         self._busy = False
+        # Drop the cancel token now that the worker is done. Has to happen
+        # before _render_step_cards below so the Run button returns to its
+        # normal "Run" form (rather than "Cancel" / "Cancelling…").
+        self._cancel_token = None
+        self._cancel_pending = False
         if self.project is None:
             return
         manifest = self.project.load_manifest(basename) or {}
@@ -2092,15 +2144,22 @@ class ProjectWorkbenchApp(ToolBase):
                          f"Translate running: {basename}")
         threading.Thread(
             target=self._translate_worker,
-            args=(basename, srt_in, source_lang, list(targets)),
+            args=(basename, srt_in, source_lang, list(targets),
+                   self._cancel_token),
             daemon=True,
         ).start()
 
     def _translate_worker(self, basename: str, srt_in: str,
-                          source_lang: str, targets: list[str]) -> None:
+                          source_lang: str, targets: list[str],
+                          cancel_token=None) -> None:
         try:
             outputs: list[str] = []
             for tgt in targets:
+                # Between-language cancel — important for multi-target runs
+                # where the user changes their mind after the first language
+                # writes out.
+                if cancel_token is not None:
+                    cancel_token.throw_if_cancelled("Translate")
                 self.master.after(
                     0, self._step_status,
                     tr("tool.project_workbench.status.translate_start",
@@ -2114,6 +2173,7 @@ class ProjectWorkbenchApp(ToolBase):
                     source_lang=source_lang,
                     target_lang=tgt,
                     progress_cb=progress_cb,
+                    cancel_token=cancel_token,
                 )
                 # translate_srt_file names by language English name (e.g.
                 # "Chinese.srt"); rename to match ASR convention
@@ -2133,11 +2193,22 @@ class ProjectWorkbenchApp(ToolBase):
                               tr("tool.project_workbench.status.translate_done",
                                  basename=basename))
         except AIError as e:
-            self.master.after(0, self._finish_step, "step3_translate", basename,
-                              "failed", {"error": str(e)},
-                              tr("tool.project_workbench.status.translate_failed",
-                                 basename=basename, e=e))
-            self.master.after(0, lambda err=e: show_ai_error(self.master, err))
+            if e.kind == Kind.CANCELLED:
+                # User cancelled — revert to pending so they can re-run cleanly,
+                # no error dialog.
+                self.master.after(
+                    0, self._finish_step, "step3_translate", basename,
+                    "pending", {"error": None},
+                    tr("tool.project_workbench.status.cancelled",
+                       basename=basename))
+            else:
+                self.master.after(
+                    0, self._finish_step, "step3_translate", basename,
+                    "failed", {"error": str(e)},
+                    tr("tool.project_workbench.status.translate_failed",
+                       basename=basename, e=e))
+                self.master.after(
+                    0, lambda err=e: show_ai_error(self.master, err))
         except Exception as e:
             self.master.after(0, self._finish_step, "step3_translate", basename,
                               "failed", {"error": str(e)},
