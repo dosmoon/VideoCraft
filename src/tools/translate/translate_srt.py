@@ -5,7 +5,8 @@ from tkinter import filedialog, ttk
 
 from tools.base import ToolBase
 from hub_logger import logger
-from core.ai.errors import AIError
+from core.ai.errors import AIError, Kind
+from core.ai.cancellation import CancellationToken
 from ui.ai_error_dialog import show_ai_error
 
 # Per architecture principle 1, the UI does not import core.ai directly;
@@ -89,6 +90,11 @@ class TranslateApp(ToolBase):
         master.geometry("700x430")
         master.resizable(False, False)
 
+        # Cancellation state. None when idle; a fresh token while a worker
+        # is running. Set back to None when worker exits (success / cancel /
+        # error). Tri-state button reads this to decide what to do on click.
+        self._cancel_token: CancellationToken | None = None
+
         language_options = get_language_options()
 
         # ── Row 0: 源语言 ──────────────────────────────────────────────────────
@@ -130,8 +136,13 @@ class TranslateApp(ToolBase):
                  ).grid(row=4, column=0, columnspan=3, sticky="w", padx=10, pady=(2, 0))
 
         # ── Row 5: 翻译按钮 ────────────────────────────────────────────────────
+        # Tri-state: idle = "Start" → kicks off worker. Running = "Cancel"
+        # → calls token.cancel(). Cancelling = "Cancelling..." (disabled,
+        # waits for current batch to finish).
         self.trans_btn = tk.Button(master, text=tr("tool.translate.btn_start"),
-                                   command=self.translate_srt, width=20)
+                                   command=self._on_btn_click, width=20,
+                                   bg="#2563eb", fg="white",
+                                   activebackground="#1d4ed8")
         self.trans_btn.grid(row=5, column=1, pady=20)
 
         # ── Row 6: 状态栏 ──────────────────────────────────────────────────────
@@ -147,16 +158,21 @@ class TranslateApp(ToolBase):
         if path:
             self.srt_path_var.set(path)
 
-    def _run_translation(self, srt_path, source_lang, target_lang, batch_size):
+    def _run_translation(self, srt_path, source_lang, target_lang, batch_size,
+                          token):
         """Worker thread: delegate to core.translate, post status to main thread."""
         from i18n import tr as _tr
 
         def status(msg):
             self.master.after(0, self.status_var.set, msg)
 
-        def finish():
+        def reset_button():
+            # Clear the active token so the next click starts fresh, and
+            # restore the button to idle (blue "Start") state.
+            self._cancel_token = None
             self.master.after(0, lambda: self.trans_btn.config(
-                state="normal", text=_tr("tool.translate.btn_start")))
+                state="normal", text=_tr("tool.translate.btn_start"),
+                bg="#2563eb", activebackground="#1d4ed8"))
 
         def on_progress(_done, _total, msg):
             status(msg)
@@ -169,23 +185,41 @@ class TranslateApp(ToolBase):
                 batch_size=batch_size,
                 progress_cb=on_progress,
                 log_cb=print,
+                cancel_token=token,
             )
             status(f"翻译完成，已保存: {output_file}")
             logger.info(f"翻译完成 → {os.path.basename(output_file)}")
             self.set_done()
 
         except AIError as e:
-            # Structured AI error → dialog with Kind-driven recovery actions.
-            self.set_error(str(e))
-            status(f"✗ {e}")
-            self.master.after(0, lambda err=e: show_ai_error(self.master, err))
+            if e.kind == Kind.CANCELLED:
+                # User cancellation — neutral, not an error.
+                status(_tr("tool.translate.status_cancelled"))
+                logger.info("翻译已被用户取消")
+                self.set_warning(_tr("tool.translate.status_cancelled"))
+            else:
+                self.set_error(str(e))
+                status(f"✗ {e}")
+                self.master.after(0, lambda err=e: show_ai_error(self.master, err))
         except Exception as e:
             self.set_error(f"翻译失败: {e}")
             status(f"✗ 翻译失败: {e}")
         finally:
-            finish()
+            reset_button()
 
-    def translate_srt(self):
+    def _on_btn_click(self):
+        """Tri-state click handler — Start / Cancel / no-op while cancelling."""
+        from i18n import tr as _tr
+        if self._cancel_token is None:
+            self._start_translation()
+            return
+        # Running → cancel
+        self._cancel_token.cancel()
+        self.trans_btn.config(state="disabled",
+                               text=_tr("tool.translate.btn_cancelling"))
+        self.status_var.set(_tr("tool.translate.status_cancelling"))
+
+    def _start_translation(self):
         srt_path    = self.srt_path_var.get()
         source_lang = get_lang_code(self.source_lang_var.get())
         target_lang = get_lang_code(self.target_lang_var.get())
@@ -199,15 +233,23 @@ class TranslateApp(ToolBase):
             return
 
         from i18n import tr as _tr
-        self.trans_btn.config(state="disabled", text=_tr("tool.translate.btn_running"))
+        self._cancel_token = CancellationToken()
+        # Switch button to "Cancel" mode (red, still clickable).
+        self.trans_btn.config(state="normal",
+                               text=_tr("tool.translate.btn_cancel"),
+                               bg="#dc2626", activebackground="#b91c1c")
         self.status_var.set(_tr("tool.translate.status_reading"))
         self.set_busy()
 
         threading.Thread(
             target=self._run_translation,
-            args=(srt_path, source_lang, target_lang, batch_size),
+            args=(srt_path, source_lang, target_lang, batch_size,
+                   self._cancel_token),
             daemon=True
         ).start()
+
+    # Backward-compat alias — older callers may invoke .translate_srt() directly.
+    translate_srt = _start_translation
 
 
 # 启动主界面

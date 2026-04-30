@@ -212,6 +212,7 @@ def translate_srt_file(
     tier: str = TIER_STANDARD,
     progress_cb: Callable[[int, int, str], None] | None = None,
     log_cb: Callable[[str], None] | None = None,
+    cancel_token=None,
 ) -> str:
     """Batch-translate an SRT file, writing output next to the source.
 
@@ -272,6 +273,13 @@ def translate_srt_file(
     translated_subs: dict[int, str] = {}
 
     for batch_idx, batch in enumerate(batches):
+        # Cooperative cancel: between batches the user can bail and we stop
+        # without writing the partial output. Re-raising the CANCELLED
+        # AIError out of the loop so the UI's existing AIError handling
+        # picks it up; per-batch fallback below intentionally skips it.
+        if cancel_token is not None:
+            cancel_token.throw_if_cancelled("Translate")
+
         if progress_cb:
             progress_cb(
                 batch_idx, total,
@@ -298,6 +306,10 @@ def translate_srt_file(
                 tier=tier,
             )
         except Exception as e:
+            # Cancellation must propagate, not fall back to original text.
+            from core.ai.errors import AIError, Kind
+            if isinstance(e, AIError) and e.kind == Kind.CANCELLED:
+                raise
             if log_cb:
                 log_cb(f"❌ 批次 {batch_idx+1} AI 调用失败: {e}")
             # Fall back to original text so the overall task keeps going.
