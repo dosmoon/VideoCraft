@@ -45,17 +45,18 @@ if __name__ == "__main__":
 ## 关键约束
 
 - **不做全局状态共享**：工具间数据通过 Project 文件夹（文件系统）传递，不用共享内存
-- **AI Router 是唯一进程内单例**：`from ai_router import router`
+- **AI 调用走 facade**：UI 层一律 `from core import ai`（顶层 `ai_router.py` 仅作 legacy 兼容 shim）；providers / errors / cancellation 在 `src/core/ai/` 子包内，详见 [04-ai-router.md](04-ai-router.md)
 - **错误传播**：`core/` 层工具函数失败一律 `raise`，UI 层在 try/except 里统一 `self.set_error(...)`，不静默失败
-- **配置存储**（均在 `~/.videocraft/` 下）：
+- **配置存储**（均在 `<repo>/user_data/` 下，绿色便携；老 `~/.videocraft/` 首次启动由 `core/user_data.py` 一次性 copy 迁移）：
 
   | 文件 | 用途 |
   |------|------|
-  | `recent.json`               | 最近打开的工程列表（[project.py](../../src/project.py)） |
-  | `layout.json`               | Hub 主窗口 geometry / sash / zoom（[hub_layout.py](../../src/hub_layout.py)，见 [11-hub-layout-persistence.md](11-hub-layout-persistence.md)） |
-  | `settings.json`             | 用户偏好（当前只有 `language`，未来扩展） |
+  | `recent.json`                | 最近打开的工程列表（[project.py](../../src/project.py)） |
+  | `layout.json`                | Hub 主窗口 geometry / sash / zoom / sidebar_tab（[hub_layout.py](../../src/hub_layout.py)，见 [11-hub-layout-persistence.md](11-hub-layout-persistence.md)） |
+  | `settings.json`              | 用户偏好（`language` 等） |
   | `presets/subtitle_burn.json` | 字幕烧录工具的命名参数预设 |
-  | `keys/providers.json`（项目内） | AI Provider 档位路由 + 各 Key 存储 |
+  | `runtimes/node/`             | Settings 一键安装的 managed Node.js（yt-dlp JS runtime 用） |
+  | `keys/providers.json`（repo-rooted） | AI Provider task routing + 各 Key 存储；不进 user_data，便于 git 选择性 ignore |
 
 ---
 
