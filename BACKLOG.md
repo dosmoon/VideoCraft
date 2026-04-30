@@ -19,8 +19,6 @@
 | 优先级 | 状态 | 功能 | 说明 |
 |--------|------|------|------|
 | 🟡 P2 | [x] | 视频加水印（含无字幕场景） | 烧录功能已支持图片/文字/日期三类水印 + 无字幕场景（仅水印或纯重编码）。作为独立工具的提案不再追，新工作台烧录步骤已覆盖。 |
-| 🟡 P2 | [ ] | SRT 时间轴整体偏移 | 字幕和视频对不上时，整体向前/向后偏移指定秒数 |
-| 🟡 P2 | [ ] | SRT 格式转换 | SRT ↔ VTT / ASS，不同平台（B站/YouTube/剪映）格式要求不同（注：word_subtitle 可生成 ASS 卡拉OK效果，但非通用格式转换） |
 | 🟡 P2 | [ ] | yt-dlp 下载时同步获取字幕 | yt-dlp 原生支持，加一个"同时下载字幕"选项，省去手动转录步骤 |
 | 🟡 P2 | [ ] | 视频合并/拼接 | 多个视频片段按顺序合并为一个，自媒体剪辑常见需求 |
 | 🟡 P2 | [ ] | AI 错误契约实施 (X1) | `core/ai/errors.py` 已定义 9 种 `AIError.Kind`（NETWORK/AUTH/QUOTA/RATE_LIMIT/REFUSED/MALFORMED/OVERFLOW/CANCELLED/UNKNOWN）但各 provider 仍直抛 RuntimeError。需要：(a) 给 5 个 provider 各写原生异常→Kind 映射表；(b) UI 加 Kind→恢复动作映射（AUTH→打开 AI 控制台、QUOTA→换 provider 等）。spec 见 [docs/design/04-ai-router.md](docs/design/04-ai-router.md) "错误契约（X1）" 章节 |
@@ -128,3 +126,5 @@
 | 批量处理 | 工作量大，先做单文件质量，后续再扩展 |
 | PPT / Slidev 转视频 | 受众与现有"视频创作者"主线错位（教育 / 培训 vs 自媒体），与 text2video 重叠 65%+；AI-PPT-to-video 工作流尚未被市场验证。如未来要做应另起新软件，不容纳进本 repo。2026-04-30 删除 ppt2video / slidev_pipeline / pptx_pipeline / node_env 全部相关代码 |
 | 字幕处理综合工作台 | 草案写完后世界变了：`subtitle.pack` 一键管线已覆盖 95% 流水线场景（一次 AI 调用产 titles+segments+refined），项目工作台 step5_pack 也包揽了「项目流程」中的字幕后处理。剩余 5% 的"手工 review/编辑"场景，用户用文本编辑器改 .txt 即可，不值得专做工作台。2026-04-30 决定取消，保留 5 个老菜单项作单步调试 fallback；菜单顺序调整把 pack 提到顶部 |
+| SRT 时间轴整体偏移 | 服务的痛点是"用户拿外部字幕烧录对不齐"，但实际场景里 VideoCraft 自家的 ASR + 翻译 + pack 流程产出的字幕都是对齐的，外部字幕导入烧录是边缘场景。等真有用户反馈再做。2026-04-30 取消 |
+| SRT 格式转换（SRT↔VTT/ASS） | 服务的痛点是"用户做完视频要传 B 站 / 嵌网页"，但目标用户群（自媒体视频创作者）多数全程 SRT 走完，且烧录是终态产物（视频里就有字幕），不需要外发字幕文件。word_subtitle 已能生成 ASS 卡拉 OK 效果。等真有用户反馈再做。2026-04-30 取消 |
