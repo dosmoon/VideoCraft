@@ -17,6 +17,8 @@ from typing import Callable
 
 import requests
 
+from core.ai.errors import AIError, Kind, map_http_status_to_kind
+
 
 EventCallback = Callable[..., None]
 
@@ -120,7 +122,8 @@ def transcribe(
         # Either fatal OR retries exhausted
         _raise_retry_exhausted(kind, payload)
 
-    raise RuntimeError("Lemonfox transcription: no result after all attempts")
+    raise AIError(Kind.UNKNOWN, "Lemonfox",
+                  "Transcription: no result after all attempts")
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
@@ -215,14 +218,17 @@ def _attempt(
 
         if not response.ok:
             body_preview = (response.text or "")[:500]
-            return ("fatal", RuntimeError(
-                f"Lemonfox API error ({response.status_code}): {body_preview}"
+            kind = map_http_status_to_kind(response.status_code, body_preview)
+            return ("fatal", AIError(
+                kind, "Lemonfox",
+                f"API error ({response.status_code}): {body_preview}",
             ))
 
         try:
             return response.json()
         except ValueError:
-            return ("fatal", RuntimeError("Lemonfox returned invalid JSON"))
+            return ("fatal", AIError(
+                Kind.MALFORMED, "Lemonfox", "Returned invalid JSON"))
 
     except requests.exceptions.ConnectTimeout as e:
         return ("retry", ("connect_timeout", e))
@@ -231,22 +237,25 @@ def _attempt(
     except requests.exceptions.ConnectionError as e:
         return ("retry", ("connection_error", e))
     except requests.exceptions.RequestException as e:
-        return ("fatal", RuntimeError(f"Lemonfox request failed: {e}"))
+        return ("fatal", AIError(
+            Kind.NETWORK, "Lemonfox", f"Request failed: {e}", raw=e))
     finally:
         wait_stop_event.set()
 
 
 def _raise_retry_exhausted(kind: str, payload):
-    """Translate the tuple marker into a RuntimeError for the caller."""
+    """Translate the tuple marker into an AIError for the caller."""
     if kind == "fatal":
         raise payload
     reason, exc = payload
     messages = {
-        "connect_timeout": "Lemonfox connect timeout (retries exhausted)",
-        "read_timeout":    "Lemonfox read timeout (retries exhausted)",
-        "connection_error": "Lemonfox connection error (retries exhausted)",
+        "connect_timeout":  "Connect timeout (retries exhausted)",
+        "read_timeout":     "Read timeout (retries exhausted)",
+        "connection_error": "Connection error (retries exhausted)",
     }
-    raise RuntimeError(messages.get(reason, f"Lemonfox failed: {reason}")) from exc
+    raise AIError(
+        Kind.NETWORK, "Lemonfox",
+        messages.get(reason, f"Failed: {reason}"), raw=exc) from exc
 
 
 def _resolve_upload_mime(file_path: str) -> tuple[str, bool]:

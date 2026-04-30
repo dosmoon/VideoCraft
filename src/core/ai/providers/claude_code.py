@@ -15,6 +15,7 @@ import json
 import shutil
 import subprocess
 
+from core.ai.errors import AIError, Kind, map_subprocess_exception
 from core.ai.providers._json_utils import parse_json_response
 
 
@@ -45,14 +46,15 @@ def call_json(cfg: dict, model_id: str, prompt: str, schema: dict) -> dict:
     try:
         envelope = json.loads(envelope_raw)
     except json.JSONDecodeError:
-        raise RuntimeError(
-            f"ClaudeCode CLI returned non-JSON stdout: {envelope_raw[:300]!r}"
+        raise AIError(
+            Kind.MALFORMED, "ClaudeCode",
+            f"CLI returned non-JSON stdout: {envelope_raw[:200]!r}",
         )
     inner_text = envelope.get("result", "")
     if not inner_text:
-        raise RuntimeError(
-            f"ClaudeCode result envelope missing 'result' field: "
-            f"{str(envelope)[:200]!r}"
+        raise AIError(
+            Kind.MALFORMED, "ClaudeCode",
+            f"Result envelope missing 'result' field: {str(envelope)[:200]!r}",
         )
     return parse_json_response(inner_text, provider_hint="ClaudeCode")
 
@@ -87,6 +89,7 @@ def _run(cmd: list, cfg: dict, prompt: str) -> str:
     if resolved:
         cmd = [resolved] + list(cmd[1:])
 
+    timeout_sec = int(cfg.get("timeout_sec", 600))
     try:
         result = subprocess.run(
             cmd,
@@ -95,19 +98,23 @@ def _run(cmd: list, cfg: dict, prompt: str) -> str:
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=int(cfg.get("timeout_sec", 600)),
+            timeout=timeout_sec,
         )
-    except FileNotFoundError:
-        raise RuntimeError(
-            f"Claude Code CLI not found: {executable!r}. "
-            "Install from https://claude.com/claude-code and ensure it "
-            "is on PATH, or set a full path in the AI Console."
-        )
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(
-            f"Claude Code CLI timed out after {cfg.get('timeout_sec')}s"
-        )
+    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+        raise map_subprocess_exception(
+            e, "ClaudeCode",
+            executable=executable, timeout_sec=timeout_sec) from e
     if result.returncode != 0:
         tail = (result.stderr or "").strip().splitlines()[-10:]
-        raise RuntimeError("claude code failed: " + " | ".join(tail))
+        joined = " | ".join(tail).lower()
+        # Sniff the CLI's stderr for known failure modes; default to UNKNOWN.
+        kind = Kind.UNKNOWN
+        if "not authorized" in joined or "not logged in" in joined:
+            kind = Kind.AUTH
+        elif "rate limit" in joined or "429" in joined:
+            kind = Kind.RATE_LIMIT
+        elif "context" in joined and "exceed" in joined:
+            kind = Kind.OVERFLOW
+        raise AIError(kind, "ClaudeCode",
+                      "CLI failed: " + (" | ".join(tail) or "<no stderr>"))
     return (result.stdout or "").strip()

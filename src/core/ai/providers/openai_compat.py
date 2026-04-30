@@ -10,32 +10,48 @@ openai.AuthenticationError into AIError with the appropriate Kind.
 
 import json
 
+from core.ai.errors import AIError, map_openai_exception
 from core.ai.providers._json_utils import parse_json_response
+
+
+def _provider_label(base_url: str) -> str:
+    """Best-effort name to surface in errors. DeepSeek vs Custom is a routing
+    distinction the user picks; we hint with the host so they can tell which
+    config blew up when multiple openai-compat providers coexist."""
+    if "deepseek" in (base_url or "").lower():
+        return "DeepSeek"
+    return f"OpenAI-compat ({base_url})"
 
 
 def call(api_key: str, base_url: str, model_id: str, prompt: str) -> str:
     """Plain text completion via OpenAI-compatible chat.completions."""
     from openai import OpenAI
-    client = OpenAI(api_key=api_key, base_url=base_url)
-    response = client.chat.completions.create(
-        model=model_id,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return response.choices[0].message.content.strip()
+    provider = _provider_label(base_url)
+    try:
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        response = client.chat.completions.create(
+            model=model_id,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.choices[0].message.content.strip()
+    except AIError:
+        raise
+    except Exception as e:
+        raise map_openai_exception(e, provider) from e
 
 
 def list_models(api_key: str, base_url: str) -> list[str]:
     """Fetch model IDs from an OpenAI-compatible endpoint's GET /models.
 
-    Returns a sorted list of model IDs the key has access to. Raises
-    RuntimeError if the call fails.
+    Returns a sorted list of model IDs the key has access to.
     """
     from openai import OpenAI
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    provider = _provider_label(base_url)
     try:
+        client = OpenAI(api_key=api_key, base_url=base_url)
         response = client.models.list()
     except Exception as e:
-        raise RuntimeError(f"Failed to fetch models from {base_url}: {e}") from e
+        raise map_openai_exception(e, provider) from e
     ids = []
     for m in response.data:
         mid = getattr(m, "id", None) or (m.get("id") if isinstance(m, dict) else None)
@@ -54,20 +70,26 @@ def call_json(api_key: str, base_url: str, model_id: str,
     hint to steer the model, then validate by parsing.
     """
     from openai import OpenAI
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    provider = _provider_label(base_url)
     schema_hint = (
         "You must respond with a single JSON object that strictly matches "
         "this JSON Schema:\n"
         f"{json.dumps(schema, ensure_ascii=False, indent=2)}\n"
         "Return only the JSON object. No markdown fences. No prose. No explanations."
     )
-    response = client.chat.completions.create(
-        model=model_id,
-        messages=[
-            {"role": "system", "content": schema_hint},
-            {"role": "user",   "content": prompt},
-        ],
-        response_format={"type": "json_object"},
-    )
-    raw = (response.choices[0].message.content or "").strip()
+    try:
+        client = OpenAI(api_key=api_key, base_url=base_url)
+        response = client.chat.completions.create(
+            model=model_id,
+            messages=[
+                {"role": "system", "content": schema_hint},
+                {"role": "user",   "content": prompt},
+            ],
+            response_format={"type": "json_object"},
+        )
+        raw = (response.choices[0].message.content or "").strip()
+    except AIError:
+        raise
+    except Exception as e:
+        raise map_openai_exception(e, provider) from e
     return parse_json_response(raw, provider_hint="OpenAI-compatible")

@@ -5,31 +5,42 @@ Uses the modern google-genai SDK (`from google import genai`). The legacy
 longer used here.
 """
 
+from core.ai.errors import AIError, map_gemini_exception
 from core.ai.providers._json_utils import parse_json_response
 
 
 def call(api_key: str, model_id: str, prompt: str) -> str:
     """Plain text completion via google-genai SDK."""
     from google import genai
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(model=model_id, contents=prompt)
-    return (response.text or "").strip()
+    try:
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(model=model_id, contents=prompt)
+        return (response.text or "").strip()
+    except AIError:
+        raise
+    except Exception as e:
+        raise map_gemini_exception(e) from e
 
 
 def call_json(api_key: str, model_id: str, prompt: str, schema: dict) -> dict:
     """Structured JSON completion via Gemini's native response_schema flag."""
     from google import genai
     from google.genai.types import GenerateContentConfig
-    client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model=model_id,
-        contents=prompt,
-        config=GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema=schema,
-        ),
-    )
-    raw = (response.text or "").strip()
+    try:
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=model_id,
+            contents=prompt,
+            config=GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=schema,
+            ),
+        )
+        raw = (response.text or "").strip()
+    except AIError:
+        raise
+    except Exception as e:
+        raise map_gemini_exception(e) from e
     return parse_json_response(raw, provider_hint="Gemini")
 
 
@@ -41,9 +52,13 @@ def list_models(api_key: str) -> list[str]:
     that support generateContent (skips embedding-only / vision-only ones).
     """
     from google import genai
-    client = genai.Client(api_key=api_key)
+    try:
+        client = genai.Client(api_key=api_key)
+        models = list(client.models.list())
+    except Exception as e:
+        raise map_gemini_exception(e) from e
     out: list[str] = []
-    for m in client.models.list():
+    for m in models:
         actions = list(m.supported_actions or [])
         if "generateContent" not in actions:
             continue

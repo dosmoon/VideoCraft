@@ -11,6 +11,8 @@ fish_audio_sdk exceptions onto AIError.Kind.
 
 from typing import Callable
 
+from core.ai.errors import AIError, Kind, map_http_status_to_kind
+
 
 def is_sdk_available() -> bool:
     """True if fish_audio_sdk is importable. UI layer uses this to grey out
@@ -53,8 +55,10 @@ def synthesize(
     try:
         from fish_audio_sdk import Session, TTSRequest
     except ImportError as e:
-        raise RuntimeError(
-            "fish_audio_sdk not installed; pip install fish_audio_sdk"
+        raise AIError(
+            Kind.AUTH, "FishAudio",
+            "fish_audio_sdk not installed; pip install fish_audio_sdk",
+            raw=e,
         ) from e
 
     # SDK 1.3.x: Session.tts() directly returns Generator[bytes]; no context
@@ -75,12 +79,30 @@ def synthesize(
                 if on_chunk:
                     on_chunk(total)
     except InterruptedError:
+        raise AIError(Kind.CANCELLED, "FishAudio", "TTS cancelled by user")
+    except AIError:
         raise
     except Exception as e:
-        msg = str(e)
-        if hasattr(e, "message"):
-            msg = e.message
-        raise RuntimeError(
-            f"Fish Audio TTS error: {msg} "
-            f"(voice_id={voice_id!r}, text_len={len(text)})"
+        # Fish Audio SDK doesn't expose typed exceptions; sniff status code
+        # from the response if attached, otherwise scan the message.
+        msg = getattr(e, "message", None) or str(e)
+        msg_low = msg.lower()
+        status = getattr(getattr(e, "response", None), "status_code", None)
+        kind = Kind.UNKNOWN
+        if status:
+            kind = map_http_status_to_kind(int(status), msg)
+        elif "401" in msg or "unauthorized" in msg_low or "api key" in msg_low:
+            kind = Kind.AUTH
+        elif "402" in msg or "payment" in msg_low or "balance" in msg_low:
+            kind = Kind.QUOTA
+        elif "429" in msg or "rate" in msg_low:
+            kind = Kind.RATE_LIMIT
+        elif any(t in msg_low for t in ("timeout", "timed out", "connection")):
+            kind = Kind.NETWORK
+        elif "voice" in msg_low and ("not found" in msg_low or "invalid" in msg_low):
+            kind = Kind.MALFORMED
+        raise AIError(
+            kind, "FishAudio",
+            f"{msg} (voice_id={voice_id!r}, text_len={len(text)})",
+            raw=e,
         ) from e
