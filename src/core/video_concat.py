@@ -36,6 +36,48 @@ def run_ffmpeg(cmd: list[str]) -> None:
         raise RuntimeError("ffmpeg failed: " + " | ".join(stderr))
 
 
+def probe_video(path: str) -> dict:
+    """One-shot ffprobe for the fields the concat tool cares about.
+
+    Returns {duration, width, height, fps, vcodec, acodec}. Missing or
+    unparseable fields come back as None / 0; callers display "?" for those.
+    """
+    import json as _json
+    cmd = [
+        "ffprobe", "-v", "error", "-print_format", "json",
+        "-show_format", "-show_streams", path,
+    ]
+    out = {"duration": 0.0, "width": 0, "height": 0,
+           "fps": 0.0, "vcodec": None, "acodec": None}
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True,
+                             encoding="utf-8", errors="replace")
+        data = _json.loads(res.stdout or "{}")
+    except (OSError, ValueError):
+        return out
+    fmt = data.get("format") or {}
+    try:
+        out["duration"] = float(fmt.get("duration") or 0.0)
+    except (TypeError, ValueError):
+        pass
+    for s in (data.get("streams") or []):
+        ctype = s.get("codec_type")
+        if ctype == "video" and out["vcodec"] is None:
+            out["vcodec"] = s.get("codec_name")
+            out["width"] = int(s.get("width") or 0)
+            out["height"] = int(s.get("height") or 0)
+            # avg_frame_rate is "30000/1001" or "30/1" or "0/0"
+            rate = s.get("avg_frame_rate") or "0/0"
+            try:
+                num, den = rate.split("/")
+                out["fps"] = (float(num) / float(den)) if float(den) else 0.0
+            except (ValueError, ZeroDivisionError):
+                pass
+        elif ctype == "audio" and out["acodec"] is None:
+            out["acodec"] = s.get("codec_name")
+    return out
+
+
 def concat_videos(files: list[str], output: str) -> None:
     """Concatenate compatible video files using ffmpeg concat demuxer."""
     if not files:

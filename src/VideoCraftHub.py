@@ -42,6 +42,7 @@ TOOL_MAP = {
     "srt-gen-titles":         {"file": "tools/subtitle/srt_tools.py", "class": "SrtGenerateTitlesApp"},
     "srt-gen-pack":           {"file": "tools/subtitle/srt_tools.py", "class": "SrtGeneratePackApp"},
     "split-workbench": {"file": "tools/video/split_workbench.py",  "class": "SplitWorkbenchApp"},
+    "concat-workbench": {"file": "tools/video/concat_workbench.py", "class": "ConcatWorkbenchApp"},
     "videotools":       {"file": "tools/video/video_tools.py", "class": "VideoToolsGUI"},
     "extract-audio":    {"file": "tools/video/video_tools.py", "class": "ExtractAudioApp"},
     "convert-bitrate":  {"file": "tools/video/video_tools.py", "class": "ConvertBitrateApp"},
@@ -348,6 +349,8 @@ class VideoCraftHub:
                              command=lambda: self.open_tool("word-subtitle"))
         vid_menu.add_command(label=tr("menu.video.split_workbench"),
                              command=lambda: self.open_tool("split-workbench"))
+        vid_menu.add_command(label=tr("menu.video.concat_workbench"),
+                             command=lambda: self.open_tool("concat-workbench"))
         vid_menu.add_separator()
         vid_menu.add_command(label=tr("menu.video.extract_mp3"),
                              command=lambda: self.open_tool("extract-audio"))
