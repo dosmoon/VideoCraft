@@ -121,6 +121,10 @@ def download_video(
     force_ipv4: bool = False,
     playlist_index: Optional[int] = None,
     file_access_retries: int = 5,
+    subtitle_langs: Optional[list[str]] = None,
+    auto_caption_langs: Optional[list[str]] = None,
+    subtitle_format: str = "srt",
+    skip_video: bool = False,
 ) -> tuple[dict, str]:
     """Run a download. Returns (info_dict, resolved_filepath).
 
@@ -159,10 +163,92 @@ def download_video(
     else:
         opts["noplaylist"] = True
 
+    # Subtitle opts. yt-dlp writes manual SRT when writesubtitles=True,
+    # auto-caption when writeautomaticsub=True; subtitleslangs is the
+    # union list. When both manual+auto exist for the same lang, manual
+    # wins automatically.
+    sub_langs = list(subtitle_langs or [])
+    auto_langs = list(auto_caption_langs or [])
+    if sub_langs or auto_langs:
+        opts["writesubtitles"] = bool(sub_langs)
+        opts["writeautomaticsub"] = bool(auto_langs)
+        opts["subtitleslangs"] = sub_langs + auto_langs
+        # Format fallback chain: prefer srt natively (manual subs + many
+        # auto langs offer it); fall back to best (usually vtt) and let
+        # the convertor postprocessor turn it into srt. Without the
+        # fallback, langs that don't offer srt directly bomb the run.
+        opts["subtitlesformat"] = f"{subtitle_format}/best"
+        # Append (don't replace) so yt-dlp's auto-added FFmpegMerger
+        # (needed for bestvideo+bestaudio) survives.
+        opts.setdefault("postprocessors", []).append({
+            "key": "FFmpegSubtitlesConvertor",
+            "format": subtitle_format,
+        })
+    if skip_video:
+        # Subs-only mode: yt-dlp still runs extract + sub download, just
+        # skips fetching video/audio streams. Caller should expect
+        # video_file path to be the (non-existent) prepared name.
+        opts["skip_download"] = True
+
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
         fpath = ydl.prepare_filename(info)
     return info, fpath
+
+
+def list_available_subtitles(info: dict) -> dict:
+    """Parse extract_info output for subtitle availability.
+
+    Returns:
+        {
+          "manual":    {"en-US": ["srt","vtt"], ...},  # creator-uploaded
+          "automatic": {"en-US": ["vtt"], ...},        # YouTube ASR + translate
+          "video_lang": "en" | None,                   # info.language hint
+        }
+    """
+    def _normalize(raw):
+        out: dict[str, list[str]] = {}
+        if not isinstance(raw, dict):
+            return out
+        for code, tracks in raw.items():
+            exts: list[str] = []
+            if isinstance(tracks, list):
+                for t in tracks:
+                    if isinstance(t, dict):
+                        ext = t.get("ext")
+                        if ext and ext not in exts:
+                            exts.append(ext)
+            out[code] = exts
+        return out
+
+    return {
+        "manual":    _normalize(info.get("subtitles")),
+        "automatic": _normalize(info.get("automatic_captions")),
+        "video_lang": info.get("language"),
+    }
+
+
+def summarize_subtitles(subs: dict) -> str:
+    """One-line UI fingerprint of subtitle availability."""
+    manual = subs.get("manual") or {}
+    auto = subs.get("automatic") or {}
+    if not manual and not auto:
+        return "  → Subs: NONE — ASR required"
+    parts = []
+    if manual:
+        # Show first few manual codes inline; usually <= 10.
+        codes = list(manual.keys())
+        shown = ", ".join(codes[:6])
+        if len(codes) > 6:
+            shown += f", +{len(codes) - 6} more"
+        parts.append(f"manual=[{shown}]")
+    else:
+        parts.append("manual=none")
+    if auto:
+        parts.append(f"auto={len(auto)} langs available")
+    else:
+        parts.append("auto=none")
+    return "  → Subs: " + "  ".join(parts)
 
 
 def summarize_formats(info: dict) -> Optional[str]:

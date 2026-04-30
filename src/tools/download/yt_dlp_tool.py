@@ -1,13 +1,17 @@
 from tools.base import ToolBase
-from i18n import tr
+from i18n import tr, get_current_lang
 import tkinter as tk
 from tkinter import filedialog, ttk
 import os
+import glob
 import threading
 import subprocess
 from urllib.parse import urlparse
 from hub_logger import logger
 from core import youtube_download
+from core import lang_names
+
+SUBS_MAX_PER_KIND = 4
 
 class YouTubeDownloader(ToolBase):
     def __init__(self, root, initial_file=None):
@@ -28,6 +32,16 @@ class YouTubeDownloader(ToolBase):
         # on stable connections. The toggles stay so users with broken
         # IPv6 / hotel WiFi / mobile tethering can opt in.
         self.force_ipv4_var = tk.BooleanVar(value=False)
+
+        # Subtitle download state. Manual SRT only — auto-caption was cut
+        # because YouTube heavily rate-limits its translate endpoint (HTTP
+        # 429s) and the quality of auto-translate (ASR × MT) is too poor
+        # to be useful. summarize_subtitles still reports auto availability
+        # informationally so users know whether ASR is the only path.
+        self.subs_enabled_var = tk.BooleanVar(value=False)
+        self.subs_only_var = tk.BooleanVar(value=False)
+        self.subs_manual_picked: list[str] = []
+        self.subs_manual_available: list[str] = []
 
         # Progress update throttling - 避免事件队列堆积
         self.last_progress_update = {}  # {video_title: last_update_time}
@@ -82,8 +96,8 @@ class YouTubeDownloader(ToolBase):
         # Left Panel - Input and Selection
         # URL Input (multi-line for multiple URLs)
         tk.Label(left_frame, text=tr("tool.download.url_label"), font=("Arial", 10, "bold")).pack(anchor="w", pady=(0,5))
-        self.url_text = tk.Text(left_frame, height=4, width=50, wrap=tk.WORD)
-        self.url_text.pack(fill=tk.X, pady=(0,10))
+        self.url_text = tk.Text(left_frame, height=3, width=50, wrap=tk.WORD)
+        self.url_text.pack(fill=tk.X, pady=(0,8))
 
         # Get Video List Button
         self.get_list_btn = tk.Button(left_frame, text=tr("tool.download.btn_get_list"), command=self.get_video_list,
@@ -92,8 +106,11 @@ class YouTubeDownloader(ToolBase):
 
         # Video List Display with Checkboxes
         tk.Label(left_frame, text=tr("tool.download.available"), font=("Arial", 10, "bold")).pack(anchor="w", pady=(0,5))
-        self.list_frame = tk.Frame(left_frame, relief=tk.SUNKEN, bd=1)
-        self.list_frame.pack(fill=tk.BOTH, expand=True, pady=(0,10))
+        # Compact list area; checkbox list is scrollable so a fixed-ish
+        # height is enough — avoids pushing options off the bottom.
+        self.list_frame = tk.Frame(left_frame, relief=tk.SUNKEN, bd=1, height=140)
+        self.list_frame.pack(fill=tk.X, pady=(0,8))
+        self.list_frame.pack_propagate(False)
 
         # Scrollable canvas for checkboxes
         self.list_canvas = tk.Canvas(self.list_frame, highlightthickness=0)
@@ -135,6 +152,27 @@ class YouTubeDownloader(ToolBase):
         # MP3 Checkbox
         self.mp3_var = tk.BooleanVar()
         tk.Checkbutton(options_frame, text=tr("tool.download.extract_mp3"), variable=self.mp3_var, font=("Arial", 9)).grid(row=2, column=0, sticky="w")
+
+        # Subtitle download block. One Pick button (manual only); button
+        # stays enabled before Get List runs (modal shows empty-state).
+        subs_frame = tk.Frame(options_frame)
+        subs_frame.grid(row=20, column=0, sticky="ew", pady=(8, 0))
+        tk.Checkbutton(subs_frame, text=tr("tool.download.checkbox_subtitles"),
+                       variable=self.subs_enabled_var, font=("Arial", 9),
+                       command=self._refresh_subs_buttons).grid(row=0, column=0, columnspan=2, sticky="w")
+        tk.Label(subs_frame, text=tr("tool.download.subs_manual_label"),
+                 font=("Arial", 9)).grid(row=1, column=0, sticky="w", padx=(20, 4))
+        self.subs_manual_btn = tk.Button(
+            subs_frame, text=tr("tool.download.subs_pick_button_empty"),
+            width=22, anchor="w",
+            command=self._open_subs_picker)
+        self.subs_manual_btn.grid(row=1, column=1, sticky="w", pady=1)
+        tk.Checkbutton(subs_frame, text=tr("tool.download.subs_only"),
+                       variable=self.subs_only_var, font=("Arial", 9)).grid(
+            row=2, column=0, columnspan=2, sticky="w", padx=(20, 0))
+        tk.Label(subs_frame, text=tr("tool.download.subs_hint"),
+                 font=("Arial", 7), fg="gray").grid(row=3, column=0, columnspan=2, sticky="w", padx=(20, 0))
+        self._refresh_subs_buttons()
 
         # Network mode. "Auto" = yt-dlp defaults (single-stream TCP, no
         # forced chunking) — best on stable broadband. "Throttled" =
@@ -179,7 +217,7 @@ class YouTubeDownloader(ToolBase):
 
         # Progress/Status Display
         tk.Label(right_frame, text=tr("tool.download.status_header"), font=("Arial", 10, "bold")).pack(anchor="w", pady=(0,5))
-        self.status_text = tk.Text(right_frame, height=15, width=50, wrap=tk.WORD, font=("Arial", 9))
+        self.status_text = tk.Text(right_frame, height=8, width=50, wrap=tk.WORD, font=("Arial", 9))
         self.status_text.pack(fill=tk.BOTH, expand=True)
         self.status_text.config(state="disabled")
         
@@ -216,6 +254,10 @@ class YouTubeDownloader(ToolBase):
         self.set_busy()
         self.log(tr("tool.download.log.fetching"))
         self.video_list = []
+        # Reset subtitle availability — fetch_list rebuilds the union
+        # across all videos. Picks are NOT reset (user might have
+        # pre-picked, e.g. en/zh, which we want to preserve across fetches).
+        self.subs_manual_available = []
         # Clear existing checkboxes on the main thread before the fetch thread runs
         for w in self.check_frame.winfo_children():
             w.destroy()
@@ -256,6 +298,9 @@ class YouTubeDownloader(ToolBase):
                             summary = youtube_download.summarize_formats(info)
                             if summary:
                                 self.root.after(0, lambda s=summary: self.log(s))
+                            subs = youtube_download.list_available_subtitles(info)
+                            self._merge_subs_availability(subs)
+                            self.root.after(0, lambda s=youtube_download.summarize_subtitles(subs): self.log(s))
                     except Exception as e:
                         # Fallback to extract_flat=True
                         self.log(f"Fallback for URL: {url}")
@@ -344,6 +389,17 @@ class YouTubeDownloader(ToolBase):
         self.selected_videos = [self.video_list[i] for i in selected_indices]
         quality = self.quality_combo.get()
         force_ipv4 = self.force_ipv4_var.get()
+
+        # Snapshot subtitle picks (only honored when checkbox is on; empty
+        # list becomes None so download_video skips subtitle opts entirely).
+        if self.subs_enabled_var.get():
+            sub_langs = list(self.subs_manual_picked) or None
+        else:
+            sub_langs = None
+        auto_langs = None  # auto-caption removed from UI; see __init__ comment
+        skip_video = bool(self.subs_only_var.get() and sub_langs)
+        if self.subs_only_var.get() and not sub_langs:
+            self.log("⚠ 'Subtitles only' enabled but no languages picked — falling back to normal video download.")
         
         self.download_btn.config(state="disabled")
         self.get_list_btn.config(state="disabled")
@@ -420,9 +476,31 @@ class YouTubeDownloader(ToolBase):
                             progress_hook=self.create_progress_hook(video),
                             force_ipv4=force_ipv4,
                             playlist_index=playlist_idx_arg,
+                            subtitle_langs=sub_langs,
+                            auto_caption_langs=auto_langs,
+                            skip_video=skip_video,
                         )
                         downloaded_count += 1
-                        
+
+                        # Subs-only mode: no video to rename / convert,
+                        # just report the SRT files that yt-dlp wrote.
+                        if skip_video:
+                            try:
+                                stem = os.path.splitext(os.path.basename(
+                                    info.get("_filename") or video_file))[0]
+                                pattern = os.path.join(output_dir, glob.escape(stem) + ".*.srt")
+                                srt_paths = sorted(glob.glob(pattern))
+                                if srt_paths:
+                                    summary = ", ".join(os.path.basename(p) for p in srt_paths)
+                                    self.root.after(0, lambda s=summary: self.log(
+                                        tr("tool.download.subs_log_written", summary=s)))
+                                else:
+                                    self.root.after(0, lambda: self.log(
+                                        f"⚠ Subs-only mode: no SRT files written for {video_title}"))
+                            except Exception as e:
+                                self.root.after(0, lambda em=str(e): self.log(f"Sub scan failed: {em}"))
+                            continue  # skip rename + MP3 — there is no video file
+
                         # 重命名为短标题格式
                         try:
                             raw_title = info.get('title', video_title)
@@ -440,6 +518,25 @@ class YouTubeDownloader(ToolBase):
                             self.root.after(0, lambda e=str(rename_err): self.log(tr("tool.download.log.rename_failed", e=e)))
 
                         self.root.after(0, lambda vf=video_file, vt=video_title: self.log(f"Downloaded: {vt} -> {os.path.basename(vf)}"))
+
+                        # Report any sibling SRT files yt-dlp wrote next
+                        # to the merged video. yt-dlp names them
+                        # <stem>.<lang>.<fmt>; we already renamed the
+                        # video, so look for files with the ORIGINAL stem.
+                        if sub_langs:
+                            try:
+                                # Use the pre-rename stem if rename happened, else current.
+                                # 'video_file' was reassigned above; reconstruct from info.
+                                orig_stem = os.path.splitext(os.path.basename(
+                                    info.get("_filename") or video_file))[0]
+                                pattern = os.path.join(output_dir, glob.escape(orig_stem) + ".*.srt")
+                                srt_paths = sorted(glob.glob(pattern))
+                                if srt_paths:
+                                    summary = ", ".join(os.path.basename(p) for p in srt_paths)
+                                    self.root.after(0, lambda s=summary: self.log(
+                                        tr("tool.download.subs_log_written", summary=s)))
+                            except Exception:
+                                pass
 
                         # Extract MP3 if selected
                         if self.mp3_var.get():
@@ -497,6 +594,39 @@ class YouTubeDownloader(ToolBase):
         self.set_busy()
         threading.Thread(target=download, daemon=True).start()
         
+    def _merge_subs_availability(self, subs: dict):
+        """Union per-video manual subtitle langs into the picker's available list."""
+        for code in (subs.get("manual") or {}).keys():
+            if code not in self.subs_manual_available:
+                self.subs_manual_available.append(code)
+
+    def _refresh_subs_buttons(self):
+        """Update the manual Pick button's label.
+
+        Button stays enabled regardless of checkbox so users can preview
+        / pre-pick before enabling — but the picks only take effect when
+        the master checkbox is on (start_download enforces this)."""
+        if self.subs_manual_picked:
+            self.subs_manual_btn.config(
+                text=tr("tool.download.subs_pick_button_count",
+                        count=len(self.subs_manual_picked)))
+        else:
+            self.subs_manual_btn.config(
+                text=tr("tool.download.subs_pick_button_empty"))
+
+    def _open_subs_picker(self):
+        """Launch the modal language picker for manual subtitles."""
+        def on_ok(picked: list[str]):
+            self.subs_manual_picked = picked
+            self._refresh_subs_buttons()
+
+        SubsLangPicker(self.root,
+                       title=tr("tool.download.subs_modal_title_manual"),
+                       available=self.subs_manual_available,
+                       current=list(self.subs_manual_picked),
+                       max_pick=SUBS_MAX_PER_KIND,
+                       on_ok=on_ok)
+
     def create_progress_hook(self, video):
         """Create a progress hook function for a specific video"""
         video_title = video['title']  # 提前捕获标题
@@ -552,6 +682,141 @@ def _build_download_filename(title: str, upload_date: str, quality: str, ext: st
     date_tag = f"_{upload_date}" if upload_date else ""
     q_tag = f"_{quality}" if quality not in ("best", "1080p") else ""
     return f"{short}{date_tag}{q_tag}.{ext.lstrip('.')}"
+
+
+class SubsLangPicker(tk.Toplevel):
+    """Modal language picker.
+
+    Shows a scrollable checkbox list of BCP47 codes with friendly names,
+    a live search box that matches code/zh-name/en-name, and a hard cap
+    on selections. Used for both manual and auto-caption pickers.
+    """
+
+    def __init__(self, parent, *, title: str, available: list[str],
+                 current: list[str], max_pick: int,
+                 on_ok):
+        super().__init__(parent)
+        self.title(title)
+        self.transient(parent)
+        self.grab_set()
+        self.geometry("420x520")
+
+        self._available = list(available)
+        self._max = max_pick
+        self._on_ok = on_ok
+        self._locale = get_current_lang()
+        self._vars: dict[str, tk.BooleanVar] = {
+            code: tk.BooleanVar(value=(code in current)) for code in self._available
+        }
+
+        # Search box
+        top = tk.Frame(self, padx=10, pady=8)
+        top.pack(fill=tk.X)
+        tk.Label(top, text=tr("tool.download.subs_modal_search"),
+                 font=("Arial", 9)).pack(side=tk.LEFT)
+        self._search_var = tk.StringVar()
+        self._search_var.trace_add("write", lambda *_: self._refilter())
+        tk.Entry(top, textvariable=self._search_var,
+                 font=("Arial", 9)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+
+        # Scrollable checkbox list
+        mid = tk.Frame(self, padx=10)
+        mid.pack(fill=tk.BOTH, expand=True)
+        self._canvas = tk.Canvas(mid, highlightthickness=0)
+        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb = tk.Scrollbar(mid, command=self._canvas.yview)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._canvas.configure(yscrollcommand=sb.set)
+        self._inner = tk.Frame(self._canvas)
+        self._win = self._canvas.create_window((0, 0), window=self._inner, anchor="nw")
+        self._inner.bind("<Configure>",
+                         lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")))
+        self._canvas.bind("<Configure>",
+                          lambda e: self._canvas.itemconfig(self._win, width=e.width))
+        self._canvas.bind("<MouseWheel>",
+                          lambda e: self._canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
+
+        # Status + buttons
+        bottom = tk.Frame(self, padx=10, pady=8)
+        bottom.pack(fill=tk.X)
+        self._status_label = tk.Label(bottom, text="", font=("Arial", 9), fg="gray")
+        self._status_label.pack(side=tk.LEFT)
+        tk.Button(bottom, text=tr("tool.download.subs_modal_ok"),
+                  command=self._on_ok_click, width=8).pack(side=tk.RIGHT, padx=(4, 0))
+        tk.Button(bottom, text=tr("tool.download.subs_modal_cancel"),
+                  command=self.destroy, width=8).pack(side=tk.RIGHT, padx=(4, 0))
+        tk.Button(bottom, text=tr("tool.download.subs_modal_clear"),
+                  command=self._clear_all, width=10).pack(side=tk.RIGHT, padx=(4, 0))
+
+        if not self._available:
+            tk.Label(self._inner, text=tr("tool.download.subs_modal_empty_hint"),
+                     font=("Arial", 9), fg="gray", pady=20).pack()
+
+        self._refilter()
+        self._update_status()
+
+        # Center over parent
+        self.update_idletasks()
+        try:
+            px = parent.winfo_rootx() + parent.winfo_width() // 2 - self.winfo_width() // 2
+            py = parent.winfo_rooty() + parent.winfo_height() // 2 - self.winfo_height() // 2
+            self.geometry(f"+{max(px, 0)}+{max(py, 0)}")
+        except Exception:
+            pass
+
+    def _picked_codes(self) -> list[str]:
+        return [c for c, v in self._vars.items() if v.get()]
+
+    def _update_status(self):
+        n = len(self._picked_codes())
+        self._status_label.config(
+            text=tr("tool.download.subs_modal_selected", n=n, max=self._max))
+
+    def _on_check_toggle(self, code: str):
+        # Enforce max cap: revert the new check if it would exceed.
+        picked = self._picked_codes()
+        if len(picked) > self._max:
+            self._vars[code].set(False)
+            self._status_label.config(
+                text=tr("tool.download.subs_modal_max_warning", max=self._max),
+                fg="red")
+            self.after(1500, self._update_status_color_reset)
+        self._update_status()
+
+    def _update_status_color_reset(self):
+        self._status_label.config(fg="gray")
+        self._update_status()
+
+    def _refilter(self):
+        for w in self._inner.winfo_children():
+            w.destroy()
+        if not self._available:
+            tk.Label(self._inner, text=tr("tool.download.subs_modal_empty_hint"),
+                     font=("Arial", 9), fg="gray", pady=20).pack()
+            return
+        query = self._search_var.get()
+        for code in self._available:
+            if not lang_names.matches_search(code, query, self._locale):
+                continue
+            label = lang_names.display_label(code, self._locale)
+            cb = tk.Checkbutton(self._inner, text=label,
+                                variable=self._vars[code], anchor="w",
+                                font=("Arial", 9),
+                                command=lambda c=code: self._on_check_toggle(c))
+            cb.pack(fill=tk.X, padx=4, pady=1, anchor="w")
+
+    def _clear_all(self):
+        for v in self._vars.values():
+            v.set(False)
+        self._update_status()
+
+    def _on_ok_click(self):
+        picked = self._picked_codes()
+        # Cap defensively (shouldn't trigger given _on_check_toggle).
+        if len(picked) > self._max:
+            picked = picked[: self._max]
+        self._on_ok(picked)
+        self.destroy()
 
 
 if __name__ == "__main__":
