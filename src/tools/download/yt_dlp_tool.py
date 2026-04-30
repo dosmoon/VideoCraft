@@ -2,57 +2,12 @@ from tools.base import ToolBase
 from i18n import tr
 import tkinter as tk
 from tkinter import filedialog, ttk
-import yt_dlp
 import os
 import threading
 import subprocess
 from urllib.parse import urlparse
 from hub_logger import logger
-
-
-def _apply_jsruntime_opts(opts: dict) -> None:
-    """Mutate ydl_opts in place: enable yt-dlp's JS-runtime path so YouTube
-    HLS/m3u8 formats are reachable. Silent no-op when Node is unavailable —
-    yt-dlp falls back to the limited android-vr-player API.
-
-    YouTube's challenge-solver requires a JS runtime + the EJS solver script;
-    without these yt-dlp drops m3u8 streams (~6 fewer formats per video as of
-    2026-04). See `core/env/node_manager.py` for managed Node install."""
-    from core import env
-    res = env.detect_one("node")
-    if res.available and res.path:
-        opts["js_runtimes"] = {"node": {"path": res.path}}
-        opts["remote_components"] = ["ejs:github"]
-
-
-def _jsruntime_status_line() -> str:
-    """One-line summary of JS runtime status for the in-tool log."""
-    from core import env
-    res = env.detect_one("node")
-    if res.available:
-        ver = res.version or "?"
-        src = res.source or "?"
-        return f"JS runtime: Node.js {ver} ({src}) — full YouTube format support"
-    return ("JS runtime: NOT DETECTED — high-quality HLS formats may be missing. "
-            "Open Settings → Environment → Setup Node.js to fix.")
-
-
-def _summarize_formats(info: dict) -> str | None:
-    """Return a short fingerprint of an extracted video's formats, or None
-    if formats info is unavailable (e.g. extract_flat fallback path)."""
-    fmts = info.get("formats") or []
-    if not fmts:
-        return None
-    has_hls = any((f.get("protocol") or "").startswith("m3u8") for f in fmts)
-    heights = [f.get("height") for f in fmts if f.get("height")]
-    max_h = max(heights) if heights else 0
-    # Top codec at max height
-    best = next((f for f in fmts if f.get("height") == max_h and f.get("vcodec")), None)
-    codec = (best.get("vcodec") if best else "") or ""
-    codec_short = codec.split(".")[0] if codec else "?"
-    hls_mark = "✓" if has_hls else "✗"
-    res_str = f"{max_h}p" if max_h else "audio-only"
-    return f"  → {len(fmts)} formats, max {res_str} ({codec_short}), HLS {hls_mark}"
+from core import youtube_download
 
 class YouTubeDownloader(ToolBase):
     def __init__(self, root, initial_file=None):
@@ -255,50 +210,60 @@ class YouTubeDownloader(ToolBase):
 
         def fetch_list():
             try:
-                # First try with extract_flat=False for full metadata
-                ydl_opts = {
-                    'quiet': True,
-                    'no_warnings': False,
-                    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
-                    'referer': 'https://www.youtube.com/',
-                    'extract_flat': False,
-                    # 网络和缓冲区优化
-                    'buffersize': 131072,  # 128KB内存缓冲区
-                    'http_chunk_size': 10485760,  # 10MB HTTP块大小
-                    'retries': 10,  # 下载重试次数
-                    'fragment_retries': 10,  # 片段重试次数
-                    'file_access_retries': 5,  # 文件访问重试
-                    'socket_timeout': 30,  # Socket超时30秒
-                }
+                self.root.after(0, lambda s=youtube_download.jsruntime_status_line(): self.log(s))
 
-                if force_ipv4:
-                    ydl_opts['source_address'] = '0.0.0.0'
-
-                _apply_jsruntime_opts(ydl_opts)
-                self.root.after(0, lambda s=_jsruntime_status_line(): self.log(s))
-
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    for url in urls:
+                for url in urls:
+                    try:
+                        info = youtube_download.extract_info(url, flat=False, force_ipv4=force_ipv4)
+                        if 'entries' in info:
+                            # It's a playlist
+                            for entry_idx, entry in enumerate(info['entries'], start=1):
+                                if entry:
+                                    resolved_url = self.resolve_video_url(entry, url)
+                                    if not resolved_url:
+                                        continue
+                                    self.video_list.append({
+                                        'title': entry.get('title', 'Unknown Title'),
+                                        'url': resolved_url,
+                                        'duration': entry.get('duration', 0),
+                                        'uploader': entry.get('uploader', info.get('uploader', 'Unknown')),
+                                        'playlist': info.get('title', 'Unknown Playlist'),
+                                        'source_url': url,
+                                        'playlist_index': entry.get('playlist_index', entry_idx)
+                                    })
+                        else:
+                            # Single video
+                            self.video_list.append({
+                                'title': info.get('title', 'Unknown Title'),
+                                'url': info.get('webpage_url', url),
+                                'duration': info.get('duration', 0),
+                                'uploader': info.get('uploader', 'Unknown'),
+                                'playlist': None
+                            })
+                            summary = youtube_download.summarize_formats(info)
+                            if summary:
+                                self.root.after(0, lambda s=summary: self.log(s))
+                    except Exception as e:
+                        # Fallback to extract_flat=True
+                        self.log(f"Fallback for URL: {url}")
                         try:
-                            info = ydl.extract_info(url, download=False)
+                            info = youtube_download.extract_info(url, flat=True, force_ipv4=force_ipv4)
                             if 'entries' in info:
-                                # It's a playlist
                                 for entry_idx, entry in enumerate(info['entries'], start=1):
                                     if entry:
                                         resolved_url = self.resolve_video_url(entry, url)
                                         if not resolved_url:
                                             continue
                                         self.video_list.append({
-                                            'title': entry.get('title', 'Unknown Title'),
+                                            'title': entry.get('title', f"Video {entry.get('id', 'Unknown')}"),
                                             'url': resolved_url,
-                                            'duration': entry.get('duration', 0),
-                                            'uploader': entry.get('uploader', info.get('uploader', 'Unknown')),
+                                            'duration': 0,  # Not available in flat mode
+                                            'uploader': info.get('uploader', 'Unknown'),
                                             'playlist': info.get('title', 'Unknown Playlist'),
                                             'source_url': url,
                                             'playlist_index': entry.get('playlist_index', entry_idx)
                                         })
                             else:
-                                # Single video
                                 self.video_list.append({
                                     'title': info.get('title', 'Unknown Title'),
                                     'url': info.get('webpage_url', url),
@@ -306,42 +271,9 @@ class YouTubeDownloader(ToolBase):
                                     'uploader': info.get('uploader', 'Unknown'),
                                     'playlist': None
                                 })
-                                summary = _summarize_formats(info)
-                                if summary:
-                                    self.root.after(0, lambda s=summary: self.log(s))
-                        except Exception as e:
-                            # Fallback to extract_flat=True
-                            self.log(f"Fallback for URL: {url}")
-                            ydl_flat_opts = ydl_opts.copy()
-                            ydl_flat_opts['extract_flat'] = True
-                            with yt_dlp.YoutubeDL(ydl_flat_opts) as ydl_flat:
-                                info = ydl_flat.extract_info(url, download=False)
-                                if 'entries' in info:
-                                    # It's a playlist
-                                    for entry_idx, entry in enumerate(info['entries'], start=1):
-                                        if entry:
-                                            resolved_url = self.resolve_video_url(entry, url)
-                                            if not resolved_url:
-                                                continue
-                                            self.video_list.append({
-                                                'title': entry.get('title', f"Video {entry.get('id', 'Unknown')}"),
-                                                'url': resolved_url,
-                                                'duration': 0,  # Not available in flat mode
-                                                'uploader': info.get('uploader', 'Unknown'),
-                                                'playlist': info.get('title', 'Unknown Playlist'),
-                                                'source_url': url,
-                                                'playlist_index': entry.get('playlist_index', entry_idx)
-                                            })
-                                else:
-                                    # Single video
-                                    self.video_list.append({
-                                        'title': info.get('title', 'Unknown Title'),
-                                        'url': info.get('webpage_url', url),
-                                        'duration': info.get('duration', 0),
-                                        'uploader': info.get('uploader', 'Unknown'),
-                                        'playlist': None
-                                    })
-                
+                        except Exception as fallback_err:
+                            self.log(f"  Failed: {fallback_err}")
+
                 self.root.after(0, self.update_video_listbox)
                 self.set_done()
             except Exception as e:
@@ -445,84 +377,44 @@ class YouTubeDownloader(ToolBase):
                         format_str = "bestvideo+bestaudio/best"
                     
                     output_template = os.path.join(output_dir, "%(title)s.%(ext)s")
-                    
-                    # 根据网络速度选择HTTP块大小和并发设置
+
+                    # Map UI's network combo string to youtube_download preset key.
+                    # Actual chunk_size / buffersize / concurrent_fragment_downloads
+                    # values live in core.youtube_download.NETWORK_PRESETS so all
+                    # callers stay in sync.
                     network_choice = self.network_combo.get()
                     if "Fast" in network_choice:
-                        http_chunk = 31457280  # 30MB
-                        buffersize = 16777216  # 16MB 内存缓冲区
-                        concurrent = 8         # 并发下载8个片段
+                        net_preset = "fast"
                     elif "Medium" in network_choice:
-                        http_chunk = 15728640  # 15MB
-                        buffersize = 8388608   # 8MB 内存缓冲区
-                        concurrent = 5         # 并发下载5个片段
-                    else:  # Slow
-                        http_chunk = 5242880   # 5MB
-                        buffersize = 4194304   # 4MB 内存缓冲区
-                        concurrent = 3         # 并发下载3个片段
-                    
-                    self.root.after(0, lambda hc=http_chunk//1048576, bs=buffersize//1048576, c=concurrent: 
-                                   self.log(f"Using {hc}MB chunks, {bs}MB buffer, {c} concurrent downloads"))
-                    
-                    # Aligned with the project-manifest fast path
-                    # (project_workbench.py:_download_worker): silence yt-dlp's
-                    # internal stdout chatter (the noprogress=False default in
-                    # the legacy opts pumped a progress bar through Hub's stdout
-                    # pipe on every chunk, which throttled throughput) and drop
-                    # the `+faststart` postprocessor pass (full-file moov rewrite
-                    # adds 10-30s on 4K downloads — Tk + media players play the
-                    # output fine without it). Network tuning kept because it's
-                    # surfaced as a user preset (Fast / Medium / Slow).
-                    ydl_opts = {
-                        'format': format_str,
-                        'outtmpl': output_template,
-                        'merge_output_format': 'mp4',
-
-                        # Network / buffer tuning (preserved — user-facing presets)
-                        'http_chunk_size': http_chunk,
-                        'buffersize': buffersize,
-                        'retries': 5,
-                        'fragment_retries': 5,
-                        'file_access_retries': 5,
-                        'skip_unavailable_fragments': True,
-                        'socket_timeout': 30,
-                        'concurrent_fragment_downloads': concurrent,
-
-                        'progress_hooks': [self.create_progress_hook(video)],
-
-                        # Quiet — match the manifest path's defaults; suppresses
-                        # the verbose progress bar that bottlenecks Hub stdout.
-                        'quiet': True,
-                        'no_warnings': True,
-                        'noprogress': True,
-                        'ignoreerrors': False,
-                    }
+                        net_preset = "medium"
+                    else:
+                        net_preset = "slow"
+                    self.root.after(0, lambda np=net_preset: self.log(f"Network preset: {np}"))
 
                     source_url = video.get('source_url')
                     playlist_index = video.get('playlist_index')
                     if source_url and playlist_index:
-                        ydl_opts['noplaylist'] = False
-                        ydl_opts['playlist_items'] = str(playlist_index)
                         target_url = source_url
+                        playlist_idx_arg = playlist_index
                         self.root.after(0, lambda pi=playlist_index: self.log(f"Playlist mode: downloading selected item #{pi} only"))
                     else:
-                        ydl_opts['noplaylist'] = True
                         target_url = video['url']
-
-                    if force_ipv4:
-                        ydl_opts['source_address'] = '0.0.0.0'
-
-                    _apply_jsruntime_opts(ydl_opts)
+                        playlist_idx_arg = None
 
                     self.root.after(0, lambda enabled=force_ipv4: self.log(f"Force IPv4: {'ON' if enabled else 'OFF'}"))
-                    
+
                     try:
                         self.root.after(0, lambda vt=video_title: self.log(f"Initializing yt-dlp for: {vt}"))
-                        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                            self.root.after(0, lambda vt=video_title: self.log(f"Extracting info for: {vt}"))
-                            info = ydl.extract_info(target_url, download=True)
-                            video_file = ydl.prepare_filename(info)
-                            downloaded_count += 1
+                        info, video_file = youtube_download.download_video(
+                            target_url,
+                            output_template,
+                            format=format_str,
+                            network_preset=net_preset,
+                            progress_hook=self.create_progress_hook(video),
+                            force_ipv4=force_ipv4,
+                            playlist_index=playlist_idx_arg,
+                        )
+                        downloaded_count += 1
                         
                         # 重命名为短标题格式
                         try:

@@ -1661,7 +1661,7 @@ class ProjectWorkbenchApp(ToolBase):
 
     def _download_worker(self, basename: str, url: str, out_template: str) -> None:
         try:
-            import yt_dlp
+            from core import youtube_download
 
             # progress_hook fires from yt-dlp's worker; marshal back to UI.
             def hook(d):
@@ -1677,23 +1677,15 @@ class ProjectWorkbenchApp(ToolBase):
                                       tr("tool.project_workbench.status.download_merging",
                                          basename=basename))
 
-            opts = {
-                "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
-                "outtmpl": out_template,
-                "merge_output_format": "mp4",
-                "quiet": True,
-                "no_warnings": True,
-                "noprogress": True,
-                "retries": 5,
-                "fragment_retries": 5,
-                "progress_hooks": [hook],
-            }
             self.master.after(0, self._step_status,
                               tr("tool.project_workbench.status.download_start",
                                  basename=basename))
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                fpath = ydl.prepare_filename(info)
+            info, fpath = youtube_download.download_video(
+                url, out_template, progress_hook=hook,
+            )
+            # bestvideo+bestaudio merges into mp4 (per merge_output_format),
+            # which may differ from info['ext'] (e.g. webm). Prefer the .mp4
+            # variant if it exists on disk.
             mp4 = os.path.splitext(fpath)[0] + ".mp4"
             raw_path = mp4 if os.path.exists(mp4) else fpath
             outputs = [self._project_relpath(raw_path)]
