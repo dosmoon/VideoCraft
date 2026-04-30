@@ -5,6 +5,8 @@ from tkinter import filedialog, ttk
 
 from tools.base import ToolBase
 from hub_logger import logger
+from core.ai.errors import AIError
+from ui.ai_error_dialog import show_ai_error
 
 # Per architecture principle 1, the UI does not import core.ai directly;
 # the actual AI call happens inside core.translate. Routing (which model
@@ -172,6 +174,11 @@ class TranslateApp(ToolBase):
             logger.info(f"翻译完成 → {os.path.basename(output_file)}")
             self.set_done()
 
+        except AIError as e:
+            # Structured AI error → dialog with Kind-driven recovery actions.
+            self.set_error(str(e))
+            status(f"✗ {e}")
+            self.master.after(0, lambda err=e: show_ai_error(self.master, err))
         except Exception as e:
             self.set_error(f"翻译失败: {e}")
             status(f"✗ 翻译失败: {e}")

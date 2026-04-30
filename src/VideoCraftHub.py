@@ -181,6 +181,11 @@ class VideoCraftHub:
 
         self._set_app_icon()
 
+        # Wire the AI error dialog so any tool can call show_ai_error()
+        # without plumbing the "open AI Console" navigation manually.
+        from ui.ai_error_dialog import set_open_console_handler
+        set_open_console_handler(lambda: self.open_tool("ai-console"))
+
         self.project: Project | None = None
         self._recent_menu: tk.Menu | None = None
         self._tool_instances: list = []   # 防止工具实例被 GC 回收

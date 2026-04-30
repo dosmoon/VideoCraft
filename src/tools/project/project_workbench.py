@@ -35,6 +35,8 @@ from core.segment_model import load_from_file as load_segments_file
 from core.video_concat import split_segments
 from core.video_split import SplitMode
 from core import burn_presets
+from core.ai.errors import AIError
+from ui.ai_error_dialog import show_ai_error
 
 
 # ── Burn preset bridge ───────────────────────────────────────────────────────
@@ -2048,6 +2050,12 @@ class ProjectWorkbenchApp(ToolBase):
                               "done", updates,
                               tr("tool.project_workbench.status.asr_done",
                                  basename=basename))
+        except AIError as e:
+            self.master.after(0, self._finish_step, "step2_asr", basename,
+                              "failed", {"error": str(e)},
+                              tr("tool.project_workbench.status.asr_failed",
+                                 basename=basename, e=e))
+            self.master.after(0, lambda err=e: show_ai_error(self.master, err))
         except Exception as e:
             self.master.after(0, self._finish_step, "step2_asr", basename,
                               "failed", {"error": str(e)},
@@ -2124,6 +2132,12 @@ class ProjectWorkbenchApp(ToolBase):
                                        "source_lang_used": source_lang},
                               tr("tool.project_workbench.status.translate_done",
                                  basename=basename))
+        except AIError as e:
+            self.master.after(0, self._finish_step, "step3_translate", basename,
+                              "failed", {"error": str(e)},
+                              tr("tool.project_workbench.status.translate_failed",
+                                 basename=basename, e=e))
+            self.master.after(0, lambda err=e: show_ai_error(self.master, err))
         except Exception as e:
             self.master.after(0, self._finish_step, "step3_translate", basename,
                               "failed", {"error": str(e)},
@@ -2510,6 +2524,12 @@ class ProjectWorkbenchApp(ToolBase):
                               "done", {"output": outputs, "error": None},
                               tr("tool.project_workbench.status.pack_done",
                                  basename=basename))
+        except AIError as e:
+            self.master.after(0, self._finish_step, "step5_pack", basename,
+                              "failed", {"error": str(e)},
+                              tr("tool.project_workbench.status.pack_failed",
+                                 basename=basename, e=e))
+            self.master.after(0, lambda err=e: show_ai_error(self.master, err))
         except Exception as e:
             self.master.after(0, self._finish_step, "step5_pack", basename,
                               "failed", {"error": str(e)},
