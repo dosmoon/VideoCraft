@@ -1443,8 +1443,9 @@ class ProjectWorkbenchApp(ToolBase):
         2. Most recent SRT producer strictly before this step (step3_translate
            preferred when done, otherwise step2_asr) — gives burn the
            translated SRT when translation has run, the original otherwise
-        3. Top-level `source` if it points at a .srt file (lets users feed
-           an existing SRT straight in without running ASR)
+        3. Manual SRT pulled by step1_download.subtitles (non-ASR path). When
+           the caller has a source_lang field (e.g. step3_translate), prefer
+           a matching iso; otherwise take the first.
         4. None
         """
         if self._buffer is None:
@@ -1464,6 +1465,22 @@ class ProjectWorkbenchApp(ToolBase):
                 for path in (step.get("output", []) or []):
                     if str(path).lower().endswith(".srt"):
                         return self._abspath(str(path))
+        # Fallback: manual SRT pulled by step1_download (Phase 2 — manifest
+        # may run without ASR when a manual SRT covers the source language).
+        step1 = self._buffer.get("step1_download", {}) or {}
+        subs = step1.get("subtitles") or []
+        if isinstance(subs, list) and subs:
+            want_lang = str(self._buffer.get(step_key, {}).get("source_lang", "")
+                             ).strip().lower()
+            picked = None
+            if want_lang:
+                picked = next((s for s in subs if isinstance(s, dict)
+                                and str(s.get("iso", "")).lower() == want_lang), None)
+            if picked is None:
+                picked = next((s for s in subs if isinstance(s, dict)
+                                and s.get("path")), None)
+            if picked and picked.get("path"):
+                return self._abspath(str(picked["path"]))
         return None
 
     @staticmethod
@@ -1563,14 +1580,16 @@ class ProjectWorkbenchApp(ToolBase):
             if not (step.get("targets") or []):
                 return "step3_translate.targets is empty"
             if self._resolve_srt_input(step_key) is None:
-                return "no input SRT — run step2_asr or set step3_translate.source_srt"
+                return ("no input SRT — run step2_asr, pull a manual SRT in "
+                        "step1_download, or set step3_translate.source_srt")
         elif step_key == "step4_burn":
             if self._resolve_video_input(step_key) is None:
                 return "no input video"
             # No-subs case allowed (watermark-only burn).
         elif step_key == "step5_pack":
             if self._resolve_srt_input(step_key) is None:
-                return "no input SRT — run step2_asr or set step5_pack.source_srt"
+                return ("no input SRT — run step2_asr, pull a manual SRT in "
+                        "step1_download, or set step5_pack.source_srt")
         elif step_key == "step6_split":
             if self._resolve_video_input(step_key) is None:
                 return "no input video"
