@@ -918,11 +918,14 @@ class ProjectWorkbenchApp(ToolBase):
           - step2_asr.language matches one of those iso codes (or 'auto'
             and step1 produced any subs)."""
         assert self._buffer is not None
+        asr = self._buffer.get("step2_asr", {})
+        # Disabled ASR can't overwrite anything — no hint needed.
+        if not asr.get("enabled"):
+            return
         step1 = self._buffer.get("step1_download", {})
         subs = step1.get("subtitles") or []
         if not isinstance(subs, list) or not subs:
             return
-        asr = self._buffer.get("step2_asr", {})
         asr_lang = str(asr.get("language") or "auto").lower()
         iso_codes = [str(s.get("iso", "")).lower() for s in subs
                      if isinstance(s, dict)]
