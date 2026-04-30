@@ -35,7 +35,6 @@
 | 🟢 P3 | [ ] | 各工具窗口风格统一 | 大小、配色、按钮样式统一；目前各工具窗口风格不一 |
 | 🟢 P3 | [~] | 输出路径可自定义 | 🟡 yt-dlp / speech2text / video_tools / subtitle_tool 已支持；仅 translate_srt 仍硬编码输出到源文件目录 |
 | 🟢 P3 | [~] | 操作参数持久化 | 🟡 subtitle_tool 已完成 preset 系统（user_data/presets/subtitle_burn.json，支持命名保存/切换/记忆 last_used）；其他工具待跟进 |
-| 🟢 P3 | [ ] | AI 响应缓存 (X4) | 长 SRT 反复调优 prompt 浪费 tokens。需要：(a) **A 前缀缓存** — Anthropic `cache_control` / Gemini Context Cache / DeepSeek 自动；(b) **B 客户端 SHA256 缓存** — `user_data/ai_cache/`，LRU + 7 天 TTL + 100MB 上限。`core.ai.complete()` 已留 `cache_hint=` 参数位。spec 见 [docs/design/04-ai-router.md](docs/design/04-ai-router.md) "缓存 (X4)" |
 | 🟢 P3 | [ ] | ASR / TTS Test 真实施 | AI 控制台 Lemonfox / Fish Audio 的 Test 按钮目前 disabled 占位。需要：(a) ASR — 在 `prompts/samples/silence-1s.wav` 塞 1 秒静音样本，Test 拿它打 Lemonfox；(b) TTS — provider 配置加 `test_voice_id` 字段，Test 调短文本合成 |
 | 🟢 P3 | [ ] | per-(task, provider) prompt 变体 | `core.prompts.get(task)` 当前一 task 一 prompt。不同 provider 在同一任务上风格差异明显（DeepSeek 喜欢长解释、Gemini 偏简洁）。需要：扩展 prompts 文件命名为 `<task>.<provider>.md`，loader 优先匹配 (task, provider) 后 fallback 到 (task) |
 
@@ -136,3 +135,4 @@
 | 字幕处理综合工作台 | 草案写完后世界变了：`subtitle.pack` 一键管线已覆盖 95% 流水线场景（一次 AI 调用产 titles+segments+refined），项目工作台 step5_pack 也包揽了「项目流程」中的字幕后处理。剩余 5% 的"手工 review/编辑"场景，用户用文本编辑器改 .txt 即可，不值得专做工作台。2026-04-30 决定取消，保留 5 个老菜单项作单步调试 fallback；菜单顺序调整把 pack 提到顶部 |
 | SRT 时间轴整体偏移 | 服务的痛点是"用户拿外部字幕烧录对不齐"，但实际场景里 VideoCraft 自家的 ASR + 翻译 + pack 流程产出的字幕都是对齐的，外部字幕导入烧录是边缘场景。等真有用户反馈再做。2026-04-30 取消 |
 | SRT 格式转换（SRT↔VTT/ASS） | 服务的痛点是"用户做完视频要传 B 站 / 嵌网页"，但目标用户群（自媒体视频创作者）多数全程 SRT 走完，且烧录是终态产物（视频里就有字幕），不需要外发字幕文件。word_subtitle 已能生成 ASS 卡拉 OK 效果。等真有用户反馈再做。2026-04-30 取消 |
+| AI 响应缓存 (X4) | 当前所有 AI 入口（translate / ASR / pack / TTS）都是单次性操作 —— 跑完产物落盘，没有「同一份输入反复跑同一份 prompt」的 loop 场景。缓存现在做反而会让用户改 prompt 后困惑「为什么还是老结果」。`cache_hint=` API 位先留着不动。等将来开发 agent 类功能（自循环调用、多轮工具调用 / 反思 loop）时再补。2026-05-01 决定暂不做 |
