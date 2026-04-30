@@ -108,12 +108,14 @@ def tts(text: str, output_path: str, *,
         voice_id: str,
         audio_format: str = "mp3",
         should_cancel=None,
-        on_chunk=None) -> None:
+        on_chunk=None,
+        cancel_token=None) -> None:
     """Stream TTS audio to a file.
 
     `task` is recorded for forward compatibility; Phase 1 ignores it.
-    `should_cancel` is a cooperative cancellation predicate (Phase 7 will
-    integrate with CancellationToken).
+    `should_cancel` is the legacy predicate API (kept for back-compat);
+    `cancel_token` is the canonical CancellationToken integration. Either
+    or both work; both signals stop the stream.
     """
     _ = task
     return router.tts(
@@ -123,6 +125,7 @@ def tts(text: str, output_path: str, *,
         audio_format=audio_format,
         should_cancel=should_cancel,
         on_chunk=on_chunk,
+        cancel_token=cancel_token,
     )
 
 

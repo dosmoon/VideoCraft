@@ -33,6 +33,7 @@ def synthesize(
     audio_format: str = "mp3",
     should_cancel: Callable[[], bool] | None = None,
     on_chunk: Callable[[int], None] | None = None,
+    cancel_token=None,
 ) -> None:
     """Stream TTS audio to `output_path`.
 
@@ -65,6 +66,17 @@ def synthesize(
     # manager and no .iter_bytes() on the return value. Older code (pre-M5)
     # used a stale `with ... as resp: resp.iter_bytes()` pattern that never
     # worked against this SDK version.
+    # If both should_cancel and cancel_token are passed, fold them into one
+    # predicate — either signal stops the stream. Token-only is the new
+    # canonical path; should_cancel is kept for backward-compat callers.
+    if cancel_token is not None:
+        original_should_cancel = should_cancel
+        def should_cancel():
+            if cancel_token.cancelled:
+                return True
+            if original_should_cancel is not None:
+                return original_should_cancel()
+            return False
     session = Session(api_key)
     total = 0
     try:

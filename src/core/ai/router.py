@@ -351,7 +351,8 @@ class AIRouter:
             voice_id: str,
             audio_format: str = "mp3",
             should_cancel=None,
-            on_chunk=None) -> None:
+            on_chunk=None,
+            cancel_token=None) -> None:
         """Dispatch a TTS synthesis call.
 
         Args:
@@ -393,6 +394,7 @@ class AIRouter:
                     audio_format=audio_format,
                     should_cancel=should_cancel,
                     on_chunk=on_chunk,
+                    cancel_token=cancel_token,
                 )
             else:
                 raise RuntimeError(f"Unsupported TTS provider: {provider!r}")

@@ -59,6 +59,7 @@ def synthesize_text(
     provider: str = "fish_audio",
     should_cancel: CancelPredicate | None = None,
     on_progress: ProgressCallback | None = None,
+    cancel_token=None,
 ) -> str:
     """Single-voice TTS. Streams audio to output_path.
 
@@ -76,6 +77,7 @@ def synthesize_text(
         audio_format=audio_format,
         should_cancel=should_cancel,
         on_chunk=on_chunk,
+        cancel_token=cancel_token,
     )
     return output_path
 
@@ -89,6 +91,7 @@ def synthesize_dialogue(
     provider: str = "fish_audio",
     should_cancel: CancelPredicate | None = None,
     on_progress: ProgressCallback | None = None,
+    cancel_token=None,
 ) -> str:
     """Multi-voice dialogue TTS.
 
@@ -108,6 +111,11 @@ def synthesize_dialogue(
 
     try:
         for i, (role, text) in enumerate(segments):
+            # Both signal types stop the loop. cancel_token wins for the new
+            # Hub-driven Cancel button; should_cancel for older callers that
+            # still pass a predicate.
+            if cancel_token is not None and cancel_token.cancelled:
+                raise InterruptedError("Cancelled")
             if should_cancel and should_cancel():
                 raise InterruptedError("Cancelled")
 
@@ -129,6 +137,7 @@ def synthesize_dialogue(
                 audio_format=audio_format,
                 should_cancel=should_cancel,
                 on_chunk=None,
+                cancel_token=cancel_token,
             )
 
         if on_progress:
