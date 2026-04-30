@@ -38,7 +38,7 @@
 | 🟢 P3 | [ ] | 分割视频前显示分段预览 | 执行前列出解析出的分段列表，让用户确认再运行 |
 | 🟢 P3 | [ ] | 各工具窗口风格统一 | 大小、配色、按钮样式统一；目前各工具窗口风格不一 |
 | 🟢 P3 | [~] | 输出路径可自定义 | 🟡 yt-dlp / speech2text / video_tools / subtitle_tool 已支持；仅 translate_srt 仍硬编码输出到源文件目录 |
-| 🟢 P3 | [~] | 操作参数持久化 | 🟡 subtitle_tool 已完成 preset 系统（~/.videocraft/presets/subtitle_burn.json，支持命名保存/切换/记忆 last_used）；其他工具待跟进 |
+| 🟢 P3 | [~] | 操作参数持久化 | 🟡 subtitle_tool 已完成 preset 系统（user_data/presets/subtitle_burn.json，支持命名保存/切换/记忆 last_used）；其他工具待跟进 |
 | 🟢 P3 | [ ] | AI 响应缓存 (X4) | 长 SRT 反复调优 prompt 浪费 tokens。需要：(a) **A 前缀缓存** — Anthropic `cache_control` / Gemini Context Cache / DeepSeek 自动；(b) **B 客户端 SHA256 缓存** — `user_data/ai_cache/`，LRU + 7 天 TTL + 100MB 上限。`core.ai.complete()` 已留 `cache_hint=` 参数位。spec 见 [docs/design/04-ai-router.md](docs/design/04-ai-router.md) "缓存 (X4)" |
 | 🟢 P3 | [ ] | ASR / TTS Test 真实施 | AI 控制台 Lemonfox / Fish Audio 的 Test 按钮目前 disabled 占位。需要：(a) ASR — 在 `prompts/samples/silence-1s.wav` 塞 1 秒静音样本，Test 拿它打 Lemonfox；(b) TTS — provider 配置加 `test_voice_id` 字段，Test 调短文本合成 |
 | 🟢 P3 | [ ] | per-(task, provider) prompt 变体 | `core.prompts.get(task)` 当前一 task 一 prompt。不同 provider 在同一任务上风格差异明显（DeepSeek 喜欢长解释、Gemini 偏简洁）。需要：扩展 prompts 文件命名为 `<task>.<provider>.md`，loader 优先匹配 (task, provider) 后 fallback 到 (task) |
