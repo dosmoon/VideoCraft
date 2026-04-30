@@ -9,6 +9,7 @@
 
 | 优先级 | 状态 | 功能 | 说明 |
 |--------|------|------|------|
+| 🔴 P1 | [ ] | 项目工作台 UX + 健壮性深度优化（延后） | 现状：M1+ + 字幕集成 Phase 2（commits 7b63740 / cac18b3 / 6c159b9 / 7793741 / b8b874e / 98e89c5）跑通了"能用"基线，但 UI 反人类（7 步表单密度过大、字段名跟用户心智不对齐、cross-step 状态不可见、错误恢复路径不明）+ 健壮性差（resolver 多处分叉各走各的；step1/2/3 有 manual SRT 时 enable/disable 心智模型靠注释而非 UI；mid-session 切换字段不触发卡片重渲；validator 报错信息只对开发者友好）。下一轮要做：(a) 重画卡片信息层级 — 隐藏运行时只读字段；(b) cross-step affordance — 哪条 SRT 进哪一步、哪个被覆盖一目了然；(c) resolver 统一收口（burn vs translate vs pack 别再各走各的）；(d) validator 错误信息走 i18n + 对应可点击的修复入口；(e) 工作台首屏空态/快速开始引导。先把 backlog 其它高价值项消化掉再回头深做 |
 | 🟡 P2 | [ ] | extract-clip / auto-split 业务逻辑下沉到 core | [video_tools.py:127-193](src/tools/video/video_tools.py#L127-L193) 的 `get_keyframe_times / find_nearest_keyframe / auto_split_video(use_keyframes=...)` 仍在 UI 层自带 ffprobe/ffmpeg 实现，与 `core/video_split.split_one()` 能力重复。跟进项：切到统一 API，移除 UI 层的重复逻辑。菜单入口保留 |
 | 🟢 P3 | [ ] | requirements.txt → uv + lockfile | 当前 requirements.txt 已全量 pin 到精确版本（commit e9ce581），可重现构建已解决；下一步引入 `uv` + `requirements.in/.lock` 双文件机制，升级一键化 + 装得快。改动面：build_portable.py 切到 `uv pip install`，CI 加 uv 安装步骤 |
 
@@ -45,6 +46,7 @@
 
 | 完成时间 | 功能 | 备注 |
 |---------|------|------|
+| 2026-04-30 | 项目工作台字幕集成 Phase 2（manifest 拉手工字幕 + ASR 可跳过） | step1_download 加 `subtitle_langs: list[BCP47]` 字段：跑时调 yt-dlp 拉对应 manual SRT，relocate 到 `<unit>/subtitles/<basename>_<iso>.srt`（BCP47→ISO 收敛），写入 `step1.subtitles[]` + 跑 `srt_quality.fingerprint` 落 manifest 和 status log。step1 卡片加 Pick 按钮，复用 `ui/subs_lang_picker.py`（从 yt-dlp 工具提到 ui/ 共享）；modal 异步模式：打开时显示 Loading，后台 `extract_info(URL)` 探测可用语言。step2_asr 卡片加重叠 hint。resolver 大修：`_resolve_srt_input` + `_resolve_burn_sub1/2` 都加 step1.subtitles fallback 层（按 source_lang 匹配 iso），closes 「ASR 关掉但有 manual SRT」时 translate / burn / pack 全链路。i18n +9 keys 双语对称 1133/1133。commits 7b63740 / cac18b3 / 6c159b9 / 7793741 / b8b874e / 98e89c5 |
 | 2026-04-30 | SRT 质量指纹（下载完自动报告） | 新建 `core/srt_quality.py`：纯结构性指标（cue 数 / 平均时长 / 字符宽 / cps 阅读速度 / 句末标点 % / ALL-CAPS % / 说话人标签 / 音效标签 / 晚开场标记）。刻意不出 good/fair/bad 评分（阈值无学术依据，跨语言不可移植）。yt-dlp 工具下载完每份 SRT 一行 fingerprint 实测能区分「创作者人工字幕（混合大小写、~75% 标点、speaker tags）」vs「电视广播 CC 回灌（99% ALL-CAPS、晚 47 秒开场、断句割裂）」。零依赖。commit b1200f9 |
 | 2026-04-30 | yt-dlp 字幕下载（手工字幕 + 只下字幕模式）| 独立工具上线：手工字幕多语言模态选择器（搜索 + 友好语言名 + max 4）+「只下字幕（跳过视频）」复选框 +下载完日志列出写入的 SRT。`core/youtube_download.download_video()` 加 `subtitle_langs` / `auto_caption_langs` / `skip_video` 参数（auto 参数留作 manifest 第二阶段复用）。subtitle 格式走 `srt/best` fallback chain 让 vtt-only 语言通过 FFmpegSubtitlesConvertor 转换。新增 `core/lang_names.py` 硬编码 ~50 条 BCP47 → (中, 英) 映射避免新依赖。auto-caption UI 上线后试用即砍——YouTube 翻译端点 HTTP 429 + ASR×MT 质量太差，真翻译走 manifest step3。i18n +15 keys 双语对称。commits 3a1e588 / b1200f9（cut 阶段） |
 | 2026-04-30 | 字幕菜单重排 + paragraph 折入 pack | (a) 「一键 pack」从菜单中部提到顶部首位（95% 流水线场景一次 AI 调用产 titles+segments+refined 全搞定）；(b) `subtitle.pack` prompt 输出新增 `paragraphs` 字段，pack 落 4 份产物：`-titles.txt` / `-segments.txt` / `-refined.txt` / `-paragraphs.txt`，老菜单「段落提取」入口删除（功能已被 pack 覆盖）；(c) pack status 行同步 surface 出 paragraphs.txt 路径。commits 8e52328 / 94ce454 |
