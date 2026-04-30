@@ -579,7 +579,7 @@
   "tool.srt.gen_pack.btn_run": "一次性生成",
   "tool.srt.gen_pack.output_base": "输出基础名:",
   "tool.srt.gen_pack.status_running": "正在调用 AI 生成标题、分段与精炼内容...",
-  "tool.srt.gen_pack.status_done": "完成 → {json_name} / {titles_name} / {chapters_name} / {description_name}",
+  "tool.srt.gen_pack.status_done": "完成 → {json_name} / {titles_name} / {chapters_name} / {description_name} / {paragraphs_name}",
   "tool.srt.gen_pack.status_fail": "生成失败",
   "tool.srt.gen_pack.error_failed": "一键生成失败: {e}",
   "tool.srt.gen_pack.log_done": "字幕分段包已生成 → {filename}",

@@ -2212,11 +2212,12 @@ class ProjectWorkbenchApp(ToolBase):
             messagebox.showerror("Error", f"SRT not found:\n{srt_in}")
             self._abort_chain()
             return
-        # Output base: <project>/<basename>_pack — write_subtitle_pack will
-        # append -postprocess.json / -titles.txt / -chapters.txt / -description.txt
-        # Pack outputs are user-shippable (titles / chapters / description /
-        # structured payload) → land in the unit's output/ folder. Drop the
-        # legacy "_pack-" prefix; the file stems now describe their role
+        # Output base: <project>/<basename>/output/<basename> — write_subtitle_pack
+        # will append -postprocess.json / -titles.txt / -chapters.txt /
+        # -description.txt / -paragraphs.txt (the last one driven by srt_path,
+        # raw SRT slices per chapter, no AI).
+        # Pack outputs are user-shippable → land in the unit's output/ folder.
+        # Drop the legacy "_pack-" prefix; the file stems describe their role
         # directly.
         output_dir = os.path.join(self.project.unit_dir(basename), "output")
         os.makedirs(output_dir, exist_ok=True)

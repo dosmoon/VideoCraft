@@ -579,7 +579,7 @@
   "tool.srt.gen_pack.btn_run": "Generate pack",
   "tool.srt.gen_pack.output_base": "Output base path:",
   "tool.srt.gen_pack.status_running": "Calling AI to generate titles, segments, and refined summaries...",
-  "tool.srt.gen_pack.status_done": "Done → {json_name} / {titles_name} / {chapters_name} / {description_name}",
+  "tool.srt.gen_pack.status_done": "Done → {json_name} / {titles_name} / {chapters_name} / {description_name} / {paragraphs_name}",
   "tool.srt.gen_pack.status_fail": "Generation failed",
   "tool.srt.gen_pack.error_failed": "Pack generation failed: {e}",
   "tool.srt.gen_pack.log_done": "Subtitle pack generated → {filename}",

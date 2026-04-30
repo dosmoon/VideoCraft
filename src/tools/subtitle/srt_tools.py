@@ -595,6 +595,7 @@ class SrtGeneratePackApp(ToolBase):
                     titles_name=os.path.basename(paths["titles"]),
                     chapters_name=os.path.basename(paths["chapters"]),
                     description_name=os.path.basename(paths["description"]),
+                    paragraphs_name=os.path.basename(paths.get("paragraphs", "(skipped)")),
                 ))
                 logger.info(tr("tool.srt.gen_pack.log_done",
                                filename=os.path.basename(paths["json"])))
