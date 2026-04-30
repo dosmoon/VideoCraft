@@ -141,10 +141,31 @@ def concat_videos_reencode(
     cmd.insert(-1, "-progress")
     cmd.insert(-1, "pipe:1")
 
+    # IMPORTANT: must drain stderr in a background thread, otherwise the
+    # OS pipe buffer (~64KB) fills with ffmpeg's verbose encoding chatter,
+    # ffmpeg blocks writing to stderr → it stops writing -progress to
+    # stdout → our progress loop hangs forever. Same applies if we ever
+    # forget to read both pipes when both are PIPE.
+    import threading as _threading
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
         text=True, encoding="utf-8", errors="replace", bufsize=1,
     )
+    stderr_lines: list[str] = []
+
+    def _drain_stderr():
+        if proc.stderr is None:
+            return
+        for line in proc.stderr:
+            stderr_lines.append(line)
+            # Keep memory bounded — a long re-encode can otherwise grow
+            # this list to 100k+ lines. Last 200 lines is plenty for
+            # error diagnosis.
+            if len(stderr_lines) > 400:
+                del stderr_lines[:200]
+
+    drainer = _threading.Thread(target=_drain_stderr, daemon=True)
+    drainer.start()
     try:
         if proc.stdout is not None:
             for line in proc.stdout:
@@ -155,9 +176,9 @@ def concat_videos_reencode(
                     except ValueError:
                         pass
         proc.wait()
+        drainer.join(timeout=2)
         if proc.returncode != 0:
-            stderr_text = (proc.stderr.read() if proc.stderr else "")
-            tail = (stderr_text or "").strip().splitlines()[-10:]
+            tail = "".join(stderr_lines).strip().splitlines()[-10:]
             raise RuntimeError("ffmpeg failed: " + " | ".join(tail))
     finally:
         if proc.stdout is not None:
