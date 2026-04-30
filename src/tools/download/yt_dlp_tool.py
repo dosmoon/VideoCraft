@@ -464,41 +464,38 @@ class YouTubeDownloader(ToolBase):
                     self.root.after(0, lambda hc=http_chunk//1048576, bs=buffersize//1048576, c=concurrent: 
                                    self.log(f"Using {hc}MB chunks, {bs}MB buffer, {c} concurrent downloads"))
                     
+                    # Aligned with the project-manifest fast path
+                    # (project_workbench.py:_download_worker): silence yt-dlp's
+                    # internal stdout chatter (the noprogress=False default in
+                    # the legacy opts pumped a progress bar through Hub's stdout
+                    # pipe on every chunk, which throttled throughput) and drop
+                    # the `+faststart` postprocessor pass (full-file moov rewrite
+                    # adds 10-30s on 4K downloads — Tk + media players play the
+                    # output fine without it). Network tuning kept because it's
+                    # surfaced as a user preset (Fast / Medium / Slow).
                     ydl_opts = {
                         'format': format_str,
                         'outtmpl': output_template,
                         'merge_output_format': 'mp4',
-                        
-                        # FFmpeg后处理优化参数 - 音视频都不重编码以提速
-                        'postprocessor_args': {
-                            'ffmpeg': [
-                                '-c:v', 'copy',              # 视频流直接复制
-                                '-c:a', 'copy',              # 音频流也直接复制，不重编码
-                                '-threads', '0',             # 使用所有CPU线程
-                                '-movflags', '+faststart',   # 优化MP4结构
-                            ]
-                        },
-                        
-                        # 网络和缓冲区优化
-                        'http_chunk_size': http_chunk,       # 动态HTTP块大小
-                        'buffersize': buffersize,            # 内存缓冲区
-                        'retries': 10,                       # 下载重试次数
-                        'fragment_retries': 10,              # 片段重试次数
-                        'file_access_retries': 5,            # 文件访问重试
-                        'skip_unavailable_fragments': True,  # 跳过不可用片段
-                        'socket_timeout': 30,                # Socket超时
-                        
-                        # 并发下载优化
-                        'concurrent_fragment_downloads': concurrent,  # 动态并发数
-                        
-                        # 其他优化
+
+                        # Network / buffer tuning (preserved — user-facing presets)
+                        'http_chunk_size': http_chunk,
+                        'buffersize': buffersize,
+                        'retries': 5,
+                        'fragment_retries': 5,
+                        'file_access_retries': 5,
+                        'skip_unavailable_fragments': True,
+                        'socket_timeout': 30,
+                        'concurrent_fragment_downloads': concurrent,
+
                         'progress_hooks': [self.create_progress_hook(video)],
-                        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
-                        'referer': 'https://www.youtube.com/',
-                        'quiet': False,
-                        'no_warnings': False,
-                        'noprogress': False,
-                        'ignoreerrors': False,               # 不忽略错误
+
+                        # Quiet — match the manifest path's defaults; suppresses
+                        # the verbose progress bar that bottlenecks Hub stdout.
+                        'quiet': True,
+                        'no_warnings': True,
+                        'noprogress': True,
+                        'ignoreerrors': False,
                     }
 
                     source_url = video.get('source_url')
