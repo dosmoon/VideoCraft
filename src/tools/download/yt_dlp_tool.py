@@ -24,6 +24,36 @@ def _apply_jsruntime_opts(opts: dict) -> None:
         opts["js_runtimes"] = {"node": {"path": res.path}}
         opts["remote_components"] = ["ejs:github"]
 
+
+def _jsruntime_status_line() -> str:
+    """One-line summary of JS runtime status for the in-tool log."""
+    from core import env
+    res = env.detect_one("node")
+    if res.available:
+        ver = res.version or "?"
+        src = res.source or "?"
+        return f"JS runtime: Node.js {ver} ({src}) — full YouTube format support"
+    return ("JS runtime: NOT DETECTED — high-quality HLS formats may be missing. "
+            "Open Settings → Environment → Setup Node.js to fix.")
+
+
+def _summarize_formats(info: dict) -> str | None:
+    """Return a short fingerprint of an extracted video's formats, or None
+    if formats info is unavailable (e.g. extract_flat fallback path)."""
+    fmts = info.get("formats") or []
+    if not fmts:
+        return None
+    has_hls = any((f.get("protocol") or "").startswith("m3u8") for f in fmts)
+    heights = [f.get("height") for f in fmts if f.get("height")]
+    max_h = max(heights) if heights else 0
+    # Top codec at max height
+    best = next((f for f in fmts if f.get("height") == max_h and f.get("vcodec")), None)
+    codec = (best.get("vcodec") if best else "") or ""
+    codec_short = codec.split(".")[0] if codec else "?"
+    hls_mark = "✓" if has_hls else "✗"
+    res_str = f"{max_h}p" if max_h else "audio-only"
+    return f"  → {len(fmts)} formats, max {res_str} ({codec_short}), HLS {hls_mark}"
+
 class YouTubeDownloader(ToolBase):
     def __init__(self, root, initial_file=None):
         self.root = root
@@ -245,6 +275,7 @@ class YouTubeDownloader(ToolBase):
                     ydl_opts['source_address'] = '0.0.0.0'
 
                 _apply_jsruntime_opts(ydl_opts)
+                self.root.after(0, lambda s=_jsruntime_status_line(): self.log(s))
 
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     for url in urls:
@@ -275,6 +306,9 @@ class YouTubeDownloader(ToolBase):
                                     'uploader': info.get('uploader', 'Unknown'),
                                     'playlist': None
                                 })
+                                summary = _summarize_formats(info)
+                                if summary:
+                                    self.root.after(0, lambda s=summary: self.log(s))
                         except Exception as e:
                             # Fallback to extract_flat=True
                             self.log(f"Fallback for URL: {url}")
