@@ -3,7 +3,6 @@ requests
 srt
 ffmpeg-python==0.2.0
 deepl
-google-generativeai
 google-genai
 fish-audio-sdk
 openai>=1.0.0
