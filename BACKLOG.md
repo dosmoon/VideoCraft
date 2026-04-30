@@ -19,7 +19,7 @@
 | 优先级 | 状态 | 功能 | 说明 |
 |--------|------|------|------|
 | 🟡 P2 | [x] | 视频加水印（含无字幕场景） | 烧录功能已支持图片/文字/日期三类水印 + 无字幕场景（仅水印或纯重编码）。作为独立工具的提案不再追，新工作台烧录步骤已覆盖。 |
-| 🟡 P2 | [ ] | yt-dlp 下载时同步获取字幕 | yt-dlp 原生支持，加一个"同时下载字幕"选项，省去手动转录步骤 |
+| 🟡 P2 | [x] | yt-dlp 下载时同步获取字幕 | 已上线：手工字幕（创作者上传）多语言下载 + 「只下字幕」模式 + 下载完自动报告 SRT 质量指纹。auto-caption 经评估砍掉（YouTube 翻译端点 429 + ASR×MT 质量太差，真翻译走 manifest step3）。commits 3a1e588 / b1200f9 |
 | 🟡 P2 | [ ] | 视频合并/拼接 | 多个视频片段按顺序合并为一个，自媒体剪辑常见需求 |
 | 🟡 P2 | [ ] | AI 错误契约实施 (X1) | `core/ai/errors.py` 已定义 9 种 `AIError.Kind`（NETWORK/AUTH/QUOTA/RATE_LIMIT/REFUSED/MALFORMED/OVERFLOW/CANCELLED/UNKNOWN）但各 provider 仍直抛 RuntimeError。需要：(a) 给 5 个 provider 各写原生异常→Kind 映射表；(b) UI 加 Kind→恢复动作映射（AUTH→打开 AI 控制台、QUOTA→换 provider 等）。spec 见 [docs/design/04-ai-router.md](docs/design/04-ai-router.md) "错误契约（X1）" 章节 |
 | 🟡 P2 | [ ] | AI 取消传播 wiring (X2) | `CancellationToken` 类已建但未真接入 — provider adapter 没注册 `abort_cb`、UI 没加取消按钮。长任务（翻译 2000 行 / TTS 多角色合成）目前没法中途停。需 wire 全链 + UI 加取消按钮。spec 见 [docs/design/04-ai-router.md](docs/design/04-ai-router.md) "取消传播（X2）" 章节 |
@@ -45,6 +45,9 @@
 
 | 完成时间 | 功能 | 备注 |
 |---------|------|------|
+| 2026-04-30 | SRT 质量指纹（下载完自动报告） | 新建 `core/srt_quality.py`：纯结构性指标（cue 数 / 平均时长 / 字符宽 / cps 阅读速度 / 句末标点 % / ALL-CAPS % / 说话人标签 / 音效标签 / 晚开场标记）。刻意不出 good/fair/bad 评分（阈值无学术依据，跨语言不可移植）。yt-dlp 工具下载完每份 SRT 一行 fingerprint 实测能区分「创作者人工字幕（混合大小写、~75% 标点、speaker tags）」vs「电视广播 CC 回灌（99% ALL-CAPS、晚 47 秒开场、断句割裂）」。零依赖。commit b1200f9 |
+| 2026-04-30 | yt-dlp 字幕下载（手工字幕 + 只下字幕模式）| 独立工具上线：手工字幕多语言模态选择器（搜索 + 友好语言名 + max 4）+「只下字幕（跳过视频）」复选框 +下载完日志列出写入的 SRT。`core/youtube_download.download_video()` 加 `subtitle_langs` / `auto_caption_langs` / `skip_video` 参数（auto 参数留作 manifest 第二阶段复用）。subtitle 格式走 `srt/best` fallback chain 让 vtt-only 语言通过 FFmpegSubtitlesConvertor 转换。新增 `core/lang_names.py` 硬编码 ~50 条 BCP47 → (中, 英) 映射避免新依赖。auto-caption UI 上线后试用即砍——YouTube 翻译端点 HTTP 429 + ASR×MT 质量太差，真翻译走 manifest step3。i18n +15 keys 双语对称。commits 3a1e588 / b1200f9（cut 阶段） |
+| 2026-04-30 | 字幕菜单重排 + paragraph 折入 pack | (a) 「一键 pack」从菜单中部提到顶部首位（95% 流水线场景一次 AI 调用产 titles+segments+refined 全搞定）；(b) `subtitle.pack` prompt 输出新增 `paragraphs` 字段，pack 落 4 份产物：`-titles.txt` / `-segments.txt` / `-refined.txt` / `-paragraphs.txt`，老菜单「段落提取」入口删除（功能已被 pack 覆盖）；(c) pack status 行同步 surface 出 paragraphs.txt 路径。commits 8e52328 / 94ce454 |
 | 2026-04-30 | yt-dlp 自伤默认值修复 | force_ipv4 默认 ON 禁了 IPv6 路由（健康双栈用户被 Happy Eyeballs 自动选优的能力被砍掉）；Network combo 默认选 "Fast (30MB chunks)" 把连续 TCP 流强行切成 N 个 HTTP Range 请求实测变慢。改动：force_ipv4 默 OFF（异常用户仍可勾），combo 砍到 2 档 "Auto (recommended)" + "Throttled (slow / unstable)"，Auto = 不传 chunk_size 让 yt-dlp 用默认。core.youtube_download.NETWORK_PRESETS 删 fast/medium 两个有害 preset 只留 throttled。commit 91fc451 |
 | 2026-04-30 | yt-dlp 调用统一收口到 core/youtube_download | 之前 5 处 `yt_dlp.YoutubeDL()` 直调散在 yt_dlp_tool.py + project_workbench.py 两模块，每次改 opts 都漏一边（manifest 模式之前没注入 JS runtime 一直在悄悄漏 m3u8 流）。新建 `core/youtube_download.py`：`extract_info() / download_video() / summarize_formats() / jsruntime_status_line() / NETWORK_PRESETS`。两边调用方都改用 facade。fetch_list 的 fallback 块缩进 bug + 缺异常处理顺手修了。commit 6c0d044 |
 | 2026-04-30 | yt-dlp 工具 UX：JS runtime 状态 + format fingerprint | 之前 yt-dlp 工具的 status_text 只显示高级事件，无法验证 JS runtime fix 是否生效。加入：fetch_list 启动时一次性 status line（"Node.js v22.11.0 (managed) — full YouTube format support"），单视频 fetch 完成后 fingerprint 行（"→ 37 formats, max 2160p (vp9), HLS ✓"）。HLS ✓ 是修复生效的硬证据。commit 65ecf37 |
