@@ -32,7 +32,6 @@
 
 | 优先级 | 状态 | 功能 | 说明 |
 |--------|------|------|------|
-| 🟢 P3 | [ ] | 分割视频前显示分段预览 | 执行前列出解析出的分段列表，让用户确认再运行 |
 | 🟢 P3 | [ ] | 各工具窗口风格统一 | 大小、配色、按钮样式统一；目前各工具窗口风格不一 |
 | 🟢 P3 | [~] | 输出路径可自定义 | 🟡 yt-dlp / speech2text / video_tools / subtitle_tool 已支持；仅 translate_srt 仍硬编码输出到源文件目录 |
 | 🟢 P3 | [~] | 操作参数持久化 | 🟡 subtitle_tool 已完成 preset 系统（user_data/presets/subtitle_burn.json，支持命名保存/切换/记忆 last_used）；其他工具待跟进 |
