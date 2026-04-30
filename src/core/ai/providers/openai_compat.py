@@ -23,12 +23,15 @@ def _provider_label(base_url: str) -> str:
     return f"OpenAI-compat ({base_url})"
 
 
-def call(api_key: str, base_url: str, model_id: str, prompt: str) -> str:
+def call(api_key: str, base_url: str, model_id: str, prompt: str,
+         *, cancel_token=None) -> str:
     """Plain text completion via OpenAI-compatible chat.completions."""
     from openai import OpenAI
     provider = _provider_label(base_url)
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    if cancel_token is not None:
+        cancel_token.register_abort(lambda c=client: _safe_close(c))
     try:
-        client = OpenAI(api_key=api_key, base_url=base_url)
         response = client.chat.completions.create(
             model=model_id,
             messages=[{"role": "user", "content": prompt}],
@@ -37,6 +40,10 @@ def call(api_key: str, base_url: str, model_id: str, prompt: str) -> str:
     except AIError:
         raise
     except Exception as e:
+        if cancel_token is not None and cancel_token.cancelled:
+            from core.ai.errors import Kind
+            raise AIError(Kind.CANCELLED, provider,
+                          "Cancelled by user", raw=e) from e
         raise map_openai_exception(e, provider) from e
 
 
@@ -62,13 +69,18 @@ def list_models(api_key: str, base_url: str) -> list[str]:
 
 
 def call_json(api_key: str, base_url: str, model_id: str,
-              prompt: str, schema: dict) -> dict:
+              prompt: str, schema: dict, *, cancel_token=None) -> dict:
     """Structured JSON completion.
 
     OpenAI-compat endpoints accept `response_format={"type":"json_object"}`
     but do NOT accept a schema directly — we inject the schema as a system
     hint to steer the model, then validate by parsing.
-    """
+
+    cancel_token: when supplied, the underlying httpx client is registered
+    for abort on cancel. Closing the OpenAI() client tears down its
+    connection pool, which surfaces as APIConnectionError in the blocked
+    .create() call → mapped to Kind.NETWORK and re-raised as CANCELLED
+    when token.cancelled is set."""
     from openai import OpenAI
     provider = _provider_label(base_url)
     schema_hint = (
@@ -77,8 +89,10 @@ def call_json(api_key: str, base_url: str, model_id: str,
         f"{json.dumps(schema, ensure_ascii=False, indent=2)}\n"
         "Return only the JSON object. No markdown fences. No prose. No explanations."
     )
+    client = OpenAI(api_key=api_key, base_url=base_url)
+    if cancel_token is not None:
+        cancel_token.register_abort(lambda c=client: _safe_close(c))
     try:
-        client = OpenAI(api_key=api_key, base_url=base_url)
         response = client.chat.completions.create(
             model=model_id,
             messages=[
@@ -91,5 +105,17 @@ def call_json(api_key: str, base_url: str, model_id: str,
     except AIError:
         raise
     except Exception as e:
+        if cancel_token is not None and cancel_token.cancelled:
+            from core.ai.errors import Kind
+            raise AIError(Kind.CANCELLED, provider,
+                          "Cancelled by user", raw=e) from e
         raise map_openai_exception(e, provider) from e
     return parse_json_response(raw, provider_hint="OpenAI-compatible")
+
+
+def _safe_close(client) -> None:
+    """Best-effort client close — never raise from an abort callback."""
+    try:
+        client.close()
+    except Exception:
+        pass

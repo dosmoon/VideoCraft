@@ -19,13 +19,14 @@ from core.ai.errors import AIError, Kind, map_subprocess_exception
 from core.ai.providers._json_utils import parse_json_response
 
 
-def call(cfg: dict, model_id: str, prompt: str) -> str:
+def call(cfg: dict, model_id: str, prompt: str, *, cancel_token=None) -> str:
     """Plain text completion."""
     cmd = _cmd(cfg, model_id, output_format="text")
-    return _run(cmd, cfg, prompt)
+    return _run(cmd, cfg, prompt, cancel_token=cancel_token)
 
 
-def call_json(cfg: dict, model_id: str, prompt: str, schema: dict) -> dict:
+def call_json(cfg: dict, model_id: str, prompt: str, schema: dict,
+              *, cancel_token=None) -> dict:
     """Structured JSON completion.
 
     Uses --output-format json, which wraps the model's text in a result
@@ -41,7 +42,7 @@ def call_json(cfg: dict, model_id: str, prompt: str, schema: dict) -> dict:
         f"{json.dumps(schema, ensure_ascii=False, indent=2)}\n"
         "No prose. No markdown. No code fences. Just the JSON object."
     )
-    envelope_raw = _run(cmd, cfg, full_prompt)
+    envelope_raw = _run(cmd, cfg, full_prompt, cancel_token=cancel_token)
 
     try:
         envelope = json.loads(envelope_raw)
@@ -75,9 +76,9 @@ def _cmd(cfg: dict, model_id: str, *, output_format: str) -> list:
     return cmd
 
 
-def _run(cmd: list, cfg: dict, prompt: str) -> str:
+def _run(cmd: list, cfg: dict, prompt: str, *, cancel_token=None) -> str:
     """Spawn the Claude CLI subprocess with prompt on stdin, return stdout.
-    Raises RuntimeError on missing binary, timeout, or non-zero exit."""
+    Raises AIError on missing binary, timeout, or non-zero exit."""
     executable = cmd[0] if cmd else "claude"
 
     # On Windows, npm-installed CLIs land as `claude.cmd` (or .bat). Plain
@@ -90,20 +91,46 @@ def _run(cmd: list, cfg: dict, prompt: str) -> str:
         cmd = [resolved] + list(cmd[1:])
 
     timeout_sec = int(cfg.get("timeout_sec", 600))
+    # Manual Popen so we can register an abort that terminates the child.
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             cmd,
-            input=prompt,
-            capture_output=True,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=timeout_sec,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+    except FileNotFoundError as e:
         raise map_subprocess_exception(
             e, "ClaudeCode",
             executable=executable, timeout_sec=timeout_sec) from e
+
+    if cancel_token is not None:
+        cancel_token.register_abort(lambda p=proc: _safe_terminate(p))
+
+    try:
+        stdout, stderr = proc.communicate(input=prompt, timeout=timeout_sec)
+    except subprocess.TimeoutExpired as e:
+        proc.kill()
+        try:
+            proc.communicate()
+        except Exception:
+            pass
+        raise map_subprocess_exception(
+            e, "ClaudeCode",
+            executable=executable, timeout_sec=timeout_sec) from e
+
+    if cancel_token is not None and cancel_token.cancelled:
+        raise AIError(Kind.CANCELLED, "ClaudeCode", "Cancelled by user")
+
+    class _R:  # adapter so the rest of _run code reads as before
+        pass
+    result = _R()
+    result.returncode = proc.returncode
+    result.stdout = stdout or ""
+    result.stderr = stderr or ""
     if result.returncode != 0:
         tail = (result.stderr or "").strip().splitlines()[-10:]
         joined = " | ".join(tail).lower()
@@ -118,3 +145,12 @@ def _run(cmd: list, cfg: dict, prompt: str) -> str:
         raise AIError(kind, "ClaudeCode",
                       "CLI failed: " + (" | ".join(tail) or "<no stderr>"))
     return (result.stdout or "").strip()
+
+
+def _safe_terminate(proc) -> None:
+    """Best-effort terminate of a Popen process — never raise from abort."""
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+    except Exception:
+        pass

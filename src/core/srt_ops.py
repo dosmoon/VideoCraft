@@ -351,7 +351,8 @@ def refine_segment_descriptions(paragraphs_path, prompt=None, tier=None):
     return refined_text
 
 
-def generate_subtitle_pack(srt_path, prompt=None, tier=None) -> dict:
+def generate_subtitle_pack(srt_path, prompt=None, tier=None,
+                            cancel_token=None) -> dict:
     """One-shot AI call: SRT -> {titles, segments[time_str/title/refined]}.
 
     Combines the work of generate_youtube_segments + refine_segment_descriptions
@@ -382,8 +383,14 @@ def generate_subtitle_pack(srt_path, prompt=None, tier=None) -> dict:
             schema=SUBTITLE_PACK_SCHEMA,
             task="subtitle.post",
             tier=_tier,
+            cancel_token=cancel_token,
         )
     except Exception as e:
+        # Let AIError (including CANCELLED) propagate untouched so the UI
+        # can branch on .kind. Only wrap unexpected non-AIError exceptions.
+        from core.ai.errors import AIError as _AIError
+        if isinstance(e, _AIError):
+            raise
         raise RuntimeError(f"调用AI生成失败 (tier={_tier}): {e}")
 
     if not isinstance(result, dict):

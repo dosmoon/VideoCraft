@@ -376,7 +376,7 @@ _STATUS_VALUES = ["pending", "running", "done", "failed"]
 # translate has fine-grained (between-batch) cancellation; asr / pack are
 # single-call so cooperative cancel only takes effect after the current
 # call returns. Add to this set once those gain abort-callback wiring.
-_CANCELLABLE_STEPS = {"step3_translate"}
+_CANCELLABLE_STEPS = {"step2_asr", "step3_translate", "step5_pack"}
 
 # Steps that can be run from the workbench in M2.
 _RUNNABLE_STEPS = {"step1_download", "step1_5_select", "step2_asr",
@@ -2061,12 +2061,14 @@ class ProjectWorkbenchApp(ToolBase):
         self._begin_busy("step2_asr", basename, f"ASR running: {basename}")
         threading.Thread(
             target=self._asr_worker,
-            args=(basename, source, output_srt, expected_iso, language_hint),
+            args=(basename, source, output_srt, expected_iso, language_hint,
+                   self._cancel_token),
             daemon=True,
         ).start()
 
     def _asr_worker(self, basename: str, source: str, output_srt: str,
-                    expected_iso: str | None, language_hint: str | None) -> None:
+                    expected_iso: str | None, language_hint: str | None,
+                    cancel_token=None) -> None:
         try:
             assert self.project is not None
             # Always normalize through ffmpeg → mp3 ≤100MB. Lemonfox's upload
@@ -2087,6 +2089,7 @@ class ProjectWorkbenchApp(ToolBase):
                     0, self._step_status,
                     tr("tool.project_workbench.status.asr_progress",
                        basename=basename, evt=evt)),
+                cancel_token=cancel_token,
             )
             outputs = []
             for path in (result.get("srt_path"), result.get("json_path")):
@@ -2103,11 +2106,18 @@ class ProjectWorkbenchApp(ToolBase):
                               tr("tool.project_workbench.status.asr_done",
                                  basename=basename))
         except AIError as e:
-            self.master.after(0, self._finish_step, "step2_asr", basename,
-                              "failed", {"error": str(e)},
-                              tr("tool.project_workbench.status.asr_failed",
-                                 basename=basename, e=e))
-            self.master.after(0, lambda err=e: show_ai_error(self.master, err))
+            if e.kind == Kind.CANCELLED:
+                self.master.after(
+                    0, self._finish_step, "step2_asr", basename,
+                    "pending", {"error": None},
+                    tr("tool.project_workbench.status.cancelled",
+                       basename=basename))
+            else:
+                self.master.after(0, self._finish_step, "step2_asr", basename,
+                                  "failed", {"error": str(e)},
+                                  tr("tool.project_workbench.status.asr_failed",
+                                     basename=basename, e=e))
+                self.master.after(0, lambda err=e: show_ai_error(self.master, err))
         except Exception as e:
             self.master.after(0, self._finish_step, "step2_asr", basename,
                               "failed", {"error": str(e)},
@@ -2570,11 +2580,12 @@ class ProjectWorkbenchApp(ToolBase):
         self._begin_busy("step5_pack", basename, f"Pack running: {basename}")
         threading.Thread(
             target=self._pack_worker,
-            args=(basename, srt_in, base),
+            args=(basename, srt_in, base, self._cancel_token),
             daemon=True,
         ).start()
 
-    def _pack_worker(self, basename: str, srt_in: str, base: str) -> None:
+    def _pack_worker(self, basename: str, srt_in: str, base: str,
+                     cancel_token=None) -> None:
         try:
             self.master.after(
                 0, self._step_status,
@@ -2582,7 +2593,7 @@ class ProjectWorkbenchApp(ToolBase):
             # tier= is a no-op in the router since commit 58e6414 (drop tier
             # dimension). Routing is task-based now: subtitle.post is
             # configured per-task in the AI Console.
-            pack = generate_subtitle_pack(srt_in)
+            pack = generate_subtitle_pack(srt_in, cancel_token=cancel_token)
             self.master.after(
                 0, self._step_status,
                 tr("tool.project_workbench.status.pack_writing", basename=basename))
@@ -2596,11 +2607,18 @@ class ProjectWorkbenchApp(ToolBase):
                               tr("tool.project_workbench.status.pack_done",
                                  basename=basename))
         except AIError as e:
-            self.master.after(0, self._finish_step, "step5_pack", basename,
-                              "failed", {"error": str(e)},
-                              tr("tool.project_workbench.status.pack_failed",
-                                 basename=basename, e=e))
-            self.master.after(0, lambda err=e: show_ai_error(self.master, err))
+            if e.kind == Kind.CANCELLED:
+                self.master.after(
+                    0, self._finish_step, "step5_pack", basename,
+                    "pending", {"error": None},
+                    tr("tool.project_workbench.status.cancelled",
+                       basename=basename))
+            else:
+                self.master.after(0, self._finish_step, "step5_pack", basename,
+                                  "failed", {"error": str(e)},
+                                  tr("tool.project_workbench.status.pack_failed",
+                                     basename=basename, e=e))
+                self.master.after(0, lambda err=e: show_ai_error(self.master, err))
         except Exception as e:
             self.master.after(0, self._finish_step, "step5_pack", basename,
                               "failed", {"error": str(e)},

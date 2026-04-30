@@ -25,6 +25,7 @@ def transcribe_audio(
     speaker_labels: bool = False,
     provider: str = "lemonfox",
     on_event: Callable[..., None] | None = None,
+    cancel_token=None,
 ) -> dict:
     """Transcribe audio and write both .srt and .json outputs.
 
@@ -71,6 +72,7 @@ def transcribe_audio(
         translate=translate,
         speaker_labels=speaker_labels,
         on_event=on_event,
+        cancel_token=cancel_token,
     )
 
     # Resolve detected language and decide on output suffix rewrite.

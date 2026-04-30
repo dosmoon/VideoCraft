@@ -62,11 +62,12 @@ def complete_json(prompt: str, *,
                   task: str = "",
                   tier: str = TIER_STANDARD,
                   provider: str | None = None,
-                  model: str | None = None) -> dict:
+                  model: str | None = None,
+                  cancel_token=None) -> dict:
     """Structured JSON completion. See complete() for `task` semantics."""
     return router.complete_json(
         prompt, schema=schema, task=task, tier=tier,
-        provider=provider, model=model,
+        provider=provider, model=model, cancel_token=cancel_token,
     )
 
 
@@ -81,7 +82,8 @@ def asr(audio_path: str, *,
         language: str | None = None,
         translate: bool = False,
         speaker_labels: bool = False,
-        on_event=None) -> dict:
+        on_event=None,
+        cancel_token=None) -> dict:
     """Transcribe audio. Returns raw provider response dict.
 
     `task` is recorded for forward compatibility (future routing); Phase 1
@@ -96,6 +98,7 @@ def asr(audio_path: str, *,
         translate=translate,
         speaker_labels=speaker_labels,
         on_event=on_event,
+        cancel_token=cancel_token,
     )
 
 

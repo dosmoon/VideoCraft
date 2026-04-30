@@ -19,6 +19,7 @@ from core.ai.providers import openai_compat as _openai_compat
 from core.ai.providers import claude_code as _claude_code
 from core.ai.providers import lemonfox as _lemonfox
 from core.ai.providers import fish_audio as _fish_audio
+from core.ai.errors import AIError, Kind
 from core.ai.stats import Stats
 from core.ai.tiers import (
     TIER_PREMIUM,
@@ -84,7 +85,8 @@ class AIRouter:
                       task: str = "",
                       tier: str = TIER_STANDARD,
                       provider: str | None = None,
-                      model: str | None = None) -> dict:
+                      model: str | None = None,
+                      cancel_token=None) -> dict:
         """Structured JSON completion constrained by `schema`.
 
         See complete() for `task` semantics.
@@ -105,8 +107,10 @@ class AIRouter:
 
         if provider:
             provider = _cfg.canonicalize_provider_name(provider)
-            return self._complete_json_explicit(provider, tier, model, prompt, schema)
-        return self._complete_json_by_tier(task, tier, model, prompt, schema)
+            return self._complete_json_explicit(provider, tier, model, prompt,
+                                                  schema, cancel_token)
+        return self._complete_json_by_tier(task, tier, model, prompt, schema,
+                                            cancel_token)
 
     def describe(self, task: str, tier: str = TIER_STANDARD) -> dict:
         """Return capability metadata for (task, tier).
@@ -247,7 +251,8 @@ class AIRouter:
             language: str | None = None,
             translate: bool = False,
             speaker_labels: bool = False,
-            on_event=None) -> dict:
+            on_event=None,
+            cancel_token=None) -> dict:
         """Dispatch an ASR (speech-to-text) call.
 
         Args:
@@ -298,6 +303,7 @@ class AIRouter:
                     read_timeout=cfg.get("read_timeout_sec", 120),
                     max_retries=cfg.get("max_retries", 1),
                     on_event=on_event,
+                    cancel_token=cancel_token,
                 )
             else:
                 raise RuntimeError(f"Unsupported ASR provider type: {provider!r}")
@@ -513,7 +519,8 @@ class AIRouter:
         )
 
     def _complete_json_explicit(self, provider: str, tier: str, model: str | None,
-                                prompt: str, schema: dict) -> dict:
+                                prompt: str, schema: dict,
+                                cancel_token=None) -> dict:
         cfg = self._providers.get(provider)
         if cfg is None:
             raise RuntimeError(
@@ -524,17 +531,24 @@ class AIRouter:
             raise RuntimeError(
                 f"provider {provider!r} has no model configured for tier={tier!r}"
             )
-        return self._call_json(provider, cfg, resolved_model, prompt, schema)
+        return self._call_json(provider, cfg, resolved_model, prompt, schema,
+                                cancel_token=cancel_token)
 
     def _complete_json_by_tier(self, task: str, tier: str, model: str | None,
-                               prompt: str, schema: dict) -> dict:
+                               prompt: str, schema: dict,
+                               cancel_token=None) -> dict:
         r_provider, r_model = self._resolve_task_tier(task, tier, model)
 
         if r_provider and r_model:
             cfg = self._providers.get(r_provider)
             if cfg and cfg.get("enabled", True) and _cfg.read_key(cfg) is not None:
                 try:
-                    return self._call_json(r_provider, cfg, r_model, prompt, schema)
+                    return self._call_json(r_provider, cfg, r_model, prompt,
+                                            schema, cancel_token=cancel_token)
+                except AIError as e:
+                    # Don't auto-fall-back on cancellation — user wants OUT.
+                    if e.kind == Kind.CANCELLED:
+                        raise
                 except Exception:
                     pass
 
@@ -547,7 +561,12 @@ class AIRouter:
         last_err = None
         for name, cfg, mid in candidates:
             try:
-                return self._call_json(name, cfg, model or mid, prompt, schema)
+                return self._call_json(name, cfg, model or mid, prompt, schema,
+                                        cancel_token=cancel_token)
+            except AIError as e:
+                if e.kind == Kind.CANCELLED:
+                    raise
+                last_err = e
             except Exception as e:
                 last_err = e
         raise RuntimeError(
@@ -601,7 +620,7 @@ class AIRouter:
             raise
 
     def _call_json(self, name: str, cfg: dict, model_id: str,
-                   prompt: str, schema: dict) -> dict:
+                   prompt: str, schema: dict, *, cancel_token=None) -> dict:
         ptype = cfg.get("type")
         api_key = None
         if ptype != "claude_code":
@@ -611,14 +630,18 @@ class AIRouter:
 
         try:
             if ptype == "gemini":
-                result = _gemini.call_json(api_key, model_id, prompt, schema)
+                result = _gemini.call_json(api_key, model_id, prompt, schema,
+                                            cancel_token=cancel_token)
             elif ptype == "openai_compatible":
                 base_url = cfg.get("base_url", "")
                 if not base_url:
                     raise RuntimeError(f"provider {name!r} has no base_url configured")
-                result = _openai_compat.call_json(api_key, base_url, model_id, prompt, schema)
+                result = _openai_compat.call_json(api_key, base_url, model_id,
+                                                    prompt, schema,
+                                                    cancel_token=cancel_token)
             elif ptype == "claude_code":
-                result = _claude_code.call_json(cfg, model_id, prompt, schema)
+                result = _claude_code.call_json(cfg, model_id, prompt, schema,
+                                                  cancel_token=cancel_token)
             else:
                 raise RuntimeError(f"Unsupported JSON provider type: {ptype!r}")
 

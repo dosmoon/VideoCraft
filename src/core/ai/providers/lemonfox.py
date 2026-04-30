@@ -35,6 +35,7 @@ def transcribe(
     read_timeout: int = 120,
     max_retries: int = 1,
     on_event: EventCallback | None = None,
+    cancel_token=None,
 ) -> dict:
     """Transcribe audio via the Lemonfox Whisper-compatible API.
 
@@ -97,6 +98,10 @@ def transcribe(
     max_attempts = max_retries + 1
 
     for attempt in range(1, max_attempts + 1):
+        # Cooperative cancel between retry attempts (the within-attempt
+        # path uses session.close() via register_abort to interrupt mid-flight).
+        if cancel_token is not None and cancel_token.cancelled:
+            raise AIError(Kind.CANCELLED, "Lemonfox", "Cancelled by user")
         result = _attempt(
             audio_path,
             base_url=base_url,
@@ -108,6 +113,7 @@ def transcribe(
             attempt=attempt,
             max_attempts=max_attempts,
             emit=emit,
+            cancel_token=cancel_token,
         )
         if isinstance(result, dict):
             return result
@@ -140,6 +146,7 @@ def _attempt(
     attempt: int,
     max_attempts: int,
     emit: Callable,
+    cancel_token=None,
 ):
     """Run a single HTTP attempt. Returns dict on success, tuple marker on error."""
     # Per-attempt state for progress throttling
@@ -202,11 +209,20 @@ def _attempt(
     wait_thread = threading.Thread(target=wait_tick_loop, daemon=True)
     wait_thread.start()
 
+    # Use a per-attempt session so register_abort can close it cleanly.
+    # Closing the session tears down the underlying urllib3 connection
+    # pool and any in-flight socket, which surfaces in the blocked
+    # POST as ConnectionError → caught below as a cancel marker.
+    session = requests.Session()
+    if cancel_token is not None:
+        cancel_token.register_abort(lambda s=session: s.close())
+
     try:
-        progress_fp = _ProgressFile(audio_path, report_upload)
+        progress_fp = _ProgressFile(audio_path, report_upload,
+                                      cancel_token=cancel_token)
         try:
             files = {"file": (os.path.basename(audio_path), progress_fp, mime_type)}
-            response = requests.post(
+            response = session.post(
                 base_url,
                 headers=headers,
                 data=data,
@@ -230,11 +246,26 @@ def _attempt(
             return ("fatal", AIError(
                 Kind.MALFORMED, "Lemonfox", "Returned invalid JSON"))
 
+    except InterruptedError as e:
+        # Raised by _ProgressFile when cancelled mid-upload.
+        return ("fatal", AIError(Kind.CANCELLED, "Lemonfox",
+                                  "Cancelled by user", raw=e))
     except requests.exceptions.ConnectTimeout as e:
+        # Cancellation can manifest as ConnectionError from session.close;
+        # check token to disambiguate from a real connection drop.
+        if cancel_token is not None and cancel_token.cancelled:
+            return ("fatal", AIError(Kind.CANCELLED, "Lemonfox",
+                                      "Cancelled by user", raw=e))
         return ("retry", ("connect_timeout", e))
     except requests.exceptions.ReadTimeout as e:
+        if cancel_token is not None and cancel_token.cancelled:
+            return ("fatal", AIError(Kind.CANCELLED, "Lemonfox",
+                                      "Cancelled by user", raw=e))
         return ("retry", ("read_timeout", e))
     except requests.exceptions.ConnectionError as e:
+        if cancel_token is not None and cancel_token.cancelled:
+            return ("fatal", AIError(Kind.CANCELLED, "Lemonfox",
+                                      "Cancelled by user", raw=e))
         return ("retry", ("connection_error", e))
     except requests.exceptions.RequestException as e:
         return ("fatal", AIError(
@@ -293,13 +324,19 @@ class _ProgressFile:
     """Wraps a file-like object so requests can stream upload progress.
     Close the file explicitly after the HTTP call — requests doesn't."""
 
-    def __init__(self, path: str, callback: Callable[[int, int], None]):
+    def __init__(self, path: str, callback: Callable[[int, int], None],
+                  cancel_token=None):
         self._fp = open(path, "rb")
         self._total = os.path.getsize(path)
         self._uploaded = 0
         self._callback = callback
+        self._cancel_token = cancel_token
 
     def read(self, size: int = -1) -> bytes:
+        # Per-chunk cancel check — interrupts uploads instantly without
+        # waiting for register_abort/session.close to take effect.
+        if self._cancel_token is not None and self._cancel_token.cancelled:
+            raise InterruptedError("Upload cancelled by user")
         chunk = self._fp.read(size)
         if chunk:
             self._uploaded += len(chunk)
