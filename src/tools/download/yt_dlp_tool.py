@@ -1,5 +1,5 @@
 from tools.base import ToolBase
-from i18n import tr, get_current_lang
+from i18n import tr
 import tkinter as tk
 from tkinter import filedialog, ttk
 import os
@@ -9,8 +9,8 @@ import subprocess
 from urllib.parse import urlparse
 from hub_logger import logger
 from core import youtube_download
-from core import lang_names
 from core import srt_quality
+from ui.subs_lang_picker import SubsLangPicker
 
 SUBS_MAX_PER_KIND = 4
 
@@ -699,141 +699,6 @@ def _build_download_filename(title: str, upload_date: str, quality: str, ext: st
     date_tag = f"_{upload_date}" if upload_date else ""
     q_tag = f"_{quality}" if quality not in ("best", "1080p") else ""
     return f"{short}{date_tag}{q_tag}.{ext.lstrip('.')}"
-
-
-class SubsLangPicker(tk.Toplevel):
-    """Modal language picker.
-
-    Shows a scrollable checkbox list of BCP47 codes with friendly names,
-    a live search box that matches code/zh-name/en-name, and a hard cap
-    on selections. Used for both manual and auto-caption pickers.
-    """
-
-    def __init__(self, parent, *, title: str, available: list[str],
-                 current: list[str], max_pick: int,
-                 on_ok):
-        super().__init__(parent)
-        self.title(title)
-        self.transient(parent)
-        self.grab_set()
-        self.geometry("420x520")
-
-        self._available = list(available)
-        self._max = max_pick
-        self._on_ok = on_ok
-        self._locale = get_current_lang()
-        self._vars: dict[str, tk.BooleanVar] = {
-            code: tk.BooleanVar(value=(code in current)) for code in self._available
-        }
-
-        # Search box
-        top = tk.Frame(self, padx=10, pady=8)
-        top.pack(fill=tk.X)
-        tk.Label(top, text=tr("tool.download.subs_modal_search"),
-                 font=("Arial", 9)).pack(side=tk.LEFT)
-        self._search_var = tk.StringVar()
-        self._search_var.trace_add("write", lambda *_: self._refilter())
-        tk.Entry(top, textvariable=self._search_var,
-                 font=("Arial", 9)).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
-
-        # Scrollable checkbox list
-        mid = tk.Frame(self, padx=10)
-        mid.pack(fill=tk.BOTH, expand=True)
-        self._canvas = tk.Canvas(mid, highlightthickness=0)
-        self._canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        sb = tk.Scrollbar(mid, command=self._canvas.yview)
-        sb.pack(side=tk.RIGHT, fill=tk.Y)
-        self._canvas.configure(yscrollcommand=sb.set)
-        self._inner = tk.Frame(self._canvas)
-        self._win = self._canvas.create_window((0, 0), window=self._inner, anchor="nw")
-        self._inner.bind("<Configure>",
-                         lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")))
-        self._canvas.bind("<Configure>",
-                          lambda e: self._canvas.itemconfig(self._win, width=e.width))
-        self._canvas.bind("<MouseWheel>",
-                          lambda e: self._canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
-
-        # Status + buttons
-        bottom = tk.Frame(self, padx=10, pady=8)
-        bottom.pack(fill=tk.X)
-        self._status_label = tk.Label(bottom, text="", font=("Arial", 9), fg="gray")
-        self._status_label.pack(side=tk.LEFT)
-        tk.Button(bottom, text=tr("tool.download.subs_modal_ok"),
-                  command=self._on_ok_click, width=8).pack(side=tk.RIGHT, padx=(4, 0))
-        tk.Button(bottom, text=tr("tool.download.subs_modal_cancel"),
-                  command=self.destroy, width=8).pack(side=tk.RIGHT, padx=(4, 0))
-        tk.Button(bottom, text=tr("tool.download.subs_modal_clear"),
-                  command=self._clear_all, width=10).pack(side=tk.RIGHT, padx=(4, 0))
-
-        if not self._available:
-            tk.Label(self._inner, text=tr("tool.download.subs_modal_empty_hint"),
-                     font=("Arial", 9), fg="gray", pady=20).pack()
-
-        self._refilter()
-        self._update_status()
-
-        # Center over parent
-        self.update_idletasks()
-        try:
-            px = parent.winfo_rootx() + parent.winfo_width() // 2 - self.winfo_width() // 2
-            py = parent.winfo_rooty() + parent.winfo_height() // 2 - self.winfo_height() // 2
-            self.geometry(f"+{max(px, 0)}+{max(py, 0)}")
-        except Exception:
-            pass
-
-    def _picked_codes(self) -> list[str]:
-        return [c for c, v in self._vars.items() if v.get()]
-
-    def _update_status(self):
-        n = len(self._picked_codes())
-        self._status_label.config(
-            text=tr("tool.download.subs_modal_selected", n=n, max=self._max))
-
-    def _on_check_toggle(self, code: str):
-        # Enforce max cap: revert the new check if it would exceed.
-        picked = self._picked_codes()
-        if len(picked) > self._max:
-            self._vars[code].set(False)
-            self._status_label.config(
-                text=tr("tool.download.subs_modal_max_warning", max=self._max),
-                fg="red")
-            self.after(1500, self._update_status_color_reset)
-        self._update_status()
-
-    def _update_status_color_reset(self):
-        self._status_label.config(fg="gray")
-        self._update_status()
-
-    def _refilter(self):
-        for w in self._inner.winfo_children():
-            w.destroy()
-        if not self._available:
-            tk.Label(self._inner, text=tr("tool.download.subs_modal_empty_hint"),
-                     font=("Arial", 9), fg="gray", pady=20).pack()
-            return
-        query = self._search_var.get()
-        for code in self._available:
-            if not lang_names.matches_search(code, query, self._locale):
-                continue
-            label = lang_names.display_label(code, self._locale)
-            cb = tk.Checkbutton(self._inner, text=label,
-                                variable=self._vars[code], anchor="w",
-                                font=("Arial", 9),
-                                command=lambda c=code: self._on_check_toggle(c))
-            cb.pack(fill=tk.X, padx=4, pady=1, anchor="w")
-
-    def _clear_all(self):
-        for v in self._vars.values():
-            v.set(False)
-        self._update_status()
-
-    def _on_ok_click(self):
-        picked = self._picked_codes()
-        # Cap defensively (shouldn't trigger given _on_check_toggle).
-        if len(picked) > self._max:
-            picked = picked[: self._max]
-        self._on_ok(picked)
-        self.destroy()
 
 
 if __name__ == "__main__":

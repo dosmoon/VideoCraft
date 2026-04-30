@@ -225,11 +225,8 @@ _STEP_DISPLAY_NUM: dict[str, str] = {
 
 # Known fields (rendered with widgets). Anything else lands in raw section.
 _KNOWN_FIELDS: dict[str, list[str]] = {
-    "step1_download":  ["enabled", "status", "source", "output"],
-    # NOTE: subtitle_langs (list[BCP47]) is intentionally NOT in this list —
-    # Commit A wires the backend only; Commit B will add UI (Pick button +
-    # modal), at which point this entry gains the field. For now users can
-    # hand-edit the manifest JSON to test backend behavior.
+    "step1_download":  ["enabled", "status", "source", "subtitle_langs",
+                        "output"],
     "step1_5_select":  ["enabled", "status", "source", "start", "end", "output"],
     "step2_asr":       ["enabled", "status", "language", "source", "output"],
     "step3_translate": ["enabled", "status", "source_lang", "targets",
@@ -253,6 +250,7 @@ _KNOWN_FIELDS: dict[str, list[str]] = {
 # Field type per (step, field). Drives widget choice in _add_field.
 _FIELD_TYPE: dict[tuple[str, str], str] = {
     ("step1_download", "source"):        "url_or_path",
+    ("step1_download", "subtitle_langs"): "bcp47_list",
     ("step1_download", "output"):        "readonly_list",
     ("step1_5_select", "source"):        "filepath",
     ("step1_5_select", "start"):         "time",
@@ -747,6 +745,8 @@ class ProjectWorkbenchApp(ToolBase):
             self._add_url_or_path_field(parent, r, step_key, fname, label)
         elif ftype == "preset":
             self._add_preset_field(parent, r, step_key, fname, label)
+        elif ftype == "bcp47_list":
+            self._add_bcp47_list_field(parent, r, step_key, fname, label)
         else:
             self._add_string_field(parent, r, step_key, fname, label)
 
@@ -901,6 +901,75 @@ class ProjectWorkbenchApp(ToolBase):
                 self._refresh_run_state(step_key)
         var.trace_add("write", on_write)
         self._field_vars.append(var)
+
+    def _add_bcp47_list_field(self, parent, r: int, step_key: str,
+                               field: str, label: str) -> None:
+        """List[BCP47] picker for manual subtitle languages.
+
+        Renders as a Pick button whose label reflects current selection.
+        Click opens the shared SubsLangPicker modal in async mode — the
+        modal calls back into yt-dlp to enumerate available languages
+        for the current step's source URL. Local-file sources show a
+        hint; available langs come from extract_info(URL)."""
+        assert self._buffer is not None
+        step = self._buffer[step_key]
+        cur_raw = step.get(field) or []
+        if not isinstance(cur_raw, list):
+            cur_raw = []
+        picked: list[str] = [str(c) for c in cur_raw if c]
+        self._label_cell(parent, r, f"{label}:")
+
+        btn = tk.Button(parent, anchor="w",
+                        bg=S["card_bg"], fg=S["value_fg"],
+                        font=S["value_font"], width=32)
+        btn.grid(row=r, column=1, sticky="w", pady=2)
+
+        def refresh_label():
+            if picked:
+                summary = ", ".join(picked[:3])
+                if len(picked) > 3:
+                    summary += "…"
+                btn.config(text=tr(
+                    "tool.project_workbench.subs_pick_count",
+                    count=len(picked), summary=summary))
+            else:
+                btn.config(text=tr("tool.project_workbench.subs_pick_empty"))
+
+        refresh_label()
+
+        def on_pick():
+            # Source URL comes from the same step buffer. Local paths can't
+            # be probed for subtitles, so we surface a hint and bail.
+            src = str(self._buffer[step_key].get("source", "")).strip()
+            is_url = src.lower().startswith(("http://", "https://"))
+            if not is_url:
+                messagebox.showinfo(
+                    "Manual subtitles",
+                    tr("tool.project_workbench.subs_no_url"))
+                return
+
+            # Loader runs in the modal's worker thread; must not touch UI.
+            def loader() -> list[str]:
+                from core import youtube_download
+                info = youtube_download.extract_info(src, flat=False)
+                subs = youtube_download.list_available_subtitles(info)
+                manual = subs.get("manual") or {}
+                return list(manual.keys())
+
+            def on_ok(new_picks: list[str]):
+                nonlocal picked
+                picked = list(new_picks)
+                refresh_label()
+                self._on_field_change(step_key, field, list(picked))
+
+            from ui.subs_lang_picker import SubsLangPicker
+            SubsLangPicker(
+                self.master,
+                title=tr("tool.download.subs_modal_title_manual"),
+                current=picked, max_pick=4,
+                loader=loader, on_ok=on_ok)
+
+        btn.config(command=on_pick)
 
     def _add_int_field(self, parent, r: int, step_key: str, field: str,
                        label: str) -> None:
