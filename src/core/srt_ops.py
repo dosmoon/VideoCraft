@@ -395,18 +395,26 @@ def generate_subtitle_pack(srt_path, prompt=None, tier=None) -> dict:
     return result
 
 
-def write_subtitle_pack(pack: dict, base_path: str) -> dict:
-    """Persist a subtitle post-process bundle as 1 JSON + 3 plain-text files.
+def write_subtitle_pack(pack: dict, base_path: str, srt_path: str | None = None) -> dict:
+    """Persist a subtitle post-process bundle as 1 JSON + 3-4 plain-text files.
 
     base_path may include or omit an extension; the suffix is stripped and
-    four sibling files are written using descriptive role suffixes:
+    sibling files are written using descriptive role suffixes:
       - <base>-postprocess.json   full structured payload
       - <base>-titles.txt         one candidate title per line
       - <base>-chapters.txt       "HH:MM:SS title" per line (drives split)
       - <base>-description.txt    "HH:MM:SS title\\n<refined>\\n\\n" blocks
+      - <base>-paragraphs.txt     "HH:MM:SS title\\n<raw SRT slice>\\n\\n"
+                                  blocks (only when srt_path is provided)
+
+    The paragraphs file is the non-AI counterpart to description.txt: it
+    slices the original SRT by the AI's chapter timestamps without any
+    refinement. Useful when you want to re-edit the raw transcript per
+    chapter without losing the AI'd structure.
 
     Returns a dict mapping kind -> absolute path. Keys: json / titles /
-    chapters / description.
+    chapters / description / paragraphs (paragraphs absent when srt_path
+    is None).
     """
     root, _ext = os.path.splitext(base_path)
     json_path = root + "-postprocess.json"
@@ -436,6 +444,27 @@ def write_subtitle_pack(pack: dict, base_path: str) -> dict:
             f.write(f"{seg.get('time_str', '').strip()} "
                     f"{seg.get('title', '').strip()}\n")
             f.write(f"{seg.get('refined', '').strip()}\n\n")
+
+    out = {
+        "json":        json_path,
+        "titles":      titles_path,
+        "chapters":    chapters_path,
+        "description": description_path,
+    }
+
+    if srt_path and os.path.exists(srt_path):
+        paragraphs_path = root + "-paragraphs.txt"
+        try:
+            paragraphs = extract_paragraphs_from_segments(srt_path, chapters_path)
+            with open(paragraphs_path, 'w', encoding='utf-8') as f:
+                f.write(paragraphs + "\n")
+            out["paragraphs"] = paragraphs_path
+        except Exception:
+            # Non-fatal: paragraphs is a convenience output; the AI'd
+            # bundle remains valid even if the slice fails.
+            pass
+
+    return out
 
     return {
         "json": json_path,

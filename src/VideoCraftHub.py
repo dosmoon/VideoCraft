@@ -360,9 +360,13 @@ class VideoCraftHub:
         vid_menu.add_command(label=tr("menu.video.convert_bitrate"),
                              command=lambda: self.open_tool("convert-bitrate"))
 
-        # Subtitle
+        # Subtitle — pack (one-shot recommended) at top, single-step legacy
+        # entries below as fallback for debugging or rerunning a single phase.
         sub_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label=tr("menu.subtitle"), menu=sub_menu)
+        sub_menu.add_command(label=tr("menu.subtitle.gen_pack"),
+                             command=lambda: self.open_tool("srt-gen-pack"))
+        sub_menu.add_separator()
         sub_menu.add_command(label=tr("menu.subtitle.extract_all"),
                              command=lambda: self.open_tool("srt-extract-subtitles"))
         sub_menu.add_command(label=tr("menu.subtitle.gen_segments"),
@@ -373,9 +377,6 @@ class VideoCraftHub:
                              command=lambda: self.open_tool("srt-refine"))
         sub_menu.add_command(label=tr("menu.subtitle.gen_titles"),
                              command=lambda: self.open_tool("srt-gen-titles"))
-        sub_menu.add_separator()
-        sub_menu.add_command(label=tr("menu.subtitle.gen_pack"),
-                             command=lambda: self.open_tool("srt-gen-pack"))
 
         # Text to Video
         t2v_menu = tk.Menu(menubar, tearoff=0)

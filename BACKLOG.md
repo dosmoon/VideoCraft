@@ -10,7 +10,6 @@
 | 优先级 | 状态 | 功能 | 说明 |
 |--------|------|------|------|
 | 🟡 P2 | [ ] | extract-clip / auto-split 业务逻辑下沉到 core | [video_tools.py:127-193](src/tools/video/video_tools.py#L127-L193) 的 `get_keyframe_times / find_nearest_keyframe / auto_split_video(use_keyframes=...)` 仍在 UI 层自带 ffprobe/ffmpeg 实现，与 `core/video_split.split_one()` 能力重复。跟进项：切到统一 API，移除 UI 层的重复逻辑。菜单入口保留 |
-| 🔴 P1 | [ ] | 字幕处理综合工作台 | 合并字幕菜单下 5 个独立窗口为一个工作台（对标 `split_workbench.py`），老入口保留平滑迁移。详见 [docs/draft/SubtitleWorkbench.md](docs/draft/SubtitleWorkbench.md) |
 | 🟢 P3 | [ ] | requirements.txt → uv + lockfile | 当前 requirements.txt 已全量 pin 到精确版本（commit e9ce581），可重现构建已解决；下一步引入 `uv` + `requirements.in/.lock` 双文件机制，升级一键化 + 装得快。改动面：build_portable.py 切到 `uv pip install`，CI 加 uv 安装步骤 |
 
 ---
@@ -128,3 +127,4 @@
 | 跨平台（短期） | 先把 Windows 版做稳，Mac 需求出现时再考虑本地 Web 方案 |
 | 批量处理 | 工作量大，先做单文件质量，后续再扩展 |
 | PPT / Slidev 转视频 | 受众与现有"视频创作者"主线错位（教育 / 培训 vs 自媒体），与 text2video 重叠 65%+；AI-PPT-to-video 工作流尚未被市场验证。如未来要做应另起新软件，不容纳进本 repo。2026-04-30 删除 ppt2video / slidev_pipeline / pptx_pipeline / node_env 全部相关代码 |
+| 字幕处理综合工作台 | 草案写完后世界变了：`subtitle.pack` 一键管线已覆盖 95% 流水线场景（一次 AI 调用产 titles+segments+refined），项目工作台 step5_pack 也包揽了「项目流程」中的字幕后处理。剩余 5% 的"手工 review/编辑"场景，用户用文本编辑器改 .txt 即可，不值得专做工作台。2026-04-30 决定取消，保留 5 个老菜单项作单步调试 fallback；菜单顺序调整把 pack 提到顶部 |

@@ -587,7 +587,8 @@ class SrtGeneratePackApp(ToolBase):
         def _work():
             try:
                 pack = srt_ops.generate_subtitle_pack(srt_path)
-                paths = srt_ops.write_subtitle_pack(pack, output_path)
+                paths = srt_ops.write_subtitle_pack(pack, output_path,
+                                                    srt_path=srt_path)
                 self.status_var.set(tr(
                     "tool.srt.gen_pack.status_done",
                     json_name=os.path.basename(paths["json"]),

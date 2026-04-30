@@ -2240,10 +2240,11 @@ class ProjectWorkbenchApp(ToolBase):
             self.master.after(
                 0, self._step_status,
                 tr("tool.project_workbench.status.pack_writing", basename=basename))
-            paths = write_subtitle_pack(pack, base)
+            paths = write_subtitle_pack(pack, base, srt_path=srt_in)
             outputs = [self._project_relpath(p) for p in
                        (paths.get("json"), paths.get("titles"),
-                        paths.get("chapters"), paths.get("description")) if p]
+                        paths.get("chapters"), paths.get("description"),
+                        paths.get("paragraphs")) if p]
             self.master.after(0, self._finish_step, "step5_pack", basename,
                               "done", {"output": outputs, "error": None},
                               tr("tool.project_workbench.status.pack_done",
