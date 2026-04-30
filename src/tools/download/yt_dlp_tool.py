@@ -9,6 +9,21 @@ import subprocess
 from urllib.parse import urlparse
 from hub_logger import logger
 
+
+def _apply_jsruntime_opts(opts: dict) -> None:
+    """Mutate ydl_opts in place: enable yt-dlp's JS-runtime path so YouTube
+    HLS/m3u8 formats are reachable. Silent no-op when Node is unavailable —
+    yt-dlp falls back to the limited android-vr-player API.
+
+    YouTube's challenge-solver requires a JS runtime + the EJS solver script;
+    without these yt-dlp drops m3u8 streams (~6 fewer formats per video as of
+    2026-04). See `core/env/node_manager.py` for managed Node install."""
+    from core import env
+    res = env.detect_one("node")
+    if res.available and res.path:
+        opts["js_runtimes"] = {"node": {"path": res.path}}
+        opts["remote_components"] = ["ejs:github"]
+
 class YouTubeDownloader(ToolBase):
     def __init__(self, root, initial_file=None):
         self.root = root
@@ -228,7 +243,9 @@ class YouTubeDownloader(ToolBase):
 
                 if force_ipv4:
                     ydl_opts['source_address'] = '0.0.0.0'
-                
+
+                _apply_jsruntime_opts(ydl_opts)
+
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     for url in urls:
                         try:
@@ -463,6 +480,8 @@ class YouTubeDownloader(ToolBase):
 
                     if force_ipv4:
                         ydl_opts['source_address'] = '0.0.0.0'
+
+                    _apply_jsruntime_opts(ydl_opts)
 
                     self.root.after(0, lambda enabled=force_ipv4: self.log(f"Force IPv4: {'ON' if enabled else 'OFF'}"))
                     
