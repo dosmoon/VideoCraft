@@ -1156,9 +1156,12 @@
   "tool.concat_workbench.mode_label": "模式：",
   "tool.concat_workbench.mode_stream_copy": "Stream copy（快，要求格式完全一致）",
   "tool.concat_workbench.mode_reencode": "重编码（自动统一格式）",
-  "tool.concat_workbench.mode_reencode_soon": "重编码模式下个版本支持。目前请保证输入文件分辨率/帧率/编码完全一致。",
+  "tool.concat_workbench.target_label": "目标格式：",
+  "tool.concat_workbench.target_follow_first": "跟随 #1",
+  "tool.concat_workbench.target_highest": "最高质量",
   "tool.concat_workbench.hint_need_two": "⚠ 至少需要 2 个文件才能拼接。",
-  "tool.concat_workbench.hint_mismatch": "⚠ 第 {rows} 行格式与第 1 行不一致。Stream copy 模式要求所有输入分辨率/帧率/编码完全相同。",
+  "tool.concat_workbench.hint_mismatch_stream": "⚠ 第 {rows} 行格式与第 1 行不一致。请切到「重编码」模式，或调整输入到一致格式。",
+  "tool.concat_workbench.hint_mismatch_reencode": "⚠ 第 {rows} 行格式不一致 — 重编码时会自动统一到目标格式。",
   "tool.concat_workbench.dlg_add_title": "添加视频文件",
   "tool.concat_workbench.dlg_output_title": "保存拼接结果为...",
   "tool.concat_workbench.status_running": "正在拼接...",
@@ -1168,6 +1171,7 @@
   "tool.concat_workbench.log.probe_failed": "探测失败 {path}：{e}",
   "tool.concat_workbench.log.no_output": "⚠ 请先设置输出文件路径。",
   "tool.concat_workbench.log.starting": "正在拼接 {n} 个文件 → {output}",
+  "tool.concat_workbench.log.starting_reencode": "正在重编码并拼接 {n} 个文件 → {output} ({spec})",
   "tool.concat_workbench.log.done": "✓ 完成 → {output}",
   "tool.concat_workbench.log.failed": "✗ 失败：{e}"
 }

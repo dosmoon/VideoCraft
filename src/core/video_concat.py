@@ -78,6 +78,94 @@ def probe_video(path: str) -> dict:
     return out
 
 
+def concat_videos_reencode(
+    files: list[str],
+    output: str,
+    target: dict,
+    progress_cb: Callable[[float], None] | None = None,
+) -> None:
+    """Re-encode + concat videos with mismatched formats.
+
+    Each input is normalized (scale+pad to target resolution, target fps,
+    44.1kHz audio resample) then concatenated via filter_complex. Slower
+    than stream copy but handles arbitrary input mix (different codecs,
+    resolutions, frame rates).
+
+    target = {"width": int, "height": int, "fps": float|int,
+              "vcodec": str, "acodec": str}
+    progress_cb gets a 0..100 percentage. Total duration is summed via
+    probe_video; ffmpeg's `-progress pipe:1` reports out_time_us we then
+    convert to a percentage."""
+    if len(files) < 2:
+        raise ValueError("concat_videos_reencode: need at least 2 files")
+
+    width = int(target.get("width") or 1920)
+    height = int(target.get("height") or 1080)
+    fps = target.get("fps") or 30
+    vcodec = target.get("vcodec") or "libx264"
+    acodec = target.get("acodec") or "aac"
+
+    # Per-input normalization filters: scale (preserve aspect) + pad to fit
+    # exact target box + setsar=1 + fps. Audio resampled to a common rate.
+    parts = []
+    for i in range(len(files)):
+        parts.append(
+            f"[{i}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+            f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={fps}[v{i}];"
+            f"[{i}:a]aresample=44100[a{i}]"
+        )
+    streams = "".join(f"[v{i}][a{i}]" for i in range(len(files)))
+    parts.append(f"{streams}concat=n={len(files)}:v=1:a=1[outv][outa]")
+    filter_complex = ";".join(parts)
+
+    cmd = ["ffmpeg", "-y"]
+    for f in files:
+        cmd.extend(["-i", f])
+    cmd.extend([
+        "-filter_complex", filter_complex,
+        "-map", "[outv]", "-map", "[outa]",
+        "-c:v", vcodec, "-c:a", acodec,
+        "-preset", "medium",
+        output,
+    ])
+
+    if progress_cb is None:
+        run_ffmpeg(cmd)
+        return
+
+    # Live percentage via `-progress pipe:1`. Total = sum of input durations.
+    total_us = 0
+    for f in files:
+        info = probe_video(f)
+        total_us += int(float(info.get("duration") or 0) * 1_000_000)
+    cmd.insert(-1, "-progress")
+    cmd.insert(-1, "pipe:1")
+
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace", bufsize=1,
+    )
+    try:
+        if proc.stdout is not None:
+            for line in proc.stdout:
+                if line.startswith("out_time_us=") and total_us > 0:
+                    try:
+                        cur_us = int(line.split("=", 1)[1].strip())
+                        progress_cb(min(100.0, cur_us / total_us * 100))
+                    except ValueError:
+                        pass
+        proc.wait()
+        if proc.returncode != 0:
+            stderr_text = (proc.stderr.read() if proc.stderr else "")
+            tail = (stderr_text or "").strip().splitlines()[-10:]
+            raise RuntimeError("ffmpeg failed: " + " | ".join(tail))
+    finally:
+        if proc.stdout is not None:
+            proc.stdout.close()
+        if proc.stderr is not None:
+            proc.stderr.close()
+
+
 def concat_videos(files: list[str], output: str) -> None:
     """Concatenate compatible video files using ffmpeg concat demuxer."""
     if not files:

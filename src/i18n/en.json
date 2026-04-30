@@ -1156,9 +1156,12 @@
   "tool.concat_workbench.mode_label": "Mode:",
   "tool.concat_workbench.mode_stream_copy": "Stream copy (fast, requires same format)",
   "tool.concat_workbench.mode_reencode": "Re-encode (handles mismatch)",
-  "tool.concat_workbench.mode_reencode_soon": "Re-encode mode coming next — for now, ensure all inputs share the same resolution / fps / codec.",
+  "tool.concat_workbench.target_label": "Target:",
+  "tool.concat_workbench.target_follow_first": "Follow #1",
+  "tool.concat_workbench.target_highest": "Highest quality",
   "tool.concat_workbench.hint_need_two": "⚠ Need at least 2 input files to concatenate.",
-  "tool.concat_workbench.hint_mismatch": "⚠ Format mismatch in row(s) {rows}. Stream copy requires identical resolution / fps / codec across all inputs.",
+  "tool.concat_workbench.hint_mismatch_stream": "⚠ Format mismatch in row(s) {rows}. Switch to Re-encode mode, or make the inputs consistent.",
+  "tool.concat_workbench.hint_mismatch_reencode": "⚠ Format mismatch in row(s) {rows} — will be normalized to the target spec during re-encode.",
   "tool.concat_workbench.dlg_add_title": "Add video files",
   "tool.concat_workbench.dlg_output_title": "Save concatenated video as...",
   "tool.concat_workbench.status_running": "Concatenating...",
@@ -1168,6 +1171,7 @@
   "tool.concat_workbench.log.probe_failed": "Probe failed for {path}: {e}",
   "tool.concat_workbench.log.no_output": "⚠ Set an output file path first.",
   "tool.concat_workbench.log.starting": "Concatenating {n} files → {output}",
+  "tool.concat_workbench.log.starting_reencode": "Re-encoding + concatenating {n} files → {output} ({spec})",
   "tool.concat_workbench.log.done": "✓ Done → {output}",
   "tool.concat_workbench.log.failed": "✗ Failed: {e}"
 }

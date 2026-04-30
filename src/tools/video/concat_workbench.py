@@ -18,7 +18,7 @@ from tkinter import filedialog, ttk
 from tools.base import ToolBase
 from i18n import tr
 from hub_logger import logger
-from core.video_concat import probe_video, concat_videos
+from core.video_concat import probe_video, concat_videos, concat_videos_reencode
 
 
 def _fmt_duration(sec: float) -> str:
@@ -157,20 +157,44 @@ class ConcatWorkbenchApp(ToolBase):
                   command=self._on_browse_output, width=8).pack(
             side=tk.RIGHT, padx=(4, 0))
 
-        # Mode picker (Commit 1: stream copy only; re-encode greyed out)
+        # Mode picker — auto-toggles to reencode when mismatch detected.
         tk.Label(right, text=tr("tool.concat_workbench.mode_label"),
                  font=("Arial", 10, "bold"), anchor="w").pack(fill=tk.X)
         self._mode_var = tk.StringVar(value="stream_copy")
-        tk.Radiobutton(right, text=tr("tool.concat_workbench.mode_stream_copy"),
-                       variable=self._mode_var, value="stream_copy",
-                       anchor="w").pack(fill=tk.X)
-        rb = tk.Radiobutton(right, text=tr("tool.concat_workbench.mode_reencode"),
-                             variable=self._mode_var, value="reencode",
-                             state="disabled", anchor="w")
-        rb.pack(fill=tk.X)
-        tk.Label(right, text=tr("tool.concat_workbench.mode_reencode_soon"),
-                 font=("Arial", 8), fg="gray", anchor="w").pack(
-            fill=tk.X, pady=(0, 12))
+        self._mode_var.trace_add("write",
+                                  lambda *_: self._refresh_hint_and_run_state())
+        self._stream_rb = tk.Radiobutton(
+            right, text=tr("tool.concat_workbench.mode_stream_copy"),
+            variable=self._mode_var, value="stream_copy", anchor="w")
+        self._stream_rb.pack(fill=tk.X)
+        self._reencode_rb = tk.Radiobutton(
+            right, text=tr("tool.concat_workbench.mode_reencode"),
+            variable=self._mode_var, value="reencode", anchor="w")
+        self._reencode_rb.pack(fill=tk.X)
+
+        # Re-encode target spec (only meaningful when reencode is selected).
+        target_row = tk.Frame(right)
+        target_row.pack(fill=tk.X, pady=(4, 12))
+        tk.Label(target_row, text=tr("tool.concat_workbench.target_label"),
+                 font=("Arial", 9), anchor="w").pack(side=tk.LEFT)
+        self._target_var = tk.StringVar(value="follow_first")
+        self._target_combo = ttk.Combobox(
+            target_row, textvariable=self._target_var, state="readonly",
+            values=["follow_first", "highest"], width=14, font=("Arial", 9))
+        # Display labels via internal mapping.
+        self._target_label_map = {
+            "follow_first": tr("tool.concat_workbench.target_follow_first"),
+            "highest": tr("tool.concat_workbench.target_highest"),
+        }
+        self._target_combo["values"] = list(self._target_label_map.values())
+        self._target_combo.set(self._target_label_map["follow_first"])
+        self._target_combo.pack(side=tk.LEFT, padx=(6, 0), fill=tk.X, expand=True)
+
+        # Progress bar (visible during re-encode, hidden otherwise).
+        self._progress_var = tk.DoubleVar(value=0.0)
+        self._progress = ttk.Progressbar(
+            right, variable=self._progress_var, maximum=100.0)
+        self._progress.pack(fill=tk.X, pady=(0, 4))
 
         self._run_btn = tk.Button(
             right, text=tr("tool.concat_workbench.btn_concat"),
@@ -210,7 +234,46 @@ class ConcatWorkbenchApp(ToolBase):
         self._rebuild_tree()
         self._refresh_totals()
         self._refresh_default_output()
+        # When inputs require re-encode, nudge the user there automatically.
+        # Stays in stream_copy if the lineup happens to be consistent.
+        if self._has_mismatch() and self._mode_var.get() == "stream_copy":
+            self._mode_var.set("reencode")
         self._refresh_hint_and_run_state()
+
+    def _has_mismatch(self) -> bool:
+        if len(self._rows) < 2:
+            return False
+        ref = self._rows[0]["probe"]
+        return any(self._row_diverges(r["probe"], ref) for r in self._rows[1:])
+
+    def _resolve_target_spec(self) -> dict:
+        """Build the target {width, height, fps, vcodec, acodec} from the combo.
+
+        follow_first → exactly row 1's attrs
+        highest      → max width × height across rows; max fps; libx264/aac
+        """
+        if not self._rows:
+            return {}
+        # Map the localized combo display back to the internal key.
+        choice = self._target_var.get()
+        for k, label in self._target_label_map.items():
+            if choice == label:
+                choice = k
+                break
+        if choice == "highest":
+            w = max((r["probe"].get("width") or 0) for r in self._rows)
+            h = max((r["probe"].get("height") or 0) for r in self._rows)
+            fps = max((r["probe"].get("fps") or 0) for r in self._rows) or 30
+            return {"width": w or 1920, "height": h or 1080,
+                    "fps": fps, "vcodec": "libx264", "acodec": "aac"}
+        # follow_first
+        p = self._rows[0]["probe"]
+        return {
+            "width": p.get("width") or 1920,
+            "height": p.get("height") or 1080,
+            "fps": p.get("fps") or 30,
+            "vcodec": "libx264", "acodec": "aac",
+        }
 
     def _rebuild_tree(self) -> None:
         for iid in self._tree.get_children():
@@ -277,11 +340,17 @@ class ConcatWorkbenchApp(ToolBase):
         ref = self._rows[0]["probe"]
         bad = [i for i, r in enumerate(self._rows[1:], start=2)
                if self._row_diverges(r["probe"], ref)]
-        if bad:
+        mode = self._mode_var.get()
+        if bad and mode == "stream_copy":
             self._hint_var.set(tr(
-                "tool.concat_workbench.hint_mismatch",
+                "tool.concat_workbench.hint_mismatch_stream",
                 rows=", ".join(f"#{i}" for i in bad)))
             self._run_btn.config(state="disabled")
+        elif bad and mode == "reencode":
+            self._hint_var.set(tr(
+                "tool.concat_workbench.hint_mismatch_reencode",
+                rows=", ".join(f"#{i}" for i in bad)))
+            self._run_btn.config(state="normal")
         else:
             self._hint_var.set("")
             self._run_btn.config(state="normal")
@@ -344,16 +413,39 @@ class ConcatWorkbenchApp(ToolBase):
             self._log_msg(tr("tool.concat_workbench.log.no_output"))
             return
         files = [r["path"] for r in self._rows]
+        mode = self._mode_var.get()
         self._run_btn.config(state="disabled")
+        self._progress_var.set(0.0)
         self.set_busy(tr("tool.concat_workbench.status_running"))
-        self._log_msg(tr("tool.concat_workbench.log.starting",
-                          n=len(files), output=os.path.basename(output)))
-        threading.Thread(target=self._concat_worker,
-                          args=(files, output), daemon=True).start()
+        if mode == "reencode":
+            target = self._resolve_target_spec()
+            self._log_msg(tr(
+                "tool.concat_workbench.log.starting_reencode",
+                n=len(files), output=os.path.basename(output),
+                spec=f"{target['width']}x{target['height']} @ {target['fps']}fps"))
+            threading.Thread(target=self._concat_worker_reencode,
+                              args=(files, output, target),
+                              daemon=True).start()
+        else:
+            self._log_msg(tr("tool.concat_workbench.log.starting",
+                              n=len(files), output=os.path.basename(output)))
+            threading.Thread(target=self._concat_worker,
+                              args=(files, output), daemon=True).start()
 
     def _concat_worker(self, files: list[str], output: str) -> None:
         try:
             concat_videos(files, output)
+            self.master.after(0, self._on_concat_done, output, None)
+        except Exception as e:
+            self.master.after(0, self._on_concat_done, output, str(e))
+
+    def _concat_worker_reencode(self, files: list[str], output: str,
+                                  target: dict) -> None:
+        def progress(pct: float):
+            self.master.after(0, self._progress_var.set, pct)
+        try:
+            concat_videos_reencode(files, output, target, progress_cb=progress)
+            self.master.after(0, self._progress_var.set, 100.0)
             self.master.after(0, self._on_concat_done, output, None)
         except Exception as e:
             self.master.after(0, self._on_concat_done, output, str(e))
