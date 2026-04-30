@@ -9,7 +9,6 @@
 
 | 优先级 | 状态 | 功能 | 说明 |
 |--------|------|------|------|
-| 🔴 P1 | [ ] | PPT 视频生成管线 | Claude 对话产出 slide（md/html）→ PPT 插件渲染 → Claude 写备注讲稿 → TTS（Edge TTS 免费档 / Fish Audio 发布档）→ PPT 每页导出 PNG → ffmpeg 按音频时长拼接 + 字幕烧录 → MP4。完整管线草案见 [docs/draft/PPT2Videopipeline.md](docs/draft/PPT2Videopipeline.md) |
 | 🟡 P2 | [ ] | extract-clip / auto-split 业务逻辑下沉到 core | [video_tools.py:127-193](src/tools/video/video_tools.py#L127-L193) 的 `get_keyframe_times / find_nearest_keyframe / auto_split_video(use_keyframes=...)` 仍在 UI 层自带 ffprobe/ffmpeg 实现，与 `core/video_split.split_one()` 能力重复。跟进项：切到统一 API，移除 UI 层的重复逻辑。菜单入口保留 |
 | 🔴 P1 | [ ] | 字幕处理综合工作台 | 合并字幕菜单下 5 个独立窗口为一个工作台（对标 `split_workbench.py`），老入口保留平滑迁移。详见 [docs/draft/SubtitleWorkbench.md](docs/draft/SubtitleWorkbench.md) |
 | 🔴 P1 | [ ] | yt-dlp JS runtime 修复 | YouTube 下载时 yt-dlp 因缺少 JavaScript 运行环境抛兼容性警告，部分格式解析失败导致清晰度缺失或直接下载失败。修复方案：(a) 升级 yt-dlp 到最新版本；(b) portable 包内置或检测系统的 Node.js；(c) 调用时显式传 `--js-runtimes node`。涉及 [tools/download/yt_dlp_tool.py](src/tools/download/yt_dlp_tool.py) 参数组装与打包脚本 |
@@ -121,3 +120,4 @@
 | Docker 分发 | 目标用户不具备 Docker 使用背景 |
 | 跨平台（短期） | 先把 Windows 版做稳，Mac 需求出现时再考虑本地 Web 方案 |
 | 批量处理 | 工作量大，先做单文件质量，后续再扩展 |
+| PPT / Slidev 转视频 | 受众与现有"视频创作者"主线错位（教育 / 培训 vs 自媒体），与 text2video 重叠 65%+；AI-PPT-to-video 工作流尚未被市场验证。如未来要做应另起新软件，不容纳进本 repo。2026-04-30 删除 ppt2video / slidev_pipeline / pptx_pipeline / node_env 全部相关代码 |

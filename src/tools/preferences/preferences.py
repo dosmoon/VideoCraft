@@ -89,53 +89,6 @@ class PreferencesApp(ToolBase):
         self._status_lbl = tk.Label(lang_section, text="", fg="#2e8b57", anchor="w")
         self._status_lbl.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
 
-        # ── Section: Environment — Node.js / Slidev ─────────────────────────
-        node_section = tk.LabelFrame(
-            root, text=tr("tool.preferences.section_env_node"),
-            padx=16, pady=12,
-        )
-        node_section.pack(fill="x", pady=(16, 0))
-        node_section.columnconfigure(1, weight=1)
-
-        _node_rows = [
-            (tr("tool.preferences.env_node_label"),    "_node_val"),
-            (tr("tool.preferences.env_npm_label"),     "_npm_val"),
-            (tr("tool.preferences.env_slidev_label"),  "_slidev_val"),
-            (tr("tool.preferences.env_browser_label"), "_browser_val"),
-        ]
-        for i, (label, attr) in enumerate(_node_rows):
-            tk.Label(node_section, text=label, anchor="w", width=14).grid(
-                row=i, column=0, sticky="w", padx=(0, 8), pady=2,
-            )
-            lbl = tk.Label(node_section, text="…", anchor="w", fg="#888")
-            lbl.grid(row=i, column=1, sticky="w", pady=2)
-            setattr(self, attr, lbl)
-
-        btn_row = tk.Frame(node_section)
-        btn_row.grid(row=len(_node_rows), column=0, columnspan=2, sticky="w", pady=(10, 4))
-
-        tk.Button(
-            btn_row, text=tr("tool.preferences.btn_refresh"),
-            command=self._refresh_node_status, width=12,
-        ).pack(side="left", padx=(0, 8))
-
-        self._install_slidev_btn = tk.Button(
-            btn_row, text=tr("tool.preferences.btn_install_slidev"),
-            command=self._install_slidev,
-            bg="#0078d4", fg="white", relief="flat",
-            activebackground="#1a8ae5", cursor="hand2",
-        )
-        self._install_slidev_btn.pack(side="left")
-
-        self._node_log = scrolledtext.ScrolledText(
-            node_section, height=5, state="disabled",
-            font=("Consolas", 9), wrap="word",
-        )
-        self._node_log.grid(
-            row=len(_node_rows) + 1, column=0, columnspan=2,
-            sticky="ew", pady=(4, 0),
-        )
-
         # ── Section: Environment — yt-dlp ────────────────────────────────────
         ytdlp_section = tk.LabelFrame(
             root, text=tr("tool.preferences.section_env_ytdlp"),
@@ -237,73 +190,11 @@ class PreferencesApp(ToolBase):
             )
         self.set_done()
 
-    # ── Node / Slidev status ─────────────────────────────────────────────────
+    # ── yt-dlp ───────────────────────────────────────────────────────────────
 
     def _bg_initial_refresh(self):
-        self.master.after(0, self._refresh_node_status)
         self.master.after(0, self._refresh_ytdlp_status)
 
-    def _refresh_node_status(self):
-        missing = tr("tool.preferences.env_status_missing")
-        not_inst = tr("tool.preferences.env_status_not_installed")
-
-        def _set(attr, val, ok):
-            getattr(self, attr).config(
-                text=f"✓  {val}" if ok else val,
-                fg="#2e8b57" if ok else "#c0392b",
-            )
-
-        node = env_check.check_node()
-        _set("_node_val", node or missing, bool(node))
-
-        npm = env_check.check_npm()
-        _set("_npm_val", npm or missing, bool(npm))
-
-        slidev = env_check.check_slidev()
-        _set("_slidev_val", slidev or not_inst, bool(slidev))
-
-        browser = env_check.check_browser()
-        self._browser_val.config(
-            text=f"✓  {browser}" if browser else not_inst,
-            fg="#2e8b57" if browser else "#888",
-        )
-
-    def _install_slidev(self):
-        self._install_slidev_btn.config(state="disabled")
-        self._node_log.config(state="normal")
-        self._node_log.delete("1.0", "end")
-        self._node_log.config(state="disabled")
-
-        def on_log(line: str):
-            self.master.after(0, self._append_node_log, line)
-
-        def run():
-            try:
-                from core import slidev_pipeline
-                slidev_pipeline.ensure_node_env(on_log=on_log)
-                self.master.after(0, self._on_slidev_done, True, None)
-            except Exception as e:
-                self.master.after(0, self._on_slidev_done, False, str(e))
-
-        threading.Thread(target=run, daemon=True).start()
-
-    def _append_node_log(self, line: str):
-        self._node_log.config(state="normal")
-        self._node_log.insert("end", line + "\n")
-        self._node_log.see("end")
-        self._node_log.config(state="disabled")
-
-    def _on_slidev_done(self, success: bool, err: str | None):
-        msg = (
-            tr("tool.preferences.slidev_install_done")
-            if success
-            else f"{tr('tool.preferences.slidev_install_failed')}: {err}"
-        )
-        self._append_node_log(msg)
-        self._install_slidev_btn.config(state="normal")
-        self._refresh_node_status()
-
-    # ── yt-dlp ───────────────────────────────────────────────────────────────
 
     def _refresh_ytdlp_status(self):
         ver = env_check.check_ytdlp()
