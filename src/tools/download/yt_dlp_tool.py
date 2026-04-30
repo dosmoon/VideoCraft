@@ -10,6 +10,7 @@ from urllib.parse import urlparse
 from hub_logger import logger
 from core import youtube_download
 from core import lang_names
+from core import srt_quality
 
 SUBS_MAX_PER_KIND = 4
 
@@ -494,6 +495,7 @@ class YouTubeDownloader(ToolBase):
                                     summary = ", ".join(os.path.basename(p) for p in srt_paths)
                                     self.root.after(0, lambda s=summary: self.log(
                                         tr("tool.download.subs_log_written", summary=s)))
+                                    self._log_subs_fingerprints(srt_paths)
                                 else:
                                     self.root.after(0, lambda: self.log(
                                         f"⚠ Subs-only mode: no SRT files written for {video_title}"))
@@ -535,6 +537,7 @@ class YouTubeDownloader(ToolBase):
                                     summary = ", ".join(os.path.basename(p) for p in srt_paths)
                                     self.root.after(0, lambda s=summary: self.log(
                                         tr("tool.download.subs_log_written", summary=s)))
+                                    self._log_subs_fingerprints(srt_paths)
                             except Exception:
                                 pass
 
@@ -594,6 +597,20 @@ class YouTubeDownloader(ToolBase):
         self.set_busy()
         threading.Thread(target=download, daemon=True).start()
         
+    def _log_subs_fingerprints(self, srt_paths: list[str]):
+        """Compute + log a one-line quality fingerprint per SRT.
+
+        Failures are silent — fingerprint is informational, not critical."""
+        for p in srt_paths:
+            try:
+                fp = srt_quality.fingerprint(p)
+                if fp is None:
+                    continue
+                line = f"  → {os.path.basename(p)}: {srt_quality.format_fingerprint(fp)}"
+                self.root.after(0, lambda s=line: self.log(s))
+            except Exception:
+                pass
+
     def _merge_subs_availability(self, subs: dict):
         """Union per-video manual subtitle langs into the picker's available list."""
         for code in (subs.get("manual") or {}).keys():
