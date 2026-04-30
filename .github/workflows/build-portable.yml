@@ -120,6 +120,9 @@ jobs:
             | `VideoTools.bat` | 视频处理工具 |
             | `SplitVideo.bat` | 视频分割工具 |
 
+            ### 升级提示
+            首次运行后会在解压目录生成 `user_data/`（语言、窗口布局、最近项目、烧录预设等）和 `keys/*.key`（API 密钥）。升级到新版本时保留这两个目录即可，配置和密钥不会丢。
+
             ---
             自动构建 · commit `${{ github.sha }}` · [查看构建日志](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
         env:
