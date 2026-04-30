@@ -1096,6 +1096,7 @@
   "tool.project_workbench.subs_pick_empty": "Pick languages...",
   "tool.project_workbench.subs_pick_count": "Pick... ({count}: {summary})",
   "tool.project_workbench.subs_no_url": "Set source URL first",
+  "tool.project_workbench.asr_overlap_hint": "⚠ step1 already pulled {lang} SRT ({path}). Running ASR will overwrite it. Disable this step to use the manual SRT instead.",
   "tool.project_workbench.step.download": "Download",
   "tool.project_workbench.step.select": "Select / Merge segments",
   "tool.project_workbench.step.asr": "ASR (Speech-to-Text)",

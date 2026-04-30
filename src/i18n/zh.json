@@ -1096,6 +1096,7 @@
   "tool.project_workbench.subs_pick_empty": "选择语言…",
   "tool.project_workbench.subs_pick_count": "选择… ({count} 种: {summary})",
   "tool.project_workbench.subs_no_url": "请先填 source URL",
+  "tool.project_workbench.asr_overlap_hint": "⚠ step1 已下载 {lang} 手工字幕（{path}）。跑 ASR 会覆盖它。如想直接用手工字幕，请关闭本步。",
   "tool.project_workbench.step.download": "下载",
   "tool.project_workbench.step.select": "段落拣选/合并",
   "tool.project_workbench.step.asr": "语音转字幕 (ASR)",

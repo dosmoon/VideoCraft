@@ -704,6 +704,13 @@ class ProjectWorkbenchApp(ToolBase):
                 label = tr(f"tool.project_workbench.field.{fname}")
                 self._add_field(body, next_row(), step_key, fname, label)
 
+        # Cross-step hint: ASR overlap with manual SRT pulled by step1.
+        # If step1 already produced an SRT for the language ASR is about
+        # to write, surface it so the user can either disable this step
+        # (use the manual SRT) or proceed knowing they'll overwrite it.
+        if step_key == "step2_asr":
+            self._maybe_add_asr_overlap_hint(body, next_row())
+
         # Raw section: any unknown keys
         leftover = {k: v for k, v in step.items() if k not in known}
         if leftover:
@@ -901,6 +908,41 @@ class ProjectWorkbenchApp(ToolBase):
                 self._refresh_run_state(step_key)
         var.trace_add("write", on_write)
         self._field_vars.append(var)
+
+    def _maybe_add_asr_overlap_hint(self, parent, r: int) -> None:
+        """Show a gray hint row if step1 already pulled a same-language SRT.
+
+        The hint is informational, not a blocker — user might still want
+        ASR to overwrite. Triggers when:
+          - step1_download.output.subtitles has at least one entry, AND
+          - step2_asr.language matches one of those iso codes (or 'auto'
+            and step1 produced any subs)."""
+        assert self._buffer is not None
+        step1 = self._buffer.get("step1_download", {})
+        subs = step1.get("subtitles") or []
+        if not isinstance(subs, list) or not subs:
+            return
+        asr = self._buffer.get("step2_asr", {})
+        asr_lang = str(asr.get("language") or "auto").lower()
+        iso_codes = [str(s.get("iso", "")).lower() for s in subs
+                     if isinstance(s, dict)]
+        if asr_lang != "auto" and asr_lang not in iso_codes:
+            return  # ASR will write a different lang; no overlap
+        # Pick the matching record (or first when auto) for the message.
+        matched = next(
+            (s for s in subs if isinstance(s, dict)
+             and (asr_lang == "auto" or str(s.get("iso", "")).lower() == asr_lang)),
+            None,
+        )
+        if not matched:
+            return
+        hint_text = tr("tool.project_workbench.asr_overlap_hint",
+                       lang=matched.get("iso", "?"),
+                       path=os.path.basename(matched.get("path", "")))
+        tk.Label(parent, text=hint_text, bg=S["card_bg"], fg="#b45309",
+                 font=S["label_font"], anchor="w", wraplength=520,
+                 justify="left").grid(row=r, column=0, columnspan=2,
+                                       sticky="w", padx=(0, 0), pady=(4, 0))
 
     def _add_bcp47_list_field(self, parent, r: int, step_key: str,
                                field: str, label: str) -> None:
