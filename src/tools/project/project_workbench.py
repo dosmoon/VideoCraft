@@ -2262,27 +2262,56 @@ class ProjectWorkbenchApp(ToolBase):
                 return self._abspath(str(path))
         return None
 
+    def _srt_from_step1_manual(self, prefer_iso: str | None = None) -> str | None:
+        """Manual SRT pulled by step1_download (Phase 2 path).
+
+        When prefer_iso is set (e.g. translate's source_lang), pick the
+        matching record; otherwise return the first available."""
+        if self._buffer is None:
+            return None
+        subs = (self._buffer.get("step1_download", {}) or {}).get("subtitles") or []
+        if not isinstance(subs, list) or not subs:
+            return None
+        want = (prefer_iso or "").strip().lower()
+        picked = None
+        if want:
+            picked = next((s for s in subs if isinstance(s, dict)
+                            and str(s.get("iso", "")).lower() == want), None)
+        if picked is None:
+            picked = next((s for s in subs if isinstance(s, dict)
+                            and s.get("path")), None)
+        if picked and picked.get("path"):
+            return self._abspath(str(picked["path"]))
+        return None
+
     def _resolve_burn_sub1(self) -> str | None:
-        """Sub1 (top, translated). Returned only when bilingual (both ASR and
-        translate done) — a lone subtitle should sit on the bottom track, so
-        single-language case routes to sub2 instead. User override always wins.
-        """
+        """Sub1 (top, translated). Bilingual case only — a lone subtitle
+        should sit on the bottom track, so single-language case routes to
+        sub2 instead. User override always wins. The "original" track for
+        bilingual mode now also accepts a manual SRT pulled by step1
+        when ASR is disabled."""
         if self._buffer is None:
             return None
         own = str(self._buffer.get("step4_burn", {}).get("sub1_path", "")).strip()
         if own:
             return self._abspath(own)
-        asr = self._srt_from_step("step2_asr")
         tr_ = self._srt_from_step("step3_translate")
-        if asr and tr_:
-            return tr_
+        if not tr_:
+            return None
+        # Bilingual requires the original track too — ASR or step1 manual.
+        source_lang = str(self._buffer.get("step3_translate", {}).get(
+            "source_lang", "")).strip()
+        original = (self._srt_from_step("step2_asr")
+                    or self._srt_from_step1_manual(prefer_iso=source_lang))
+        if original:
+            return tr_  # translated goes on top
         return None
 
     def _resolve_burn_sub2(self) -> str | None:
-        """Sub2 (bottom, original). Bilingual case: ASR. Single-language case:
-        whichever SRT exists (translation alone or ASR alone) — lone subtitle
-        always goes to bottom track. User override always wins.
-        """
+        """Sub2 (bottom, original). Bilingual case: ASR or step1 manual SRT.
+        Single-language case: whichever SRT exists (translation, ASR, or
+        manual) — lone subtitle always goes to bottom track. User override
+        always wins."""
         if self._buffer is None:
             return None
         own = str(self._buffer.get("step4_burn", {}).get("sub2_path", "")).strip()
@@ -2290,13 +2319,21 @@ class ProjectWorkbenchApp(ToolBase):
             return self._abspath(own)
         asr = self._srt_from_step("step2_asr")
         tr_ = self._srt_from_step("step3_translate")
-        if asr and tr_:
-            return asr
-        # Single-language fallback: prefer translation, then ASR
+        # Prefer ASR for the original track; fall back to step1's manual SRT
+        # (matched against translate's source_lang when translate ran).
+        source_lang = str(self._buffer.get("step3_translate", {}).get(
+            "source_lang", "")).strip()
+        manual = self._srt_from_step1_manual(prefer_iso=source_lang)
+        original = asr or manual
+        if original and tr_:
+            return original
+        # Single-language fallback: prefer translation, then ASR, then manual
         if tr_:
             return tr_
         if asr:
             return asr
+        if manual:
+            return manual
         return None
 
     def _run_burn(self, basename: str) -> None:
