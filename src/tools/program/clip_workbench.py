@@ -9,9 +9,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Callable
 
 try:
@@ -320,17 +321,43 @@ class ClipWorkbenchApp(ToolBase):
             return f"{stem}.json"
         return "cut.json"
 
+    _INVALID_FNAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+    def _sanitize_cut_name(self, raw: str) -> str:
+        s = self._INVALID_FNAME_CHARS.sub("", raw or "").strip()
+        return s
+
+    def _has_any_source(self) -> bool:
+        return any(v.get().strip() for v in
+                   (self._pack_var, self._video_var, self._srt_var))
+
     def _on_new_cut(self) -> None:
-        default_dir = self._default_cut_dir()
-        os.makedirs(default_dir, exist_ok=True)
-        path = filedialog.asksaveasfilename(
-            title=_tr("tool.clip.dialog_new_cut"),
-            defaultextension=".json",
-            initialdir=default_dir,
-            initialfile=self._suggested_cut_filename(),
-            filetypes=[("Clip cut JSON", "*.json")])
-        if not path:
+        if not self._has_any_source():
+            messagebox.showerror(_tr("tool.clip.title"),
+                                  _tr("tool.clip.warn_need_sources"))
             return
+        default_name = os.path.splitext(self._suggested_cut_filename())[0]
+        name = simpledialog.askstring(
+            _tr("tool.clip.title"),
+            _tr("tool.clip.dialog_new_cut_name"),
+            initialvalue=default_name,
+            parent=self.master,
+        )
+        if name is None:
+            return
+        name = self._sanitize_cut_name(name)
+        if not name:
+            messagebox.showerror(_tr("tool.clip.title"),
+                                  _tr("tool.clip.warn_empty_name"))
+            return
+        cut_dir = self._default_cut_dir()
+        os.makedirs(cut_dir, exist_ok=True)
+        path = os.path.join(cut_dir, f"{name}.json")
+        if os.path.exists(path):
+            if not messagebox.askyesno(
+                _tr("tool.clip.title"),
+                _tr("tool.clip.confirm_overwrite").format(name=name)):
+                return
         # Reset state to empty — user fills sources next
         self._cut_path = path
         self._cut_name = os.path.splitext(os.path.basename(path))[0]
@@ -360,14 +387,76 @@ class ClipWorkbenchApp(ToolBase):
             name=self._cut_name))
 
     def _on_open_cut(self) -> None:
-        default_dir = self._default_cut_dir()
-        path = filedialog.askopenfilename(
-            title=_tr("tool.clip.dialog_open_cut"),
-            initialdir=default_dir if os.path.isdir(default_dir) else None,
-            filetypes=[("Clip cut JSON", "*.json"), ("All", "*.*")])
-        if not path:
+        if not self._has_any_source():
+            messagebox.showerror(_tr("tool.clip.title"),
+                                  _tr("tool.clip.warn_need_sources"))
             return
-        self._open_cut_path(path)
+        cut_dir = self._default_cut_dir()
+        if not os.path.isdir(cut_dir):
+            messagebox.showinfo(_tr("tool.clip.title"),
+                                 _tr("tool.clip.info_no_cuts_yet"))
+            return
+        names = sorted(f for f in os.listdir(cut_dir)
+                        if f.lower().endswith(".json"))
+        if not names:
+            messagebox.showinfo(_tr("tool.clip.title"),
+                                 _tr("tool.clip.info_no_cuts_yet"))
+            return
+        picked = self._show_cut_picker(names)
+        if not picked:
+            return
+        self._open_cut_path(os.path.join(cut_dir, picked))
+
+    def _show_cut_picker(self, filenames: list[str]) -> str | None:
+        """Modal listbox of cut filenames (display name strips .json)."""
+        dlg = tk.Toplevel(self.master)
+        dlg.title(_tr("tool.clip.dialog_pick_cut"))
+        dlg.transient(self.master)
+        dlg.geometry("400x320")
+        dlg.grab_set()
+
+        tk.Label(dlg, text=_tr("tool.clip.dialog_pick_cut_hint"),
+                  anchor="w").pack(fill="x", padx=10, pady=(8, 4))
+
+        list_frame = tk.Frame(dlg)
+        list_frame.pack(fill="both", expand=True, padx=10, pady=4)
+        listbox = tk.Listbox(list_frame, activestyle="dotbox")
+        listbox.pack(side="left", fill="both", expand=True)
+        sb = ttk.Scrollbar(list_frame, orient="vertical",
+                            command=listbox.yview)
+        listbox.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+
+        for fname in filenames:
+            listbox.insert("end", os.path.splitext(fname)[0])
+        listbox.selection_set(0)
+        listbox.activate(0)
+        listbox.focus_set()
+
+        result: dict = {"v": None}
+
+        def on_ok():
+            sel = listbox.curselection()
+            if sel:
+                result["v"] = filenames[sel[0]]
+            dlg.destroy()
+
+        def on_cancel():
+            dlg.destroy()
+
+        listbox.bind("<Double-Button-1>", lambda _e: on_ok())
+        listbox.bind("<Return>", lambda _e: on_ok())
+        dlg.bind("<Escape>", lambda _e: on_cancel())
+
+        btn_row = tk.Frame(dlg)
+        btn_row.pack(fill="x", pady=(4, 8), padx=10)
+        ttk.Button(btn_row, text=_tr("tool.clip.btn_open"),
+                    command=on_ok).pack(side="right", padx=4)
+        ttk.Button(btn_row, text=_tr("tool.clip.btn_cancel_dialog"),
+                    command=on_cancel).pack(side="right", padx=4)
+
+        self.master.wait_window(dlg)
+        return result["v"]
 
     def _open_cut_path(self, path: str) -> None:
         try:

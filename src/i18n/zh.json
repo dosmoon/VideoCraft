@@ -1286,5 +1286,14 @@
   "tool.clip.dialog_save_as_cut": "另存为剪辑稿",
   "tool.clip.status_cut_new": "✓ 已新建剪辑稿: {name}",
   "tool.clip.status_cut_opened": "✓ 已打开 {name}（{n} 条切片）",
-  "tool.clip.status_cut_saved_as": "✓ 已另存为: {name}"
+  "tool.clip.status_cut_saved_as": "✓ 已另存为: {name}",
+  "tool.clip.dialog_new_cut_name": "请输入剪辑名（自动存到 .videocraft/clips/）",
+  "tool.clip.dialog_pick_cut": "打开剪辑稿",
+  "tool.clip.dialog_pick_cut_hint": "选择已有剪辑稿（双击 / 回车 = 打开）",
+  "tool.clip.btn_open": "打开",
+  "tool.clip.btn_cancel_dialog": "取消",
+  "tool.clip.warn_need_sources": "请先填好上方至少一个源文件（pack / 视频 / SRT），用于定位项目目录",
+  "tool.clip.warn_empty_name": "名字不能为空或全是非法字符",
+  "tool.clip.confirm_overwrite": "剪辑稿 '{name}' 已存在，覆盖？",
+  "tool.clip.info_no_cuts_yet": "当前项目尚无剪辑稿，请点「新建」创建一个"
 }

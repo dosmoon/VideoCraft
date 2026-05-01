@@ -1286,5 +1286,14 @@
   "tool.clip.dialog_save_as_cut": "Save cut as",
   "tool.clip.status_cut_new": "✓ New cut created: {name}",
   "tool.clip.status_cut_opened": "✓ Opened {name} ({n} clips)",
-  "tool.clip.status_cut_saved_as": "✓ Saved as: {name}"
+  "tool.clip.status_cut_saved_as": "✓ Saved as: {name}",
+  "tool.clip.dialog_new_cut_name": "Cut name (saved to .videocraft/clips/)",
+  "tool.clip.dialog_pick_cut": "Open Cut",
+  "tool.clip.dialog_pick_cut_hint": "Pick an existing cut (double-click / Enter = open)",
+  "tool.clip.btn_open": "Open",
+  "tool.clip.btn_cancel_dialog": "Cancel",
+  "tool.clip.warn_need_sources": "Fill at least one source (pack / video / SRT) above to locate the project",
+  "tool.clip.warn_empty_name": "Name cannot be empty or only invalid chars",
+  "tool.clip.confirm_overwrite": "Cut '{name}' exists. Overwrite?",
+  "tool.clip.info_no_cuts_yet": "No cuts yet for this project — click New to create one"
 }
