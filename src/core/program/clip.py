@@ -277,11 +277,73 @@ def crop_rect_to_pixels(rect: dict, video_w: int, video_h: int
 # ── Clips JSON persistence ──────────────────────────────────────────────────
 
 CLIPS_JSON_VERSION = 1
+CUT_FILE_VERSION = 2
 
+
+def _hydrate_clip(c: dict) -> ClipDraft:
+    return ClipDraft(
+        id=c.get("id", 0),
+        chapter_idx=c.get("chapter_idx", -1),
+        chapter_title=c.get("chapter_title", ""),
+        start_sec=float(c.get("start_sec", 0.0)),
+        end_sec=float(c.get("end_sec", 0.0)),
+        original_excerpt=c.get("original_excerpt", ""),
+        hook=c.get("hook", ""),
+        outro=c.get("outro", ""),
+        title=c.get("title", ""),
+        hashtags=list(c.get("hashtags") or []),
+        crop_rect=c.get("crop_rect"),
+        status=c.get("status", "draft"),
+        output_path=c.get("output_path", ""),
+    )
+
+
+def write_cut_file(path: str, *, name: str, sources: dict,
+                    clips: list[ClipDraft], output_dir: str = "") -> str:
+    """Persist a self-contained clip-script project file.
+
+    The cut file is the unit of persistence — a user-named .json that holds
+    everything needed to reopen this edit later: source paths, the output
+    directory preference, and the full clip list.
+    """
+    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+    payload = {
+        "version": CUT_FILE_VERSION,
+        "name": name,
+        "saved_at": datetime.now().isoformat(timespec="seconds"),
+        "sources": {
+            "pack_path":  sources.get("pack_path", ""),
+            "video_path": sources.get("video_path", ""),
+            "srt_path":   sources.get("srt_path", ""),
+        },
+        "output_dir": output_dir or "",
+        "clips": [asdict(c) for c in clips],
+    }
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    return path
+
+
+def load_cut_file(path: str) -> dict:
+    """Read a cut file. Returns dict with keys:
+    name / sources / output_dir / clips (list[ClipDraft])."""
+    with open(path, "r", encoding="utf-8") as f:
+        payload = json.load(f)
+    return {
+        "name": payload.get("name", os.path.splitext(os.path.basename(path))[0]),
+        "sources": payload.get("sources") or {},
+        "output_dir": payload.get("output_dir", ""),
+        "clips": [_hydrate_clip(c) for c in (payload.get("clips") or [])],
+    }
+
+
+# Backward-compat aliases for the old write/read API. Older clips.json files
+# (version 1) are still readable; new code writes v2 cut files exclusively.
 
 def write_clips_json(clips: list[ClipDraft], video_path: str,
                      basename: str, out_dir: str) -> str:
-    """Persist all clip drafts as <basename>-clips.json."""
+    """Legacy: emit the v1 -clips.json layout. Kept for back-compat with
+    callers that haven't migrated to the cut-file model."""
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, f"{basename}-clips.json")
     payload = {
@@ -297,27 +359,10 @@ def write_clips_json(clips: list[ClipDraft], video_path: str,
 
 
 def load_clips_json(path: str) -> list[ClipDraft]:
-    """Re-hydrate ClipDraft list from a previously-written clips.json."""
+    """Legacy v1 reader. New code should use load_cut_file()."""
     with open(path, "r", encoding="utf-8") as f:
         payload = json.load(f)
-    out: list[ClipDraft] = []
-    for c in payload.get("clips", []):
-        out.append(ClipDraft(
-            id=c.get("id", 0),
-            chapter_idx=c.get("chapter_idx", -1),
-            chapter_title=c.get("chapter_title", ""),
-            start_sec=float(c.get("start_sec", 0.0)),
-            end_sec=float(c.get("end_sec", 0.0)),
-            original_excerpt=c.get("original_excerpt", ""),
-            hook=c.get("hook", ""),
-            outro=c.get("outro", ""),
-            title=c.get("title", ""),
-            hashtags=list(c.get("hashtags") or []),
-            crop_rect=c.get("crop_rect"),
-            status=c.get("status", "draft"),
-            output_path=c.get("output_path", ""),
-        ))
-    return out
+    return [_hydrate_clip(c) for c in (payload.get("clips") or [])]
 
 
 # ── Export pipeline ─────────────────────────────────────────────────────────
@@ -560,6 +605,8 @@ __all__ = [
     "extract_keyframe",
     "center_crop_rect",
     "crop_rect_to_pixels",
+    "write_cut_file",
+    "load_cut_file",
     "write_clips_json",
     "load_clips_json",
     "export_clip",

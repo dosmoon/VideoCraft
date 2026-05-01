@@ -53,6 +53,8 @@ class ClipWorkbenchApp(ToolBase):
         master.geometry("1100x720")
 
         # ── State ─────────────────────────────────────────────────────────
+        self._cut_path: str | None = None       # path to current .json cut file
+        self._cut_name: str = ""                # display name (== file stem)
         self._pack: dict | None = None
         self._pack_path: str = ""
         self._video_path: str = ""
@@ -64,9 +66,9 @@ class ClipWorkbenchApp(ToolBase):
         self._cues = []                        # parsed SRT cues for snapping
         self._clips: list[ClipDraft] = []
         self._next_clip_id: int = 1
-        self._chapter_check_vars: dict[int, tk.BooleanVar] = {}
         self._export_thread: threading.Thread | None = None
         self._export_cancel_flag: dict = {"v": False}
+        self._suspend_autosave: bool = False    # set during bulk hydration
 
         # ── Notebook ──────────────────────────────────────────────────────
         self._notebook = ttk.Notebook(master)
@@ -92,21 +94,43 @@ class ClipWorkbenchApp(ToolBase):
         tk.Label(master, textvariable=self._status_var,
                  fg="blue", anchor="w").pack(fill="x", padx=8, pady=(0, 4))
 
+        # Start in "no cut" mode — Tab 2/3/4 disabled until New / Open.
+        self._refresh_cut_state()
+
         if initial_file and os.path.isfile(initial_file):
-            self._load_pack_file(initial_file)
+            # If launched with a .json file argument, treat it as a cut to open.
+            if initial_file.lower().endswith(".json"):
+                self._open_cut_path(initial_file)
 
     # ── Tab 1: setup + chapters ───────────────────────────────────────────
 
     def _build_tab_setup(self) -> None:
         f = self._tab_setup
-        # Top: file pickers
+
+        # ── Cut file management (top) ────────────────────────────────────
+        cut_box = ttk.LabelFrame(f, text=_tr("tool.clip.section_cut"))
+        cut_box.pack(fill="x", padx=6, pady=6)
+        btn_row = ttk.Frame(cut_box)
+        btn_row.pack(fill="x", padx=4, pady=4)
+        ttk.Button(btn_row, text=_tr("tool.clip.btn_new_cut"),
+                   command=self._on_new_cut).pack(side="left", padx=2)
+        ttk.Button(btn_row, text=_tr("tool.clip.btn_open_cut"),
+                   command=self._on_open_cut).pack(side="left", padx=2)
+        ttk.Button(btn_row, text=_tr("tool.clip.btn_save_as_cut"),
+                   command=self._on_save_as_cut).pack(side="left", padx=2)
+        self._cut_status_var = tk.StringVar(value=_tr("tool.clip.cut_none"))
+        tk.Label(cut_box, textvariable=self._cut_status_var,
+                 fg="#2563eb", anchor="w").pack(fill="x", padx=8, pady=(0, 4))
+
+        # ── Sources (manual) ─────────────────────────────────────────────
         top = ttk.LabelFrame(f, text=_tr("tool.clip.section_inputs"))
         top.pack(fill="x", padx=6, pady=6)
 
-        # Postprocess.json
+        # Pack JSON (optional in spirit, but Phase A still requires it)
         ttk.Label(top, text=_tr("tool.clip.label_pack")).grid(
             row=0, column=0, sticky="e", padx=4, pady=3)
         self._pack_var = tk.StringVar()
+        self._pack_var.trace_add("write", self._on_source_path_changed)
         ttk.Entry(top, textvariable=self._pack_var, width=70).grid(
             row=0, column=1, sticky="we", padx=4)
         ttk.Button(top, text=_tr("tool.clip.btn_browse"),
@@ -116,6 +140,7 @@ class ClipWorkbenchApp(ToolBase):
         ttk.Label(top, text=_tr("tool.clip.label_video")).grid(
             row=1, column=0, sticky="e", padx=4, pady=3)
         self._video_var = tk.StringVar()
+        self._video_var.trace_add("write", self._on_source_path_changed)
         ttk.Entry(top, textvariable=self._video_var, width=70).grid(
             row=1, column=1, sticky="we", padx=4)
         ttk.Button(top, text=_tr("tool.clip.btn_browse"),
@@ -125,6 +150,7 @@ class ClipWorkbenchApp(ToolBase):
         ttk.Label(top, text=_tr("tool.clip.label_srt")).grid(
             row=2, column=0, sticky="e", padx=4, pady=3)
         self._srt_var = tk.StringVar()
+        self._srt_var.trace_add("write", self._on_source_path_changed)
         ttk.Entry(top, textvariable=self._srt_var, width=70).grid(
             row=2, column=1, sticky="we", padx=4)
         ttk.Button(top, text=_tr("tool.clip.btn_browse"),
@@ -195,29 +221,17 @@ class ClipWorkbenchApp(ToolBase):
         self._load_pack_file(pack_path)
 
     def _load_pack_file(self, pack_path: str) -> None:
+        """Load chapters from the user-picked pack file. Sources (video/SRT)
+        are NOT auto-filled — user fills them manually. No manifest sniffing,
+        no restore prompts; restore lives entirely in the cut-file model."""
         try:
             self._pack = cliplib.load_pack(pack_path)
         except Exception as e:
             messagebox.showerror(_tr("tool.clip.title"), str(e))
             return
         self._pack_path = pack_path
-        self._pack_var.set(pack_path)
-
-        # Resolve video + SRT from the unit's manifest (authoritative).
-        # Layout: <project>/<basename>/output/<basename>-postprocess.json
-        # Manifest at: <project>/.videocraft/manifests/<basename>.json
-        video_from_manifest, srt_from_manifest = self._resolve_from_manifest(pack_path)
-
-        if not self._video_var.get() and video_from_manifest:
-            self._video_var.set(video_from_manifest)
-        if not self._srt_var.get() and srt_from_manifest:
-            self._srt_var.set(srt_from_manifest)
-
-        # Heuristic fallback (for packs not produced by project workbench)
-        if not self._video_var.get():
-            self._fallback_find_video(pack_path)
-        if not self._srt_var.get():
-            self._fallback_find_srt(pack_path)
+        if self._pack_var.get() != pack_path:
+            self._pack_var.set(pack_path)
 
         # Probe video for duration / resolution
         self._video_path = self._video_var.get().strip()
@@ -238,130 +252,158 @@ class ClipWorkbenchApp(ToolBase):
         self._refresh_peaks_chapter_combo()
         self._set_status(_tr("tool.clip.status_loaded").format(
             n=len(self._chapters)))
+        self._autosave()
 
-        # Offer to restore prior clip drafts if a clips.json exists in the
-        # default output dir (output/clips/<basename>-clips.json).
-        self._maybe_restore_clips()
+    # ── Cut file management ─────────────────────────────────────────────────
 
-    def _maybe_restore_clips(self) -> None:
-        if not self._video_path:
+    def _has_cut(self) -> bool:
+        return self._cut_path is not None
+
+    def _refresh_cut_state(self) -> None:
+        """Update title-bar status + enable/disable Tab 2/3/4 based on whether
+        a cut is currently open."""
+        has = self._has_cut()
+        if has:
+            self._cut_status_var.set(
+                _tr("tool.clip.cut_open").format(
+                    name=self._cut_name, path=self._cut_path))
+        else:
+            self._cut_status_var.set(_tr("tool.clip.cut_none"))
+        # Disable tabs 2/3/4 (peaks / package / export) when no cut is loaded.
+        for idx in (1, 2, 3):
+            try:
+                self._notebook.tab(idx, state=("normal" if has else "disabled"))
+            except tk.TclError:
+                pass
+
+    def _on_new_cut(self) -> None:
+        path = filedialog.asksaveasfilename(
+            title=_tr("tool.clip.dialog_new_cut"),
+            defaultextension=".json",
+            filetypes=[("Clip cut JSON", "*.json")])
+        if not path:
             return
-        basename = os.path.splitext(os.path.basename(self._video_path))[0]
-        out_dir = os.path.join(os.path.dirname(self._pack_path), "clips")
-        clips_json = os.path.join(out_dir, f"{basename}-clips.json")
-        if not os.path.isfile(clips_json):
+        # Reset state to empty — user fills sources next
+        self._cut_path = path
+        self._cut_name = os.path.splitext(os.path.basename(path))[0]
+        self._suspend_autosave = True
+        try:
+            self._pack = None
+            self._pack_path = ""
+            self._pack_var.set("")
+            self._video_var.set("")
+            self._srt_var.set("")
+            self._video_path = ""
+            self._srt_path = ""
+            self._chapters = []
+            self._cues = []
+            self._clips = []
+            self._next_clip_id = 1
+            self._refresh_chapter_tree()
+            self._refresh_peaks_chapter_combo()
+            self._refresh_clips_tree()
+            self._refresh_package_cards()
+            self._refresh_export_clip_combo()
+        finally:
+            self._suspend_autosave = False
+        self._refresh_cut_state()
+        self._autosave()    # write the empty cut so the file exists
+        self._set_status(_tr("tool.clip.status_cut_new").format(
+            name=self._cut_name))
+
+    def _on_open_cut(self) -> None:
+        path = filedialog.askopenfilename(
+            title=_tr("tool.clip.dialog_open_cut"),
+            filetypes=[("Clip cut JSON", "*.json"), ("All", "*.*")])
+        if not path:
+            return
+        self._open_cut_path(path)
+
+    def _open_cut_path(self, path: str) -> None:
+        try:
+            cut = cliplib.load_cut_file(path)
+        except Exception as e:
+            messagebox.showerror(_tr("tool.clip.title"), str(e))
+            return
+        self._cut_path = path
+        self._cut_name = cut["name"] or os.path.splitext(os.path.basename(path))[0]
+
+        sources = cut["sources"] or {}
+        self._suspend_autosave = True
+        try:
+            self._pack_var.set(sources.get("pack_path", ""))
+            self._video_var.set(sources.get("video_path", ""))
+            self._srt_var.set(sources.get("srt_path", ""))
+            self._out_dir_var.set(cut.get("output_dir", "") or "")
+            self._clips = cut["clips"]
+            self._next_clip_id = max((c.id for c in self._clips), default=0) + 1
+            # Eagerly load pack chapters + cues so chapters appear immediately.
+            pack_path = sources.get("pack_path") or ""
+            if pack_path and os.path.isfile(pack_path):
+                self._load_pack_file(pack_path)
+            else:
+                # No pack — still need video probe for export.
+                self._video_path = self._video_var.get().strip()
+                self._srt_path = self._srt_var.get().strip()
+                if self._video_path and os.path.isfile(self._video_path):
+                    self._video_duration = cliplib.probe_duration(self._video_path)
+                    self._video_w, self._video_h = \
+                        cliplib.probe_resolution(self._video_path)
+                if self._srt_path and os.path.isfile(self._srt_path):
+                    try:
+                        self._cues = cliplib.load_cues(self._srt_path)
+                    except Exception:
+                        self._cues = []
+            self._refresh_clips_tree()
+            self._refresh_package_cards()
+            self._refresh_export_clip_combo()
+        finally:
+            self._suspend_autosave = False
+        self._refresh_cut_state()
+        self._set_status(_tr("tool.clip.status_cut_opened").format(
+            name=self._cut_name, n=len(self._clips)))
+
+    def _on_save_as_cut(self) -> None:
+        if not self._has_cut():
+            self._on_new_cut()
+            return
+        path = filedialog.asksaveasfilename(
+            title=_tr("tool.clip.dialog_save_as_cut"),
+            defaultextension=".json",
+            initialfile=f"{self._cut_name}.json",
+            filetypes=[("Clip cut JSON", "*.json")])
+        if not path:
+            return
+        self._cut_path = path
+        self._cut_name = os.path.splitext(os.path.basename(path))[0]
+        self._refresh_cut_state()
+        self._autosave()
+        self._set_status(_tr("tool.clip.status_cut_saved_as").format(
+            name=self._cut_name))
+
+    def _autosave(self) -> None:
+        """Write the current state to the active cut file. No-op if no cut
+        loaded or autosave is suspended (during bulk hydration)."""
+        if self._suspend_autosave or not self._has_cut():
             return
         try:
-            existing = cliplib.load_clips_json(clips_json)
-        except Exception:
-            return
-        if not existing:
-            return
-        if not messagebox.askyesno(
-            _tr("tool.clip.title"),
-            _tr("tool.clip.restore_prompt").format(
-                n=len(existing), path=clips_json)):
-            return
-        self._clips = existing
-        self._next_clip_id = max((c.id for c in existing), default=0) + 1
-        # Default the output dir entry to where we found the clips.json
-        self._out_dir_var.set(out_dir)
-        self._refresh_clips_tree()
-        self._refresh_package_cards()
-        self._refresh_export_clip_combo()
-        self._set_status(_tr("tool.clip.status_restored").format(n=len(existing)))
+            cliplib.write_cut_file(
+                self._cut_path,
+                name=self._cut_name,
+                sources={
+                    "pack_path":  self._pack_var.get().strip(),
+                    "video_path": self._video_var.get().strip(),
+                    "srt_path":   self._srt_var.get().strip(),
+                },
+                clips=self._clips,
+                output_dir=self._out_dir_var.get().strip(),
+            )
+        except Exception as e:
+            self._set_status(f"autosave failed: {e}")
 
-    def _resolve_from_manifest(self, pack_path: str
-                                ) -> tuple[str | None, str | None]:
-        """Walk up from <project>/<basename>/output/<basename>-postprocess.json
-        to <project>/.videocraft/manifests/<basename>.json, then read step
-        outputs to find canonical video + best SRT."""
-        try:
-            output_dir = os.path.dirname(pack_path)         # <project>/<basename>/output
-            unit_dir = os.path.dirname(output_dir)          # <project>/<basename>
-            project_dir = os.path.dirname(unit_dir)         # <project>
-            basename = os.path.basename(unit_dir)
-            manifest_path = os.path.join(
-                project_dir, ".videocraft", "manifests", f"{basename}.json")
-            if not os.path.isfile(manifest_path):
-                return (None, None)
-            with open(manifest_path, "r", encoding="utf-8") as f:
-                manifest = json.load(f)
-        except Exception:
-            return (None, None)
-
-        def _abs(p: str) -> str:
-            return p if os.path.isabs(p) else os.path.join(project_dir, p)
-
-        video: str | None = None
-        srt: str | None = None
-
-        # Video: prefer step2 canonical, fall back to step1 raw
-        for sk in ("step2_asr", "step1_download"):
-            step = manifest.get(sk) or {}
-            for out in (step.get("output") or []):
-                cand = _abs(str(out))
-                if cand.lower().endswith((".mp4", ".mkv", ".mov", ".webm")) \
-                        and os.path.isfile(cand):
-                    video = cand
-                    break
-            if video:
-                break
-
-        # SRT: prefer step3 translated, fall back to step2 ASR, then step1 manual
-        for sk in ("step3_translate", "step2_asr"):
-            step = manifest.get(sk) or {}
-            for out in (step.get("output") or []):
-                cand = _abs(str(out))
-                if cand.lower().endswith(".srt") and os.path.isfile(cand):
-                    srt = cand
-                    break
-            if srt:
-                break
-        if srt is None:
-            step1 = manifest.get("step1_download") or {}
-            for sub in (step1.get("subtitles") or []):
-                if isinstance(sub, dict) and sub.get("path"):
-                    cand = _abs(str(sub["path"]))
-                    if os.path.isfile(cand):
-                        srt = cand
-                        break
-
-        return (video, srt)
-
-    def _fallback_find_video(self, pack_path: str) -> None:
-        """Heuristic for non-manifest packs: drop -postprocess.json, try
-        common video extensions in same dir or parent dir."""
-        base = pack_path
-        for suffix in ("-postprocess.json", ".json"):
-            if base.endswith(suffix):
-                base = base[: -len(suffix)]
-                break
-        for ext in (".mp4", ".mkv", ".mov", ".webm"):
-            cand = base + ext
-            if os.path.exists(cand):
-                self._video_var.set(cand)
-                return
-        parent = os.path.dirname(os.path.dirname(pack_path))
-        stem = os.path.basename(parent)
-        for ext in (".mp4", ".mkv", ".mov", ".webm"):
-            cand = os.path.join(parent, f"{stem}{ext}")
-            if os.path.exists(cand):
-                self._video_var.set(cand)
-                return
-
-    def _fallback_find_srt(self, pack_path: str) -> None:
-        """Heuristic for non-manifest packs: any .srt in pack dir or
-        parent's subtitles/ subdir."""
-        for d in (os.path.dirname(pack_path),
-                  os.path.join(os.path.dirname(os.path.dirname(pack_path)),
-                                "subtitles")):
-            if not os.path.isdir(d):
-                continue
-            for fname in sorted(os.listdir(d)):
-                if fname.lower().endswith(".srt"):
-                    self._srt_var.set(os.path.join(d, fname))
-                    return
+    def _on_source_path_changed(self, *_a) -> None:
+        """Trace callback for the three source path entries — persist."""
+        self._autosave()
 
     def _refresh_chapter_tree(self) -> None:
         for iid in self._chap_tree.get_children():
@@ -587,6 +629,7 @@ class ClipWorkbenchApp(ToolBase):
         self._refresh_clips_tree()
         self._refresh_package_cards()
         self._refresh_export_clip_combo()
+        self._autosave()
         self._set_status(_tr("tool.clip.status_clip_added").format(
             id=clip.id))
 
@@ -603,6 +646,7 @@ class ClipWorkbenchApp(ToolBase):
         self._refresh_clips_tree()
         self._refresh_package_cards()
         self._refresh_export_clip_combo()
+        self._autosave()
 
     def _refresh_clips_tree(self) -> None:
         for iid in self._clips_tree.get_children():
@@ -683,8 +727,10 @@ class ClipWorkbenchApp(ToolBase):
         hook_var = tk.StringVar(value=clip.hook)
         hook_entry = ttk.Entry(card, textvariable=hook_var, width=80)
         hook_entry.grid(row=1, column=1, sticky="we", padx=4, pady=2)
-        hook_var.trace_add("write",
-                           lambda *_a, c=clip, v=hook_var: setattr(c, "hook", v.get()))
+        def _save_hook(*_a, c=clip, v=hook_var):
+            setattr(c, "hook", v.get())
+            self._autosave()
+        hook_var.trace_add("write", _save_hook)
 
         # Outro
         ttk.Label(card, text=_tr("tool.clip.field_outro")).grid(
@@ -692,8 +738,10 @@ class ClipWorkbenchApp(ToolBase):
         outro_var = tk.StringVar(value=clip.outro)
         outro_entry = ttk.Entry(card, textvariable=outro_var, width=80)
         outro_entry.grid(row=2, column=1, sticky="we", padx=4, pady=2)
-        outro_var.trace_add("write",
-                            lambda *_a, c=clip, v=outro_var: setattr(c, "outro", v.get()))
+        def _save_outro(*_a, c=clip, v=outro_var):
+            setattr(c, "outro", v.get())
+            self._autosave()
+        outro_var.trace_add("write", _save_outro)
 
         # Title
         ttk.Label(card, text=_tr("tool.clip.field_clip_title")).grid(
@@ -701,8 +749,10 @@ class ClipWorkbenchApp(ToolBase):
         title_var = tk.StringVar(value=clip.title)
         ttk.Entry(card, textvariable=title_var, width=80).grid(
             row=3, column=1, sticky="we", padx=4, pady=2)
-        title_var.trace_add("write",
-                            lambda *_a, c=clip, v=title_var: setattr(c, "title", v.get()))
+        def _save_title(*_a, c=clip, v=title_var):
+            setattr(c, "title", v.get())
+            self._autosave()
+        title_var.trace_add("write", _save_title)
 
         # Hashtags (comma-separated)
         ttk.Label(card, text=_tr("tool.clip.field_hashtags")).grid(
@@ -713,6 +763,7 @@ class ClipWorkbenchApp(ToolBase):
 
         def _save_tags(*_a, c=clip, v=tags_var):
             c.hashtags = [t.strip() for t in v.get().split() if t.strip()]
+            self._autosave()
         tags_var.trace_add("write", _save_tags)
 
         card.columnconfigure(1, weight=1)
@@ -818,11 +869,13 @@ class ClipWorkbenchApp(ToolBase):
         if not (0 <= idx < len(self._clips)):
             return
         self._clips[idx].crop_rect = dict(rect)
+        self._autosave()
 
     def _apply_crop_to_all(self) -> None:
         rect = self._crop_overlay.get_rect()
         for c in self._clips:
             c.crop_rect = dict(rect)
+        self._autosave()
         self._set_status(_tr("tool.clip.status_crop_applied").format(
             n=len(self._clips)))
 
@@ -834,6 +887,9 @@ class ClipWorkbenchApp(ToolBase):
     def _default_out_dir(self) -> str:
         if self._out_dir_var.get().strip():
             return self._out_dir_var.get().strip()
+        # Default: <cut_dir>/<cut_name>/
+        if self._cut_path:
+            return os.path.join(os.path.dirname(self._cut_path), self._cut_name)
         if self._pack_path:
             return os.path.join(os.path.dirname(self._pack_path), "clips")
         return os.path.join(os.path.dirname(self._video_path) or ".", "clips")
@@ -890,10 +946,10 @@ class ClipWorkbenchApp(ToolBase):
                 on_progress=on_step,
                 cancel_check=cancel_check,
             )
-            # Persist clips.json regardless of cancel
-            basename = os.path.splitext(os.path.basename(self._video_path))[0]
-            json_path = cliplib.write_clips_json(
-                self._clips, self._video_path, basename, out_dir)
+            # The cut file is the source of truth and was already autosaved
+            # during edits. Just refresh it once after export so output_path /
+            # status fields stick.
+            self.master.after(0, self._autosave)
             if cancel_check():
                 self.master.after(0, self._set_status,
                                   tr("tool.clip.status_cancelled"))
@@ -901,7 +957,7 @@ class ClipWorkbenchApp(ToolBase):
             else:
                 self.master.after(0, self._set_status,
                                   tr("tool.clip.status_done").format(
-                                      n=len(paths), json=json_path))
+                                      n=len(paths), out_dir=out_dir))
                 self.set_done()
         except Exception as e:
             self.master.after(0, self._set_status, f"✗ {e}")

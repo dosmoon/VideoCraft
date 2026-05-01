@@ -1255,7 +1255,7 @@
   "tool.clip.status_clip_added": "Clip #{id} added",
   "tool.clip.status_crop_applied": "Applied current crop to {n} clips",
   "tool.clip.status_exporting": "Exporting {n}/{total} ({pct}%)",
-  "tool.clip.status_done": "✓ Exported {n} clips → {json}",
+  "tool.clip.status_done": "✓ Exported {n} clips → {out_dir}",
   "tool.clip.status_cancelled": "Cancelled",
   "tool.clip.warn_no_srt_for_snap": "No SRT loaded — cannot snap",
   "tool.clip.warn_bad_range": "Invalid range (end must be > start)",
@@ -1274,5 +1274,17 @@
   "tool.clip.preview_range": "→ Clip absolute range: {start} – {end}  ({dur}s)",
   "tool.clip.restore_prompt": "Found {n} clip drafts at\n{path}\nRestore?",
   "tool.clip.status_restored": "✓ Restored {n} clip drafts",
-  "tool.clip.btn_reset_center": "Reset to center (9:16)"
+  "tool.clip.btn_reset_center": "Reset to center (9:16)",
+  "tool.clip.section_cut": "Cut (project file)",
+  "tool.clip.btn_new_cut": "New…",
+  "tool.clip.btn_open_cut": "Open…",
+  "tool.clip.btn_save_as_cut": "Save As…",
+  "tool.clip.cut_none": "No cut open — click New or Open to begin; edits auto-save once a cut is loaded",
+  "tool.clip.cut_open": "Current cut: {name}    Path: {path}",
+  "tool.clip.dialog_new_cut": "New cut (pick save location)",
+  "tool.clip.dialog_open_cut": "Open cut",
+  "tool.clip.dialog_save_as_cut": "Save cut as",
+  "tool.clip.status_cut_new": "✓ New cut created: {name}",
+  "tool.clip.status_cut_opened": "✓ Opened {name} ({n} clips)",
+  "tool.clip.status_cut_saved_as": "✓ Saved as: {name}"
 }
