@@ -493,6 +493,7 @@ class ClipWorkbenchApp(ToolBase):
             self._out_dir_var.set(cut.get("output_dir", "") or "")
             self._clips = cut["clips"]
             self._next_clip_id = max((c.id for c in self._clips), default=0) + 1
+            self._ranks = cut.get("ranks") or {}
             # Eagerly load pack chapters + cues so chapters appear immediately.
             pack_path = sources.get("pack_path") or ""
             if pack_path and os.path.isfile(pack_path):
@@ -561,6 +562,7 @@ class ClipWorkbenchApp(ToolBase):
                 },
                 clips=self._clips,
                 output_dir=self._out_dir_var.get().strip(),
+                ranks=self._ranks,
             )
         except Exception as e:
             self._set_status(f"autosave failed: {e}")
@@ -1012,6 +1014,7 @@ class ClipWorkbenchApp(ToolBase):
     def _on_rank_done(self, ranked: list[dict]) -> None:
         self._ranks = {int(r["idx"]): r for r in ranked}
         self._refresh_chapter_tree()
+        self._autosave()
         self._set_status(_tr("tool.clip.status_rank_done").format(
             n=len(ranked)))
 

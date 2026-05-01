@@ -299,12 +299,14 @@ def _hydrate_clip(c: dict) -> ClipDraft:
 
 
 def write_cut_file(path: str, *, name: str, sources: dict,
-                    clips: list[ClipDraft], output_dir: str = "") -> str:
+                    clips: list[ClipDraft], output_dir: str = "",
+                    ranks: dict[int, dict] | None = None) -> str:
     """Persist a self-contained clip-script project file.
 
     The cut file is the unit of persistence — a user-named .json that holds
     everything needed to reopen this edit later: source paths, the output
-    directory preference, and the full clip list.
+    directory preference, the full clip list, and the AI chapter ranks
+    (if any).
     """
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
     payload = {
@@ -317,6 +319,9 @@ def write_cut_file(path: str, *, name: str, sources: dict,
             "srt_path":   sources.get("srt_path", ""),
         },
         "output_dir": output_dir or "",
+        # Ranks stored as a list (JSON dicts can't have int keys reliably).
+        "ranks": [{"idx": int(idx), **{k: v for k, v in r.items() if k != "idx"}}
+                   for idx, r in (ranks or {}).items()],
         "clips": [asdict(c) for c in clips],
     }
     with open(path, "w", encoding="utf-8") as f:
@@ -326,14 +331,24 @@ def write_cut_file(path: str, *, name: str, sources: dict,
 
 def load_cut_file(path: str) -> dict:
     """Read a cut file. Returns dict with keys:
-    name / sources / output_dir / clips (list[ClipDraft])."""
+    name / sources / output_dir / clips (list[ClipDraft]) / ranks (dict)."""
     with open(path, "r", encoding="utf-8") as f:
         payload = json.load(f)
+    ranks_raw = payload.get("ranks") or []
+    ranks: dict[int, dict] = {}
+    for r in ranks_raw:
+        if isinstance(r, dict) and "idx" in r:
+            ranks[int(r["idx"])] = {
+                "idx":    int(r["idx"]),
+                "score":  int(r.get("score", 0)),
+                "reason": str(r.get("reason", "")),
+            }
     return {
         "name": payload.get("name", os.path.splitext(os.path.basename(path))[0]),
         "sources": payload.get("sources") or {},
         "output_dir": payload.get("output_dir", ""),
         "clips": [_hydrate_clip(c) for c in (payload.get("clips") or [])],
+        "ranks": ranks,
     }
 
 
