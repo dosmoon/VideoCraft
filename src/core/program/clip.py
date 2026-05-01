@@ -651,14 +651,22 @@ _PACKAGE_SCHEMA: dict = {
 def _ai_call_json(prompt: str, *, schema: dict, task: str,
                    tier: str = None, cancel_token=None) -> dict:
     """Wrap ai.complete_json with the standard AIError unwrap pattern
-    (mirror core/translate.py and core/srt_ops.py)."""
+    (mirror core/translate.py and core/srt_ops.py).
+
+    Routing: clip.* tasks are aliased to "subtitle.post" so the user's
+    existing AI Console config for subtitle pack work covers clip work
+    too — no separate routing needed. If users later want to split them,
+    add explicit clip.rank / clip.peak / clip.package entries in AI
+    Console → Routing.
+    """
     from core import ai
-    from core.ai.tiers import TIER_STANDARD, TIER_PREMIUM
+    from core.ai.tiers import TIER_STANDARD
     from core.ai.errors import AIError as _AIError
 
     _tier = tier or TIER_STANDARD
+    routed_task = "subtitle.post" if task.startswith("clip.") else task
     try:
-        return ai.complete_json(prompt, schema=schema, task=task,
+        return ai.complete_json(prompt, schema=schema, task=routed_task,
                                  tier=_tier, cancel_token=cancel_token)
     except Exception as e:
         if isinstance(e, _AIError):
