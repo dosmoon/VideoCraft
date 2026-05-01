@@ -1273,5 +1273,6 @@
   "tool.clip.label_chapter_range": "Chapter range: {start} – {end}  ({len})",
   "tool.clip.preview_range": "→ Clip absolute range: {start} – {end}  ({dur}s)",
   "tool.clip.restore_prompt": "Found {n} clip drafts at\n{path}\nRestore?",
-  "tool.clip.status_restored": "✓ Restored {n} clip drafts"
+  "tool.clip.status_restored": "✓ Restored {n} clip drafts",
+  "tool.clip.btn_reset_center": "Reset to center (9:16)"
 }

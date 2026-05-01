@@ -734,17 +734,10 @@ class ClipWorkbenchApp(ToolBase):
         self._export_clip_combo.bind("<<ComboboxSelected>>",
                                       self._on_export_clip_picked)
 
-        self._crop_mode_var = tk.StringVar(value="center")
-        ttk.Label(top, text=_tr("tool.clip.crop_mode")).pack(side="left", padx=(20, 4))
-        ttk.Radiobutton(top, text=_tr("tool.clip.crop_center"),
-                        variable=self._crop_mode_var, value="center",
-                        command=self._on_crop_mode_changed).pack(side="left", padx=2)
-        ttk.Radiobutton(top, text=_tr("tool.clip.crop_manual"),
-                        variable=self._crop_mode_var, value="manual",
-                        command=self._on_crop_mode_changed).pack(side="left", padx=2)
-
+        ttk.Button(top, text=_tr("tool.clip.btn_reset_center"),
+                   command=self._reset_crop_to_center).pack(side="left", padx=(20, 4))
         ttk.Button(top, text=_tr("tool.clip.btn_apply_to_all"),
-                   command=self._apply_crop_to_all).pack(side="left", padx=12)
+                   command=self._apply_crop_to_all).pack(side="left", padx=4)
 
         # Center: crop overlay
         mid = ttk.Frame(f)
@@ -802,32 +795,29 @@ class ClipWorkbenchApp(ToolBase):
         except Exception as e:
             self._set_status(f"keyframe: {e}")
             return
-        # Apply existing rect or center
+        # Apply existing rect or center default. set_rect / reset_to_center
+        # both fire _on_crop_changed via the overlay's _notify; that's fine
+        # — it just persists the rect onto the clip again, no mode mucking.
         if clip.crop_rect:
             self._crop_overlay.set_rect(clip.crop_rect)
-            self._crop_mode_var.set("manual")
         else:
             self._crop_overlay.reset_to_center()
-            self._crop_mode_var.set("center")
 
-    def _on_crop_mode_changed(self) -> None:
+    def _reset_crop_to_center(self) -> None:
+        """Snap the current clip's crop back to a centered 9:16 rect."""
         idx = self._export_clip_combo.current()
         if not (0 <= idx < len(self._clips)):
             return
-        clip = self._clips[idx]
-        if self._crop_mode_var.get() == "center":
-            self._crop_overlay.reset_to_center()
-            clip.crop_rect = self._crop_overlay.get_rect()
-        # manual mode just leaves the rect as-is, user drags it.
+        self._crop_overlay.reset_to_center()
+        # _on_crop_changed will fire via _notify and persist the new rect.
 
     def _on_crop_changed(self, rect: dict) -> None:
+        """Persist whatever rect the overlay currently shows (whether the
+        user dragged or we set it programmatically)."""
         idx = self._export_clip_combo.current()
         if not (0 <= idx < len(self._clips)):
             return
-        clip = self._clips[idx]
-        clip.crop_rect = rect
-        if self._crop_mode_var.get() != "manual":
-            self._crop_mode_var.set("manual")
+        self._clips[idx].crop_rect = dict(rect)
 
     def _apply_crop_to_all(self) -> None:
         rect = self._crop_overlay.get_rect()
