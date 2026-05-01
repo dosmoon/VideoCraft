@@ -158,8 +158,8 @@ class ClipWorkbenchApp(ToolBase):
 
         # Hint: chapter selection happens implicitly — Tab 2 lets user add
         # peaks under any chapter.
-        ttk.Label(f, text=_tr("tool.clip.hint_chapters"),
-                  fg="gray").pack(padx=8, pady=(0, 6), anchor="w")
+        tk.Label(f, text=_tr("tool.clip.hint_chapters"),
+                 fg="gray").pack(padx=8, pady=(0, 6), anchor="w")
 
     def _browse_pack(self) -> None:
         path = filedialog.askopenfilename(
@@ -336,8 +336,8 @@ class ClipWorkbenchApp(ToolBase):
         self._vlc = VlcPlayerFrame(prev_box)
         self._vlc.pack(fill="both", expand=True)
         if not is_vlc_available():
-            ttk.Label(right, text=_tr("tool.clip.hint_no_vlc"),
-                      fg="gray").pack(pady=4)
+            tk.Label(right, text=_tr("tool.clip.hint_no_vlc"),
+                     fg="gray").pack(pady=4)
 
     def _refresh_peaks_chapter_combo(self) -> None:
         labels = [f"#{ch['idx']+1} [{ch['time_str']}] {ch['title']}"
@@ -472,8 +472,8 @@ class ClipWorkbenchApp(ToolBase):
         self._pkg_canvas.pack(side="left", fill="both", expand=True)
         self._pkg_scroll.pack(side="right", fill="y")
 
-        ttk.Label(f, text=_tr("tool.clip.hint_package"),
-                  fg="gray").pack(padx=8, pady=4, anchor="w")
+        tk.Label(f, text=_tr("tool.clip.hint_package"),
+                 fg="gray").pack(padx=8, pady=4, anchor="w")
 
     def _refresh_package_cards(self) -> None:
         for child in self._pkg_inner.winfo_children():
@@ -489,10 +489,10 @@ class ClipWorkbenchApp(ToolBase):
 
         # Excerpt (read-only)
         if clip.original_excerpt:
-            ttk.Label(card, text=clip.original_excerpt[:200],
-                      fg="gray", wraplength=900,
-                      justify="left").grid(row=0, column=0, columnspan=2,
-                                            sticky="w", padx=6, pady=(4, 6))
+            tk.Label(card, text=clip.original_excerpt[:200],
+                     fg="gray", wraplength=900,
+                     justify="left").grid(row=0, column=0, columnspan=2,
+                                          sticky="w", padx=6, pady=(4, 6))
 
         # Hook
         ttk.Label(card, text=_tr("tool.clip.field_hook")).grid(
