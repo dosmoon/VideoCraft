@@ -1279,7 +1279,7 @@
   "tool.clip.btn_new_cut": "新建…",
   "tool.clip.btn_open_cut": "打开…",
   "tool.clip.btn_save_as_cut": "另存为…",
-  "tool.clip.cut_none": "尚未打开剪辑稿 — 点「新建」或「打开」开始；之后所有编辑自动保存",
+  "tool.clip.cut_none": "尚未打开剪辑稿 — 先填好下方源文件，再点「新建」(默认存到 .videocraft/clips/<名字>.json)",
   "tool.clip.cut_open": "当前剪辑: {name}    路径: {path}",
   "tool.clip.dialog_new_cut": "新建剪辑稿（选保存位置）",
   "tool.clip.dialog_open_cut": "打开剪辑稿",

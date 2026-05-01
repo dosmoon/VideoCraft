@@ -1279,7 +1279,7 @@
   "tool.clip.btn_new_cut": "New…",
   "tool.clip.btn_open_cut": "Open…",
   "tool.clip.btn_save_as_cut": "Save As…",
-  "tool.clip.cut_none": "No cut open — click New or Open to begin; edits auto-save once a cut is loaded",
+  "tool.clip.cut_none": "No cut open — fill the source paths below, then click New (defaults to .videocraft/clips/<name>.json)",
   "tool.clip.cut_open": "Current cut: {name}    Path: {path}",
   "tool.clip.dialog_new_cut": "New cut (pick save location)",
   "tool.clip.dialog_open_cut": "Open cut",

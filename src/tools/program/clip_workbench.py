@@ -276,10 +276,58 @@ class ClipWorkbenchApp(ToolBase):
             except tk.TclError:
                 pass
 
+    def _default_cut_dir(self) -> str:
+        """Compute the canonical home for cut files: <project>/.videocraft/clips/.
+
+        Project root is inferred from whichever source path is already set:
+          - pack at <project>/<unit>/output/...    → grandparent's parent
+          - pack at <project>/<unit>/...           → grandparent
+          - video / srt at <project>/<unit>/...    → grandparent
+          - else fallback: <video_or_pack_dir>/.videocraft/clips/
+
+        Always returned as an absolute path; the caller may need to mkdir it
+        before opening a Save dialog targeting initialdir=<this>.
+        """
+        # Try in order of authority: pack (most likely inside an output dir),
+        # then video, then SRT.
+        for path_var in (self._pack_var, self._video_var, self._srt_var):
+            p = path_var.get().strip()
+            if not p or not os.path.isabs(p):
+                continue
+            d = os.path.dirname(p)
+            # Manifest layout: pack in <project>/<unit>/output/, video in
+            # <project>/<unit>/. Walk up the right number of levels to land
+            # on <project>, then store under .videocraft/clips/.
+            if os.path.basename(d).lower() == "output":
+                # <project>/<unit>/output/<file> → up 2 levels to <project>
+                project_root = os.path.dirname(os.path.dirname(d)) or d
+            else:
+                # <project>/<unit>/<file> → up 1 level to <project>
+                project_root = os.path.dirname(d) or d
+            return os.path.join(project_root, ".videocraft", "clips")
+        # Truly nothing set — point at user_data so the file is at least findable
+        try:
+            from core import user_data
+            return user_data.path("clips")
+        except Exception:
+            return os.path.join(os.path.expanduser("~"), "VideoCraft-clips")
+
+    def _suggested_cut_filename(self) -> str:
+        """Default filename for new cuts. Uses video basename if available."""
+        v = self._video_var.get().strip()
+        if v:
+            stem = os.path.splitext(os.path.basename(v))[0]
+            return f"{stem}.json"
+        return "cut.json"
+
     def _on_new_cut(self) -> None:
+        default_dir = self._default_cut_dir()
+        os.makedirs(default_dir, exist_ok=True)
         path = filedialog.asksaveasfilename(
             title=_tr("tool.clip.dialog_new_cut"),
             defaultextension=".json",
+            initialdir=default_dir,
+            initialfile=self._suggested_cut_filename(),
             filetypes=[("Clip cut JSON", "*.json")])
         if not path:
             return
@@ -312,8 +360,10 @@ class ClipWorkbenchApp(ToolBase):
             name=self._cut_name))
 
     def _on_open_cut(self) -> None:
+        default_dir = self._default_cut_dir()
         path = filedialog.askopenfilename(
             title=_tr("tool.clip.dialog_open_cut"),
+            initialdir=default_dir if os.path.isdir(default_dir) else None,
             filetypes=[("Clip cut JSON", "*.json"), ("All", "*.*")])
         if not path:
             return
@@ -367,9 +417,12 @@ class ClipWorkbenchApp(ToolBase):
         if not self._has_cut():
             self._on_new_cut()
             return
+        default_dir = self._default_cut_dir()
+        os.makedirs(default_dir, exist_ok=True)
         path = filedialog.asksaveasfilename(
             title=_tr("tool.clip.dialog_save_as_cut"),
             defaultextension=".json",
+            initialdir=default_dir,
             initialfile=f"{self._cut_name}.json",
             filetypes=[("Clip cut JSON", "*.json")])
         if not path:
