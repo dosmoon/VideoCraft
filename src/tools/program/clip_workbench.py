@@ -366,20 +366,39 @@ class ClipWorkbenchApp(ToolBase):
             state="readonly", width=50)
         self._peaks_chapter_combo.grid(row=0, column=1, columnspan=3,
                                        sticky="we", padx=4)
+        self._peaks_chapter_combo.bind(
+            "<<ComboboxSelected>>", self._on_peak_chapter_changed)
 
-        ttk.Label(add_box, text=_tr("tool.clip.field_start")).grid(
-            row=1, column=0, sticky="e", padx=4)
-        self._peaks_start_var = tk.StringVar(value="00:00:00")
-        ttk.Entry(add_box, textvariable=self._peaks_start_var, width=12).grid(
-            row=1, column=1, sticky="w", padx=4)
-        ttk.Label(add_box, text=_tr("tool.clip.field_end")).grid(
-            row=1, column=2, sticky="e", padx=4)
-        self._peaks_end_var = tk.StringVar(value="00:00:30")
-        ttk.Entry(add_box, textvariable=self._peaks_end_var, width=12).grid(
-            row=1, column=3, sticky="w", padx=4)
+        # Chapter context label (range + length) — updates as chapter switches
+        self._peaks_chapter_info = tk.StringVar(value="")
+        tk.Label(add_box, textvariable=self._peaks_chapter_info,
+                 fg="gray").grid(row=1, column=0, columnspan=4,
+                                  sticky="w", padx=8, pady=(0, 4))
+
+        # Two simple inputs: offset within chapter + clip duration (seconds)
+        ttk.Label(add_box, text=_tr("tool.clip.field_offset")).grid(
+            row=2, column=0, sticky="e", padx=4)
+        self._peaks_offset_var = tk.IntVar(value=0)
+        ttk.Spinbox(add_box, from_=0, to=99999, increment=5,
+                     textvariable=self._peaks_offset_var, width=8).grid(
+            row=2, column=1, sticky="w", padx=4)
+        ttk.Label(add_box, text=_tr("tool.clip.field_duration_sec")).grid(
+            row=2, column=2, sticky="e", padx=4)
+        self._peaks_dur_var = tk.IntVar(value=45)
+        ttk.Spinbox(add_box, from_=5, to=600, increment=5,
+                     textvariable=self._peaks_dur_var, width=8).grid(
+            row=2, column=3, sticky="w", padx=4)
+
+        # Live "computed range" preview line
+        self._peaks_preview = tk.StringVar(value="")
+        tk.Label(add_box, textvariable=self._peaks_preview,
+                 fg="#2563eb").grid(row=3, column=0, columnspan=4,
+                                     sticky="w", padx=8, pady=(2, 0))
+        for v in (self._peaks_offset_var, self._peaks_dur_var):
+            v.trace_add("write", lambda *_a: self._refresh_peak_preview())
 
         btn_row = ttk.Frame(add_box)
-        btn_row.grid(row=2, column=0, columnspan=4, sticky="we", pady=4)
+        btn_row.grid(row=4, column=0, columnspan=4, sticky="we", pady=4)
         ttk.Button(btn_row, text=_tr("tool.clip.btn_snap"),
                    command=self._snap_peak_inputs).pack(side="left", padx=4)
         ttk.Button(btn_row, text=_tr("tool.clip.btn_add_clip"),
@@ -425,6 +444,7 @@ class ClipWorkbenchApp(ToolBase):
         self._peaks_chapter_combo["values"] = labels
         if labels and not self._peaks_chapter_var.get():
             self._peaks_chapter_combo.current(0)
+        self._on_peak_chapter_changed()
 
     def _selected_chapter(self) -> dict | None:
         if not self._peaks_chapter_var.get() or not self._chapters:
@@ -437,18 +457,66 @@ class ClipWorkbenchApp(ToolBase):
             pass
         return None
 
+    def _on_peak_chapter_changed(self, _event=None) -> None:
+        ch = self._selected_chapter()
+        if ch is None:
+            self._peaks_chapter_info.set("")
+            self._peaks_preview.set("")
+            return
+        ch_dur = max(0, int(ch["end_sec"] - ch["start_sec"]))
+        m, s = divmod(ch_dur, 60)
+        self._peaks_chapter_info.set(_tr("tool.clip.label_chapter_range").format(
+            start=_seconds_to_str(ch["start_sec"]),
+            end=_seconds_to_str(ch["end_sec"]),
+            len=f"{m}:{s:02d}"))
+        # Clamp default duration to chapter length
+        if self._peaks_dur_var.get() > ch_dur > 5:
+            self._peaks_dur_var.set(min(60, ch_dur))
+        self._refresh_peak_preview()
+
+    def _peak_absolute_range(self) -> tuple[float, float] | None:
+        """Compute (start_sec, end_sec) absolute from chapter + offset + dur."""
+        ch = self._selected_chapter()
+        if ch is None:
+            return None
+        try:
+            offset = max(0, int(self._peaks_offset_var.get()))
+            dur = max(1, int(self._peaks_dur_var.get()))
+        except (tk.TclError, ValueError):
+            return None
+        ch_start = float(ch["start_sec"])
+        ch_end = float(ch["end_sec"])
+        s = min(ch_start + offset, ch_end - 1)
+        e = min(s + dur, ch_end)
+        if e <= s:
+            return None
+        return (s, e)
+
+    def _refresh_peak_preview(self) -> None:
+        rng = self._peak_absolute_range()
+        if rng is None:
+            self._peaks_preview.set("")
+            return
+        s, e = rng
+        self._peaks_preview.set(_tr("tool.clip.preview_range").format(
+            start=_seconds_to_str(s), end=_seconds_to_str(e),
+            dur=int(e - s)))
+
     def _snap_peak_inputs(self) -> None:
         if not self._cues:
             self._set_status(_tr("tool.clip.warn_no_srt_for_snap"))
             return
-        s = _str_to_seconds(self._peaks_start_var.get())
-        e = _str_to_seconds(self._peaks_end_var.get())
-        if s is None or e is None or e <= s:
+        rng = self._peak_absolute_range()
+        if rng is None:
             self._set_status(_tr("tool.clip.warn_bad_range"))
             return
+        s, e = rng
         s2, e2 = cliplib.snap_to_cue_boundaries(self._cues, s, e)
-        self._peaks_start_var.set(_seconds_to_str(s2))
-        self._peaks_end_var.set(_seconds_to_str(e2))
+        ch = self._selected_chapter()
+        if ch is not None:
+            self._peaks_offset_var.set(max(0, int(s2 - ch["start_sec"])))
+            self._peaks_dur_var.set(max(1, int(e2 - s2)))
+        self._refresh_peak_preview()
         self._set_status(_tr("tool.clip.status_snapped"))
 
     def _add_clip_from_inputs(self) -> None:
@@ -456,11 +524,11 @@ class ClipWorkbenchApp(ToolBase):
         if ch is None:
             self._set_status(_tr("tool.clip.warn_pick_chapter"))
             return
-        s = _str_to_seconds(self._peaks_start_var.get())
-        e = _str_to_seconds(self._peaks_end_var.get())
-        if s is None or e is None or e <= s:
+        rng = self._peak_absolute_range()
+        if rng is None:
             self._set_status(_tr("tool.clip.warn_bad_range"))
             return
+        s, e = rng
         # Pull excerpt from cues if available
         excerpt = ""
         if self._cues:

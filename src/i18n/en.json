@@ -1267,5 +1267,9 @@
   "tool.clip.dialog_pick_pack": "Pick postprocess.json",
   "tool.clip.dialog_pick_video": "Pick video",
   "tool.clip.dialog_pick_srt": "Pick SRT",
-  "tool.clip.dialog_pick_out_dir": "Pick output directory"
+  "tool.clip.dialog_pick_out_dir": "Pick output directory",
+  "tool.clip.field_offset": "Offset within chapter (s)",
+  "tool.clip.field_duration_sec": "Duration (s)",
+  "tool.clip.label_chapter_range": "Chapter range: {start} – {end}  ({len})",
+  "tool.clip.preview_range": "→ Clip absolute range: {start} – {end}  ({dur}s)"
 }

@@ -1267,5 +1267,9 @@
   "tool.clip.dialog_pick_pack": "选择 postprocess.json",
   "tool.clip.dialog_pick_video": "选择视频",
   "tool.clip.dialog_pick_srt": "选择 SRT 字幕",
-  "tool.clip.dialog_pick_out_dir": "选择输出目录"
+  "tool.clip.dialog_pick_out_dir": "选择输出目录",
+  "tool.clip.field_offset": "章节内偏移 (秒)",
+  "tool.clip.field_duration_sec": "时长 (秒)",
+  "tool.clip.label_chapter_range": "章节范围: {start} – {end}  (共 {len})",
+  "tool.clip.preview_range": "→ 切片绝对范围: {start} – {end}  ({dur}s)"
 }
