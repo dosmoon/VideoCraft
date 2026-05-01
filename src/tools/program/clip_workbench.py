@@ -907,10 +907,20 @@ class ClipWorkbenchApp(ToolBase):
         clip = next((c for c in self._clips if c.id == cid), None)
         if clip is None:
             return
-        if self._vlc.is_available():
-            self._vlc.load(self._video_path)
-            # Seek shortly after load — VLC needs a tick to set duration
-            self._vlc.master.after(500, lambda: self._vlc.seek(clip.start_sec))
+        if not self._vlc.is_available():
+            return
+        # Only re-load when the source video actually changed; otherwise
+        # VLC.load() restarts from 0 and its 200ms _show_first_frame callback
+        # races our seek (visible as "jumps to target then snaps back to 0").
+        already_loaded = (
+            getattr(self._vlc, "_loaded_path", None) == self._video_path)
+        if already_loaded:
+            self._vlc.seek(clip.start_sec)
+            return
+        self._vlc.load(self._video_path)
+        # Wait long enough for VLC's _show_first_frame (200ms) to settle
+        # before issuing our seek, so it doesn't get clobbered.
+        self._vlc.master.after(800, lambda: self._vlc.seek(clip.start_sec))
 
     # ── Tab 3: package ────────────────────────────────────────────────────
 
