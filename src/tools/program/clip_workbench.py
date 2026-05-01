@@ -7,6 +7,7 @@ buttons. Architecture follows docs/draft/program-script-clip.md.
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import tkinter as tk
@@ -201,34 +202,113 @@ class ClipWorkbenchApp(ToolBase):
         self._pack_path = pack_path
         self._pack_var.set(pack_path)
 
-        # Heuristic: video next to pack file (drop -postprocess suffix).
-        if not self._video_var.get():
-            base = pack_path
-            for suffix in ("-postprocess.json", ".json"):
-                if base.endswith(suffix):
-                    base = base[: -len(suffix)]
-                    break
-            for ext in (".mp4", ".mkv", ".mov", ".webm"):
-                cand = base + ext
-                if os.path.exists(cand):
-                    self._video_var.set(cand)
-                    break
-            # Also try parent canonical (manifest unit layout: pack lives in
-            # output/ and the canonical mp4 is the parent dir's <basename>.mp4)
-            if not self._video_var.get():
-                parent = os.path.dirname(os.path.dirname(pack_path))
-                stem = os.path.basename(parent)
-                cand = os.path.join(parent, f"{stem}.mp4")
-                if os.path.exists(cand):
-                    self._video_var.set(cand)
+        # Resolve video + SRT from the unit's manifest (authoritative).
+        # Layout: <project>/<basename>/output/<basename>-postprocess.json
+        # Manifest at: <project>/.videocraft/manifests/<basename>.json
+        video_from_manifest, srt_from_manifest = self._resolve_from_manifest(pack_path)
 
-        # Heuristic: SRT next to pack (any -<lang>.srt).
+        if not self._video_var.get() and video_from_manifest:
+            self._video_var.set(video_from_manifest)
+        if not self._srt_var.get() and srt_from_manifest:
+            self._srt_var.set(srt_from_manifest)
+
+        # Heuristic fallback (for packs not produced by project workbench)
+        if not self._video_var.get():
+            self._fallback_find_video(pack_path)
         if not self._srt_var.get():
-            for fname in os.listdir(os.path.dirname(pack_path) or "."):
-                if fname.endswith(".srt"):
-                    self._srt_var.set(os.path.join(
-                        os.path.dirname(pack_path), fname))
+            self._fallback_find_srt(pack_path)
+
+    def _resolve_from_manifest(self, pack_path: str
+                                ) -> tuple[str | None, str | None]:
+        """Walk up from <project>/<basename>/output/<basename>-postprocess.json
+        to <project>/.videocraft/manifests/<basename>.json, then read step
+        outputs to find canonical video + best SRT."""
+        try:
+            output_dir = os.path.dirname(pack_path)         # <project>/<basename>/output
+            unit_dir = os.path.dirname(output_dir)          # <project>/<basename>
+            project_dir = os.path.dirname(unit_dir)         # <project>
+            basename = os.path.basename(unit_dir)
+            manifest_path = os.path.join(
+                project_dir, ".videocraft", "manifests", f"{basename}.json")
+            if not os.path.isfile(manifest_path):
+                return (None, None)
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+        except Exception:
+            return (None, None)
+
+        def _abs(p: str) -> str:
+            return p if os.path.isabs(p) else os.path.join(project_dir, p)
+
+        video: str | None = None
+        srt: str | None = None
+
+        # Video: prefer step2 canonical, fall back to step1 raw
+        for sk in ("step2_asr", "step1_download"):
+            step = manifest.get(sk) or {}
+            for out in (step.get("output") or []):
+                cand = _abs(str(out))
+                if cand.lower().endswith((".mp4", ".mkv", ".mov", ".webm")) \
+                        and os.path.isfile(cand):
+                    video = cand
                     break
+            if video:
+                break
+
+        # SRT: prefer step3 translated, fall back to step2 ASR, then step1 manual
+        for sk in ("step3_translate", "step2_asr"):
+            step = manifest.get(sk) or {}
+            for out in (step.get("output") or []):
+                cand = _abs(str(out))
+                if cand.lower().endswith(".srt") and os.path.isfile(cand):
+                    srt = cand
+                    break
+            if srt:
+                break
+        if srt is None:
+            step1 = manifest.get("step1_download") or {}
+            for sub in (step1.get("subtitles") or []):
+                if isinstance(sub, dict) and sub.get("path"):
+                    cand = _abs(str(sub["path"]))
+                    if os.path.isfile(cand):
+                        srt = cand
+                        break
+
+        return (video, srt)
+
+    def _fallback_find_video(self, pack_path: str) -> None:
+        """Heuristic for non-manifest packs: drop -postprocess.json, try
+        common video extensions in same dir or parent dir."""
+        base = pack_path
+        for suffix in ("-postprocess.json", ".json"):
+            if base.endswith(suffix):
+                base = base[: -len(suffix)]
+                break
+        for ext in (".mp4", ".mkv", ".mov", ".webm"):
+            cand = base + ext
+            if os.path.exists(cand):
+                self._video_var.set(cand)
+                return
+        parent = os.path.dirname(os.path.dirname(pack_path))
+        stem = os.path.basename(parent)
+        for ext in (".mp4", ".mkv", ".mov", ".webm"):
+            cand = os.path.join(parent, f"{stem}{ext}")
+            if os.path.exists(cand):
+                self._video_var.set(cand)
+                return
+
+    def _fallback_find_srt(self, pack_path: str) -> None:
+        """Heuristic for non-manifest packs: any .srt in pack dir or
+        parent's subtitles/ subdir."""
+        for d in (os.path.dirname(pack_path),
+                  os.path.join(os.path.dirname(os.path.dirname(pack_path)),
+                                "subtitles")):
+            if not os.path.isdir(d):
+                continue
+            for fname in sorted(os.listdir(d)):
+                if fname.lower().endswith(".srt"):
+                    self._srt_var.set(os.path.join(d, fname))
+                    return
 
         # Probe video for duration / resolution
         self._video_path = self._video_var.get().strip()
