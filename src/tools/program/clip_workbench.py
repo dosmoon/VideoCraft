@@ -386,33 +386,65 @@ class ClipWorkbenchApp(ToolBase):
         self._set_status(_tr("tool.clip.status_cut_new").format(
             name=self._cut_name))
 
+    def _collect_existing_cuts(self) -> list[tuple[str, str]]:
+        """Find all cut files across the user's known projects.
+
+        Returns a list of (display_label, absolute_path) tuples. We scan:
+          1. The current default cut dir (if any source is set)
+          2. All recent project folders' .videocraft/clips/ subdirs
+
+        De-duplicates by absolute path. Display label is "<project> · <name>"
+        for recent-project hits, plain "<name>" for the current project.
+        """
+        items: list[tuple[str, str]] = []
+        seen: set[str] = set()
+
+        def _scan(cdir: str, proj_label: str | None) -> None:
+            if not os.path.isdir(cdir):
+                return
+            for fname in sorted(os.listdir(cdir)):
+                if not fname.lower().endswith(".json"):
+                    continue
+                full = os.path.abspath(os.path.join(cdir, fname))
+                if full in seen:
+                    continue
+                seen.add(full)
+                stem = os.path.splitext(fname)[0]
+                label = f"{proj_label} · {stem}" if proj_label else stem
+                items.append((label, full))
+
+        # 1. Current project (only if any source is filled)
+        if self._has_any_source():
+            _scan(self._default_cut_dir(), None)
+
+        # 2. Recent projects
+        try:
+            from project import get_recent_projects
+            for proj in get_recent_projects():
+                _scan(os.path.join(proj, ".videocraft", "clips"),
+                       os.path.basename(proj))
+        except Exception:
+            pass
+        return items
+
     def _on_open_cut(self) -> None:
-        if not self._has_any_source():
-            messagebox.showerror(_tr("tool.clip.title"),
-                                  _tr("tool.clip.warn_need_sources"))
-            return
-        cut_dir = self._default_cut_dir()
-        if not os.path.isdir(cut_dir):
+        items = self._collect_existing_cuts()
+        if not items:
             messagebox.showinfo(_tr("tool.clip.title"),
                                  _tr("tool.clip.info_no_cuts_yet"))
             return
-        names = sorted(f for f in os.listdir(cut_dir)
-                        if f.lower().endswith(".json"))
-        if not names:
-            messagebox.showinfo(_tr("tool.clip.title"),
-                                 _tr("tool.clip.info_no_cuts_yet"))
-            return
-        picked = self._show_cut_picker(names)
+        picked = self._show_cut_picker(items)
         if not picked:
             return
-        self._open_cut_path(os.path.join(cut_dir, picked))
+        self._open_cut_path(picked)
 
-    def _show_cut_picker(self, filenames: list[str]) -> str | None:
-        """Modal listbox of cut filenames (display name strips .json)."""
+    def _show_cut_picker(self, items: list[tuple[str, str]]) -> str | None:
+        """Modal listbox of cuts. items = [(display_label, full_path)].
+        Returns the chosen full_path, or None on cancel."""
         dlg = tk.Toplevel(self.master)
         dlg.title(_tr("tool.clip.dialog_pick_cut"))
         dlg.transient(self.master)
-        dlg.geometry("400x320")
+        dlg.geometry("500x360")
         dlg.grab_set()
 
         tk.Label(dlg, text=_tr("tool.clip.dialog_pick_cut_hint"),
@@ -427,8 +459,8 @@ class ClipWorkbenchApp(ToolBase):
         listbox.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
 
-        for fname in filenames:
-            listbox.insert("end", os.path.splitext(fname)[0])
+        for label, _path in items:
+            listbox.insert("end", label)
         listbox.selection_set(0)
         listbox.activate(0)
         listbox.focus_set()
@@ -438,7 +470,7 @@ class ClipWorkbenchApp(ToolBase):
         def on_ok():
             sel = listbox.curselection()
             if sel:
-                result["v"] = filenames[sel[0]]
+                result["v"] = items[sel[0]][1]
             dlg.destroy()
 
         def on_cancel():
