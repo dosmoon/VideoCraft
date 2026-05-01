@@ -218,6 +218,26 @@ class ClipWorkbenchApp(ToolBase):
         if not self._srt_var.get():
             self._fallback_find_srt(pack_path)
 
+        # Probe video for duration / resolution
+        self._video_path = self._video_var.get().strip()
+        self._srt_path = self._srt_var.get().strip()
+        if self._video_path and os.path.isfile(self._video_path):
+            self._video_duration = cliplib.probe_duration(self._video_path)
+            self._video_w, self._video_h = cliplib.probe_resolution(self._video_path)
+        # Build chapters
+        self._chapters = cliplib.list_chapters(self._pack, self._video_duration)
+        # Load cues for snapping
+        if self._srt_path and os.path.isfile(self._srt_path):
+            try:
+                self._cues = cliplib.load_cues(self._srt_path)
+            except Exception:
+                self._cues = []
+
+        self._refresh_chapter_tree()
+        self._refresh_peaks_chapter_combo()
+        self._set_status(_tr("tool.clip.status_loaded").format(
+            n=len(self._chapters)))
+
     def _resolve_from_manifest(self, pack_path: str
                                 ) -> tuple[str | None, str | None]:
         """Walk up from <project>/<basename>/output/<basename>-postprocess.json
@@ -309,26 +329,6 @@ class ClipWorkbenchApp(ToolBase):
                 if fname.lower().endswith(".srt"):
                     self._srt_var.set(os.path.join(d, fname))
                     return
-
-        # Probe video for duration / resolution
-        self._video_path = self._video_var.get().strip()
-        self._srt_path = self._srt_var.get().strip()
-        if self._video_path and os.path.isfile(self._video_path):
-            self._video_duration = cliplib.probe_duration(self._video_path)
-            self._video_w, self._video_h = cliplib.probe_resolution(self._video_path)
-        # Build chapters
-        self._chapters = cliplib.list_chapters(self._pack, self._video_duration)
-        # Load cues for snapping
-        if self._srt_path and os.path.isfile(self._srt_path):
-            try:
-                self._cues = cliplib.load_cues(self._srt_path)
-            except Exception:
-                self._cues = []
-
-        self._refresh_chapter_tree()
-        self._refresh_peaks_chapter_combo()
-        self._set_status(_tr("tool.clip.status_loaded").format(
-            n=len(self._chapters)))
 
     def _refresh_chapter_tree(self) -> None:
         for iid in self._chap_tree.get_children():
