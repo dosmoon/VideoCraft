@@ -1017,11 +1017,12 @@ class ClipWorkbenchApp(ToolBase):
         if self._out_dir_var.get().strip():
             return self._out_dir_var.get().strip()
         if self._project_root and self._cut_name:
-            return os.path.join(self._project_root, self._cut_name, "output")
+            return os.path.join(self._project_root,
+                                f"clip_{self._cut_name}", "output")
         # Fallback for the (rare) case of no project — write next to cut file.
         if self._cut_path and self._cut_name:
             return os.path.join(os.path.dirname(self._cut_path),
-                                 self._cut_name, "output")
+                                 f"clip_{self._cut_name}", "output")
         return os.path.join(os.path.dirname(self._video_path) or ".", "clips")
 
     def _refresh_out_dir(self) -> None:
@@ -1029,10 +1030,11 @@ class ClipWorkbenchApp(ToolBase):
         Called after New / Open so the field reflects where files will land.
         Computes the default fresh (ignoring any existing user value)."""
         if self._project_root and self._cut_name:
-            target = os.path.join(self._project_root, self._cut_name, "output")
+            target = os.path.join(self._project_root,
+                                   f"clip_{self._cut_name}", "output")
         elif self._cut_path and self._cut_name:
             target = os.path.join(os.path.dirname(self._cut_path),
-                                   self._cut_name, "output")
+                                   f"clip_{self._cut_name}", "output")
         else:
             return
         self._suspend_autosave = True
