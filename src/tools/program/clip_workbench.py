@@ -349,8 +349,11 @@ class ClipWorkbenchApp(ToolBase):
             self._refresh_clips_tree()
             self._refresh_package_cards()
             self._refresh_export_clip_combo()
+            # Force-clear out_dir so _refresh_out_dir picks up the new default
+            self._out_dir_var.set("")
         finally:
             self._suspend_autosave = False
+        self._refresh_out_dir()
         self._refresh_cut_state()
         self._autosave()    # write the empty cut so the file exists
         self._set_status(_tr("tool.clip.status_cut_new").format(
@@ -469,8 +472,12 @@ class ClipWorkbenchApp(ToolBase):
             self._refresh_clips_tree()
             self._refresh_package_cards()
             self._refresh_export_clip_combo()
+            # If the cut didn't carry an output_dir (legacy / blank), recompute
+            if not self._out_dir_var.get().strip():
+                self._out_dir_var.set("")    # ensure trace fires below
         finally:
             self._suspend_autosave = False
+        self._refresh_out_dir()
         self._refresh_cut_state()
         self._set_status(_tr("tool.clip.status_cut_opened").format(
             name=self._cut_name, n=len(self._clips)))
@@ -918,6 +925,7 @@ class ClipWorkbenchApp(ToolBase):
         bot.pack(fill="x", padx=6, pady=6)
         ttk.Label(bot, text=_tr("tool.clip.label_output_dir")).pack(side="left", padx=4)
         self._out_dir_var = tk.StringVar()
+        self._out_dir_var.trace_add("write", lambda *_a: self._autosave())
         ttk.Entry(bot, textvariable=self._out_dir_var, width=50).pack(side="left", padx=4)
         ttk.Button(bot, text=_tr("tool.clip.btn_browse"),
                    command=self._browse_out_dir).pack(side="left", padx=2)
@@ -1001,14 +1009,37 @@ class ClipWorkbenchApp(ToolBase):
             self._out_dir_var.set(d)
 
     def _default_out_dir(self) -> str:
+        """Authoritative output dir: <project>/<cut_name>/output/.
+
+        User-set value (if any) wins. Otherwise we always auto-compute from
+        the project root + cut name so the user never needs to fiddle with
+        Tab 4 paths."""
         if self._out_dir_var.get().strip():
             return self._out_dir_var.get().strip()
-        # Default: <cut_dir>/<cut_name>/
-        if self._cut_path:
-            return os.path.join(os.path.dirname(self._cut_path), self._cut_name)
-        if self._pack_path:
-            return os.path.join(os.path.dirname(self._pack_path), "clips")
+        if self._project_root and self._cut_name:
+            return os.path.join(self._project_root, self._cut_name, "output")
+        # Fallback for the (rare) case of no project — write next to cut file.
+        if self._cut_path and self._cut_name:
+            return os.path.join(os.path.dirname(self._cut_path),
+                                 self._cut_name, "output")
         return os.path.join(os.path.dirname(self._video_path) or ".", "clips")
+
+    def _refresh_out_dir(self) -> None:
+        """Auto-fill the Tab 4 output dir entry from the current default.
+        Called after New / Open so the field reflects where files will land.
+        Computes the default fresh (ignoring any existing user value)."""
+        if self._project_root and self._cut_name:
+            target = os.path.join(self._project_root, self._cut_name, "output")
+        elif self._cut_path and self._cut_name:
+            target = os.path.join(os.path.dirname(self._cut_path),
+                                   self._cut_name, "output")
+        else:
+            return
+        self._suspend_autosave = True
+        try:
+            self._out_dir_var.set(target)
+        finally:
+            self._suspend_autosave = False
 
     # ── Export worker ─────────────────────────────────────────────────────
 
