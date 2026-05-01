@@ -80,6 +80,7 @@ class ClipWorkbenchApp(ToolBase):
         self._notebook.add(self._tab_peaks,   text=_tr("tool.clip.tab_peaks"))
         self._notebook.add(self._tab_package, text=_tr("tool.clip.tab_package"))
         self._notebook.add(self._tab_export,  text=_tr("tool.clip.tab_export"))
+        self._notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
         self._build_tab_setup()
         self._build_tab_peaks()
@@ -553,6 +554,7 @@ class ClipWorkbenchApp(ToolBase):
         self._clips.append(clip)
         self._refresh_clips_tree()
         self._refresh_package_cards()
+        self._refresh_export_clip_combo()
         self._set_status(_tr("tool.clip.status_clip_added").format(
             id=clip.id))
 
@@ -568,6 +570,7 @@ class ClipWorkbenchApp(ToolBase):
         self._clips = [c for c in self._clips if c.id != cid]
         self._refresh_clips_tree()
         self._refresh_package_cards()
+        self._refresh_export_clip_combo()
 
     def _refresh_clips_tree(self) -> None:
         for iid in self._clips_tree.get_children():
@@ -895,8 +898,17 @@ class ClipWorkbenchApp(ToolBase):
         except Exception:
             pass
 
-    def _peaks_chapter_picked(self, *_a):
-        self._refresh_export_clip_combo()
+    def _on_tab_changed(self, _event=None) -> None:
+        """Refresh whichever tab the user just switched to so it reflects
+        clips added on other tabs."""
+        try:
+            tab = self._notebook.index(self._notebook.select())
+        except Exception:
+            return
+        if tab == 2:        # package
+            self._refresh_package_cards()
+        elif tab == 3:      # export
+            self._refresh_export_clip_combo()
 
 
 # ── Standalone run ──────────────────────────────────────────────────────────
