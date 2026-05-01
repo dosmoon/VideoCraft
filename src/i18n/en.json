@@ -1296,5 +1296,15 @@
   "tool.clip.warn_empty_name": "Name cannot be empty or only invalid chars",
   "tool.clip.confirm_overwrite": "Cut '{name}' exists. Overwrite?",
   "tool.clip.info_no_cuts_yet": "No cuts yet for this project — click New to create one",
-  "tool.clip.warn_no_project": "Open a project folder in the Hub first (File → Open folder)"
+  "tool.clip.warn_no_project": "Open a project folder in the Hub first (File → Open folder)",
+  "tool.clip.btn_ai_rank": "Refresh AI Ranking",
+  "tool.clip.btn_ai_peaks": "AI Find Peaks (this chapter)",
+  "tool.clip.btn_ai_package": "AI Generate Copy",
+  "tool.clip.col_ai_score": "AI Score",
+  "tool.clip.col_ai_reason": "Reason",
+  "tool.clip.status_rank_done": "✓ Ranked {n} chapters",
+  "tool.clip.status_peaks_done": "✓ Added {n} clips to [{ch}]",
+  "tool.clip.status_pkg_done": "✓ Generated copy for clip #{id}",
+  "tool.clip.warn_no_pack_loaded": "Load Pack JSON first",
+  "tool.clip.warn_no_paragraphs": "paragraphs.txt not found at: {path}"
 }

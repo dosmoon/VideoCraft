@@ -1296,5 +1296,15 @@
   "tool.clip.warn_empty_name": "名字不能为空或全是非法字符",
   "tool.clip.confirm_overwrite": "剪辑稿 '{name}' 已存在，覆盖？",
   "tool.clip.info_no_cuts_yet": "当前项目尚无剪辑稿，请点「新建」创建一个",
-  "tool.clip.warn_no_project": "请先在 Hub 主界面打开一个项目文件夹（File → 打开文件夹）"
+  "tool.clip.warn_no_project": "请先在 Hub 主界面打开一个项目文件夹（File → 打开文件夹）",
+  "tool.clip.btn_ai_rank": "刷新 AI 排序",
+  "tool.clip.btn_ai_peaks": "AI 找峰 (本章节)",
+  "tool.clip.btn_ai_package": "AI 生成文案",
+  "tool.clip.col_ai_score": "AI 分",
+  "tool.clip.col_ai_reason": "推荐理由",
+  "tool.clip.status_rank_done": "✓ AI 已排序 {n} 个章节",
+  "tool.clip.status_peaks_done": "✓ AI 已加 {n} 条切片到 [{ch}]",
+  "tool.clip.status_pkg_done": "✓ AI 已生成切片 #{id} 文案",
+  "tool.clip.warn_no_pack_loaded": "请先加载 Pack JSON",
+  "tool.clip.warn_no_paragraphs": "未找到 paragraphs.txt，期望路径: {path}"
 }

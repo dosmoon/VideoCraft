@@ -592,6 +592,212 @@ def export_all(
     return out_paths
 
 
+# ── AI (Phase B) ────────────────────────────────────────────────────────────
+
+# JSON schemas for the three AI calls. Each is a strict structured output
+# that the prompt instructs the model to emit verbatim.
+
+_RANK_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "ranked": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "idx": {"type": "integer"},
+                    "score": {"type": "integer"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["idx", "score", "reason"],
+            },
+        }
+    },
+    "required": ["ranked"],
+}
+
+_PEAKS_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "peaks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "start_sec": {"type": "number"},
+                    "end_sec":   {"type": "number"},
+                    "score":     {"type": "integer"},
+                    "reason":    {"type": "string"},
+                },
+                "required": ["start_sec", "end_sec", "score", "reason"],
+            },
+        }
+    },
+    "required": ["peaks"],
+}
+
+_PACKAGE_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "hook":     {"type": "string"},
+        "outro":    {"type": "string"},
+        "title":    {"type": "string"},
+        "hashtags": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["hook", "outro", "title", "hashtags"],
+}
+
+
+def _ai_call_json(prompt: str, *, schema: dict, task: str,
+                   tier: str = None, cancel_token=None) -> dict:
+    """Wrap ai.complete_json with the standard AIError unwrap pattern
+    (mirror core/translate.py and core/srt_ops.py)."""
+    from core import ai
+    from core.ai.tiers import TIER_STANDARD, TIER_PREMIUM
+    from core.ai.errors import AIError as _AIError
+
+    _tier = tier or TIER_STANDARD
+    try:
+        return ai.complete_json(prompt, schema=schema, task=task,
+                                 tier=_tier, cancel_token=cancel_token)
+    except Exception as e:
+        if isinstance(e, _AIError):
+            raise
+        raise RuntimeError(f"AI call failed (task={task}, tier={_tier}): {e}")
+
+
+def rank_chapters(pack: dict, *, cancel_token=None) -> list[dict]:
+    """Score every chapter for highlight potential. Returns a list of
+    dicts {idx, score, reason} sorted descending by score.
+
+    Idempotent — does not mutate pack. The full chapter set is always
+    returned (model is instructed to score every input idx); if the model
+    misses some, those get score=0, reason='' as a safe fallback.
+    """
+    from core import prompts as _prompts
+    from core.ai.tiers import TIER_STANDARD
+
+    raw = pack.get("segments") or []
+    chapter_list = []
+    for idx, seg in enumerate(raw):
+        chapter_list.append({
+            "idx": idx,
+            "title": (seg.get("title") or "").strip(),
+            "refined": (seg.get("refined") or "").strip(),
+        })
+    if not chapter_list:
+        return []
+
+    template = _prompts.get("clip.rank-chapters")
+    prompt = template.replace("{chapter_list}",
+                               json.dumps(chapter_list, ensure_ascii=False, indent=2))
+    result = _ai_call_json(prompt, schema=_RANK_SCHEMA,
+                            task="clip.rank", tier=TIER_STANDARD,
+                            cancel_token=cancel_token)
+    ranked_raw = result.get("ranked") or []
+    by_idx: dict[int, dict] = {
+        int(r["idx"]): {
+            "idx": int(r["idx"]),
+            "score": max(0, min(100, int(r.get("score", 0)))),
+            "reason": str(r.get("reason", "")).strip(),
+        }
+        for r in ranked_raw if isinstance(r, dict) and "idx" in r
+    }
+    out: list[dict] = []
+    for ch in chapter_list:
+        out.append(by_idx.get(ch["idx"],
+                               {"idx": ch["idx"], "score": 0, "reason": ""}))
+    out.sort(key=lambda r: r["score"], reverse=True)
+    return out
+
+
+def find_peaks(pack: dict, chapter_idx: int, paragraphs_txt_path: str,
+                video_duration: float | None = None, *,
+                cancel_token=None) -> list[dict]:
+    """Find 1-3 highlight clip ranges within one chapter. Returns
+    [{start_sec, end_sec, score, reason}] with bounds clamped to the
+    chapter and snapped to nearest cue boundaries (caller-owned cue list
+    not required — this function does its own clamp; snapping happens
+    at the workbench layer where SRT cues are loaded).
+
+    Length policy: 30 ≤ duration ≤ 90 enforced post-AI. Out-of-range
+    peaks are dropped silently."""
+    from core import prompts as _prompts
+    from core.ai.tiers import TIER_STANDARD
+
+    chapters = list_chapters(pack, video_duration)
+    if not (0 <= chapter_idx < len(chapters)):
+        return []
+    ch = chapters[chapter_idx]
+
+    paragraphs = chapter_paragraphs(paragraphs_txt_path, chapter_idx, chapters)
+    if not paragraphs:
+        return []
+
+    template = _prompts.get("clip.find-peaks")
+    prompt = (template
+              .replace("{chapter_title}", ch["title"])
+              .replace("{chapter_refined}", ch["refined"] or "")
+              .replace("{chapter_start_sec}", f"{ch['start_sec']:.1f}")
+              .replace("{chapter_end_sec}",   f"{ch['end_sec']:.1f}")
+              .replace("{chapter_paragraphs}", paragraphs))
+    result = _ai_call_json(prompt, schema=_PEAKS_SCHEMA,
+                            task="clip.peak", tier=TIER_STANDARD,
+                            cancel_token=cancel_token)
+
+    peaks_raw = result.get("peaks") or []
+    out: list[dict] = []
+    for p in peaks_raw:
+        if not isinstance(p, dict):
+            continue
+        try:
+            s = float(p["start_sec"])
+            e = float(p["end_sec"])
+        except (KeyError, ValueError, TypeError):
+            continue
+        # Clamp to chapter bounds
+        s = max(s, ch["start_sec"])
+        e = min(e, ch["end_sec"])
+        if e - s < 30 or e - s > 90:
+            continue
+        out.append({
+            "start_sec": s,
+            "end_sec": e,
+            "score": max(0, min(100, int(p.get("score", 0)))),
+            "reason": str(p.get("reason", "")).strip(),
+        })
+    return out
+
+
+def package_clip(clip: ClipDraft, pack: dict, *,
+                  cancel_token=None) -> dict:
+    """Generate hook / outro / title / hashtags for one clip.
+    Returns {hook, outro, title, hashtags}."""
+    from core import prompts as _prompts
+    from core.ai.tiers import TIER_PREMIUM
+
+    chapters_meta = list_chapters(pack)
+    ch_meta = (chapters_meta[clip.chapter_idx]
+               if 0 <= clip.chapter_idx < len(chapters_meta)
+               else {"title": clip.chapter_title, "refined": ""})
+
+    template = _prompts.get("clip.package")
+    prompt = (template
+              .replace("{chapter_title}", ch_meta.get("title", ""))
+              .replace("{chapter_refined}", ch_meta.get("refined", ""))
+              .replace("{clip_excerpt}", clip.original_excerpt or ""))
+    result = _ai_call_json(prompt, schema=_PACKAGE_SCHEMA,
+                            task="clip.package", tier=TIER_PREMIUM,
+                            cancel_token=cancel_token)
+    return {
+        "hook":     str(result.get("hook", "")).strip(),
+        "outro":    str(result.get("outro", "")).strip(),
+        "title":    str(result.get("title", "")).strip(),
+        "hashtags": [str(t).strip() for t in (result.get("hashtags") or [])
+                      if str(t).strip()],
+    }
+
+
 __all__ = [
     "ClipDraft",
     "load_pack",
@@ -611,4 +817,7 @@ __all__ = [
     "load_clips_json",
     "export_clip",
     "export_all",
+    "rank_chapters",
+    "find_peaks",
+    "package_clip",
 ]

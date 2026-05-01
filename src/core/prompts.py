@@ -124,6 +124,48 @@ DEFAULTS: dict[str, str] = {
         "】"
     ),
 
+    # ── Clip script (Phase B) ────────────────────────────────────────────
+    # Inline copies are intentionally short — the on-disk prompts/clip.*.md
+    # files are the editable source of truth (richer text). These constants
+    # exist for the "Reset to default" code path; if a user nukes the .md
+    # file and clicks Reset, they get this minimal but functional version.
+
+    "clip.rank-chapters": (
+        "你是短视频剪辑师。给定一组视频章节（标题 + 浓缩摘要），"
+        "对每个章节打 0-100 分，判断它是否适合剪成 30-60 秒短视频。\n\n"
+        "评分维度：钩子强度 / 观点密度 / 情绪冲突 / 独立可看懂。\n"
+        "60 分以下不推荐；30 分以下基本不要切（开场/转场/客套）。\n"
+        "评分必须给 reason，一句话 30 字内，要具体不要空话。\n\n"
+        "输入章节列表：\n{chapter_list}\n\n"
+        "输出严格遵循 JSON Schema。输出语言 = 输入语言。"
+        "必须包含每一个 chapter，不漏不重。"
+    ),
+
+    "clip.find-peaks": (
+        "你是短视频剪辑师。在给定章节内找 1-3 个 30-90 秒精彩切点，"
+        "强烈偏好 40-60 秒。\n\n"
+        "判断维度：完整性（有头有尾不切半句）/ 金句靠前 / 避开铺垫 / "
+        "独立可看懂。同章节内多个切点不要重叠。\n\n"
+        "章节: {chapter_title}\n"
+        "浓缩: {chapter_refined}\n"
+        "范围: {chapter_start_sec}s - {chapter_end_sec}s\n\n"
+        "字幕（绝对时间戳）:\n{chapter_paragraphs}\n\n"
+        "输出 start_sec/end_sec 是绝对秒（外层会 snap 到 cue 边界）。"
+        "评分给 reason 40 字内。无亮点可返回空数组。"
+    ),
+
+    "clip.package": (
+        "你是短视频包装文案师。为切片生成 4 件套：\n"
+        "- hook（≤15 中文字/≤8 英词）：开场钩子，前 5s 显示在顶部\n"
+        "- outro（≤20 字/≤12 词）：CTA 或总结，后 5s 显示在底部\n"
+        "- title（≤30 字/≤15 词）：发布标题，不烧到画面\n"
+        "- hashtags：3-5 个相关标签（带 # 前缀）\n\n"
+        "切片所属章节: {chapter_title}\n"
+        "章节浓缩: {chapter_refined}\n"
+        "切片字幕原文:\n{clip_excerpt}\n\n"
+        "禁止编造原片没说过的事实。输出语言 = 输入语言。"
+    ),
+
     "subtitle.pack": (
         "# 一次性生成视频标题、时间戳分段与精炼描述\n"
         "\n"
@@ -159,6 +201,12 @@ PLACEHOLDERS: dict[str, list[str]] = {
     "subtitle.refine":   ["{all_segments_content}"],
     "subtitle.titles":   [],
     "subtitle.pack":     ["{subtitle_content}"],
+    "clip.rank-chapters": ["{chapter_list}"],
+    "clip.find-peaks":   ["{chapter_title}", "{chapter_refined}",
+                           "{chapter_start_sec}", "{chapter_end_sec}",
+                           "{chapter_paragraphs}"],
+    "clip.package":      ["{chapter_title}", "{chapter_refined}",
+                           "{clip_excerpt}"],
 }
 
 

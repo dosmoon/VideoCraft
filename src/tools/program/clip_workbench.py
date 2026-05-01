@@ -22,9 +22,12 @@ except ImportError:
     _PIL_OK = False
 
 from tools.base import ToolBase
+from core.ai.cancellation import CancellationToken
+from core.ai.errors import AIError, Kind
 from core.program import clip as cliplib
 from core.program.clip import ClipDraft
 from core.segment_model import format_timestamp, parse_timestamp
+from ui.ai_error_dialog import show_ai_error
 from ui.crop_overlay import CropOverlay
 from ui.vlc_player import VlcPlayerFrame, is_vlc_available
 
@@ -77,6 +80,9 @@ class ClipWorkbenchApp(ToolBase):
         self._export_thread: threading.Thread | None = None
         self._export_cancel_flag: dict = {"v": False}
         self._suspend_autosave: bool = False    # set during bulk hydration
+        # AI rank results: chapter_idx → {score, reason}; populated by Tab 1
+        # AI button, consumed by _refresh_chapter_tree to fill score columns.
+        self._ranks: dict[int, dict] = {}
 
         # ── Notebook ──────────────────────────────────────────────────────
         self._notebook = ttk.Notebook(master)
@@ -165,24 +171,41 @@ class ClipWorkbenchApp(ToolBase):
 
         top.columnconfigure(1, weight=1)
 
-        # Chapters table
+        # Chapters table + AI rank button on top
         mid = ttk.LabelFrame(f, text=_tr("tool.clip.section_chapters"))
         mid.pack(fill="both", expand=True, padx=6, pady=6)
 
-        cols = ("idx", "time", "duration", "title", "refined")
-        self._chap_tree = ttk.Treeview(mid, columns=cols, show="headings",
+        rank_bar = ttk.Frame(mid)
+        rank_bar.pack(fill="x", padx=4, pady=(2, 4))
+        self._ai_rank_btn = self._make_ai_button(
+            rank_bar,
+            idle_text=_tr("tool.clip.btn_ai_rank"),
+            worker=self._worker_rank_chapters,
+            on_success=self._on_rank_done,
+        )
+        self._ai_rank_btn.pack(side="left")
+
+        tree_holder = ttk.Frame(mid)
+        tree_holder.pack(fill="both", expand=True)
+
+        cols = ("idx", "time", "duration", "title", "refined", "score", "reason")
+        self._chap_tree = ttk.Treeview(tree_holder, columns=cols, show="headings",
                                        selectmode="browse", height=14)
         self._chap_tree.heading("idx",     text="#")
         self._chap_tree.heading("time",    text=_tr("tool.clip.col_time"))
         self._chap_tree.heading("duration",text=_tr("tool.clip.col_duration"))
         self._chap_tree.heading("title",   text=_tr("tool.clip.col_title"))
         self._chap_tree.heading("refined", text=_tr("tool.clip.col_refined"))
+        self._chap_tree.heading("score",   text=_tr("tool.clip.col_ai_score"))
+        self._chap_tree.heading("reason",  text=_tr("tool.clip.col_ai_reason"))
         self._chap_tree.column("idx",     width=40,  anchor="center")
         self._chap_tree.column("time",    width=80,  anchor="center")
-        self._chap_tree.column("duration",width=80,  anchor="center")
-        self._chap_tree.column("title",   width=220, anchor="w")
-        self._chap_tree.column("refined", width=520, anchor="w")
-        sb = ttk.Scrollbar(mid, orient="vertical", command=self._chap_tree.yview)
+        self._chap_tree.column("duration",width=70,  anchor="center")
+        self._chap_tree.column("title",   width=180, anchor="w")
+        self._chap_tree.column("refined", width=320, anchor="w")
+        self._chap_tree.column("score",   width=60,  anchor="center")
+        self._chap_tree.column("reason",  width=260, anchor="w")
+        sb = ttk.Scrollbar(tree_holder, orient="vertical", command=self._chap_tree.yview)
         self._chap_tree.configure(yscrollcommand=sb.set)
         self._chap_tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
@@ -531,16 +554,24 @@ class ClipWorkbenchApp(ToolBase):
     def _refresh_chapter_tree(self) -> None:
         for iid in self._chap_tree.get_children():
             self._chap_tree.delete(iid)
-        for ch in self._chapters:
+        # Sort by AI score desc when ranks are available; otherwise time order.
+        ordered = sorted(
+            self._chapters,
+            key=lambda c: -self._ranks.get(c["idx"], {}).get("score", -1),
+        ) if self._ranks else list(self._chapters)
+        for ch in ordered:
             dur = max(0, int(ch["end_sec"] - ch["start_sec"]))
             mins, secs = divmod(dur, 60)
+            rank = self._ranks.get(ch["idx"]) or {}
             self._chap_tree.insert(
                 "", "end",
                 values=(ch["idx"] + 1,
                         ch["time_str"],
                         f"{mins:d}:{secs:02d}",
                         ch["title"],
-                        (ch["refined"] or "")[:120]))
+                        (ch["refined"] or "")[:120],
+                        rank.get("score", "") if rank else "",
+                        rank.get("reason", "")[:60] if rank else ""))
 
     # ── Tab 2: peaks ──────────────────────────────────────────────────────
 
@@ -603,6 +634,12 @@ class ClipWorkbenchApp(ToolBase):
                    command=self._add_clip_from_inputs).pack(side="left", padx=4)
         ttk.Button(btn_row, text=_tr("tool.clip.btn_remove_clip"),
                    command=self._remove_selected_clip).pack(side="left", padx=4)
+        self._make_ai_button(
+            btn_row,
+            idle_text=_tr("tool.clip.btn_ai_peaks"),
+            worker=self._worker_find_peaks,
+            on_success=self._on_peaks_done,
+        ).pack(side="left", padx=12)
 
         # Clips list
         clips_box = ttk.LabelFrame(left, text=_tr("tool.clip.section_clips"))
@@ -825,6 +862,133 @@ class ClipWorkbenchApp(ToolBase):
         tk.Label(f, text=_tr("tool.clip.hint_package"),
                  fg="gray").pack(padx=8, pady=4, anchor="w")
 
+    # ── AI helpers (Phase B) ──────────────────────────────────────────────
+
+    def _make_ai_button(self, parent, *, idle_text: str,
+                         worker: Callable, on_success: Callable):
+        """Tri-state AI button. `worker(token)` runs in a daemon thread and
+        returns a result; `on_success(result)` is invoked on the main thread.
+
+        State machine:
+          idle → click → start worker, swap to "Cancel" label
+          running → click → token.cancel(), swap to "Cancelling…" disabled
+          done/cancelled/failed → reset to idle
+        """
+        btn = ttk.Button(parent, text=idle_text)
+        btn._token = None       # type: ignore[attr-defined]
+
+        def _reset():
+            btn._token = None    # type: ignore[attr-defined]
+            try:
+                btn.config(state="normal", text=idle_text)
+            except tk.TclError:
+                pass
+
+        def _click():
+            if btn._token is None:
+                token = CancellationToken()
+                btn._token = token    # type: ignore[attr-defined]
+                btn.config(text=_tr("tool.clip.btn_cancel"))
+                threading.Thread(target=_run, args=(token,), daemon=True).start()
+            else:
+                btn._token.cancel()
+                try:
+                    btn.config(state="disabled",
+                                text=_tr("tool.clip.btn_cancelling"))
+                except tk.TclError:
+                    pass
+
+        def _run(token):
+            try:
+                result = worker(token)
+                self.master.after(0, lambda r=result: on_success(r))
+                self.master.after(0, _reset)
+            except AIError as e:
+                if e.kind == Kind.CANCELLED:
+                    self.master.after(0, lambda: self._set_status(
+                        _tr("tool.clip.status_cancelled")))
+                else:
+                    self.master.after(0,
+                                       lambda err=e: show_ai_error(self.master, err))
+                self.master.after(0, _reset)
+            except Exception as e:
+                self.master.after(0, lambda err=e: messagebox.showerror(
+                    _tr("tool.clip.title"), str(err)))
+                self.master.after(0, _reset)
+
+        btn.config(command=_click)
+        return btn
+
+    # ── Tab 1: rank chapters worker ──
+    def _worker_rank_chapters(self, token):
+        if not self._pack:
+            raise RuntimeError(_tr("tool.clip.warn_no_pack_loaded"))
+        return cliplib.rank_chapters(self._pack, cancel_token=token)
+
+    def _on_rank_done(self, ranked: list[dict]) -> None:
+        self._ranks = {int(r["idx"]): r for r in ranked}
+        self._refresh_chapter_tree()
+        self._set_status(_tr("tool.clip.status_rank_done").format(
+            n=len(ranked)))
+
+    # ── Tab 2: find peaks worker ──
+    def _worker_find_peaks(self, token):
+        ch = self._selected_chapter()
+        if ch is None:
+            raise RuntimeError(_tr("tool.clip.warn_pick_chapter"))
+        if not self._pack:
+            raise RuntimeError(_tr("tool.clip.warn_no_pack_loaded"))
+        # paragraphs.txt path is sibling of pack file (subtitle.pack convention)
+        paragraphs_path = self._pack_path.replace("-postprocess.json",
+                                                    "-paragraphs.txt")
+        if not os.path.isfile(paragraphs_path):
+            raise RuntimeError(_tr("tool.clip.warn_no_paragraphs").format(
+                path=paragraphs_path))
+        return cliplib.find_peaks(
+            self._pack, ch["idx"], paragraphs_path,
+            video_duration=self._video_duration,
+            cancel_token=token)
+
+    def _on_peaks_done(self, peaks: list[dict]) -> None:
+        ch = self._selected_chapter()
+        if ch is None:
+            return
+        added = 0
+        for p in peaks:
+            s, e = p["start_sec"], p["end_sec"]
+            # Snap to cue boundaries if cues are loaded
+            if self._cues:
+                s, e = cliplib.snap_to_cue_boundaries(self._cues, s, e)
+            # Build excerpt from cues
+            excerpt = ""
+            if self._cues:
+                buf = []
+                for cue in self._cues:
+                    cs = cue.start.total_seconds()
+                    ce = cue.end.total_seconds()
+                    if ce <= s or cs >= e:
+                        continue
+                    buf.append(cue.content.replace("\n", " "))
+                excerpt = " ".join(buf)[:500]
+            clip = ClipDraft(
+                id=self._next_clip_id,
+                chapter_idx=ch["idx"],
+                chapter_title=ch["title"],
+                start_sec=float(s),
+                end_sec=float(e),
+                original_excerpt=excerpt,
+            )
+            self._next_clip_id += 1
+            self._clips.append(clip)
+            added += 1
+        if added:
+            self._refresh_clips_tree()
+            self._refresh_package_cards()
+            self._refresh_export_clip_combo()
+            self._autosave()
+        self._set_status(_tr("tool.clip.status_peaks_done").format(
+            n=added, ch=ch["title"]))
+
     def _refresh_package_cards(self) -> None:
         for child in self._pkg_inner.winfo_children():
             child.destroy()
@@ -888,6 +1052,31 @@ class ClipWorkbenchApp(ToolBase):
             c.hashtags = [t.strip() for t in v.get().split() if t.strip()]
             self._autosave()
         tags_var.trace_add("write", _save_tags)
+
+        # Per-card AI [生成文案] button
+        ai_btn_holder = ttk.Frame(card)
+        ai_btn_holder.grid(row=5, column=1, sticky="w", padx=4, pady=(2, 6))
+
+        # Closure capturing this clip + the four StringVars so we can write
+        # back to the UI after AI returns
+        def _on_pkg_done(result, hv=hook_var, ov=outro_var,
+                          tv=title_var, gv=tags_var):
+            hv.set(result.get("hook", ""))
+            ov.set(result.get("outro", ""))
+            tv.set(result.get("title", ""))
+            gv.set(" ".join(result.get("hashtags", [])))
+            self._set_status(_tr("tool.clip.status_pkg_done").format(id=clip.id))
+
+        def _worker_pkg(token, c=clip):
+            return cliplib.package_clip(c, self._pack or {},
+                                          cancel_token=token)
+
+        self._make_ai_button(
+            ai_btn_holder,
+            idle_text=_tr("tool.clip.btn_ai_package"),
+            worker=_worker_pkg,
+            on_success=_on_pkg_done,
+        ).pack(side="left")
 
         card.columnconfigure(1, weight=1)
 
