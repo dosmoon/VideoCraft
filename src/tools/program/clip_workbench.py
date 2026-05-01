@@ -54,7 +54,19 @@ class ClipWorkbenchApp(ToolBase):
     def __init__(self, master, initial_file: str | None = None):
         self.master = master
         master.title(_tr("tool.clip.title"))
-        master.geometry("1100x720")
+        master.geometry("1400x880")
+
+        # Bigger, more readable Treeview rows for both the chapter list
+        # (Tab 1) and the clip list (Tab 2). Default ttk Treeview row
+        # height is ~20px which is painful on dense AI output.
+        try:
+            style = ttk.Style(master)
+            style.configure("Clip.Treeview",
+                             rowheight=34, font=("", 11))
+            style.configure("Clip.Treeview.Heading",
+                             font=("", 11, "bold"))
+        except tk.TclError:
+            pass
 
         # ── State ─────────────────────────────────────────────────────────
         # Project folder is the anchor: cuts live under
@@ -188,23 +200,28 @@ class ClipWorkbenchApp(ToolBase):
         tree_holder = ttk.Frame(mid)
         tree_holder.pack(fill="both", expand=True)
 
-        cols = ("idx", "time", "duration", "title", "refined", "score", "reason")
-        self._chap_tree = ttk.Treeview(tree_holder, columns=cols, show="headings",
-                                       selectmode="browse", height=14)
+        cols = ("idx", "time", "duration", "score", "title", "reason", "refined")
+        self._chap_tree = ttk.Treeview(tree_holder, columns=cols,
+                                       show="headings", selectmode="browse",
+                                       height=14, style="Clip.Treeview")
         self._chap_tree.heading("idx",     text="#")
         self._chap_tree.heading("time",    text=_tr("tool.clip.col_time"))
         self._chap_tree.heading("duration",text=_tr("tool.clip.col_duration"))
-        self._chap_tree.heading("title",   text=_tr("tool.clip.col_title"))
-        self._chap_tree.heading("refined", text=_tr("tool.clip.col_refined"))
         self._chap_tree.heading("score",   text=_tr("tool.clip.col_ai_score"))
+        self._chap_tree.heading("title",   text=_tr("tool.clip.col_title"))
         self._chap_tree.heading("reason",  text=_tr("tool.clip.col_ai_reason"))
-        self._chap_tree.column("idx",     width=40,  anchor="center")
-        self._chap_tree.column("time",    width=80,  anchor="center")
-        self._chap_tree.column("duration",width=70,  anchor="center")
-        self._chap_tree.column("title",   width=180, anchor="w")
-        self._chap_tree.column("refined", width=320, anchor="w")
-        self._chap_tree.column("score",   width=60,  anchor="center")
-        self._chap_tree.column("reason",  width=260, anchor="w")
+        self._chap_tree.heading("refined", text=_tr("tool.clip.col_refined"))
+        self._chap_tree.column("idx",     width=50,  anchor="center", stretch=False)
+        self._chap_tree.column("time",    width=100, anchor="center", stretch=False)
+        self._chap_tree.column("duration",width=80,  anchor="center", stretch=False)
+        self._chap_tree.column("score",   width=70,  anchor="center", stretch=False)
+        self._chap_tree.column("title",   width=260, anchor="w",      stretch=False)
+        self._chap_tree.column("reason",  width=380, anchor="w",      stretch=True)
+        self._chap_tree.column("refined", width=280, anchor="w",      stretch=True)
+        # Color-code rows by AI tier when ranks are present.
+        self._chap_tree.tag_configure("hot",  background="#fff5e0")  # light orange
+        self._chap_tree.tag_configure("warm", background="#fbfbe6")  # light cream
+        self._chap_tree.tag_configure("cold", foreground="#888")
         sb = ttk.Scrollbar(tree_holder, orient="vertical", command=self._chap_tree.yview)
         self._chap_tree.configure(yscrollcommand=sb.set)
         self._chap_tree.pack(side="left", fill="both", expand=True)
@@ -563,15 +580,27 @@ class ClipWorkbenchApp(ToolBase):
             dur = max(0, int(ch["end_sec"] - ch["start_sec"]))
             mins, secs = divmod(dur, 60)
             rank = self._ranks.get(ch["idx"]) or {}
+            score = rank.get("score", "")
+            reason = rank.get("reason", "")
+            # Heat-map style highlighting only when ranks are present
+            tag = ""
+            if isinstance(score, int):
+                if score >= 75:
+                    tag = "hot"
+                elif score >= 50:
+                    tag = "warm"
+                elif score < 30:
+                    tag = "cold"
             self._chap_tree.insert(
                 "", "end",
                 values=(ch["idx"] + 1,
                         ch["time_str"],
                         f"{mins:d}:{secs:02d}",
+                        score,
                         ch["title"],
-                        (ch["refined"] or "")[:120],
-                        rank.get("score", "") if rank else "",
-                        rank.get("reason", "")[:60] if rank else ""))
+                        reason,
+                        ch["refined"] or ""),
+                tags=(tag,) if tag else ())
 
     # ── Tab 2: peaks ──────────────────────────────────────────────────────
 
@@ -646,17 +675,18 @@ class ClipWorkbenchApp(ToolBase):
         clips_box.pack(fill="both", expand=True)
         cols = ("id", "chapter", "start", "end", "duration")
         self._clips_tree = ttk.Treeview(
-            clips_box, columns=cols, show="headings", selectmode="browse")
+            clips_box, columns=cols, show="headings",
+            selectmode="browse", style="Clip.Treeview")
         self._clips_tree.heading("id",       text="#")
         self._clips_tree.heading("chapter",  text=_tr("tool.clip.col_chapter"))
         self._clips_tree.heading("start",    text=_tr("tool.clip.field_start"))
         self._clips_tree.heading("end",      text=_tr("tool.clip.field_end"))
         self._clips_tree.heading("duration", text=_tr("tool.clip.col_duration"))
-        self._clips_tree.column("id",       width=40,  anchor="center")
-        self._clips_tree.column("chapter",  width=180, anchor="w")
-        self._clips_tree.column("start",    width=80,  anchor="center")
-        self._clips_tree.column("end",      width=80,  anchor="center")
-        self._clips_tree.column("duration", width=80,  anchor="center")
+        self._clips_tree.column("id",       width=50,  anchor="center", stretch=False)
+        self._clips_tree.column("chapter",  width=240, anchor="w",      stretch=True)
+        self._clips_tree.column("start",    width=100, anchor="center", stretch=False)
+        self._clips_tree.column("end",      width=100, anchor="center", stretch=False)
+        self._clips_tree.column("duration", width=100, anchor="center", stretch=False)
         self._clips_tree.pack(fill="both", expand=True, side="left")
         sb = ttk.Scrollbar(clips_box, orient="vertical",
                            command=self._clips_tree.yview)
