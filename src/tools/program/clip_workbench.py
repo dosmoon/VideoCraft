@@ -239,6 +239,38 @@ class ClipWorkbenchApp(ToolBase):
         self._set_status(_tr("tool.clip.status_loaded").format(
             n=len(self._chapters)))
 
+        # Offer to restore prior clip drafts if a clips.json exists in the
+        # default output dir (output/clips/<basename>-clips.json).
+        self._maybe_restore_clips()
+
+    def _maybe_restore_clips(self) -> None:
+        if not self._video_path:
+            return
+        basename = os.path.splitext(os.path.basename(self._video_path))[0]
+        out_dir = os.path.join(os.path.dirname(self._pack_path), "clips")
+        clips_json = os.path.join(out_dir, f"{basename}-clips.json")
+        if not os.path.isfile(clips_json):
+            return
+        try:
+            existing = cliplib.load_clips_json(clips_json)
+        except Exception:
+            return
+        if not existing:
+            return
+        if not messagebox.askyesno(
+            _tr("tool.clip.title"),
+            _tr("tool.clip.restore_prompt").format(
+                n=len(existing), path=clips_json)):
+            return
+        self._clips = existing
+        self._next_clip_id = max((c.id for c in existing), default=0) + 1
+        # Default the output dir entry to where we found the clips.json
+        self._out_dir_var.set(out_dir)
+        self._refresh_clips_tree()
+        self._refresh_package_cards()
+        self._refresh_export_clip_combo()
+        self._set_status(_tr("tool.clip.status_restored").format(n=len(existing)))
+
     def _resolve_from_manifest(self, pack_path: str
                                 ) -> tuple[str | None, str | None]:
         """Walk up from <project>/<basename>/output/<basename>-postprocess.json

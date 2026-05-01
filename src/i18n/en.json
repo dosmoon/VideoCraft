@@ -1271,5 +1271,7 @@
   "tool.clip.field_offset": "Offset within chapter (s)",
   "tool.clip.field_duration_sec": "Duration (s)",
   "tool.clip.label_chapter_range": "Chapter range: {start} – {end}  ({len})",
-  "tool.clip.preview_range": "→ Clip absolute range: {start} – {end}  ({dur}s)"
+  "tool.clip.preview_range": "→ Clip absolute range: {start} – {end}  ({dur}s)",
+  "tool.clip.restore_prompt": "Found {n} clip drafts at\n{path}\nRestore?",
+  "tool.clip.status_restored": "✓ Restored {n} clip drafts"
 }

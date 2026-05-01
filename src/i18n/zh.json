@@ -1271,5 +1271,7 @@
   "tool.clip.field_offset": "章节内偏移 (秒)",
   "tool.clip.field_duration_sec": "时长 (秒)",
   "tool.clip.label_chapter_range": "章节范围: {start} – {end}  (共 {len})",
-  "tool.clip.preview_range": "→ 切片绝对范围: {start} – {end}  ({dur}s)"
+  "tool.clip.preview_range": "→ 切片绝对范围: {start} – {end}  ({dur}s)",
+  "tool.clip.restore_prompt": "发现 {n} 条切片草稿（{path}）\n是否恢复？",
+  "tool.clip.status_restored": "✓ 已恢复 {n} 条切片草稿"
 }
