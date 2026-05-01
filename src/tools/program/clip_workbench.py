@@ -1009,7 +1009,15 @@ class ClipWorkbenchApp(ToolBase):
     def _worker_rank_chapters(self, token):
         if not self._pack:
             raise RuntimeError(_tr("tool.clip.warn_no_pack_loaded"))
-        return cliplib.rank_chapters(self._pack, cancel_token=token)
+        paragraphs_path = ""
+        if self._pack_path:
+            paragraphs_path = self._pack_path.replace("-postprocess.json",
+                                                       "-paragraphs.txt")
+            if not os.path.isfile(paragraphs_path):
+                paragraphs_path = ""
+        return cliplib.rank_chapters(self._pack, paragraphs_path,
+                                      video_duration=self._video_duration,
+                                      cancel_token=token)
 
     def _on_rank_done(self, ranked: list[dict]) -> None:
         self._ranks = {int(r["idx"]): r for r in ranked}
@@ -1025,14 +1033,11 @@ class ClipWorkbenchApp(ToolBase):
             raise RuntimeError(_tr("tool.clip.warn_pick_chapter"))
         if not self._pack:
             raise RuntimeError(_tr("tool.clip.warn_no_pack_loaded"))
-        # paragraphs.txt path is sibling of pack file (subtitle.pack convention)
-        paragraphs_path = self._pack_path.replace("-postprocess.json",
-                                                    "-paragraphs.txt")
-        if not os.path.isfile(paragraphs_path):
+        if not self._cues:
             raise RuntimeError(_tr("tool.clip.warn_no_paragraphs").format(
-                path=paragraphs_path))
+                path=self._srt_path or "<SRT 未加载>"))
         return cliplib.find_peaks(
-            self._pack, ch["idx"], paragraphs_path,
+            self._pack, ch["idx"], self._cues,
             video_duration=self._video_duration,
             cancel_token=token)
 
@@ -1202,12 +1207,18 @@ class ClipWorkbenchApp(ToolBase):
         ttk.Label(bot, text=_tr("tool.clip.label_output_dir")).pack(side="left", padx=4)
         self._out_dir_var = tk.StringVar()
         self._out_dir_var.trace_add("write", lambda *_a: self._autosave())
-        ttk.Entry(bot, textvariable=self._out_dir_var, width=50).pack(side="left", padx=4)
-        ttk.Button(bot, text=_tr("tool.clip.btn_browse"),
-                   command=self._browse_out_dir).pack(side="left", padx=2)
+        # Pack export buttons first (right side) so the entry can fill the
+        # remaining space between Browse and "Export all".
         self._export_btn = ttk.Button(bot, text=_tr("tool.clip.btn_export_all"),
                                        command=self._on_export_clicked)
-        self._export_btn.pack(side="right", padx=4)
+        self._export_btn.pack(side="right", padx=(2, 4))
+        self._export_one_btn = ttk.Button(bot, text=_tr("tool.clip.btn_export_current"),
+                                            command=self._on_export_current_clicked)
+        self._export_one_btn.pack(side="right", padx=2)
+        ttk.Button(bot, text=_tr("tool.clip.btn_browse"),
+                   command=self._browse_out_dir).pack(side="right", padx=2)
+        ttk.Entry(bot, textvariable=self._out_dir_var).pack(
+            side="left", fill="x", expand=True, padx=4)
 
         self._export_progress = ttk.Progressbar(f, mode="determinate")
         self._export_progress.pack(fill="x", padx=6, pady=4)
@@ -1349,6 +1360,67 @@ class ClipWorkbenchApp(ToolBase):
             target=self._export_worker,
             args=(out_dir,), daemon=True)
         self._export_thread.start()
+
+    def _on_export_current_clicked(self) -> None:
+        """Export only the clip currently selected in the export combo."""
+        if not self._video_path:
+            self._set_status(_tr("tool.clip.warn_no_video_loaded"))
+            return
+        idx = self._export_clip_combo.current()
+        if idx < 0 or idx >= len(self._clips):
+            self._set_status(_tr("tool.clip.warn_pick_clip_to_export"))
+            return
+        if self._export_thread and self._export_thread.is_alive():
+            # Defer to existing cancel path on the export-all button.
+            return
+
+        out_dir = self._default_out_dir()
+        os.makedirs(out_dir, exist_ok=True)
+        self._out_dir_var.set(out_dir)
+
+        self._export_cancel_flag = {"v": False}
+        self._export_one_btn.config(state="disabled")
+        self._export_progress["value"] = 0
+        self.set_busy()
+
+        clip = self._clips[idx]
+        self._export_thread = threading.Thread(
+            target=self._export_one_worker,
+            args=(clip, out_dir), daemon=True)
+        self._export_thread.start()
+
+    def _export_one_worker(self, clip, out_dir: str) -> None:
+        from i18n import tr
+
+        def cancel_check() -> bool:
+            return bool(self._export_cancel_flag.get("v"))
+
+        def on_progress(_status: str, pct: int) -> None:
+            self.master.after(0, self._set_status,
+                              tr("tool.clip.status_exporting").format(
+                                  n=1, total=1, pct=pct))
+            self.master.after(0, lambda: self._export_progress.configure(
+                value=int(pct)))
+
+        try:
+            path = cliplib.export_clip(
+                self._video_path, clip, out_dir,
+                source_srt=self._srt_path or None,
+                on_progress=on_progress,
+                cancel_check=cancel_check,
+            )
+            self.master.after(0, self._autosave)
+            self.master.after(0, self._set_status,
+                              tr("tool.clip.status_done").format(
+                                  n=1, out_dir=os.path.dirname(path)))
+            self.set_done()
+        except Exception as e:
+            self.master.after(0, self._set_status, f"✗ {e}")
+            self.set_error(str(e))
+        finally:
+            self.master.after(0, self._export_one_btn.config,
+                              {"state": "normal"})
+            self.master.after(0, lambda: self._export_progress.configure(value=0))
 
     def _export_worker(self, out_dir: str) -> None:
         from i18n import tr

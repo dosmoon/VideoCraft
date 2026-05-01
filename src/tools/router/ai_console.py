@@ -55,23 +55,32 @@ class AIConsoleApp(ToolBase):
         nb = ttk.Notebook(master)
         nb.pack(fill="both", expand=True, padx=10, pady=10)
 
-        self.tab_routing = tk.Frame(nb, padx=8, pady=8)
-        self.tab_prompts = tk.Frame(nb, padx=8, pady=8)
-        self.tab_stats   = tk.Frame(nb, padx=12, pady=10)
+        self.tab_routing    = tk.Frame(nb, padx=8, pady=8)
+        self.tab_prompts    = tk.Frame(nb, padx=8, pady=8)
+        self.tab_playground = tk.Frame(nb, padx=8, pady=8)
+        self.tab_stats      = tk.Frame(nb, padx=12, pady=10)
 
-        nb.add(self.tab_routing, text=tr("tool.router.tab_routing"))
-        nb.add(self.tab_prompts, text=tr("tool.router.tab_prompts"))
-        nb.add(self.tab_stats,   text=tr("tool.router.tab_stats"))
+        nb.add(self.tab_routing,    text=tr("tool.router.tab_routing"))
+        nb.add(self.tab_prompts,    text=tr("tool.router.tab_prompts"))
+        nb.add(self.tab_playground, text=tr("tool.router.tab_playground"))
+        nb.add(self.tab_stats,      text=tr("tool.router.tab_stats"))
+        self._stats_tab_index = 3
         nb.bind("<<NotebookTabChanged>>", self._on_tab_change)
 
         self._build_routing_tab()
         self._build_prompts_tab()
+        self._build_playground_tab()
         self._build_stats_tab()
 
     def _on_tab_change(self, event):
         nb = event.widget
-        if nb.index(nb.select()) == 2:  # Stats tab (now index 2 after Prompts)
+        if nb.index(nb.select()) == self._stats_tab_index:
             self._refresh_stats()
+
+    def _build_playground_tab(self):
+        from tools.router.ai_console_playground import build_playground
+        pg = build_playground(self.tab_playground)
+        pg.pack(fill="both", expand=True)
 
     # ── Routing tab: top section + bottom section ──────────────────────────
 
