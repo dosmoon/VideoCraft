@@ -197,35 +197,36 @@ class ClipWorkbenchApp(ToolBase):
         )
         self._ai_rank_btn.pack(side="left")
 
-        tree_holder = ttk.Frame(mid)
-        tree_holder.pack(fill="both", expand=True)
+        # Scrollable card list (replaces the cramped Treeview). Each chapter
+        # is a LabelFrame with full-width wrapped text and an AI-score badge.
+        cards_holder = tk.Frame(mid)
+        cards_holder.pack(fill="both", expand=True)
+        self._chap_canvas = tk.Canvas(cards_holder, highlightthickness=0,
+                                       background="#f4f4f6")
+        self._chap_scroll = ttk.Scrollbar(cards_holder, orient="vertical",
+                                           command=self._chap_canvas.yview)
+        self._chap_inner = tk.Frame(self._chap_canvas, background="#f4f4f6")
+        self._chap_inner_window = self._chap_canvas.create_window(
+            (0, 0), window=self._chap_inner, anchor="nw")
 
-        cols = ("idx", "time", "duration", "score", "title", "reason", "refined")
-        self._chap_tree = ttk.Treeview(tree_holder, columns=cols,
-                                       show="headings", selectmode="browse",
-                                       height=14, style="Clip.Treeview")
-        self._chap_tree.heading("idx",     text="#")
-        self._chap_tree.heading("time",    text=_tr("tool.clip.col_time"))
-        self._chap_tree.heading("duration",text=_tr("tool.clip.col_duration"))
-        self._chap_tree.heading("score",   text=_tr("tool.clip.col_ai_score"))
-        self._chap_tree.heading("title",   text=_tr("tool.clip.col_title"))
-        self._chap_tree.heading("reason",  text=_tr("tool.clip.col_ai_reason"))
-        self._chap_tree.heading("refined", text=_tr("tool.clip.col_refined"))
-        self._chap_tree.column("idx",     width=50,  anchor="center", stretch=False)
-        self._chap_tree.column("time",    width=100, anchor="center", stretch=False)
-        self._chap_tree.column("duration",width=80,  anchor="center", stretch=False)
-        self._chap_tree.column("score",   width=70,  anchor="center", stretch=False)
-        self._chap_tree.column("title",   width=260, anchor="w",      stretch=False)
-        self._chap_tree.column("reason",  width=380, anchor="w",      stretch=True)
-        self._chap_tree.column("refined", width=280, anchor="w",      stretch=True)
-        # Color-code rows by AI tier when ranks are present.
-        self._chap_tree.tag_configure("hot",  background="#fff5e0")  # light orange
-        self._chap_tree.tag_configure("warm", background="#fbfbe6")  # light cream
-        self._chap_tree.tag_configure("cold", foreground="#888")
-        sb = ttk.Scrollbar(tree_holder, orient="vertical", command=self._chap_tree.yview)
-        self._chap_tree.configure(yscrollcommand=sb.set)
-        self._chap_tree.pack(side="left", fill="both", expand=True)
-        sb.pack(side="right", fill="y")
+        def _on_inner_configure(_e):
+            self._chap_canvas.configure(scrollregion=self._chap_canvas.bbox("all"))
+        def _on_canvas_configure(e):
+            # Stretch inner frame to canvas width so cards fill horizontally
+            self._chap_canvas.itemconfigure(self._chap_inner_window, width=e.width)
+
+        self._chap_inner.bind("<Configure>", _on_inner_configure)
+        self._chap_canvas.bind("<Configure>", _on_canvas_configure)
+        self._chap_canvas.configure(yscrollcommand=self._chap_scroll.set)
+        self._chap_canvas.pack(side="left", fill="both", expand=True)
+        self._chap_scroll.pack(side="right", fill="y")
+        # Mouse wheel scroll
+        def _on_mousewheel(e):
+            self._chap_canvas.yview_scroll(-int(e.delta / 120), "units")
+        self._chap_canvas.bind_all("<MouseWheel>",
+                                    lambda e: _on_mousewheel(e)
+                                    if self._notebook.index(self._notebook.select()) == 0
+                                    else None)
 
         # Hint: chapter selection happens implicitly — Tab 2 lets user add
         # peaks under any chapter.
@@ -569,38 +570,81 @@ class ClipWorkbenchApp(ToolBase):
         self._autosave()
 
     def _refresh_chapter_tree(self) -> None:
-        for iid in self._chap_tree.get_children():
-            self._chap_tree.delete(iid)
-        # Sort by AI score desc when ranks are available; otherwise time order.
+        # Scrollable card list. Each chapter = a card with full-text wrapping.
+        # Naming kept as `_refresh_chapter_tree` for back-compat with the
+        # call sites; semantically it now renders cards into self._chap_inner.
+        for child in self._chap_inner.winfo_children():
+            child.destroy()
+
         ordered = sorted(
             self._chapters,
             key=lambda c: -self._ranks.get(c["idx"], {}).get("score", -1),
         ) if self._ranks else list(self._chapters)
+
         for ch in ordered:
-            dur = max(0, int(ch["end_sec"] - ch["start_sec"]))
-            mins, secs = divmod(dur, 60)
-            rank = self._ranks.get(ch["idx"]) or {}
-            score = rank.get("score", "")
-            reason = rank.get("reason", "")
-            # Heat-map style highlighting only when ranks are present
-            tag = ""
-            if isinstance(score, int):
-                if score >= 75:
-                    tag = "hot"
-                elif score >= 50:
-                    tag = "warm"
-                elif score < 30:
-                    tag = "cold"
-            self._chap_tree.insert(
-                "", "end",
-                values=(ch["idx"] + 1,
-                        ch["time_str"],
-                        f"{mins:d}:{secs:02d}",
-                        score,
-                        ch["title"],
-                        reason,
-                        ch["refined"] or ""),
-                tags=(tag,) if tag else ())
+            self._build_chapter_card(ch)
+
+    def _build_chapter_card(self, ch: dict) -> None:
+        dur = max(0, int(ch["end_sec"] - ch["start_sec"]))
+        mins, secs = divmod(dur, 60)
+        rank = self._ranks.get(ch["idx"]) or {}
+        score = rank.get("score") if isinstance(rank.get("score"), int) else None
+
+        # Heat tier → background color
+        if score is None:
+            bg = "#ffffff"
+            badge_bg = "#9aa0a6"
+        elif score >= 75:
+            bg, badge_bg = "#fff1d6", "#e07a18"   # hot orange
+        elif score >= 50:
+            bg, badge_bg = "#fbfbe6", "#9c8a26"   # warm cream
+        elif score < 30:
+            bg, badge_bg = "#f0f0f0", "#9aa0a6"   # cold gray
+        else:
+            bg, badge_bg = "#ffffff", "#4a86e8"   # neutral blue
+
+        card = tk.Frame(self._chap_inner, background=bg,
+                         highlightbackground="#d0d0d8",
+                         highlightthickness=1, bd=0)
+        card.pack(fill="x", padx=10, pady=5)
+
+        # Header line: # idx + time + duration + AI score badge
+        header = tk.Frame(card, background=bg)
+        header.pack(fill="x", padx=10, pady=(8, 4))
+
+        tk.Label(header, text=f"#{ch['idx']+1}",
+                  background=bg, font=("", 13, "bold"),
+                  fg="#333").pack(side="left")
+        tk.Label(header, text=f"  ⏱ {ch['time_str']}  ·  {mins}:{secs:02d}",
+                  background=bg, font=("", 10), fg="#555").pack(side="left")
+
+        if score is not None:
+            badge = tk.Label(header, text=f" AI {score} ",
+                              background=badge_bg, foreground="white",
+                              font=("", 11, "bold"), padx=8, pady=1)
+            badge.pack(side="right")
+
+        # Title (chapter name) — bigger, bold
+        tk.Label(card, text=ch["title"], background=bg,
+                  font=("", 13, "bold"), anchor="w", justify="left",
+                  wraplength=900).pack(fill="x", padx=10, pady=(0, 4))
+
+        # AI reason (if ranked)
+        if rank.get("reason"):
+            tk.Label(card,
+                      text=f"💡 {rank['reason']}",
+                      background=bg, foreground="#5a4520",
+                      font=("", 10, "italic"),
+                      anchor="w", justify="left",
+                      wraplength=900).pack(fill="x", padx=10, pady=(0, 4))
+
+        # Refined summary
+        if ch.get("refined"):
+            tk.Label(card, text=ch["refined"],
+                      background=bg, foreground="#444",
+                      font=("", 10),
+                      anchor="w", justify="left",
+                      wraplength=900).pack(fill="x", padx=10, pady=(0, 8))
 
     # ── Tab 2: peaks ──────────────────────────────────────────────────────
 
