@@ -406,7 +406,10 @@ class VideoCraftHub:
         prog_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label=tr("menu.program"), menu=prog_menu)
         prog_menu.add_command(label=tr("menu.program.clip_script"),
-                              command=lambda: self.open_tool("clip-script"))
+                              command=lambda: self.open_tool(
+                                  "clip-script",
+                                  initial_file=self.project.folder
+                                  if self.project else None))
 
         # AI
         ai_menu = tk.Menu(menubar, tearoff=0)

@@ -1279,7 +1279,7 @@
   "tool.clip.btn_new_cut": "新建…",
   "tool.clip.btn_open_cut": "打开…",
   "tool.clip.btn_save_as_cut": "另存为…",
-  "tool.clip.cut_none": "尚未打开剪辑稿 — 先填好下方源文件，再点「新建」(默认存到 .videocraft/clips/<名字>.json)",
+  "tool.clip.cut_none": "尚未打开剪辑稿 — 点「新建」起名 / 点「打开」从已有剪辑里选",
   "tool.clip.cut_open": "当前剪辑: {name}    路径: {path}",
   "tool.clip.dialog_new_cut": "新建剪辑稿（选保存位置）",
   "tool.clip.dialog_open_cut": "打开剪辑稿",
@@ -1295,5 +1295,6 @@
   "tool.clip.warn_need_sources": "请先填好上方至少一个源文件（pack / 视频 / SRT），用于定位项目目录",
   "tool.clip.warn_empty_name": "名字不能为空或全是非法字符",
   "tool.clip.confirm_overwrite": "剪辑稿 '{name}' 已存在，覆盖？",
-  "tool.clip.info_no_cuts_yet": "当前项目尚无剪辑稿，请点「新建」创建一个"
+  "tool.clip.info_no_cuts_yet": "当前项目尚无剪辑稿，请点「新建」创建一个",
+  "tool.clip.warn_no_project": "请先在 Hub 主界面打开一个项目文件夹（File → 打开文件夹）"
 }

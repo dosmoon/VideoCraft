@@ -1279,7 +1279,7 @@
   "tool.clip.btn_new_cut": "New…",
   "tool.clip.btn_open_cut": "Open…",
   "tool.clip.btn_save_as_cut": "Save As…",
-  "tool.clip.cut_none": "No cut open — fill the source paths below, then click New (defaults to .videocraft/clips/<name>.json)",
+  "tool.clip.cut_none": "No cut open — click New to name one, or Open to pick an existing cut",
   "tool.clip.cut_open": "Current cut: {name}    Path: {path}",
   "tool.clip.dialog_new_cut": "New cut (pick save location)",
   "tool.clip.dialog_open_cut": "Open cut",
@@ -1295,5 +1295,6 @@
   "tool.clip.warn_need_sources": "Fill at least one source (pack / video / SRT) above to locate the project",
   "tool.clip.warn_empty_name": "Name cannot be empty or only invalid chars",
   "tool.clip.confirm_overwrite": "Cut '{name}' exists. Overwrite?",
-  "tool.clip.info_no_cuts_yet": "No cuts yet for this project — click New to create one"
+  "tool.clip.info_no_cuts_yet": "No cuts yet for this project — click New to create one",
+  "tool.clip.warn_no_project": "Open a project folder in the Hub first (File → Open folder)"
 }

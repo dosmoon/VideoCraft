@@ -54,6 +54,13 @@ class ClipWorkbenchApp(ToolBase):
         master.geometry("1100x720")
 
         # ── State ─────────────────────────────────────────────────────────
+        # Project folder is the anchor: cuts live under
+        # <project>/.videocraft/clips/<name>.json. Hub passes the folder of
+        # the currently-opened project as initial_file (or None if none open).
+        self._project_root: str | None = (
+            initial_file if initial_file and os.path.isdir(initial_file)
+            else None
+        )
         self._cut_path: str | None = None       # path to current .json cut file
         self._cut_name: str = ""                # display name (== file stem)
         self._pack: dict | None = None
@@ -97,11 +104,6 @@ class ClipWorkbenchApp(ToolBase):
 
         # Start in "no cut" mode — Tab 2/3/4 disabled until New / Open.
         self._refresh_cut_state()
-
-        if initial_file and os.path.isfile(initial_file):
-            # If launched with a .json file argument, treat it as a cut to open.
-            if initial_file.lower().endswith(".json"):
-                self._open_cut_path(initial_file)
 
     # ── Tab 1: setup + chapters ───────────────────────────────────────────
 
@@ -277,64 +279,33 @@ class ClipWorkbenchApp(ToolBase):
             except tk.TclError:
                 pass
 
-    def _default_cut_dir(self) -> str:
-        """Compute the canonical home for cut files: <project>/.videocraft/clips/.
-
-        Project root is inferred from whichever source path is already set:
-          - pack at <project>/<unit>/output/...    → grandparent's parent
-          - pack at <project>/<unit>/...           → grandparent
-          - video / srt at <project>/<unit>/...    → grandparent
-          - else fallback: <video_or_pack_dir>/.videocraft/clips/
-
-        Always returned as an absolute path; the caller may need to mkdir it
-        before opening a Save dialog targeting initialdir=<this>.
-        """
-        # Try in order of authority: pack (most likely inside an output dir),
-        # then video, then SRT.
-        for path_var in (self._pack_var, self._video_var, self._srt_var):
-            p = path_var.get().strip()
-            if not p or not os.path.isabs(p):
-                continue
-            d = os.path.dirname(p)
-            # Manifest layout: pack in <project>/<unit>/output/, video in
-            # <project>/<unit>/. Walk up the right number of levels to land
-            # on <project>, then store under .videocraft/clips/.
-            if os.path.basename(d).lower() == "output":
-                # <project>/<unit>/output/<file> → up 2 levels to <project>
-                project_root = os.path.dirname(os.path.dirname(d)) or d
-            else:
-                # <project>/<unit>/<file> → up 1 level to <project>
-                project_root = os.path.dirname(d) or d
-            return os.path.join(project_root, ".videocraft", "clips")
-        # Truly nothing set — point at user_data so the file is at least findable
-        try:
-            from core import user_data
-            return user_data.path("clips")
-        except Exception:
-            return os.path.join(os.path.expanduser("~"), "VideoCraft-clips")
+    def _default_cut_dir(self) -> str | None:
+        """Canonical home: <project>/.videocraft/clips/.
+        Returns None if no project is open in the Hub."""
+        if not self._project_root:
+            return None
+        return os.path.join(self._project_root, ".videocraft", "clips")
 
     def _suggested_cut_filename(self) -> str:
-        """Default filename for new cuts. Uses video basename if available."""
+        """Default filename for new cuts. Uses video basename if available,
+        else falls back to project folder name."""
         v = self._video_var.get().strip()
         if v:
-            stem = os.path.splitext(os.path.basename(v))[0]
-            return f"{stem}.json"
+            return f"{os.path.splitext(os.path.basename(v))[0]}.json"
+        if self._project_root:
+            return f"{os.path.basename(self._project_root)}.json"
         return "cut.json"
 
     _INVALID_FNAME_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
     def _sanitize_cut_name(self, raw: str) -> str:
-        s = self._INVALID_FNAME_CHARS.sub("", raw or "").strip()
-        return s
-
-    def _has_any_source(self) -> bool:
-        return any(v.get().strip() for v in
-                   (self._pack_var, self._video_var, self._srt_var))
+        return self._INVALID_FNAME_CHARS.sub("", raw or "").strip()
 
     def _on_new_cut(self) -> None:
-        if not self._has_any_source():
+        cut_dir = self._default_cut_dir()
+        if cut_dir is None:
             messagebox.showerror(_tr("tool.clip.title"),
-                                  _tr("tool.clip.warn_need_sources"))
+                                  _tr("tool.clip.warn_no_project"))
             return
         default_name = os.path.splitext(self._suggested_cut_filename())[0]
         name = simpledialog.askstring(
@@ -350,7 +321,6 @@ class ClipWorkbenchApp(ToolBase):
             messagebox.showerror(_tr("tool.clip.title"),
                                   _tr("tool.clip.warn_empty_name"))
             return
-        cut_dir = self._default_cut_dir()
         os.makedirs(cut_dir, exist_ok=True)
         path = os.path.join(cut_dir, f"{name}.json")
         if os.path.exists(path):
@@ -386,53 +356,24 @@ class ClipWorkbenchApp(ToolBase):
         self._set_status(_tr("tool.clip.status_cut_new").format(
             name=self._cut_name))
 
-    def _collect_existing_cuts(self) -> list[tuple[str, str]]:
-        """Find all cut files across the user's known projects.
-
-        Returns a list of (display_label, absolute_path) tuples. We scan:
-          1. The current default cut dir (if any source is set)
-          2. All recent project folders' .videocraft/clips/ subdirs
-
-        De-duplicates by absolute path. Display label is "<project> · <name>"
-        for recent-project hits, plain "<name>" for the current project.
-        """
-        items: list[tuple[str, str]] = []
-        seen: set[str] = set()
-
-        def _scan(cdir: str, proj_label: str | None) -> None:
-            if not os.path.isdir(cdir):
-                return
-            for fname in sorted(os.listdir(cdir)):
-                if not fname.lower().endswith(".json"):
-                    continue
-                full = os.path.abspath(os.path.join(cdir, fname))
-                if full in seen:
-                    continue
-                seen.add(full)
-                stem = os.path.splitext(fname)[0]
-                label = f"{proj_label} · {stem}" if proj_label else stem
-                items.append((label, full))
-
-        # 1. Current project (only if any source is filled)
-        if self._has_any_source():
-            _scan(self._default_cut_dir(), None)
-
-        # 2. Recent projects
-        try:
-            from project import get_recent_projects
-            for proj in get_recent_projects():
-                _scan(os.path.join(proj, ".videocraft", "clips"),
-                       os.path.basename(proj))
-        except Exception:
-            pass
-        return items
-
     def _on_open_cut(self) -> None:
-        items = self._collect_existing_cuts()
-        if not items:
+        cut_dir = self._default_cut_dir()
+        if cut_dir is None:
+            messagebox.showerror(_tr("tool.clip.title"),
+                                  _tr("tool.clip.warn_no_project"))
+            return
+        if not os.path.isdir(cut_dir):
             messagebox.showinfo(_tr("tool.clip.title"),
                                  _tr("tool.clip.info_no_cuts_yet"))
             return
+        names = sorted(f for f in os.listdir(cut_dir)
+                        if f.lower().endswith(".json"))
+        if not names:
+            messagebox.showinfo(_tr("tool.clip.title"),
+                                 _tr("tool.clip.info_no_cuts_yet"))
+            return
+        items = [(os.path.splitext(n)[0], os.path.join(cut_dir, n))
+                  for n in names]
         picked = self._show_cut_picker(items)
         if not picked:
             return
@@ -538,12 +479,13 @@ class ClipWorkbenchApp(ToolBase):
         if not self._has_cut():
             self._on_new_cut()
             return
-        default_dir = self._default_cut_dir()
-        os.makedirs(default_dir, exist_ok=True)
+        default_dir = self._default_cut_dir() or os.path.dirname(self._cut_path or "")
+        if default_dir:
+            os.makedirs(default_dir, exist_ok=True)
         path = filedialog.asksaveasfilename(
             title=_tr("tool.clip.dialog_save_as_cut"),
             defaultextension=".json",
-            initialdir=default_dir,
+            initialdir=default_dir or None,
             initialfile=f"{self._cut_name}.json",
             filetypes=[("Clip cut JSON", "*.json")])
         if not path:
