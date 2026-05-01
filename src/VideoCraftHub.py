@@ -59,6 +59,7 @@ TOOL_MAP = {
     "preferences":      {"file": "tools/preferences/preferences.py", "class": "PreferencesApp"},
     "ai-console":       {"file": "tools/router/ai_console.py",       "class": "AIConsoleApp"},
     "project-workbench": {"file": "tools/project/project_workbench.py", "class": "ProjectWorkbenchApp"},
+    "clip-script":       {"file": "tools/program/clip_workbench.py",     "class": "ClipWorkbenchApp"},
 }
 
 # ── Tab 状态颜色 ──────────────────────────────────────────────────────────────
@@ -400,6 +401,12 @@ class VideoCraftHub:
                              command=lambda: self.open_tool("daily-news"))
         t2v_menu.add_command(label=tr("menu.text2video.composer"),
                              command=lambda: self.open_tool("media-composer"))
+
+        # Program (节目) — script generation tools (clip / summary / etc.)
+        prog_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label=tr("menu.program"), menu=prog_menu)
+        prog_menu.add_command(label=tr("menu.program.clip_script"),
+                              command=lambda: self.open_tool("clip-script"))
 
         # AI
         ai_menu = tk.Menu(menubar, tearoff=0)
