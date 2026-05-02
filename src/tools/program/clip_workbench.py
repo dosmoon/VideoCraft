@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -32,7 +33,14 @@ from core.ai.errors import AIError, Kind
 from core import clip_presets
 from core.program import clip as cliplib
 from core.program.clip import ClipDraft, ClipProjectConfig
+from core.program.clip_render import compose_style_preview
 from dataclasses import asdict
+
+try:
+    from PIL import Image, ImageTk
+    _PIL_OK = True
+except ImportError:
+    _PIL_OK = False
 from core.segment_model import format_timestamp, parse_timestamp
 from ui.ai_error_dialog import show_ai_error
 from ui.clip_widgets import (
@@ -104,6 +112,11 @@ class ClipWorkbenchApp(ToolBase):
         self._focused_clip_id: int | None = None
         # Whether the chapter-detail "💡 hint" group is expanded
         self._chapter_hint_open: bool = False
+        # Output-style preview state
+        self._preview_render_job: str | None = None
+        self._preview_source_frame: "Image.Image | None" = None
+        self._preview_source_signature: str | None = None
+        self._preview_photo = None   # keep ImageTk PhotoImage alive
         # Export
         self._export_thread: threading.Thread | None = None
         self._export_cancel_flag: dict = {"v": False}
@@ -223,6 +236,26 @@ class ClipWorkbenchApp(ToolBase):
         ttk.Button(preset_row, text=_tr("tool.clip.btn_preset_delete"),
                    command=self._on_preset_delete).pack(side="left", padx=2)
         self._refresh_preset_combo()
+
+        # ── Preview row (image + mode selector) ──
+        preview_row = ttk.Frame(outer)
+        preview_row.pack(fill="x", padx=6, pady=(2, 6))
+        # Fixed-size container so layout is stable as aspect changes.
+        self._preview_label = tk.Label(
+            preview_row, background="#222", width=300, height=240)
+        self._preview_label.pack(side="left", padx=(0, 12))
+        side = ttk.Frame(preview_row)
+        side.pack(side="left", anchor="n", pady=4)
+        ttk.Label(side,
+                   text=_tr("tool.clip.preview_mode")).pack(anchor="w")
+        self._preview_mode_var = tk.StringVar(value="main")
+        mode_box = ttk.Combobox(
+            side, textvariable=self._preview_mode_var,
+            state="readonly", width=12,
+            values=("main", "hook", "outro"))
+        mode_box.pack(anchor="w", pady=(2, 0))
+        mode_box.bind("<<ComboboxSelected>>",
+                       lambda _e: self._render_preview())
 
         # Build all tk Vars first; bind traces after population to avoid
         # spurious autosaves on first .set().
@@ -422,6 +455,8 @@ class ClipWorkbenchApp(ToolBase):
 
         # Hook all writeback traces after the form is built.
         self._wire_form_traces()
+        # Initial render (placeholder if no video loaded yet).
+        self._schedule_preview_render()
 
     def _build_color_picker(self, parent: tk.Misc,
                               var: tk.StringVar) -> ttk.Frame:
@@ -503,6 +538,7 @@ class ClipWorkbenchApp(ToolBase):
         except (tk.TclError, ValueError):
             return
         self._autosave()
+        self._schedule_preview_render()
 
     def _sync_watermark_from_form(self) -> None:
         w = self._project_config.watermark
@@ -515,6 +551,7 @@ class ClipWorkbenchApp(ToolBase):
         except (tk.TclError, ValueError):
             return
         self._autosave()
+        self._schedule_preview_render()
 
     def _sync_hook_outro_from_form(self) -> None:
         h = self._project_config.hook_outro
@@ -529,6 +566,7 @@ class ClipWorkbenchApp(ToolBase):
         except (tk.TclError, ValueError):
             return
         self._autosave()
+        self._schedule_preview_render()
 
     def _sync_bgm_from_form(self) -> None:
         b = self._project_config.bgm
@@ -574,6 +612,88 @@ class ClipWorkbenchApp(ToolBase):
             self._bgm_volume_var.set(cfg.bgm.volume)
         finally:
             self._suspend_autosave = prev
+        self._schedule_preview_render()
+
+    # ── Output-style preview ──────────────────────────────────────────────
+
+    _PREVIEW_HEIGHT = 240
+    _PREVIEW_DEBOUNCE_MS = 200
+
+    def _resolve_preview_source(self) -> "Image.Image | None":
+        """Cached PIL Image used as the 'main' preview's source frame.
+
+        Picks a keyframe at the midpoint of chapter 0 when video + chapters
+        are loaded; returns None to trigger the placeholder otherwise.
+        Cache is invalidated when the (video_path, chapter ranges) signature
+        changes.
+        """
+        if not _PIL_OK or not self._video_path \
+                or not os.path.isfile(self._video_path) \
+                or not self._chapters:
+            return None
+        ch = self._chapters[0]
+        sig = f"{self._video_path}|{ch['start_sec']}|{ch['end_sec']}"
+        if (self._preview_source_frame is not None
+                and self._preview_source_signature == sig):
+            return self._preview_source_frame
+        midpoint = (ch["start_sec"] + ch["end_sec"]) / 2.0
+        try:
+            tmp = os.path.join(
+                tempfile.gettempdir(), "clip-style-preview-source.jpg")
+            cliplib.extract_keyframe(self._video_path, midpoint, tmp)
+            with Image.open(tmp) as im:
+                im.load()
+                self._preview_source_frame = im.copy()
+            self._preview_source_signature = sig
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        except Exception:
+            self._preview_source_frame = None
+            self._preview_source_signature = None
+        return self._preview_source_frame
+
+    def _invalidate_preview_source(self) -> None:
+        self._preview_source_frame = None
+        self._preview_source_signature = None
+
+    def _schedule_preview_render(self) -> None:
+        if not hasattr(self, "_preview_label"):
+            return
+        if self._preview_render_job is not None:
+            try:
+                self.master.after_cancel(self._preview_render_job)
+            except Exception:
+                pass
+        self._preview_render_job = self.master.after(
+            self._PREVIEW_DEBOUNCE_MS, self._render_preview)
+
+    def _render_preview(self) -> None:
+        self._preview_render_job = None
+        if not _PIL_OK or not hasattr(self, "_preview_label"):
+            return
+        mode = self._preview_mode_var.get() or "main"
+        try:
+            img = compose_style_preview(
+                mode=mode,
+                config=self._project_config,
+                source_frame=(self._resolve_preview_source()
+                              if mode == "main" else None),
+                target_height=self._PREVIEW_HEIGHT,
+            )
+        except Exception as exc:
+            logger.error(f"[切片稿] 预览渲染失败：{type(exc).__name__}: {exc}")
+            return
+        if img is None:
+            return
+        try:
+            self._preview_photo = ImageTk.PhotoImage(img)
+            self._preview_label.configure(
+                image=self._preview_photo,
+                width=img.size[0], height=img.size[1])
+        except tk.TclError:
+            return
 
     # ── Preset handlers ───────────────────────────────────────────────────
 
@@ -697,6 +817,7 @@ class ClipWorkbenchApp(ToolBase):
         self._refresh_chapter_list()
         self._refresh_focused_preview()
         self._autosave()
+        self._schedule_preview_render()
 
     # ── Tab 1: master-detail ──────────────────────────────────────────────
 
@@ -1469,6 +1590,10 @@ class ClipWorkbenchApp(ToolBase):
 
         self._refresh_chapter_list()
         self._refresh_export_summary()
+        # Source frame for the style preview must be re-extracted when the
+        # video changes.
+        self._invalidate_preview_source()
+        self._schedule_preview_render()
         self._set_status(_tr("tool.clip.status_loaded").format(
             n=len(self._chapters)))
         self._autosave()
