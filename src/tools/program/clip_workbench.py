@@ -25,6 +25,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Callable
 
+from hub_logger import logger
 from tools.base import ToolBase
 from core.ai.cancellation import CancellationToken
 from core.ai.errors import AIError, Kind
@@ -765,10 +766,11 @@ class ClipWorkbenchApp(ToolBase):
                 s=_seconds_to_str(s), e=_seconds_to_str(e)))
         except Exception as exc:
             import traceback
-            traceback.print_exc()
-            messagebox.showerror(
-                _tr("tool.clip.title"),
-                f"手工切片失败：{type(exc).__name__}: {exc}")
+            logger.error(
+                f"[切片稿] 手工切片失败 chapter={chapter_idx}: "
+                f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}")
+            self._set_status(_tr("tool.clip.status_manual_failed").format(
+                err=str(exc)))
 
     def _append_new_clip(self, ch: dict, s: float, e: float) -> ClipDraft:
         """Create + register a clip; refresh dependent panes."""
