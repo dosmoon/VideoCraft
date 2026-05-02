@@ -261,23 +261,47 @@ class ClipWorkbenchApp(ToolBase):
         # spurious autosaves on first .set().
         cfg = self._project_config
 
-        # Aspect
+        # Aspect + encode preset
         self._aspect_var = tk.StringVar(value=cfg.aspect)
-        # Subtitle
-        self._sub_mode_var = tk.StringVar(value=cfg.subtitle.mode)
-        self._sub_font_var = tk.StringVar(value=cfg.subtitle.font)
-        self._sub_size_var = tk.IntVar(value=cfg.subtitle.size)
-        self._sub_color_var = tk.StringVar(value=cfg.subtitle.color)
+        self._encode_preset_var = tk.StringVar(value=cfg.encode_preset)
+
+        # Subtitle — two parallel lines (sub1 / sub2)
+        s1 = cfg.subtitle.sub1
+        s2 = cfg.subtitle.sub2
+        self._sub1_enabled_var = tk.BooleanVar(value=s1.enabled)
+        self._sub1_fontsize_var = tk.IntVar(value=s1.fontsize)
+        self._sub1_color_var = tk.StringVar(value=s1.color)
+        self._sub1_bold_var = tk.BooleanVar(value=s1.bold)
+        self._sub1_is_chinese_var = tk.BooleanVar(value=s1.is_chinese)
+        self._sub1_manual_max_var = tk.IntVar(value=s1.manual_max_chars)
+        self._sub2_enabled_var = tk.BooleanVar(value=s2.enabled)
+        self._sub2_fontsize_var = tk.IntVar(value=s2.fontsize)
+        self._sub2_color_var = tk.StringVar(value=s2.color)
+        self._sub2_bold_var = tk.BooleanVar(value=s2.bold)
+        self._sub2_is_chinese_var = tk.BooleanVar(value=s2.is_chinese)
+        self._sub2_manual_max_var = tk.IntVar(value=s2.manual_max_chars)
+        # Auto-max is one toggle for both lines (simpler UX); when off, both
+        # manual_max spinboxes appear.
+        self._sub_auto_max_var = tk.BooleanVar(
+            value=(s1.auto_max_chars and s2.auto_max_chars))
         self._sub_stroke_color_var = tk.StringVar(value=cfg.subtitle.stroke_color)
         self._sub_stroke_width_var = tk.IntVar(value=cfg.subtitle.stroke_width)
         self._sub_position_var = tk.StringVar(value=cfg.subtitle.position)
-        self._sub_line2_offset_var = tk.IntVar(value=cfg.subtitle.line2_offset)
+        # Live "auto wrap: ≈ N chars" hint label var.
+        self._sub_auto_hint_var = tk.StringVar(value="")
+
         # Watermark
-        self._wm_enabled_var = tk.BooleanVar(value=cfg.watermark.enabled)
-        self._wm_image_var = tk.StringVar(value=cfg.watermark.image_path)
-        self._wm_position_var = tk.StringVar(value=cfg.watermark.position)
-        self._wm_opacity_var = tk.IntVar(value=cfg.watermark.opacity)
-        self._wm_scale_var = tk.IntVar(value=cfg.watermark.scale)
+        wm = cfg.watermark
+        self._wm_enabled_var = tk.BooleanVar(value=wm.enabled)
+        self._wm_type_var = tk.StringVar(value=wm.type)
+        self._wm_image_var = tk.StringVar(value=wm.image_path)
+        self._wm_image_scale_var = tk.DoubleVar(value=wm.image_scale)
+        self._wm_image_opacity_var = tk.IntVar(value=wm.image_opacity)
+        self._wm_text_var = tk.StringVar(value=wm.text)
+        self._wm_text_fontsize_var = tk.IntVar(value=wm.text_fontsize)
+        self._wm_text_color_var = tk.StringVar(value=wm.text_color)
+        self._wm_text_opacity_var = tk.IntVar(value=wm.text_opacity)
+        self._wm_position_var = tk.StringVar(value=wm.position)
         # Hook/Outro card
         self._ho_font_var = tk.StringVar(value=cfg.hook_outro.font)
         self._ho_size_var = tk.IntVar(value=cfg.hook_outro.size)
@@ -306,94 +330,166 @@ class ClipWorkbenchApp(ToolBase):
         # ── Subtitle section ──
         sec = ttk.LabelFrame(outer, text=_tr("tool.clip.section_subtitle"))
         sec.pack(fill="x", padx=6, pady=4)
-        sec.columnconfigure(1, weight=1)
-        sec.columnconfigure(3, weight=1)
+        # 8 columns: each line packs enable/size/color/bold/cn into one row
+        for col in (1, 3, 5, 7):
+            sec.columnconfigure(col, weight=0)
 
-        ttk.Label(sec, text=_tr("tool.clip.subtitle_mode")).grid(
-            row=0, column=0, sticky="e", padx=4, pady=2)
-        mode_frame = ttk.Frame(sec)
-        mode_frame.grid(row=0, column=1, columnspan=3, sticky="w", padx=4)
-        ttk.Radiobutton(mode_frame, text=_tr("tool.clip.subtitle_mode_single"),
-                         variable=self._sub_mode_var, value="single").pack(
-            side="left", padx=(0, 8))
-        ttk.Radiobutton(mode_frame, text=_tr("tool.clip.subtitle_mode_bilingual"),
-                         variable=self._sub_mode_var, value="bilingual").pack(
-            side="left")
+        def _build_sub_line(row: int,
+                              label_key: str,
+                              en_var, fs_var, col_var, bold_var, cn_var):
+            ttk.Checkbutton(sec, text=_tr(label_key),
+                             variable=en_var).grid(
+                row=row, column=0, sticky="w", padx=4, pady=2)
+            ttk.Label(sec, text=_tr("tool.clip.subtitle_fontsize")).grid(
+                row=row, column=1, sticky="e", padx=4)
+            ttk.Spinbox(sec, from_=8, to=200, textvariable=fs_var,
+                         width=5).grid(row=row, column=2, sticky="w", padx=2)
+            ttk.Label(sec, text=_tr("tool.clip.subtitle_color")).grid(
+                row=row, column=3, sticky="e", padx=4)
+            self._build_color_picker(sec, col_var).grid(
+                row=row, column=4, sticky="w", padx=2)
+            ttk.Checkbutton(sec, text=_tr("tool.clip.subtitle_bold"),
+                             variable=bold_var).grid(
+                row=row, column=5, sticky="w", padx=4)
+            ttk.Checkbutton(sec, text=_tr("tool.clip.subtitle_is_chinese"),
+                             variable=cn_var).grid(
+                row=row, column=6, sticky="w", padx=4)
 
-        ttk.Label(sec, text=_tr("tool.clip.subtitle_font")).grid(
-            row=1, column=0, sticky="e", padx=4, pady=2)
-        ttk.Entry(sec, textvariable=self._sub_font_var, width=20).grid(
-            row=1, column=1, sticky="we", padx=4)
-        ttk.Label(sec, text=_tr("tool.clip.subtitle_size")).grid(
-            row=1, column=2, sticky="e", padx=4)
-        ttk.Spinbox(sec, from_=8, to=200, textvariable=self._sub_size_var,
-                     width=6).grid(row=1, column=3, sticky="w", padx=4)
+        _build_sub_line(0, "tool.clip.subtitle_sub1",
+                          self._sub1_enabled_var, self._sub1_fontsize_var,
+                          self._sub1_color_var, self._sub1_bold_var,
+                          self._sub1_is_chinese_var)
+        _build_sub_line(1, "tool.clip.subtitle_sub2",
+                          self._sub2_enabled_var, self._sub2_fontsize_var,
+                          self._sub2_color_var, self._sub2_bold_var,
+                          self._sub2_is_chinese_var)
 
-        ttk.Label(sec, text=_tr("tool.clip.subtitle_color")).grid(
-            row=2, column=0, sticky="e", padx=4, pady=2)
-        self._build_color_picker(sec, self._sub_color_var).grid(
-            row=2, column=1, sticky="w", padx=4)
+        # Stroke + position row
         ttk.Label(sec, text=_tr("tool.clip.subtitle_stroke_color")).grid(
-            row=2, column=2, sticky="e", padx=4)
+            row=2, column=0, sticky="e", padx=4, pady=4)
         self._build_color_picker(sec, self._sub_stroke_color_var).grid(
-            row=2, column=3, sticky="w", padx=4)
-
+            row=2, column=1, columnspan=2, sticky="w", padx=2)
         ttk.Label(sec, text=_tr("tool.clip.subtitle_stroke_width")).grid(
-            row=3, column=0, sticky="e", padx=4, pady=2)
+            row=2, column=3, sticky="e", padx=4)
         ttk.Spinbox(sec, from_=0, to=20,
                      textvariable=self._sub_stroke_width_var,
-                     width=6).grid(row=3, column=1, sticky="w", padx=4)
+                     width=5).grid(row=2, column=4, sticky="w", padx=2)
         ttk.Label(sec, text=_tr("tool.clip.subtitle_position")).grid(
-            row=3, column=2, sticky="e", padx=4)
-        pos_combo = ttk.Combobox(
+            row=2, column=5, sticky="e", padx=4)
+        ttk.Combobox(
             sec, textvariable=self._sub_position_var, width=8,
             state="readonly",
-            values=("top", "middle", "bottom"))
-        pos_combo.grid(row=3, column=3, sticky="w", padx=4)
+            values=("top", "middle", "bottom")).grid(
+            row=2, column=6, sticky="w", padx=2)
 
-        ttk.Label(sec, text=_tr("tool.clip.subtitle_line2_offset")).grid(
-            row=4, column=0, sticky="e", padx=4, pady=2)
-        ttk.Spinbox(sec, from_=0, to=300,
-                     textvariable=self._sub_line2_offset_var,
-                     width=6).grid(row=4, column=1, sticky="w", padx=4)
+        # Auto-wrap hint (read-only label) + advanced manual override toggle
+        tk.Label(sec, textvariable=self._sub_auto_hint_var,
+                 fg="#2563eb", anchor="w", font=("", 9)).grid(
+            row=3, column=0, columnspan=7, sticky="w", padx=8, pady=(2, 0))
+        ttk.Checkbutton(sec,
+                         text=_tr("tool.clip.subtitle_advanced_manual"),
+                         variable=self._sub_auto_max_var,
+                         command=self._on_sub_auto_max_toggled).grid(
+            row=4, column=0, columnspan=7, sticky="w", padx=8, pady=(0, 2))
+
+        # Manual-mode spinboxes (built but conditionally visible)
+        self._sub_manual_row = ttk.Frame(sec)
+        self._sub_manual_row.grid(row=5, column=0, columnspan=7,
+                                    sticky="w", padx=8, pady=(0, 4))
+        ttk.Label(self._sub_manual_row,
+                   text=_tr("tool.clip.subtitle_manual_max_sub1")).pack(
+            side="left")
+        ttk.Spinbox(self._sub_manual_row, from_=4, to=200,
+                     textvariable=self._sub1_manual_max_var,
+                     width=5).pack(side="left", padx=(2, 12))
+        ttk.Label(self._sub_manual_row,
+                   text=_tr("tool.clip.subtitle_manual_max_sub2")).pack(
+            side="left")
+        ttk.Spinbox(self._sub_manual_row, from_=4, to=200,
+                     textvariable=self._sub2_manual_max_var,
+                     width=5).pack(side="left", padx=(2, 0))
+        # Apply initial visibility (auto on → row hidden)
+        self._on_sub_auto_max_toggled()
 
         # ── Watermark section ──
         sec = ttk.LabelFrame(outer, text=_tr("tool.clip.section_watermark"))
         sec.pack(fill="x", padx=6, pady=4)
         sec.columnconfigure(1, weight=1)
-        sec.columnconfigure(3, weight=1)
 
         ttk.Checkbutton(sec, text=_tr("tool.clip.watermark_enabled"),
                          variable=self._wm_enabled_var).grid(
-            row=0, column=0, columnspan=2, sticky="w", padx=4, pady=2)
-
-        ttk.Label(sec, text=_tr("tool.clip.watermark_image")).grid(
-            row=1, column=0, sticky="e", padx=4, pady=2)
-        ttk.Entry(sec, textvariable=self._wm_image_var, width=40).grid(
-            row=1, column=1, columnspan=2, sticky="we", padx=4)
-        ttk.Button(sec, text=_tr("tool.clip.btn_browse"),
-                   command=self._browse_watermark).grid(row=1, column=3,
-                                                          padx=4)
+            row=0, column=0, sticky="w", padx=4, pady=2)
+        type_row = ttk.Frame(sec)
+        type_row.grid(row=0, column=1, columnspan=3, sticky="w", padx=4)
+        ttk.Radiobutton(type_row, text=_tr("tool.clip.watermark_type_image"),
+                         variable=self._wm_type_var, value="image",
+                         command=self._on_wm_type_changed).pack(side="left")
+        ttk.Radiobutton(type_row, text=_tr("tool.clip.watermark_type_text"),
+                         variable=self._wm_type_var, value="text",
+                         command=self._on_wm_type_changed).pack(
+            side="left", padx=(8, 0))
 
         ttk.Label(sec, text=_tr("tool.clip.watermark_position")).grid(
-            row=2, column=0, sticky="e", padx=4, pady=2)
+            row=1, column=0, sticky="e", padx=4, pady=2)
         ttk.Combobox(
             sec, textvariable=self._wm_position_var, width=14,
             state="readonly",
             values=("top-left", "top-right",
                     "bottom-left", "bottom-right")).grid(
-            row=2, column=1, sticky="w", padx=4)
-        ttk.Label(sec, text=_tr("tool.clip.watermark_opacity")).grid(
-            row=2, column=2, sticky="e", padx=4)
-        ttk.Spinbox(sec, from_=0, to=100, increment=5,
-                     textvariable=self._wm_opacity_var,
-                     width=6).grid(row=2, column=3, sticky="w", padx=4)
+            row=1, column=1, sticky="w", padx=4)
 
-        ttk.Label(sec, text=_tr("tool.clip.watermark_scale")).grid(
-            row=3, column=0, sticky="e", padx=4, pady=2)
-        ttk.Spinbox(sec, from_=1, to=100,
-                     textvariable=self._wm_scale_var,
-                     width=6).grid(row=3, column=1, sticky="w", padx=4)
+        # Image-mode rows (visible only when type=="image")
+        self._wm_image_row = ttk.Frame(sec)
+        self._wm_image_row.grid(row=2, column=0, columnspan=4,
+                                  sticky="we", padx=4)
+        ttk.Label(self._wm_image_row,
+                   text=_tr("tool.clip.watermark_image")).pack(side="left")
+        ttk.Entry(self._wm_image_row,
+                   textvariable=self._wm_image_var, width=36).pack(
+            side="left", padx=(4, 4))
+        ttk.Button(self._wm_image_row, text=_tr("tool.clip.btn_browse"),
+                   command=self._browse_watermark).pack(side="left")
+        ttk.Label(self._wm_image_row,
+                   text=_tr("tool.clip.watermark_image_scale")).pack(
+            side="left", padx=(12, 2))
+        ttk.Spinbox(self._wm_image_row, from_=0.05, to=0.5, increment=0.05,
+                     textvariable=self._wm_image_scale_var,
+                     format="%.2f", width=6).pack(side="left")
+        ttk.Label(self._wm_image_row,
+                   text=_tr("tool.clip.watermark_image_opacity")).pack(
+            side="left", padx=(12, 2))
+        ttk.Spinbox(self._wm_image_row, from_=0, to=100, increment=5,
+                     textvariable=self._wm_image_opacity_var,
+                     width=5).pack(side="left")
+
+        # Text-mode rows (visible only when type=="text")
+        self._wm_text_row = ttk.Frame(sec)
+        self._wm_text_row.grid(row=3, column=0, columnspan=4,
+                                 sticky="we", padx=4)
+        ttk.Label(self._wm_text_row,
+                   text=_tr("tool.clip.watermark_text")).pack(side="left")
+        ttk.Entry(self._wm_text_row,
+                   textvariable=self._wm_text_var, width=24).pack(
+            side="left", padx=(4, 12))
+        ttk.Label(self._wm_text_row,
+                   text=_tr("tool.clip.watermark_text_fontsize")).pack(
+            side="left", padx=(0, 2))
+        ttk.Spinbox(self._wm_text_row, from_=10, to=200, increment=2,
+                     textvariable=self._wm_text_fontsize_var,
+                     width=5).pack(side="left")
+        ttk.Label(self._wm_text_row,
+                   text=_tr("tool.clip.watermark_text_color")).pack(
+            side="left", padx=(12, 2))
+        self._build_color_picker(
+            self._wm_text_row, self._wm_text_color_var).pack(side="left")
+        ttk.Label(self._wm_text_row,
+                   text=_tr("tool.clip.watermark_text_opacity")).pack(
+            side="left", padx=(12, 2))
+        ttk.Spinbox(self._wm_text_row, from_=0, to=100, increment=5,
+                     textvariable=self._wm_text_opacity_var,
+                     width=5).pack(side="left")
+        # Initial visibility
+        self._on_wm_type_changed()
 
         # ── Hook / Outro section ──
         sec = ttk.LabelFrame(outer, text=_tr("tool.clip.section_hook_outro"))
@@ -436,6 +532,19 @@ class ClipWorkbenchApp(ToolBase):
                      textvariable=self._ho_outro_dur_var,
                      width=6).grid(row=3, column=3, sticky="w", padx=4)
 
+        # ── Encoding section ──
+        sec = ttk.LabelFrame(outer, text=_tr("tool.clip.section_encode"))
+        sec.pack(fill="x", padx=6, pady=4)
+        ttk.Label(sec, text=_tr("tool.clip.encode_preset")).pack(
+            side="left", padx=4, pady=4)
+        ttk.Combobox(
+            sec, textvariable=self._encode_preset_var, state="readonly",
+            width=12,
+            values=("ultrafast", "superfast", "veryfast", "faster",
+                    "fast", "medium")).pack(side="left", padx=4)
+        tk.Label(sec, text=_tr("tool.clip.encode_preset_hint"),
+                 fg="#888", font=("", 9)).pack(side="left", padx=8)
+
         # ── BGM section (placeholder fields, not yet wired into export) ──
         sec = ttk.LabelFrame(outer, text=_tr("tool.clip.section_bgm"))
         sec.pack(fill="x", padx=6, pady=4)
@@ -455,6 +564,7 @@ class ClipWorkbenchApp(ToolBase):
 
         # Hook all writeback traces after the form is built.
         self._wire_form_traces()
+        self._refresh_subtitle_auto_hint()
         # Initial render (placeholder if no video loaded yet).
         self._schedule_preview_render()
 
@@ -494,21 +604,35 @@ class ClipWorkbenchApp(ToolBase):
     def _wire_form_traces(self) -> None:
         """Bind every output-style Var so edits flow into self._project_config."""
         bindings: list[tuple[tk.Variable, Callable[[], None]]] = [
-            # Subtitle
-            (self._sub_mode_var,         self._sync_subtitle_from_form),
-            (self._sub_font_var,         self._sync_subtitle_from_form),
-            (self._sub_size_var,         self._sync_subtitle_from_form),
-            (self._sub_color_var,        self._sync_subtitle_from_form),
+            # Encode preset
+            (self._encode_preset_var, self._sync_encode_from_form),
+            # Subtitle (sub1, sub2, shared)
+            (self._sub1_enabled_var,    self._sync_subtitle_from_form),
+            (self._sub1_fontsize_var,   self._sync_subtitle_from_form),
+            (self._sub1_color_var,      self._sync_subtitle_from_form),
+            (self._sub1_bold_var,       self._sync_subtitle_from_form),
+            (self._sub1_is_chinese_var, self._sync_subtitle_from_form),
+            (self._sub1_manual_max_var, self._sync_subtitle_from_form),
+            (self._sub2_enabled_var,    self._sync_subtitle_from_form),
+            (self._sub2_fontsize_var,   self._sync_subtitle_from_form),
+            (self._sub2_color_var,      self._sync_subtitle_from_form),
+            (self._sub2_bold_var,       self._sync_subtitle_from_form),
+            (self._sub2_is_chinese_var, self._sync_subtitle_from_form),
+            (self._sub2_manual_max_var, self._sync_subtitle_from_form),
             (self._sub_stroke_color_var, self._sync_subtitle_from_form),
             (self._sub_stroke_width_var, self._sync_subtitle_from_form),
             (self._sub_position_var,     self._sync_subtitle_from_form),
-            (self._sub_line2_offset_var, self._sync_subtitle_from_form),
             # Watermark
-            (self._wm_enabled_var,  self._sync_watermark_from_form),
-            (self._wm_image_var,    self._sync_watermark_from_form),
-            (self._wm_position_var, self._sync_watermark_from_form),
-            (self._wm_opacity_var,  self._sync_watermark_from_form),
-            (self._wm_scale_var,    self._sync_watermark_from_form),
+            (self._wm_enabled_var,         self._sync_watermark_from_form),
+            (self._wm_type_var,            self._sync_watermark_from_form),
+            (self._wm_image_var,           self._sync_watermark_from_form),
+            (self._wm_image_scale_var,     self._sync_watermark_from_form),
+            (self._wm_image_opacity_var,   self._sync_watermark_from_form),
+            (self._wm_text_var,            self._sync_watermark_from_form),
+            (self._wm_text_fontsize_var,   self._sync_watermark_from_form),
+            (self._wm_text_color_var,      self._sync_watermark_from_form),
+            (self._wm_text_opacity_var,    self._sync_watermark_from_form),
+            (self._wm_position_var,        self._sync_watermark_from_form),
             # Hook/Outro
             (self._ho_font_var,        self._sync_hook_outro_from_form),
             (self._ho_size_var,        self._sync_hook_outro_from_form),
@@ -524,30 +648,92 @@ class ClipWorkbenchApp(ToolBase):
         for var, fn in bindings:
             var.trace_add("write", lambda *_a, f=fn: f())
 
+    def _on_sub_auto_max_toggled(self) -> None:
+        # _sub_auto_max_var True = auto on → manual row hidden.
+        if self._sub_auto_max_var.get():
+            try:
+                self._sub_manual_row.grid_remove()
+            except tk.TclError:
+                pass
+        else:
+            try:
+                self._sub_manual_row.grid()
+            except tk.TclError:
+                pass
+        self._sync_subtitle_from_form()
+
+    def _on_wm_type_changed(self) -> None:
+        t = self._wm_type_var.get()
+        try:
+            if t == "text":
+                self._wm_image_row.grid_remove()
+                self._wm_text_row.grid()
+            else:
+                self._wm_text_row.grid_remove()
+                self._wm_image_row.grid()
+        except tk.TclError:
+            pass
+        self._sync_watermark_from_form()
+
+    def _refresh_subtitle_auto_hint(self) -> None:
+        """Compute auto-wrap chars for both lines and update the hint label."""
+        cfg = self._project_config
+        n1 = cliplib.compute_subtitle_max_chars(
+            cfg.aspect, cfg.subtitle.sub1.fontsize,
+            cfg.subtitle.sub1.is_chinese)
+        n2 = cliplib.compute_subtitle_max_chars(
+            cfg.aspect, cfg.subtitle.sub2.fontsize,
+            cfg.subtitle.sub2.is_chinese)
+        self._sub_auto_hint_var.set(
+            _tr("tool.clip.subtitle_auto_max").format(n1=n1, n2=n2))
+
+    def _sync_encode_from_form(self) -> None:
+        try:
+            self._project_config.encode_preset = self._encode_preset_var.get()
+        except tk.TclError:
+            return
+        self._autosave()
+
     def _sync_subtitle_from_form(self) -> None:
         s = self._project_config.subtitle
         try:
-            s.mode = self._sub_mode_var.get()
-            s.font = self._sub_font_var.get()
-            s.size = int(self._sub_size_var.get())
-            s.color = self._sub_color_var.get()
+            auto = bool(self._sub_auto_max_var.get())
+            s.sub1.enabled = bool(self._sub1_enabled_var.get())
+            s.sub1.fontsize = int(self._sub1_fontsize_var.get())
+            s.sub1.color = self._sub1_color_var.get()
+            s.sub1.bold = bool(self._sub1_bold_var.get())
+            s.sub1.is_chinese = bool(self._sub1_is_chinese_var.get())
+            s.sub1.auto_max_chars = auto
+            s.sub1.manual_max_chars = int(self._sub1_manual_max_var.get())
+            s.sub2.enabled = bool(self._sub2_enabled_var.get())
+            s.sub2.fontsize = int(self._sub2_fontsize_var.get())
+            s.sub2.color = self._sub2_color_var.get()
+            s.sub2.bold = bool(self._sub2_bold_var.get())
+            s.sub2.is_chinese = bool(self._sub2_is_chinese_var.get())
+            s.sub2.auto_max_chars = auto
+            s.sub2.manual_max_chars = int(self._sub2_manual_max_var.get())
             s.stroke_color = self._sub_stroke_color_var.get()
             s.stroke_width = int(self._sub_stroke_width_var.get())
             s.position = self._sub_position_var.get()
-            s.line2_offset = int(self._sub_line2_offset_var.get())
         except (tk.TclError, ValueError):
             return
         self._autosave()
+        self._refresh_subtitle_auto_hint()
         self._schedule_preview_render()
 
     def _sync_watermark_from_form(self) -> None:
         w = self._project_config.watermark
         try:
             w.enabled = bool(self._wm_enabled_var.get())
+            w.type = self._wm_type_var.get()
             w.image_path = self._wm_image_var.get()
+            w.image_scale = float(self._wm_image_scale_var.get())
+            w.image_opacity = int(self._wm_image_opacity_var.get())
+            w.text = self._wm_text_var.get()
+            w.text_fontsize = int(self._wm_text_fontsize_var.get())
+            w.text_color = self._wm_text_color_var.get()
+            w.text_opacity = int(self._wm_text_opacity_var.get())
             w.position = self._wm_position_var.get()
-            w.opacity = int(self._wm_opacity_var.get())
-            w.scale = int(self._wm_scale_var.get())
         except (tk.TclError, ValueError):
             return
         self._autosave()
@@ -588,19 +774,35 @@ class ClipWorkbenchApp(ToolBase):
         self._suspend_autosave = True
         try:
             self._aspect_var.set(cfg.aspect)
-            self._sub_mode_var.set(cfg.subtitle.mode)
-            self._sub_font_var.set(cfg.subtitle.font)
-            self._sub_size_var.set(cfg.subtitle.size)
-            self._sub_color_var.set(cfg.subtitle.color)
+            self._encode_preset_var.set(cfg.encode_preset)
+            self._sub1_enabled_var.set(cfg.subtitle.sub1.enabled)
+            self._sub1_fontsize_var.set(cfg.subtitle.sub1.fontsize)
+            self._sub1_color_var.set(cfg.subtitle.sub1.color)
+            self._sub1_bold_var.set(cfg.subtitle.sub1.bold)
+            self._sub1_is_chinese_var.set(cfg.subtitle.sub1.is_chinese)
+            self._sub1_manual_max_var.set(cfg.subtitle.sub1.manual_max_chars)
+            self._sub2_enabled_var.set(cfg.subtitle.sub2.enabled)
+            self._sub2_fontsize_var.set(cfg.subtitle.sub2.fontsize)
+            self._sub2_color_var.set(cfg.subtitle.sub2.color)
+            self._sub2_bold_var.set(cfg.subtitle.sub2.bold)
+            self._sub2_is_chinese_var.set(cfg.subtitle.sub2.is_chinese)
+            self._sub2_manual_max_var.set(cfg.subtitle.sub2.manual_max_chars)
+            self._sub_auto_max_var.set(
+                cfg.subtitle.sub1.auto_max_chars
+                and cfg.subtitle.sub2.auto_max_chars)
             self._sub_stroke_color_var.set(cfg.subtitle.stroke_color)
             self._sub_stroke_width_var.set(cfg.subtitle.stroke_width)
             self._sub_position_var.set(cfg.subtitle.position)
-            self._sub_line2_offset_var.set(cfg.subtitle.line2_offset)
             self._wm_enabled_var.set(cfg.watermark.enabled)
+            self._wm_type_var.set(cfg.watermark.type)
             self._wm_image_var.set(cfg.watermark.image_path)
+            self._wm_image_scale_var.set(cfg.watermark.image_scale)
+            self._wm_image_opacity_var.set(cfg.watermark.image_opacity)
+            self._wm_text_var.set(cfg.watermark.text)
+            self._wm_text_fontsize_var.set(cfg.watermark.text_fontsize)
+            self._wm_text_color_var.set(cfg.watermark.text_color)
+            self._wm_text_opacity_var.set(cfg.watermark.text_opacity)
             self._wm_position_var.set(cfg.watermark.position)
-            self._wm_opacity_var.set(cfg.watermark.opacity)
-            self._wm_scale_var.set(cfg.watermark.scale)
             self._ho_font_var.set(cfg.hook_outro.font)
             self._ho_size_var.set(cfg.hook_outro.size)
             self._ho_color_var.set(cfg.hook_outro.color)
@@ -612,6 +814,10 @@ class ClipWorkbenchApp(ToolBase):
             self._bgm_volume_var.set(cfg.bgm.volume)
         finally:
             self._suspend_autosave = prev
+        # Apply visibility-dependent controls; refresh hint + preview.
+        self._on_sub_auto_max_toggled()
+        self._on_wm_type_changed()
+        self._refresh_subtitle_auto_hint()
         self._schedule_preview_render()
 
     # ── Output-style preview ──────────────────────────────────────────────
@@ -817,6 +1023,7 @@ class ClipWorkbenchApp(ToolBase):
         self._refresh_chapter_list()
         self._refresh_focused_preview()
         self._autosave()
+        self._refresh_subtitle_auto_hint()
         self._schedule_preview_render()
 
     # ── Tab 1: master-detail ──────────────────────────────────────────────

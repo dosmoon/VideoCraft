@@ -70,24 +70,49 @@ class ClipDraft:
 # / hook-outro card / BGM all live here.
 
 @dataclass
+class SubtitleLineStyle:
+    """One subtitle track's per-line style. Two lines (sub1 / sub2) per
+    project — typically sub1 = primary language (CJK, bold, larger), sub2
+    = secondary (Latin, regular)."""
+    enabled: bool = True
+    fontsize: int = 24
+    color: str = "#FFFFFF"
+    bold: bool = False
+    is_chinese: bool = False        # affects glyph-width / line-break logic
+    auto_max_chars: bool = True     # compute from aspect+fontsize at run time
+    manual_max_chars: int = 20      # used only when auto_max_chars is False
+
+
+@dataclass
 class SubtitleStyle:
-    mode: str = "single"           # "single" | "bilingual"
-    font: str = "Arial"
-    size: int = 32
-    color: str = "#FFFFFF"         # primary line
+    sub1: SubtitleLineStyle = field(
+        default_factory=lambda: SubtitleLineStyle(
+            enabled=True, fontsize=24, color="#FFFF00",
+            bold=True, is_chinese=True))
+    sub2: SubtitleLineStyle = field(
+        default_factory=lambda: SubtitleLineStyle(
+            enabled=False, fontsize=24, color="#FFFFFF",
+            bold=False, is_chinese=False))
     stroke_color: str = "#000000"
     stroke_width: int = 2
-    position: str = "bottom"       # "bottom" | "middle" | "top"
-    line2_offset: int = 40         # px gap to second line (bilingual only)
+    position: str = "bottom"        # "top" | "middle" | "bottom"
 
 
 @dataclass
 class WatermarkStyle:
     enabled: bool = False
+    type: str = "image"             # "image" | "text"
+    # Image-mode fields
     image_path: str = ""
-    position: str = "bottom-right"  # "top-left"|"top-right"|"bottom-left"|"bottom-right"
-    opacity: int = 80              # 0-100
-    scale: int = 10                # 0-100, % of video width
+    image_scale: float = 0.15       # fraction of video width (0.0-1.0)
+    image_opacity: int = 100        # 0-100
+    # Text-mode fields
+    text: str = ""
+    text_fontsize: int = 36
+    text_color: str = "#FFFFFF"
+    text_opacity: int = 70
+    # Common
+    position: str = "top-right"     # "top-left"|"top-right"|"bottom-left"|"bottom-right"
 
 
 @dataclass
@@ -110,7 +135,8 @@ class BgmConfig:
 @dataclass
 class ClipProjectConfig:
     """Output-style settings shared by all clips in a cut file."""
-    aspect: str = "9:16"           # "9:16"|"16:9"|"1:1"|"4:5"
+    aspect: str = "9:16"            # "9:16"|"16:9"|"1:1"|"4:5"
+    encode_preset: str = "veryfast"  # ffmpeg x264 preset
     subtitle: SubtitleStyle = field(default_factory=SubtitleStyle)
     watermark: WatermarkStyle = field(default_factory=WatermarkStyle)
     hook_outro: HookOutroStyle = field(default_factory=HookOutroStyle)
@@ -126,9 +152,11 @@ class ClipProjectConfig:
 
     @classmethod
     def from_dict(cls, d: dict | None) -> "ClipProjectConfig":
-        """Build from a JSON-loaded dict, filling defaults for missing keys.
+        """Build from a JSON-loaded dict.
 
-        Tolerant: unknown keys are ignored; type errors fall back to defaults.
+        Schema-aware migration: detects v3 (mode + flat subtitle, scale/opacity
+        watermark) and v4 (sub1/sub2 + watermark.type) and rebuilds the right
+        shape. Unknown keys ignored; type errors fall back to defaults.
         """
         if not isinstance(d, dict):
             return cls()
@@ -136,17 +164,141 @@ class ClipProjectConfig:
         wm_d  = d.get("watermark") if isinstance(d.get("watermark"), dict) else {}
         ho_d  = d.get("hook_outro") if isinstance(d.get("hook_outro"), dict) else {}
         bg_d  = d.get("bgm") if isinstance(d.get("bgm"), dict) else {}
+
+        # ── Subtitle ──
+        if "sub1" in sub_d or "sub2" in sub_d:
+            # v4 native
+            def _line(raw: dict) -> SubtitleLineStyle:
+                if not isinstance(raw, dict):
+                    return SubtitleLineStyle()
+                return SubtitleLineStyle(**{
+                    k: v for k, v in raw.items()
+                    if k in SubtitleLineStyle.__dataclass_fields__})
+            sub_style = SubtitleStyle(
+                sub1=_line(sub_d.get("sub1") or {}),
+                sub2=_line(sub_d.get("sub2") or {}),
+                stroke_color=str(sub_d.get("stroke_color", "#000000")),
+                stroke_width=int(sub_d.get("stroke_width", 2)),
+                position=str(sub_d.get("position", "bottom")),
+            )
+        else:
+            # v3 → v4 migration
+            v3_size = int(sub_d.get("size", 24))
+            v3_color = str(sub_d.get("color", "#FFFFFF"))
+            bilingual = sub_d.get("mode", "single") == "bilingual"
+            sub_style = SubtitleStyle(
+                sub1=SubtitleLineStyle(
+                    enabled=True, fontsize=v3_size, color=v3_color,
+                    is_chinese=True, bold=True),
+                sub2=SubtitleLineStyle(
+                    enabled=bilingual, fontsize=v3_size, color=v3_color,
+                    is_chinese=False, bold=False),
+                stroke_color=str(sub_d.get("stroke_color", "#000000")),
+                stroke_width=int(sub_d.get("stroke_width", 2)),
+                position=str(sub_d.get("position", "bottom")),
+            )
+
+        # ── Watermark ──
+        if "type" in wm_d:
+            wm_style = WatermarkStyle(**{k: v for k, v in wm_d.items()
+                                          if k in WatermarkStyle.__dataclass_fields__})
+        else:
+            # v3 had: enabled / image_path / position / opacity (0-100) /
+            # scale (0-100 percent).
+            wm_style = WatermarkStyle(
+                enabled=bool(wm_d.get("enabled", False)),
+                type="image",
+                image_path=str(wm_d.get("image_path", "")),
+                image_scale=float(wm_d.get("scale", 15)) / 100.0,
+                image_opacity=int(wm_d.get("opacity", 100)),
+                position=str(wm_d.get("position", "top-right")),
+            )
+
         return cls(
             aspect=str(d.get("aspect", "9:16")),
-            subtitle=SubtitleStyle(**{k: v for k, v in sub_d.items()
-                                      if k in SubtitleStyle.__dataclass_fields__}),
-            watermark=WatermarkStyle(**{k: v for k, v in wm_d.items()
-                                        if k in WatermarkStyle.__dataclass_fields__}),
+            encode_preset=str(d.get("encode_preset", "veryfast")),
+            subtitle=sub_style,
+            watermark=wm_style,
             hook_outro=HookOutroStyle(**{k: v for k, v in ho_d.items()
                                          if k in HookOutroStyle.__dataclass_fields__}),
             bgm=BgmConfig(**{k: v for k, v in bg_d.items()
                              if k in BgmConfig.__dataclass_fields__}),
         )
+
+
+# ── Auto max-chars per subtitle line ────────────────────────────────────────
+
+def compute_subtitle_max_chars(aspect: str, fontsize: int, is_chinese: bool,
+                                 *, density: float = 0.55,
+                                 font_path: str | None = None) -> int:
+    """How many chars per line before the subtitle visually overflows.
+
+    Visual fit = available_width / avg_glyph_width. Multiplied by `density`
+    to leave breathing room (default 0.55 — full visual fit feels cramped).
+
+    Glyph width is measured via PIL when possible (most accurate) and
+    falls back to empirical ratios (CJK 1.0×fs, Latin 0.55×fs) otherwise.
+    """
+    short_edge = 1080
+    try:
+        w_str, h_str = aspect.split(":", 1)
+        w_ratio, h_ratio = max(1, int(w_str)), max(1, int(h_str))
+    except Exception:
+        w_ratio, h_ratio = 9, 16
+    # Vertical / square share the same width; horizontal is wider.
+    if w_ratio < h_ratio:
+        video_width = short_edge
+    else:
+        video_width = int(short_edge * w_ratio / h_ratio)
+    safe_margin = 0.92
+    available_px = video_width * safe_margin
+
+    glyph_w = _measure_glyph_width(fontsize, is_chinese, font_path)
+    if glyph_w <= 0:
+        glyph_w = fontsize * (1.0 if is_chinese else 0.55)
+    return max(8, int(available_px / glyph_w * density))
+
+
+def _measure_glyph_width(fontsize: int, is_chinese: bool,
+                          font_path: str | None) -> float:
+    """Best-effort PIL-based glyph width measurement. Returns 0.0 on miss
+    so caller can fall back to empirical ratios."""
+    try:
+        from PIL import ImageFont
+    except ImportError:
+        return 0.0
+    candidates: list[str] = []
+    if font_path:
+        candidates.append(font_path)
+    candidates += [
+        "C:/Windows/Fonts/msyh.ttc",      # Microsoft YaHei (CJK-capable)
+        "C:/Windows/Fonts/simhei.ttf",
+        "C:/Windows/Fonts/arial.ttf",
+        "/System/Library/Fonts/PingFang.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ]
+    sample = ("中文示例字幕一二三四五" if is_chinese
+              else "The quick brown fox jumps over a lazy dog")
+    for p in candidates:
+        if not p:
+            continue
+        try:
+            font = ImageFont.truetype(p, size=fontsize)
+            total = font.getlength(sample)
+            if total > 0:
+                return total / len(sample)
+        except Exception:
+            continue
+    return 0.0
+
+
+def effective_max_chars(line: SubtitleLineStyle, aspect: str,
+                          *, font_path: str | None = None) -> int:
+    """Resolve the line's actual max_chars: auto-computed or manual."""
+    if line.auto_max_chars:
+        return compute_subtitle_max_chars(
+            aspect, line.fontsize, line.is_chinese, font_path=font_path)
+    return max(1, int(line.manual_max_chars))
 
 
 # ── Pack ingestion ──────────────────────────────────────────────────────────
@@ -364,7 +516,8 @@ def crop_rect_to_pixels(rect: dict, video_w: int, video_h: int
 # ── Clips JSON persistence ──────────────────────────────────────────────────
 
 CLIPS_JSON_VERSION = 1
-CUT_FILE_VERSION = 3   # v3 added project_config; v2 cuts still readable
+CUT_FILE_VERSION = 4   # v4 split subtitle into sub1/sub2 + watermark.type;
+                        # v3/v2 cuts still readable via from_dict migration
 
 
 def _hydrate_clip(c: dict) -> ClipDraft:
@@ -950,9 +1103,12 @@ __all__ = [
     "ClipDraft",
     "ClipProjectConfig",
     "SubtitleStyle",
+    "SubtitleLineStyle",
     "WatermarkStyle",
     "HookOutroStyle",
     "BgmConfig",
+    "compute_subtitle_max_chars",
+    "effective_max_chars",
     "load_pack",
     "list_chapters",
     "chapter_paragraphs",

@@ -144,59 +144,60 @@ def _draw_subtitle(canvas: "Image.Image",
                     config: ClipProjectConfig) -> None:
     sub = config.subtitle
     w, h = canvas.size
-    # Scale subtitle size against the preview's height. The preset value
-    # is meant for full-res output (e.g., 1080p); shrink proportionally so
-    # the preview reads correctly.
-    scaled_size = max(8, int(round(sub.size * h / 1080.0 * 4)))
-    font = _resolve_font(sub.font, scaled_size)
-    if font is None:
+    # Lines: each enabled track contributes one line. sub1 = primary
+    # (typically Chinese, bold, larger), sub2 = secondary.
+    lines: list[tuple[str, "ImageFont.ImageFont", tuple[int,int,int], bool]] = []
+    for line_cfg in (sub.sub1, sub.sub2):
+        if not line_cfg.enabled:
+            continue
+        # CJK sample if line is Chinese; Latin sample otherwise.
+        sample_text = (_DEFAULT_SAMPLE_TEXT_SECONDARY
+                       if line_cfg.is_chinese
+                       else _DEFAULT_SAMPLE_TEXT_PRIMARY)
+        scaled_size = max(8, int(round(line_cfg.fontsize * h / 1080.0 * 4)))
+        font = _resolve_font("", scaled_size)
+        if font is None:
+            continue
+        color = _hex_to_rgb(line_cfg.color, (255, 255, 255))
+        lines.append((sample_text, font, color, line_cfg.bold))
+
+    if not lines:
         return
     draw = ImageDraw.Draw(canvas)
 
-    line1 = _DEFAULT_SAMPLE_TEXT_PRIMARY
-    line2 = (_DEFAULT_SAMPLE_TEXT_SECONDARY
-              if sub.mode == "bilingual" else None)
-
-    color = _hex_to_rgb(sub.color, (255, 255, 255))
     stroke_color = _hex_to_rgb(sub.stroke_color, (0, 0, 0))
     stroke_width = max(0, int(sub.stroke_width))
 
-    # Vertical anchor based on `position`
-    margin = max(8, h // 20)
-    if sub.position == "top":
-        y_anchor = margin
-        y_dir = +1
-    elif sub.position == "middle":
-        y_anchor = h // 2
-        y_dir = 0
-    else:  # bottom
-        y_anchor = h - margin
-        y_dir = -1
+    # Stack lines vertically with a small gap.
+    line_gap = max(2, h // 80)
 
-    def _measure(text: str) -> tuple[int, int]:
+    def _measure(text: str, font) -> tuple[int, int]:
         bbox = draw.textbbox((0, 0), text, font=font, stroke_width=stroke_width)
         return (bbox[2] - bbox[0], bbox[3] - bbox[1])
 
-    lines = [line1] + ([line2] if line2 else [])
-    sizes = [_measure(t) for t in lines]
-    line_h = max((s[1] for s in sizes), default=0)
-    line2_gap = max(0, int(round(sub.line2_offset * h / 1080.0 * 2)))
-    total_h = sum(s[1] for s in sizes) + (line2_gap if line2 else 0)
+    sizes = [_measure(t, f) for (t, f, _c, _b) in lines]
+    total_h = sum(s[1] for s in sizes) + line_gap * (len(lines) - 1)
 
-    if y_dir == -1:
-        y_start = y_anchor - total_h
-    elif y_dir == +1:
-        y_start = y_anchor
-    else:
-        y_start = y_anchor - total_h // 2
+    margin = max(8, h // 20)
+    if sub.position == "top":
+        y_start = margin
+    elif sub.position == "middle":
+        y_start = (h - total_h) // 2
+    else:  # bottom
+        y_start = h - margin - total_h
 
     cur_y = y_start
-    for i, text in enumerate(lines):
+    for i, (text, font, color, bold) in enumerate(lines):
         tw_, th_ = sizes[i]
         x = (w - tw_) // 2
+        # Approximate bold by drawing the text twice with 1px offset when
+        # the font face itself doesn't have a bold variant available.
         draw.text((x, cur_y), text, font=font, fill=color,
                   stroke_width=stroke_width, stroke_fill=stroke_color)
-        cur_y += th_ + (line2_gap if i == 0 else 0)
+        if bold:
+            draw.text((x + 1, cur_y), text, font=font, fill=color,
+                      stroke_width=stroke_width, stroke_fill=stroke_color)
+        cur_y += th_ + line_gap
 
 
 def _draw_watermark(canvas: "Image.Image",
@@ -204,23 +205,33 @@ def _draw_watermark(canvas: "Image.Image",
     wm = config.watermark
     if not wm.enabled:
         return
-    w, h = canvas.size
-    # Box width = scale% of canvas width
-    box_w = max(8, int(round(w * (wm.scale / 100.0))))
-    box_h = max(8, int(round(box_w * 0.4)))
-    margin = max(4, w // 30)
-    pos = wm.position
-    if pos == "top-left":
-        x, y = margin, margin
-    elif pos == "top-right":
-        x, y = w - margin - box_w, margin
-    elif pos == "bottom-left":
-        x, y = margin, h - margin - box_h
-    else:  # bottom-right (default)
-        x, y = w - margin - box_w, h - margin - box_h
+    if wm.type == "text":
+        _draw_text_watermark(canvas, wm)
+    else:
+        _draw_image_watermark(canvas, wm)
 
-    # Try loading the actual image; fall back to a dashed placeholder so
-    # the user still sees position/size even when path is empty/invalid.
+
+def _watermark_anchor(canvas_size: tuple[int, int],
+                       box_size: tuple[int, int],
+                       position: str) -> tuple[int, int]:
+    w, h = canvas_size
+    box_w, box_h = box_size
+    margin = max(4, w // 30)
+    if position == "top-left":
+        return (margin, margin)
+    if position == "top-right":
+        return (w - margin - box_w, margin)
+    if position == "bottom-left":
+        return (margin, h - margin - box_h)
+    return (w - margin - box_w, h - margin - box_h)  # bottom-right
+
+
+def _draw_image_watermark(canvas: "Image.Image", wm) -> None:
+    w, h = canvas.size
+    box_w = max(8, int(round(w * max(0.0, min(1.0, wm.image_scale)))))
+    box_h = max(8, int(round(box_w * 0.4)))
+    x, y = _watermark_anchor((w, h), (box_w, box_h), wm.position)
+
     overlay = None
     if wm.image_path and os.path.isfile(wm.image_path):
         try:
@@ -228,19 +239,20 @@ def _draw_watermark(canvas: "Image.Image",
                 im.load()
                 overlay = im.convert("RGBA").resize(
                     (box_w, box_h), Image.LANCZOS)
-                if 0 <= wm.opacity <= 100 and wm.opacity < 100:
+                op = max(0, min(100, wm.image_opacity))
+                if op < 100:
                     alpha = overlay.split()[-1].point(
-                        lambda v, k=wm.opacity: int(v * k / 100.0))
+                        lambda v, k=op: int(v * k / 100.0))
                     overlay.putalpha(alpha)
         except Exception:
             overlay = None
 
     if overlay is None:
-        # Dashed-rectangle placeholder + "WM" label
         overlay = Image.new("RGBA", (box_w, box_h), (0, 0, 0, 0))
         d = ImageDraw.Draw(overlay)
+        op = max(0, min(100, wm.image_opacity))
         d.rectangle([(0, 0), (box_w - 1, box_h - 1)],
-                    outline=(220, 220, 220, int(wm.opacity * 2.55)),
+                    outline=(220, 220, 220, int(op * 2.55)),
                     width=2)
         wm_font = _resolve_font("", max(8, box_h // 2))
         if wm_font is not None:
@@ -249,9 +261,36 @@ def _draw_watermark(canvas: "Image.Image",
             tw_ = bbox[2] - bbox[0]
             th_ = bbox[3] - bbox[1]
             d.text(((box_w - tw_) // 2, (box_h - th_) // 2 - 2),
-                   label, fill=(220, 220, 220, int(wm.opacity * 2.55)),
+                   label, fill=(220, 220, 220, int(op * 2.55)),
                    font=wm_font)
 
+    canvas.paste(overlay, (x, y), overlay)
+
+
+def _draw_text_watermark(canvas: "Image.Image", wm) -> None:
+    w, h = canvas.size
+    text = (wm.text or "").strip() or "@watermark"
+    scaled_size = max(8, int(round(wm.text_fontsize * h / 1080.0 * 4)))
+    font = _resolve_font("", scaled_size)
+    if font is None:
+        return
+    color = _hex_to_rgb(wm.text_color, (255, 255, 255))
+    op = max(0, min(100, wm.text_opacity))
+
+    # Render text onto an RGBA layer first to apply opacity uniformly.
+    tmp_draw = ImageDraw.Draw(canvas)
+    bbox = tmp_draw.textbbox((0, 0), text, font=font)
+    tw_ = bbox[2] - bbox[0]
+    th_ = bbox[3] - bbox[1]
+    pad_x, pad_y = 4, 2
+    overlay = Image.new("RGBA", (tw_ + pad_x * 2, th_ + pad_y * 2),
+                         (0, 0, 0, 0))
+    d = ImageDraw.Draw(overlay)
+    fill = color + (int(op * 2.55),)
+    stroke = (0, 0, 0, int(op * 2.55))
+    d.text((pad_x, pad_y), text, font=font, fill=fill,
+           stroke_width=2, stroke_fill=stroke)
+    x, y = _watermark_anchor((w, h), overlay.size, wm.position)
     canvas.paste(overlay, (x, y), overlay)
 
 
