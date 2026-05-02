@@ -1291,7 +1291,6 @@
   "tool.clip.hint_no_clips_in_chapter": "(no clips yet — click a button above to generate)",
   "tool.clip.hint_pick_chapter": "Pick a chapter on the left to start authoring its clips.",
   "tool.clip.section_clips_in_ch": "Clips in this chapter",
-  "tool.clip.section_focus_clip": "Focused clip",
   "tool.clip.section_summary": "All clips summary",
   "tool.clip.status_batch_status": "Set {n} clips to {status}",
   "tool.clip.status_chapter_auto_done": "✓ Chapter \"{ch}\" produced {n} clips",

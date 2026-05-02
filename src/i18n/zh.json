@@ -1291,7 +1291,6 @@
   "tool.clip.hint_no_clips_in_chapter": "（该章节还没有切片，点上方按钮生成）",
   "tool.clip.hint_pick_chapter": "在左侧选一个章节，开始为它生成切片。",
   "tool.clip.section_clips_in_ch": "本章节切片",
-  "tool.clip.section_focus_clip": "当前选中切片",
   "tool.clip.section_summary": "全部切片汇总",
   "tool.clip.status_batch_status": "已把 {n} 条切片置为 {status}",
   "tool.clip.status_chapter_auto_done": "✓ 章节「{ch}」生成 {n} 条切片",

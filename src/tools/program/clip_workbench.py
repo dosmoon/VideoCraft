@@ -571,24 +571,16 @@ class ClipWorkbenchApp(ToolBase):
 
     def _build_tab_export(self) -> None:
         f = self._tab_export
-        pw = ttk.PanedWindow(f, orient="horizontal")
-        pw.pack(fill="both", expand=True)
 
-        left = ttk.Frame(pw)
-        right = ttk.Frame(pw, width=440)
-        pw.add(left, weight=1)
-        pw.add(right, weight=0)
-
-        # ── Left: summary tree + batch buttons ──
-        tk.Label(left, text=_tr("tool.clip.section_summary"),
+        tk.Label(f, text=_tr("tool.clip.section_summary"),
                  font=("", 10, "bold"), anchor="w").pack(
             fill="x", padx=8, pady=(6, 4))
 
         self._summary_tree = ClipSummaryTreeview(
-            left, on_select=self._on_summary_clip_selected)
+            f, on_select=self._on_summary_clip_selected)
         self._summary_tree.pack(fill="both", expand=True, padx=4, pady=4)
 
-        batch = ttk.Frame(left)
+        batch = ttk.Frame(f)
         batch.pack(fill="x", padx=4, pady=(2, 4))
         ttk.Button(batch, text=_tr("tool.clip.btn_skip"),
                    command=lambda: self._batch_status("skipped")).pack(
@@ -602,23 +594,7 @@ class ClipWorkbenchApp(ToolBase):
         ttk.Button(batch, text=_tr("tool.clip.btn_jump_to_chapter"),
                    command=self._jump_to_chapter).pack(side="left", padx=(20, 2))
 
-        # ── Right: focused clip editor ──
-        right_label = tk.Label(right, text=_tr("tool.clip.section_focus_clip"),
-                                font=("", 10, "bold"), anchor="w")
-        right_label.pack(fill="x", padx=8, pady=(6, 4))
-
-        self._focus_preview = PreviewPane(
-            right, on_change=self._on_preview_crop_changed)
-        self._focus_preview.set_apply_all_callback(self._apply_crop_to_all_global)
-        self._focus_preview.pack(fill="x", padx=4, pady=2)
-
-        self._focus_form = PackageForm(
-            right, on_change=self._on_clip_changed,
-            ai_button_factory=self._make_ai_button,
-            ai_worker_for_clip=self._make_pkg_worker)
-        self._focus_form.pack(fill="x", padx=4, pady=4)
-
-        # ── Bottom export bar (full width) ──
+        # ── Bottom export bar ──
         bot = ttk.Frame(f)
         bot.pack(fill="x", padx=6, pady=6)
         ttk.Label(bot, text=_tr("tool.clip.label_output_dir")).pack(
@@ -648,11 +624,10 @@ class ClipWorkbenchApp(ToolBase):
         self._summary_tree.bind(self._clips)
 
     def _on_summary_clip_selected(self, clip: ClipDraft | None) -> None:
+        # Tab 2 no longer hosts a focused-clip editor. Selection just records
+        # the focused id so batch buttons know which row is current; actual
+        # editing happens after [跳到该章节] navigates back to Tab 1.
         self._focused_clip_id = clip.id if clip is not None else None
-        self._focus_preview.bind_clip(
-            clip, video_path=self._video_path,
-            video_w=self._video_w, video_h=self._video_h)
-        self._focus_form.bind_clip(clip)
 
     def _batch_status(self, new_status: str) -> None:
         clips = self._summary_tree.get_selected_clips()
@@ -678,12 +653,11 @@ class ClipWorkbenchApp(ToolBase):
         for c in clips:
             c.crop_rect = None
         self._autosave()
-        # Re-render the focused preview if relevant
-        focused = self._summary_tree.get_focused_clip()
-        if focused is not None:
-            self._focus_preview.bind_clip(
-                focused, video_path=self._video_path,
-                video_w=self._video_w, video_h=self._video_h)
+        # If any reset clip is the one currently focused on the chapter tab,
+        # rebind its preview so the user sees the reset reflected.
+        if self._focused_clip_id is not None and any(
+                c.id == self._focused_clip_id for c in clips):
+            self._refresh_focused_preview()
         self._set_status(_tr("tool.clip.status_crop_reset").format(
             n=len(clips)))
 
@@ -695,13 +669,6 @@ class ClipWorkbenchApp(ToolBase):
         self._notebook.select(self._tab_chapters)
         self._focused_clip_id = clip.id
         self._on_chapter_selected(clip.chapter_idx)
-
-    def _apply_crop_to_all_global(self, rect: dict) -> None:
-        for c in self._clips:
-            c.crop_rect = dict(rect)
-        self._autosave()
-        self._set_status(_tr("tool.clip.status_crop_applied").format(
-            n=len(self._clips)))
 
     # ── Header / source handlers ──────────────────────────────────────────
 
@@ -1168,7 +1135,7 @@ class ClipWorkbenchApp(ToolBase):
         ch = self._chapters[chapter_idx]
         next_id = self._next_clip_id
         for p in peaks:
-            if token.is_cancelled():
+            if token.cancelled:
                 break
             s, e = p["start_sec"], p["end_sec"]
             if self._cues:
@@ -1193,7 +1160,7 @@ class ClipWorkbenchApp(ToolBase):
 
         # Run package_clip per new clip, serially, honoring cancel
         for c in new_clips:
-            if token.is_cancelled():
+            if token.cancelled:
                 break
             try:
                 pkg = cliplib.package_clip(c, self._pack,
@@ -1248,7 +1215,7 @@ class ClipWorkbenchApp(ToolBase):
                         key=lambda i: -self._ranks.get(i, {}).get("score", -1))
         produced: list[tuple[int, list[ClipDraft]]] = []
         for ch_idx in order:
-            if token.is_cancelled():
+            if token.cancelled:
                 break
             if any(c.chapter_idx == ch_idx for c in self._clips):
                 continue    # skip chapters already populated
