@@ -94,6 +94,8 @@ class ClipWorkbenchApp(ToolBase):
         self._clips: list[ClipDraft] = []
         self._next_clip_id: int = 1
         self._ranks: dict[int, dict] = {}
+        self._project_config: cliplib.ClipProjectConfig = \
+            cliplib.ClipProjectConfig()
         self._suspend_autosave: bool = False
         # Focus state
         self._selected_chapter_idx: int | None = None
@@ -1039,6 +1041,7 @@ class ClipWorkbenchApp(ToolBase):
             self._clips = []
             self._next_clip_id = 1
             self._ranks = {}
+            self._project_config = cliplib.ClipProjectConfig()
             self._selected_chapter_idx = None
             self._focused_clip_id = None
             self._refresh_chapter_list()
@@ -1142,6 +1145,8 @@ class ClipWorkbenchApp(ToolBase):
             self._clips = cut["clips"]
             self._next_clip_id = max((c.id for c in self._clips), default=0) + 1
             self._ranks = cut.get("ranks") or {}
+            self._project_config = cut.get("project_config") \
+                or cliplib.ClipProjectConfig()
             self._selected_chapter_idx = None
             self._focused_clip_id = None
             pack_path = sources.get("pack_path") or ""
@@ -1205,6 +1210,7 @@ class ClipWorkbenchApp(ToolBase):
                 clips=self._clips,
                 output_dir=self._out_dir_var.get().strip(),
                 ranks=self._ranks,
+                project_config=self._project_config,
             )
         except Exception as e:
             self._set_status(f"autosave failed: {e}")

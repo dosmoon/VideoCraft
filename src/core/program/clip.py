@@ -62,6 +62,93 @@ class ClipDraft:
         return max(0.0, self.end_sec - self.start_sec)
 
 
+# ── Project-level output style ──────────────────────────────────────────────
+#
+# Style is project-scoped: one cut file = one set of output style settings
+# shared by all clips. Per-clip we only store the framing rect (crop_rect)
+# and copy text (hook / outro / title / hashtags). Aspect/subtitle/watermark
+# / hook-outro card / BGM all live here.
+
+@dataclass
+class SubtitleStyle:
+    mode: str = "single"           # "single" | "bilingual"
+    font: str = "Arial"
+    size: int = 32
+    color: str = "#FFFFFF"         # primary line
+    stroke_color: str = "#000000"
+    stroke_width: int = 2
+    position: str = "bottom"       # "bottom" | "middle" | "top"
+    line2_offset: int = 40         # px gap to second line (bilingual only)
+
+
+@dataclass
+class WatermarkStyle:
+    enabled: bool = False
+    image_path: str = ""
+    position: str = "bottom-right"  # "top-left"|"top-right"|"bottom-left"|"bottom-right"
+    opacity: int = 80              # 0-100
+    scale: int = 10                # 0-100, % of video width
+
+
+@dataclass
+class HookOutroStyle:
+    font: str = "Arial"
+    size: int = 48
+    color: str = "#FFFFFF"
+    bg_color: str = "#000000"
+    bg_opacity: int = 70           # 0-100
+    hook_duration_sec: float = 5.0
+    outro_duration_sec: float = 5.0
+
+
+@dataclass
+class BgmConfig:
+    path: str = ""
+    volume: int = 50               # 0-100; placeholder, not yet wired
+
+
+@dataclass
+class ClipProjectConfig:
+    """Output-style settings shared by all clips in a cut file."""
+    aspect: str = "9:16"           # "9:16"|"16:9"|"1:1"|"4:5"
+    subtitle: SubtitleStyle = field(default_factory=SubtitleStyle)
+    watermark: WatermarkStyle = field(default_factory=WatermarkStyle)
+    hook_outro: HookOutroStyle = field(default_factory=HookOutroStyle)
+    bgm: BgmConfig = field(default_factory=BgmConfig)
+
+    def aspect_ratio(self) -> tuple[int, int]:
+        """Parse aspect string. Falls back to 9:16 on any oddity."""
+        try:
+            w, h = self.aspect.split(":", 1)
+            return (max(1, int(w)), max(1, int(h)))
+        except Exception:
+            return (9, 16)
+
+    @classmethod
+    def from_dict(cls, d: dict | None) -> "ClipProjectConfig":
+        """Build from a JSON-loaded dict, filling defaults for missing keys.
+
+        Tolerant: unknown keys are ignored; type errors fall back to defaults.
+        """
+        if not isinstance(d, dict):
+            return cls()
+        sub_d = d.get("subtitle") if isinstance(d.get("subtitle"), dict) else {}
+        wm_d  = d.get("watermark") if isinstance(d.get("watermark"), dict) else {}
+        ho_d  = d.get("hook_outro") if isinstance(d.get("hook_outro"), dict) else {}
+        bg_d  = d.get("bgm") if isinstance(d.get("bgm"), dict) else {}
+        return cls(
+            aspect=str(d.get("aspect", "9:16")),
+            subtitle=SubtitleStyle(**{k: v for k, v in sub_d.items()
+                                      if k in SubtitleStyle.__dataclass_fields__}),
+            watermark=WatermarkStyle(**{k: v for k, v in wm_d.items()
+                                        if k in WatermarkStyle.__dataclass_fields__}),
+            hook_outro=HookOutroStyle(**{k: v for k, v in ho_d.items()
+                                         if k in HookOutroStyle.__dataclass_fields__}),
+            bgm=BgmConfig(**{k: v for k, v in bg_d.items()
+                             if k in BgmConfig.__dataclass_fields__}),
+        )
+
+
 # ── Pack ingestion ──────────────────────────────────────────────────────────
 
 def load_pack(postprocess_json_path: str) -> dict:
@@ -277,7 +364,7 @@ def crop_rect_to_pixels(rect: dict, video_w: int, video_h: int
 # ── Clips JSON persistence ──────────────────────────────────────────────────
 
 CLIPS_JSON_VERSION = 1
-CUT_FILE_VERSION = 2
+CUT_FILE_VERSION = 3   # v3 added project_config; v2 cuts still readable
 
 
 def _hydrate_clip(c: dict) -> ClipDraft:
@@ -300,15 +387,17 @@ def _hydrate_clip(c: dict) -> ClipDraft:
 
 def write_cut_file(path: str, *, name: str, sources: dict,
                     clips: list[ClipDraft], output_dir: str = "",
-                    ranks: dict[int, dict] | None = None) -> str:
+                    ranks: dict[int, dict] | None = None,
+                    project_config: ClipProjectConfig | None = None) -> str:
     """Persist a self-contained clip-script project file.
 
     The cut file is the unit of persistence — a user-named .json that holds
-    everything needed to reopen this edit later: source paths, the output
-    directory preference, the full clip list, and the AI chapter ranks
+    everything needed to reopen this edit later: source paths, output dir,
+    project-level style config, the full clip list, and AI chapter ranks
     (if any).
     """
     os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+    cfg = project_config if project_config is not None else ClipProjectConfig()
     payload = {
         "version": CUT_FILE_VERSION,
         "name": name,
@@ -319,6 +408,7 @@ def write_cut_file(path: str, *, name: str, sources: dict,
             "srt_path":   sources.get("srt_path", ""),
         },
         "output_dir": output_dir or "",
+        "project_config": asdict(cfg),
         # Ranks stored as a list (JSON dicts can't have int keys reliably).
         "ranks": [{"idx": int(idx), **{k: v for k, v in r.items() if k != "idx"}}
                    for idx, r in (ranks or {}).items()],
@@ -331,7 +421,9 @@ def write_cut_file(path: str, *, name: str, sources: dict,
 
 def load_cut_file(path: str) -> dict:
     """Read a cut file. Returns dict with keys:
-    name / sources / output_dir / clips (list[ClipDraft]) / ranks (dict)."""
+    name / sources / output_dir / clips (list[ClipDraft]) / ranks (dict) /
+    project_config (ClipProjectConfig). v2 files (no project_config) load
+    with default style."""
     with open(path, "r", encoding="utf-8") as f:
         payload = json.load(f)
     ranks_raw = payload.get("ranks") or []
@@ -347,6 +439,8 @@ def load_cut_file(path: str) -> dict:
         "name": payload.get("name", os.path.splitext(os.path.basename(path))[0]),
         "sources": payload.get("sources") or {},
         "output_dir": payload.get("output_dir", ""),
+        "project_config": ClipProjectConfig.from_dict(
+            payload.get("project_config")),
         "clips": [_hydrate_clip(c) for c in (payload.get("clips") or [])],
         "ranks": ranks,
     }
@@ -854,6 +948,11 @@ def package_clip(clip: ClipDraft, pack: dict, *,
 
 __all__ = [
     "ClipDraft",
+    "ClipProjectConfig",
+    "SubtitleStyle",
+    "WatermarkStyle",
+    "HookOutroStyle",
+    "BgmConfig",
     "load_pack",
     "list_chapters",
     "chapter_paragraphs",
