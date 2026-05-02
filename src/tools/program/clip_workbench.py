@@ -730,27 +730,45 @@ class ClipWorkbenchApp(ToolBase):
         """Drop a default-range clip into the chapter (no dialog).
 
         Range: first ~30 s of the chapter, snapped to cue boundaries when SRT
-        is loaded, capped by chapter end. User adjusts start/end via the
-        clip-detail editor afterwards.
+        is loaded, capped by chapter end. After insertion the detail pane is
+        rebuilt directly to the new clip — we do not rely on the tree's
+        <<TreeviewSelect>> event, which has been observed to occasionally
+        no-op on programmatic selection changes.
         """
-        if not (0 <= chapter_idx < len(self._chapters)):
-            return
-        ch = self._chapters[chapter_idx]
-        chap_dur = ch["end_sec"] - ch["start_sec"]
-        if chap_dur < 1.0:
-            messagebox.showerror(_tr("tool.clip.title"),
-                                 _tr("tool.clip.err_chapter_too_short"))
-            return
-        default_dur = min(30.0, max(5.0, chap_dur))
-        s = float(ch["start_sec"])
-        e = float(min(ch["start_sec"] + default_dur, ch["end_sec"]))
-        if self._cues:
-            s, e = cliplib.snap_to_cue_boundaries(self._cues, s, e)
-        clip = self._append_new_clip(ch, s, e)
-        self._expand_chapter_in_tree(chapter_idx)
-        self._select_clip_in_tree(clip.id)
-        self._set_status(_tr("tool.clip.status_manual_added").format(
-            s=_seconds_to_str(s), e=_seconds_to_str(e)))
+        try:
+            if not (0 <= chapter_idx < len(self._chapters)):
+                messagebox.showerror(
+                    _tr("tool.clip.title"),
+                    f"chapter_idx out of range: {chapter_idx}")
+                return
+            ch = self._chapters[chapter_idx]
+            chap_dur = float(ch["end_sec"]) - float(ch["start_sec"])
+            if chap_dur < 1.0:
+                messagebox.showerror(_tr("tool.clip.title"),
+                                     _tr("tool.clip.err_chapter_too_short"))
+                return
+            default_dur = min(30.0, max(5.0, chap_dur))
+            s = float(ch["start_sec"])
+            e = float(min(ch["start_sec"] + default_dur, ch["end_sec"]))
+            if self._cues:
+                s, e = cliplib.snap_to_cue_boundaries(self._cues, s, e)
+            clip = self._append_new_clip(ch, s, e)
+            # Reveal in tree
+            self._expand_chapter_in_tree(chapter_idx)
+            self._select_clip_in_tree(clip.id)
+            # Force-rebuild the detail pane straight to the new clip (the
+            # tree selection event is best-effort; this is the contract).
+            self._selected_chapter_idx = chapter_idx
+            self._focused_clip_id = clip.id
+            self._build_detail_clip(clip.id)
+            self._set_status(_tr("tool.clip.status_manual_added").format(
+                s=_seconds_to_str(s), e=_seconds_to_str(e)))
+        except Exception as exc:
+            import traceback
+            traceback.print_exc()
+            messagebox.showerror(
+                _tr("tool.clip.title"),
+                f"手工切片失败：{type(exc).__name__}: {exc}")
 
     def _append_new_clip(self, ch: dict, s: float, e: float) -> ClipDraft:
         """Create + register a clip; refresh dependent panes."""
@@ -1344,10 +1362,13 @@ class ClipWorkbenchApp(ToolBase):
             if first_clip_id is None:
                 first_clip_id = new_clip.id
             added += 1
-        # Reveal the result: open the chapter row + select the first new clip
+        # Reveal the result + land on the first new clip's editor
         self._expand_chapter_in_tree(chapter_idx)
         if first_clip_id is not None:
             self._select_clip_in_tree(first_clip_id)
+            self._selected_chapter_idx = chapter_idx
+            self._focused_clip_id = first_clip_id
+            self._build_detail_clip(first_clip_id)
         self._set_status(_tr("tool.clip.status_peaks_done").format(
             n=added, ch=ch["title"]))
 
@@ -1431,6 +1452,9 @@ class ClipWorkbenchApp(ToolBase):
         self._expand_chapter_in_tree(chapter_idx)
         if clips:
             self._select_clip_in_tree(clips[0].id)
+            self._selected_chapter_idx = chapter_idx
+            self._focused_clip_id = clips[0].id
+            self._build_detail_clip(clips[0].id)
         self._set_status(_tr("tool.clip.status_chapter_auto_done").format(
             n=len(clips), ch=self._chapters[chapter_idx]["title"]))
 
