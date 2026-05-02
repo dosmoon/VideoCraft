@@ -315,7 +315,7 @@ class ClipWorkbenchApp(ToolBase):
                  else "✗" if c.status == "skipped"
                  else "·")
         duration = int(c.end_sec - c.start_sec)
-        excerpt = (c.excerpt or "").strip().replace("\n", " ")
+        excerpt = (c.original_excerpt or "").strip().replace("\n", " ")
         tag = "clip_skipped" if c.status == "skipped" else "clip_row"
         self._chap_tree.insert(
             parent_iid, "end", iid=f"clip:{c.id}",
