@@ -1291,6 +1291,8 @@
   "tool.clip.tree_col_count": "切片",
   "tool.clip.tree_col_score": "分数",
   "tool.clip.chapter_status_summary": "本章节 {total} 条切片 · 已审核 {reviewed} · 跳过 {skipped}",
+  "tool.clip.status_manual_added": "已新增手工切片：{s} – {e}（请按需调整起止）",
+  "tool.clip.err_chapter_too_short": "该章节时长不足，无法新建切片。",
   "tool.clip.col_clip_title": "标题",
   "tool.clip.col_range": "时段",
   "tool.clip.col_status": "状态",

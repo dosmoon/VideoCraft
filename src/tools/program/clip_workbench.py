@@ -401,6 +401,28 @@ class ClipWorkbenchApp(ToolBase):
             if iid != keep_open_iid and self._chap_tree.item(iid, "open"):
                 self._chap_tree.item(iid, open=False)
 
+    def _expand_chapter_in_tree(self, chapter_idx: int) -> None:
+        """Open the chapter row + apply accordion + scroll into view."""
+        if not hasattr(self, "_chap_tree"):
+            return
+        ch_iid = f"ch:{chapter_idx}"
+        if not self._chap_tree.exists(ch_iid):
+            return
+        self._chap_tree.item(ch_iid, open=True)
+        self._enforce_accordion(ch_iid)
+        self._chap_tree.see(ch_iid)
+
+    def _select_clip_in_tree(self, clip_id: int) -> None:
+        """Select the clip row + scroll into view (parent must already exist)."""
+        if not hasattr(self, "_chap_tree"):
+            return
+        clip_iid = f"clip:{clip_id}"
+        if not self._chap_tree.exists(clip_iid):
+            return
+        self._chap_tree.selection_set(clip_iid)
+        self._chap_tree.focus(clip_iid)
+        self._chap_tree.see(clip_iid)
+
     def _build_detail_chapter(self, chapter_idx: int) -> None:
         for w in self._detail_pane.winfo_children():
             w.destroy()
@@ -547,6 +569,29 @@ class ClipWorkbenchApp(ToolBase):
                      background="#16a34a", foreground="white",
                      font=("", 9, "bold"), padx=6).pack(side="right")
 
+        # Time-range editor row (start / end seconds + snap)
+        time_row = ttk.Frame(self._detail_pane)
+        time_row.pack(fill="x", padx=4, pady=(0, 4))
+        ttk.Label(time_row, text=_tr("tool.clip.field_start")).pack(
+            side="left", padx=(0, 2))
+        start_var = tk.IntVar(value=int(clip.start_sec))
+        ttk.Spinbox(time_row, from_=0, to=99999, increment=1,
+                     textvariable=start_var, width=8,
+                     command=lambda c=clip, v=start_var:
+                         self._set_clip_start(c, v.get())).pack(
+            side="left", padx=(0, 8))
+        ttk.Label(time_row, text=_tr("tool.clip.field_end")).pack(
+            side="left", padx=(0, 2))
+        end_var = tk.IntVar(value=int(clip.end_sec))
+        ttk.Spinbox(time_row, from_=0, to=99999, increment=1,
+                     textvariable=end_var, width=8,
+                     command=lambda c=clip, v=end_var:
+                         self._set_clip_end(c, v.get())).pack(
+            side="left", padx=(0, 8))
+        ttk.Button(time_row, text=_tr("tool.clip.btn_snap"),
+                   command=lambda c=clip: self._snap_clip_to_cues(c)).pack(
+            side="left", padx=(0, 2))
+
         # Action bar
         actions = ttk.Frame(self._detail_pane)
         actions.pack(fill="x", padx=4, pady=(0, 6))
@@ -596,6 +641,36 @@ class ClipWorkbenchApp(ToolBase):
                                   video_path=self._video_path,
                                   video_w=self._video_w,
                                   video_h=self._video_h)
+
+    def _set_clip_start(self, clip: ClipDraft, new_start: int) -> None:
+        new_start = max(0, int(new_start))
+        if new_start >= int(clip.end_sec):
+            return
+        clip.start_sec = float(new_start)
+        self._refresh_focused_preview()
+        self._refresh_clip_cards_for_chapter(clip.chapter_idx)
+        self._autosave()
+
+    def _set_clip_end(self, clip: ClipDraft, new_end: int) -> None:
+        new_end = max(int(clip.start_sec) + 1, int(new_end))
+        clip.end_sec = float(new_end)
+        self._refresh_focused_preview()
+        self._refresh_clip_cards_for_chapter(clip.chapter_idx)
+        self._autosave()
+
+    def _snap_clip_to_cues(self, clip: ClipDraft) -> None:
+        if not self._cues:
+            self._set_status(_tr("tool.clip.warn_no_srt_for_snap"))
+            return
+        s, e = cliplib.snap_to_cue_boundaries(
+            self._cues, clip.start_sec, clip.end_sec)
+        clip.start_sec = float(s)
+        clip.end_sec = float(e)
+        self._autosave()
+        self._refresh_clip_cards_for_chapter(clip.chapter_idx)
+        # Rebuild detail to refresh Spinbox values + preview
+        self._build_detail_clip(clip.id)
+        self._set_status(_tr("tool.clip.status_snapped"))
 
     def _toggle_clip_skip(self, clip: ClipDraft) -> None:
         clip.status = "draft" if clip.status == "skipped" else "skipped"
@@ -652,48 +727,30 @@ class ClipWorkbenchApp(ToolBase):
         self._set_status(_tr("tool.clip.status_crop_applied").format(n=n))
 
     def _add_manual_clip(self, chapter_idx: int) -> None:
-        """Pop a tiny dialog (offset + duration sec) → add a clip to this chapter."""
+        """Drop a default-range clip into the chapter (no dialog).
+
+        Range: first ~30 s of the chapter, snapped to cue boundaries when SRT
+        is loaded, capped by chapter end. User adjusts start/end via the
+        clip-detail editor afterwards.
+        """
         if not (0 <= chapter_idx < len(self._chapters)):
             return
         ch = self._chapters[chapter_idx]
-        dlg = tk.Toplevel(self.master)
-        dlg.title(_tr("tool.clip.dialog_add_manual"))
-        dlg.transient(self.master)
-        dlg.grab_set()
-        ttk.Label(dlg, text=_tr("tool.clip.field_offset")).grid(
-            row=0, column=0, sticky="e", padx=8, pady=6)
-        offset_var = tk.IntVar(value=0)
-        ttk.Spinbox(dlg, from_=0, to=99999, increment=5,
-                     textvariable=offset_var, width=8).grid(
-            row=0, column=1, sticky="w", padx=8)
-        ttk.Label(dlg, text=_tr("tool.clip.field_duration_sec")).grid(
-            row=1, column=0, sticky="e", padx=8, pady=6)
-        dur_var = tk.IntVar(value=45)
-        ttk.Spinbox(dlg, from_=5, to=600, increment=5,
-                     textvariable=dur_var, width=8).grid(
-            row=1, column=1, sticky="w", padx=8)
-
-        def on_ok():
-            try:
-                off = max(0, int(offset_var.get()))
-                dur = max(1, int(dur_var.get()))
-            except (tk.TclError, ValueError):
-                return
-            s = min(ch["start_sec"] + off, ch["end_sec"] - 1)
-            e = min(s + dur, ch["end_sec"])
-            if e <= s:
-                return
-            if self._cues:
-                s, e = cliplib.snap_to_cue_boundaries(self._cues, s, e)
-            self._append_new_clip(ch, s, e)
-            dlg.destroy()
-
-        btns = tk.Frame(dlg)
-        btns.grid(row=2, column=0, columnspan=2, pady=8)
-        ttk.Button(btns, text=_tr("tool.clip.btn_apply"),
-                    command=on_ok).pack(side="left", padx=4)
-        ttk.Button(btns, text=_tr("tool.clip.btn_cancel_dialog"),
-                    command=dlg.destroy).pack(side="left", padx=4)
+        chap_dur = ch["end_sec"] - ch["start_sec"]
+        if chap_dur < 1.0:
+            messagebox.showerror(_tr("tool.clip.title"),
+                                 _tr("tool.clip.err_chapter_too_short"))
+            return
+        default_dur = min(30.0, max(5.0, chap_dur))
+        s = float(ch["start_sec"])
+        e = float(min(ch["start_sec"] + default_dur, ch["end_sec"]))
+        if self._cues:
+            s, e = cliplib.snap_to_cue_boundaries(self._cues, s, e)
+        clip = self._append_new_clip(ch, s, e)
+        self._expand_chapter_in_tree(chapter_idx)
+        self._select_clip_in_tree(clip.id)
+        self._set_status(_tr("tool.clip.status_manual_added").format(
+            s=_seconds_to_str(s), e=_seconds_to_str(e)))
 
     def _append_new_clip(self, ch: dict, s: float, e: float) -> ClipDraft:
         """Create + register a clip; refresh dependent panes."""
@@ -717,11 +774,7 @@ class ClipWorkbenchApp(ToolBase):
         )
         self._next_clip_id += 1
         self._clips.append(clip)
-        if self._selected_chapter_idx == ch["idx"]:
-            self._refresh_clip_cards_for_chapter(ch["idx"])
-            self._focused_clip_id = clip.id
-            self._refresh_focused_preview()
-        self._refresh_chapter_list()
+        self._refresh_clip_cards_for_chapter(ch["idx"])
         self._refresh_export_summary()
         self._autosave()
         return clip
@@ -1282,12 +1335,19 @@ class ClipWorkbenchApp(ToolBase):
             return
         ch = self._chapters[chapter_idx]
         added = 0
+        first_clip_id = None
         for p in peaks:
             s, e = p["start_sec"], p["end_sec"]
             if self._cues:
                 s, e = cliplib.snap_to_cue_boundaries(self._cues, s, e)
-            self._append_new_clip(ch, s, e)
+            new_clip = self._append_new_clip(ch, s, e)
+            if first_clip_id is None:
+                first_clip_id = new_clip.id
             added += 1
+        # Reveal the result: open the chapter row + select the first new clip
+        self._expand_chapter_in_tree(chapter_idx)
+        if first_clip_id is not None:
+            self._select_clip_in_tree(first_clip_id)
         self._set_status(_tr("tool.clip.status_peaks_done").format(
             n=added, ch=ch["title"]))
 
@@ -1364,14 +1424,13 @@ class ClipWorkbenchApp(ToolBase):
             c.id = self._next_clip_id
             self._next_clip_id += 1
             self._clips.append(c)
-        if self._selected_chapter_idx == chapter_idx:
-            self._refresh_clip_cards_for_chapter(chapter_idx)
-            if clips:
-                self._focused_clip_id = clips[0].id
-            self._refresh_focused_preview()
-        self._refresh_chapter_list()
+        self._refresh_clip_cards_for_chapter(chapter_idx)
         self._refresh_export_summary()
         self._autosave()
+        # Reveal the result and land on the first new clip's editor
+        self._expand_chapter_in_tree(chapter_idx)
+        if clips:
+            self._select_clip_in_tree(clips[0].id)
         self._set_status(_tr("tool.clip.status_chapter_auto_done").format(
             n=len(clips), ch=self._chapters[chapter_idx]["title"]))
 

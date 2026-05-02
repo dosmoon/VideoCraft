@@ -1291,6 +1291,8 @@
   "tool.clip.tree_col_count": "Clips",
   "tool.clip.tree_col_score": "Score",
   "tool.clip.chapter_status_summary": "{total} clips · {reviewed} reviewed · {skipped} skipped",
+  "tool.clip.status_manual_added": "Added manual clip: {s} – {e} (adjust as needed)",
+  "tool.clip.err_chapter_too_short": "Chapter is too short to create a clip.",
   "tool.clip.col_clip_title": "Title",
   "tool.clip.col_range": "Range",
   "tool.clip.col_status": "Status",
