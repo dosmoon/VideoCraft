@@ -596,11 +596,6 @@ class ClipWorkbenchApp(ToolBase):
         # Action bar
         actions = ttk.Frame(self._detail_pane)
         actions.pack(fill="x", padx=4, pady=(0, 6))
-        skip_label = (_tr("tool.clip.btn_unskip") if clip.status == "skipped"
-                      else _tr("tool.clip.btn_skip"))
-        ttk.Button(actions, text=skip_label,
-                   command=lambda c=clip: self._toggle_clip_skip(c)).pack(
-            side="left", padx=2)
         ttk.Button(actions, text=_tr("tool.clip.btn_reset_crop"),
                    command=lambda c=clip: self._reset_focused_crop(c)).pack(
             side="left", padx=2)
@@ -618,7 +613,6 @@ class ClipWorkbenchApp(ToolBase):
 
         self._preview = PreviewPane(
             prev_holder, on_change=self._on_preview_crop_changed)
-        self._preview.set_apply_all_callback(self._apply_crop_to_all_in_chapter)
         self._preview.bind_clip(clip,
                                   video_path=self._video_path,
                                   video_w=self._video_w,
@@ -673,13 +667,6 @@ class ClipWorkbenchApp(ToolBase):
         self._build_detail_clip(clip.id)
         self._set_status(_tr("tool.clip.status_snapped"))
 
-    def _toggle_clip_skip(self, clip: ClipDraft) -> None:
-        clip.status = "draft" if clip.status == "skipped" else "skipped"
-        self._refresh_clip_cards_for_chapter(clip.chapter_idx)
-        self._refresh_export_summary()
-        self._autosave()
-        self._build_detail_clip(clip.id)
-
     def _reset_focused_crop(self, clip: ClipDraft) -> None:
         clip.crop_rect = None
         self._autosave()
@@ -708,24 +695,12 @@ class ClipWorkbenchApp(ToolBase):
 
     def _on_clip_changed(self, clip: ClipDraft) -> None:
         # Keep export summary fresh; tree row text refresh is deferred to
-        # avoid widget churn on every keystroke. Status changes (skip) flow
-        # through _toggle_clip_skip which already refreshes the affected row.
+        # avoid widget churn on every keystroke.
         self._refresh_export_summary()
         self._autosave()
 
     def _on_preview_crop_changed(self, clip: ClipDraft, _rect: dict) -> None:
         self._autosave()
-
-    def _apply_crop_to_all_in_chapter(self, rect: dict) -> None:
-        if self._selected_chapter_idx is None:
-            return
-        n = 0
-        for c in self._clips:
-            if c.chapter_idx == self._selected_chapter_idx:
-                c.crop_rect = dict(rect)
-                n += 1
-        self._autosave()
-        self._set_status(_tr("tool.clip.status_crop_applied").format(n=n))
 
     def _add_manual_clip(self, chapter_idx: int) -> None:
         """Drop a default-range clip into the chapter (no dialog).

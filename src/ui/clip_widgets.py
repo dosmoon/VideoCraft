@@ -69,18 +69,11 @@ class PreviewPane(tk.Frame):
         bar.pack(fill="x", padx=2, pady=(2, 4))
         ttk.Button(bar, text=_tr("tool.clip.btn_reset_center"),
                    command=self.reset_to_center).pack(side="left", padx=2)
-        ttk.Button(bar, text=_tr("tool.clip.btn_apply_to_all"),
-                   command=self._on_apply_all_click).pack(side="left", padx=2)
         self._info_var = tk.StringVar(value="")
         tk.Label(bar, textvariable=self._info_var, fg="#666",
                  font=("", 9)).pack(side="left", padx=(10, 0))
 
-        # apply-to-all callback (set by host)
-        self._on_apply_all: Callable[[dict], None] | None = None
-
     # ── public API ──
-    def set_apply_all_callback(self, cb: Callable[[dict], None]) -> None:
-        self._on_apply_all = cb
 
     def bind_clip(self, clip: ClipDraft | None, *,
                   video_path: str, video_w: int, video_h: int) -> None:
@@ -132,12 +125,6 @@ class PreviewPane(tk.Frame):
         self._clip.crop_rect = dict(rect)
         if self._on_change:
             self._on_change(self._clip, dict(rect))
-
-    def _on_apply_all_click(self) -> None:
-        rect = self.get_rect()
-        if self._on_apply_all:
-            self._on_apply_all(rect)
-
 
 # ── PackageForm ────────────────────────────────────────────────────────────
 
