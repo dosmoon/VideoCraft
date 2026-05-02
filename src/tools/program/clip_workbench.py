@@ -29,8 +29,10 @@ from hub_logger import logger
 from tools.base import ToolBase
 from core.ai.cancellation import CancellationToken
 from core.ai.errors import AIError, Kind
+from core import clip_presets
 from core.program import clip as cliplib
-from core.program.clip import ClipDraft
+from core.program.clip import ClipDraft, ClipProjectConfig
+from dataclasses import asdict
 from core.segment_model import format_timestamp, parse_timestamp
 from ui.ai_error_dialog import show_ai_error
 from ui.clip_widgets import (
@@ -201,6 +203,26 @@ class ClipWorkbenchApp(ToolBase):
         outer = ttk.LabelFrame(parent,
                                 text=_tr("tool.clip.section_output_style"))
         outer.pack(fill="x", padx=6, pady=(4, 8))
+
+        # ── Preset row ──
+        preset_row = ttk.Frame(outer)
+        preset_row.pack(fill="x", padx=6, pady=(6, 4))
+        ttk.Label(preset_row,
+                   text=_tr("tool.clip.preset_label")).pack(side="left")
+        self._preset_var = tk.StringVar()
+        self._preset_combo = ttk.Combobox(
+            preset_row, textvariable=self._preset_var,
+            state="readonly", width=36)
+        self._preset_combo.pack(side="left", padx=(4, 8))
+        ttk.Button(preset_row, text=_tr("tool.clip.btn_preset_apply"),
+                   command=self._on_preset_apply).pack(side="left", padx=2)
+        ttk.Button(preset_row, text=_tr("tool.clip.btn_preset_save_as"),
+                   command=self._on_preset_save_as).pack(side="left", padx=2)
+        ttk.Button(preset_row, text=_tr("tool.clip.btn_preset_overwrite"),
+                   command=self._on_preset_overwrite).pack(side="left", padx=2)
+        ttk.Button(preset_row, text=_tr("tool.clip.btn_preset_delete"),
+                   command=self._on_preset_delete).pack(side="left", padx=2)
+        self._refresh_preset_combo()
 
         # Build all tk Vars first; bind traces after population to avoid
         # spurious autosaves on first .set().
@@ -552,6 +574,108 @@ class ClipWorkbenchApp(ToolBase):
             self._bgm_volume_var.set(cfg.bgm.volume)
         finally:
             self._suspend_autosave = prev
+
+    # ── Preset handlers ───────────────────────────────────────────────────
+
+    def _refresh_preset_combo(self, select: str | None = None) -> None:
+        store = clip_presets.load_store()
+        names = clip_presets.list_preset_names(store)
+        self._preset_combo.configure(values=names)
+        target = select or clip_presets.get_last_used(store)
+        if target not in names:
+            target = clip_presets.BUILTIN_DEFAULT_NAME
+        self._preset_var.set(target)
+
+    def _on_preset_apply(self) -> None:
+        name = self._preset_var.get()
+        if not name:
+            return
+        store = clip_presets.load_store()
+        raw = clip_presets.get_preset(store, name)
+        if raw is None:
+            return
+        new_cfg = ClipProjectConfig.from_dict(raw)
+        # Aspect change with existing crops → confirm.
+        if (new_cfg.aspect != self._project_config.aspect
+                and any(c.crop_rect for c in self._clips)):
+            n = sum(1 for c in self._clips if c.crop_rect)
+            if not messagebox.askyesno(
+                    _tr("tool.clip.title"),
+                    _tr("tool.clip.confirm_aspect_switch").format(n=n)):
+                return
+            for c in self._clips:
+                c.crop_rect = None
+        self._project_config = new_cfg
+        self._refresh_form_from_config()
+        self._refresh_chapter_list()
+        self._refresh_focused_preview()
+        clip_presets.set_last_used(store, name)
+        clip_presets.save_store(store)
+        self._autosave()
+        self._set_status(_tr("tool.clip.status_preset_applied").format(
+            name=name))
+
+    def _on_preset_save_as(self) -> None:
+        name = simpledialog.askstring(
+            _tr("tool.clip.dialog_preset_save_title"),
+            _tr("tool.clip.dialog_preset_save_prompt"),
+            parent=self.master,
+        )
+        if name is None:
+            return
+        name = name.strip()
+        if not name:
+            messagebox.showwarning(_tr("tool.clip.title"),
+                                    _tr("tool.clip.warn_preset_name_empty"))
+            return
+        store = clip_presets.load_store()
+        if name in store.get("presets", {}):
+            messagebox.showwarning(
+                _tr("tool.clip.title"),
+                _tr("tool.clip.warn_preset_name_taken").format(name=name))
+            return
+        clip_presets.upsert_preset(store, name, asdict(self._project_config))
+        clip_presets.set_last_used(store, name)
+        clip_presets.save_store(store)
+        self._refresh_preset_combo(select=name)
+        self._set_status(_tr("tool.clip.status_preset_saved").format(name=name))
+
+    def _on_preset_overwrite(self) -> None:
+        name = self._preset_var.get()
+        if not name:
+            return
+        if clip_presets.is_builtin(name):
+            messagebox.showwarning(
+                _tr("tool.clip.title"),
+                _tr("tool.clip.warn_preset_builtin_protected").format(
+                    name=name))
+            return
+        store = clip_presets.load_store()
+        clip_presets.upsert_preset(store, name, asdict(self._project_config))
+        clip_presets.save_store(store)
+        self._set_status(_tr("tool.clip.status_preset_overwritten").format(
+            name=name))
+
+    def _on_preset_delete(self) -> None:
+        name = self._preset_var.get()
+        if not name:
+            return
+        if clip_presets.is_builtin(name):
+            messagebox.showwarning(
+                _tr("tool.clip.title"),
+                _tr("tool.clip.warn_preset_builtin_protected").format(
+                    name=name))
+            return
+        if not messagebox.askyesno(
+                _tr("tool.clip.title"),
+                _tr("tool.clip.confirm_preset_delete").format(name=name)):
+            return
+        store = clip_presets.load_store()
+        clip_presets.delete_preset(store, name)
+        clip_presets.save_store(store)
+        self._refresh_preset_combo()
+        self._set_status(_tr("tool.clip.status_preset_deleted").format(
+            name=name))
 
     def _on_aspect_clicked(self, new_aspect: str) -> None:
         cur = self._project_config.aspect
