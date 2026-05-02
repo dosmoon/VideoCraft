@@ -135,8 +135,22 @@ class ClipWorkbenchApp(ToolBase):
     def _build_tab_project(self) -> None:
         f = self._tab_project
 
+        # Scrollable container — output-style form gets long.
+        canvas = tk.Canvas(f, highlightthickness=0)
+        sb = ttk.Scrollbar(f, orient="vertical", command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        inner.bind("<Configure>",
+                   lambda _e: canvas.configure(
+                       scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfigure(inner_id, width=e.width))
+
         # Cut row
-        cut_box = ttk.LabelFrame(f, text=_tr("tool.clip.section_cut"))
+        cut_box = ttk.LabelFrame(inner, text=_tr("tool.clip.section_cut"))
         cut_box.pack(fill="x", padx=6, pady=(8, 4))
         row = ttk.Frame(cut_box)
         row.pack(fill="x", padx=4, pady=4)
@@ -151,7 +165,7 @@ class ClipWorkbenchApp(ToolBase):
                  anchor="w").pack(side="left", padx=(20, 0))
 
         # Sources row (Pack / Video / SRT)
-        src = ttk.LabelFrame(f, text=_tr("tool.clip.section_inputs"))
+        src = ttk.LabelFrame(inner, text=_tr("tool.clip.section_inputs"))
         src.pack(fill="x", padx=6, pady=(0, 4))
         self._pack_var  = tk.StringVar()
         self._video_var = tk.StringVar()
@@ -172,6 +186,393 @@ class ClipWorkbenchApp(ToolBase):
                    command=self._on_load_clicked).grid(
             row=3, column=1, sticky="w", padx=4, pady=4)
         src.columnconfigure(1, weight=1)
+
+        # Output style form
+        self._build_output_style_form(inner)
+
+    # ── Tab 0: output-style form ──────────────────────────────────────────
+    #
+    # All widgets use trace_add to write back to self._project_config and
+    # autosave. _suspend_autosave guards programmatic re-population on cut
+    # load. Aspect uses Radiobutton's command= (fires only on click, not on
+    # var.set) so the confirmation dialog can run before the model changes.
+
+    def _build_output_style_form(self, parent: tk.Misc) -> None:
+        outer = ttk.LabelFrame(parent,
+                                text=_tr("tool.clip.section_output_style"))
+        outer.pack(fill="x", padx=6, pady=(4, 8))
+
+        # Build all tk Vars first; bind traces after population to avoid
+        # spurious autosaves on first .set().
+        cfg = self._project_config
+
+        # Aspect
+        self._aspect_var = tk.StringVar(value=cfg.aspect)
+        # Subtitle
+        self._sub_mode_var = tk.StringVar(value=cfg.subtitle.mode)
+        self._sub_font_var = tk.StringVar(value=cfg.subtitle.font)
+        self._sub_size_var = tk.IntVar(value=cfg.subtitle.size)
+        self._sub_color_var = tk.StringVar(value=cfg.subtitle.color)
+        self._sub_stroke_color_var = tk.StringVar(value=cfg.subtitle.stroke_color)
+        self._sub_stroke_width_var = tk.IntVar(value=cfg.subtitle.stroke_width)
+        self._sub_position_var = tk.StringVar(value=cfg.subtitle.position)
+        self._sub_line2_offset_var = tk.IntVar(value=cfg.subtitle.line2_offset)
+        # Watermark
+        self._wm_enabled_var = tk.BooleanVar(value=cfg.watermark.enabled)
+        self._wm_image_var = tk.StringVar(value=cfg.watermark.image_path)
+        self._wm_position_var = tk.StringVar(value=cfg.watermark.position)
+        self._wm_opacity_var = tk.IntVar(value=cfg.watermark.opacity)
+        self._wm_scale_var = tk.IntVar(value=cfg.watermark.scale)
+        # Hook/Outro card
+        self._ho_font_var = tk.StringVar(value=cfg.hook_outro.font)
+        self._ho_size_var = tk.IntVar(value=cfg.hook_outro.size)
+        self._ho_color_var = tk.StringVar(value=cfg.hook_outro.color)
+        self._ho_bg_color_var = tk.StringVar(value=cfg.hook_outro.bg_color)
+        self._ho_bg_opacity_var = tk.IntVar(value=cfg.hook_outro.bg_opacity)
+        self._ho_hook_dur_var = tk.DoubleVar(value=cfg.hook_outro.hook_duration_sec)
+        self._ho_outro_dur_var = tk.DoubleVar(value=cfg.hook_outro.outro_duration_sec)
+        # BGM
+        self._bgm_path_var = tk.StringVar(value=cfg.bgm.path)
+        self._bgm_volume_var = tk.IntVar(value=cfg.bgm.volume)
+
+        # ── Aspect section ──
+        sec = ttk.LabelFrame(outer, text=_tr("tool.clip.section_aspect"))
+        sec.pack(fill="x", padx=6, pady=4)
+        for value, key in (("9:16", "aspect_9_16"),
+                            ("16:9", "aspect_16_9"),
+                            ("1:1",  "aspect_1_1"),
+                            ("4:5",  "aspect_4_5")):
+            ttk.Radiobutton(
+                sec, text=_tr(f"tool.clip.{key}"),
+                variable=self._aspect_var, value=value,
+                command=lambda v=value: self._on_aspect_clicked(v),
+            ).pack(side="left", padx=8, pady=4)
+
+        # ── Subtitle section ──
+        sec = ttk.LabelFrame(outer, text=_tr("tool.clip.section_subtitle"))
+        sec.pack(fill="x", padx=6, pady=4)
+        sec.columnconfigure(1, weight=1)
+        sec.columnconfigure(3, weight=1)
+
+        ttk.Label(sec, text=_tr("tool.clip.subtitle_mode")).grid(
+            row=0, column=0, sticky="e", padx=4, pady=2)
+        mode_frame = ttk.Frame(sec)
+        mode_frame.grid(row=0, column=1, columnspan=3, sticky="w", padx=4)
+        ttk.Radiobutton(mode_frame, text=_tr("tool.clip.subtitle_mode_single"),
+                         variable=self._sub_mode_var, value="single").pack(
+            side="left", padx=(0, 8))
+        ttk.Radiobutton(mode_frame, text=_tr("tool.clip.subtitle_mode_bilingual"),
+                         variable=self._sub_mode_var, value="bilingual").pack(
+            side="left")
+
+        ttk.Label(sec, text=_tr("tool.clip.subtitle_font")).grid(
+            row=1, column=0, sticky="e", padx=4, pady=2)
+        ttk.Entry(sec, textvariable=self._sub_font_var, width=20).grid(
+            row=1, column=1, sticky="we", padx=4)
+        ttk.Label(sec, text=_tr("tool.clip.subtitle_size")).grid(
+            row=1, column=2, sticky="e", padx=4)
+        ttk.Spinbox(sec, from_=8, to=200, textvariable=self._sub_size_var,
+                     width=6).grid(row=1, column=3, sticky="w", padx=4)
+
+        ttk.Label(sec, text=_tr("tool.clip.subtitle_color")).grid(
+            row=2, column=0, sticky="e", padx=4, pady=2)
+        self._build_color_picker(sec, self._sub_color_var).grid(
+            row=2, column=1, sticky="w", padx=4)
+        ttk.Label(sec, text=_tr("tool.clip.subtitle_stroke_color")).grid(
+            row=2, column=2, sticky="e", padx=4)
+        self._build_color_picker(sec, self._sub_stroke_color_var).grid(
+            row=2, column=3, sticky="w", padx=4)
+
+        ttk.Label(sec, text=_tr("tool.clip.subtitle_stroke_width")).grid(
+            row=3, column=0, sticky="e", padx=4, pady=2)
+        ttk.Spinbox(sec, from_=0, to=20,
+                     textvariable=self._sub_stroke_width_var,
+                     width=6).grid(row=3, column=1, sticky="w", padx=4)
+        ttk.Label(sec, text=_tr("tool.clip.subtitle_position")).grid(
+            row=3, column=2, sticky="e", padx=4)
+        pos_combo = ttk.Combobox(
+            sec, textvariable=self._sub_position_var, width=8,
+            state="readonly",
+            values=("top", "middle", "bottom"))
+        pos_combo.grid(row=3, column=3, sticky="w", padx=4)
+
+        ttk.Label(sec, text=_tr("tool.clip.subtitle_line2_offset")).grid(
+            row=4, column=0, sticky="e", padx=4, pady=2)
+        ttk.Spinbox(sec, from_=0, to=300,
+                     textvariable=self._sub_line2_offset_var,
+                     width=6).grid(row=4, column=1, sticky="w", padx=4)
+
+        # ── Watermark section ──
+        sec = ttk.LabelFrame(outer, text=_tr("tool.clip.section_watermark"))
+        sec.pack(fill="x", padx=6, pady=4)
+        sec.columnconfigure(1, weight=1)
+        sec.columnconfigure(3, weight=1)
+
+        ttk.Checkbutton(sec, text=_tr("tool.clip.watermark_enabled"),
+                         variable=self._wm_enabled_var).grid(
+            row=0, column=0, columnspan=2, sticky="w", padx=4, pady=2)
+
+        ttk.Label(sec, text=_tr("tool.clip.watermark_image")).grid(
+            row=1, column=0, sticky="e", padx=4, pady=2)
+        ttk.Entry(sec, textvariable=self._wm_image_var, width=40).grid(
+            row=1, column=1, columnspan=2, sticky="we", padx=4)
+        ttk.Button(sec, text=_tr("tool.clip.btn_browse"),
+                   command=self._browse_watermark).grid(row=1, column=3,
+                                                          padx=4)
+
+        ttk.Label(sec, text=_tr("tool.clip.watermark_position")).grid(
+            row=2, column=0, sticky="e", padx=4, pady=2)
+        ttk.Combobox(
+            sec, textvariable=self._wm_position_var, width=14,
+            state="readonly",
+            values=("top-left", "top-right",
+                    "bottom-left", "bottom-right")).grid(
+            row=2, column=1, sticky="w", padx=4)
+        ttk.Label(sec, text=_tr("tool.clip.watermark_opacity")).grid(
+            row=2, column=2, sticky="e", padx=4)
+        ttk.Spinbox(sec, from_=0, to=100, increment=5,
+                     textvariable=self._wm_opacity_var,
+                     width=6).grid(row=2, column=3, sticky="w", padx=4)
+
+        ttk.Label(sec, text=_tr("tool.clip.watermark_scale")).grid(
+            row=3, column=0, sticky="e", padx=4, pady=2)
+        ttk.Spinbox(sec, from_=1, to=100,
+                     textvariable=self._wm_scale_var,
+                     width=6).grid(row=3, column=1, sticky="w", padx=4)
+
+        # ── Hook / Outro section ──
+        sec = ttk.LabelFrame(outer, text=_tr("tool.clip.section_hook_outro"))
+        sec.pack(fill="x", padx=6, pady=4)
+        sec.columnconfigure(1, weight=1)
+        sec.columnconfigure(3, weight=1)
+
+        ttk.Label(sec, text=_tr("tool.clip.hook_outro_font")).grid(
+            row=0, column=0, sticky="e", padx=4, pady=2)
+        ttk.Entry(sec, textvariable=self._ho_font_var, width=20).grid(
+            row=0, column=1, sticky="we", padx=4)
+        ttk.Label(sec, text=_tr("tool.clip.hook_outro_size")).grid(
+            row=0, column=2, sticky="e", padx=4)
+        ttk.Spinbox(sec, from_=8, to=200, textvariable=self._ho_size_var,
+                     width=6).grid(row=0, column=3, sticky="w", padx=4)
+
+        ttk.Label(sec, text=_tr("tool.clip.hook_outro_color")).grid(
+            row=1, column=0, sticky="e", padx=4, pady=2)
+        self._build_color_picker(sec, self._ho_color_var).grid(
+            row=1, column=1, sticky="w", padx=4)
+        ttk.Label(sec, text=_tr("tool.clip.hook_outro_bg_color")).grid(
+            row=1, column=2, sticky="e", padx=4)
+        self._build_color_picker(sec, self._ho_bg_color_var).grid(
+            row=1, column=3, sticky="w", padx=4)
+
+        ttk.Label(sec, text=_tr("tool.clip.hook_outro_bg_opacity")).grid(
+            row=2, column=0, sticky="e", padx=4, pady=2)
+        ttk.Spinbox(sec, from_=0, to=100, increment=5,
+                     textvariable=self._ho_bg_opacity_var,
+                     width=6).grid(row=2, column=1, sticky="w", padx=4)
+
+        ttk.Label(sec, text=_tr("tool.clip.hook_duration")).grid(
+            row=3, column=0, sticky="e", padx=4, pady=2)
+        ttk.Spinbox(sec, from_=0.0, to=30.0, increment=0.5, format="%.1f",
+                     textvariable=self._ho_hook_dur_var,
+                     width=6).grid(row=3, column=1, sticky="w", padx=4)
+        ttk.Label(sec, text=_tr("tool.clip.outro_duration")).grid(
+            row=3, column=2, sticky="e", padx=4)
+        ttk.Spinbox(sec, from_=0.0, to=30.0, increment=0.5, format="%.1f",
+                     textvariable=self._ho_outro_dur_var,
+                     width=6).grid(row=3, column=3, sticky="w", padx=4)
+
+        # ── BGM section (placeholder fields, not yet wired into export) ──
+        sec = ttk.LabelFrame(outer, text=_tr("tool.clip.section_bgm"))
+        sec.pack(fill="x", padx=6, pady=4)
+        sec.columnconfigure(1, weight=1)
+
+        ttk.Label(sec, text=_tr("tool.clip.bgm_path")).grid(
+            row=0, column=0, sticky="e", padx=4, pady=2)
+        ttk.Entry(sec, textvariable=self._bgm_path_var).grid(
+            row=0, column=1, sticky="we", padx=4)
+        ttk.Button(sec, text=_tr("tool.clip.btn_browse"),
+                   command=self._browse_bgm).grid(row=0, column=2, padx=4)
+        ttk.Label(sec, text=_tr("tool.clip.bgm_volume")).grid(
+            row=1, column=0, sticky="e", padx=4, pady=2)
+        ttk.Spinbox(sec, from_=0, to=100, increment=5,
+                     textvariable=self._bgm_volume_var,
+                     width=6).grid(row=1, column=1, sticky="w", padx=4)
+
+        # Hook all writeback traces after the form is built.
+        self._wire_form_traces()
+
+    def _build_color_picker(self, parent: tk.Misc,
+                              var: tk.StringVar) -> ttk.Frame:
+        from tkinter import colorchooser
+        holder = ttk.Frame(parent)
+        ttk.Entry(holder, textvariable=var, width=10).pack(side="left")
+        def pick():
+            init = var.get() or "#FFFFFF"
+            try:
+                _, hexcol = colorchooser.askcolor(color=init, parent=holder)
+            except tk.TclError:
+                hexcol = None
+            if hexcol:
+                var.set(hexcol.upper())
+        ttk.Button(holder, text=_tr("tool.clip.btn_pick_color"),
+                    command=pick, width=4).pack(side="left", padx=(2, 0))
+        return holder
+
+    def _browse_watermark(self) -> None:
+        path = filedialog.askopenfilename(
+            filetypes=[("Image files", "*.png *.jpg *.jpeg *.bmp *.gif"),
+                       ("All", "*.*")])
+        if path:
+            self._wm_image_var.set(path)
+
+    def _browse_bgm(self) -> None:
+        path = filedialog.askopenfilename(
+            filetypes=[("Audio files", "*.mp3 *.wav *.m4a *.aac *.ogg"),
+                       ("All", "*.*")])
+        if path:
+            self._bgm_path_var.set(path)
+
+    # ── Form ↔ project_config plumbing ────────────────────────────────────
+
+    def _wire_form_traces(self) -> None:
+        """Bind every output-style Var so edits flow into self._project_config."""
+        bindings: list[tuple[tk.Variable, Callable[[], None]]] = [
+            # Subtitle
+            (self._sub_mode_var,         self._sync_subtitle_from_form),
+            (self._sub_font_var,         self._sync_subtitle_from_form),
+            (self._sub_size_var,         self._sync_subtitle_from_form),
+            (self._sub_color_var,        self._sync_subtitle_from_form),
+            (self._sub_stroke_color_var, self._sync_subtitle_from_form),
+            (self._sub_stroke_width_var, self._sync_subtitle_from_form),
+            (self._sub_position_var,     self._sync_subtitle_from_form),
+            (self._sub_line2_offset_var, self._sync_subtitle_from_form),
+            # Watermark
+            (self._wm_enabled_var,  self._sync_watermark_from_form),
+            (self._wm_image_var,    self._sync_watermark_from_form),
+            (self._wm_position_var, self._sync_watermark_from_form),
+            (self._wm_opacity_var,  self._sync_watermark_from_form),
+            (self._wm_scale_var,    self._sync_watermark_from_form),
+            # Hook/Outro
+            (self._ho_font_var,        self._sync_hook_outro_from_form),
+            (self._ho_size_var,        self._sync_hook_outro_from_form),
+            (self._ho_color_var,       self._sync_hook_outro_from_form),
+            (self._ho_bg_color_var,    self._sync_hook_outro_from_form),
+            (self._ho_bg_opacity_var,  self._sync_hook_outro_from_form),
+            (self._ho_hook_dur_var,    self._sync_hook_outro_from_form),
+            (self._ho_outro_dur_var,   self._sync_hook_outro_from_form),
+            # BGM
+            (self._bgm_path_var,   self._sync_bgm_from_form),
+            (self._bgm_volume_var, self._sync_bgm_from_form),
+        ]
+        for var, fn in bindings:
+            var.trace_add("write", lambda *_a, f=fn: f())
+
+    def _sync_subtitle_from_form(self) -> None:
+        s = self._project_config.subtitle
+        try:
+            s.mode = self._sub_mode_var.get()
+            s.font = self._sub_font_var.get()
+            s.size = int(self._sub_size_var.get())
+            s.color = self._sub_color_var.get()
+            s.stroke_color = self._sub_stroke_color_var.get()
+            s.stroke_width = int(self._sub_stroke_width_var.get())
+            s.position = self._sub_position_var.get()
+            s.line2_offset = int(self._sub_line2_offset_var.get())
+        except (tk.TclError, ValueError):
+            return
+        self._autosave()
+
+    def _sync_watermark_from_form(self) -> None:
+        w = self._project_config.watermark
+        try:
+            w.enabled = bool(self._wm_enabled_var.get())
+            w.image_path = self._wm_image_var.get()
+            w.position = self._wm_position_var.get()
+            w.opacity = int(self._wm_opacity_var.get())
+            w.scale = int(self._wm_scale_var.get())
+        except (tk.TclError, ValueError):
+            return
+        self._autosave()
+
+    def _sync_hook_outro_from_form(self) -> None:
+        h = self._project_config.hook_outro
+        try:
+            h.font = self._ho_font_var.get()
+            h.size = int(self._ho_size_var.get())
+            h.color = self._ho_color_var.get()
+            h.bg_color = self._ho_bg_color_var.get()
+            h.bg_opacity = int(self._ho_bg_opacity_var.get())
+            h.hook_duration_sec = float(self._ho_hook_dur_var.get())
+            h.outro_duration_sec = float(self._ho_outro_dur_var.get())
+        except (tk.TclError, ValueError):
+            return
+        self._autosave()
+
+    def _sync_bgm_from_form(self) -> None:
+        b = self._project_config.bgm
+        try:
+            b.path = self._bgm_path_var.get()
+            b.volume = int(self._bgm_volume_var.get())
+        except (tk.TclError, ValueError):
+            return
+        self._autosave()
+
+    def _refresh_form_from_config(self) -> None:
+        """Re-populate all form Vars from self._project_config.
+
+        Called after loading a cut. Wrapped in _suspend_autosave so the
+        traces don't write the just-loaded values back to disk.
+        """
+        cfg = self._project_config
+        prev = self._suspend_autosave
+        self._suspend_autosave = True
+        try:
+            self._aspect_var.set(cfg.aspect)
+            self._sub_mode_var.set(cfg.subtitle.mode)
+            self._sub_font_var.set(cfg.subtitle.font)
+            self._sub_size_var.set(cfg.subtitle.size)
+            self._sub_color_var.set(cfg.subtitle.color)
+            self._sub_stroke_color_var.set(cfg.subtitle.stroke_color)
+            self._sub_stroke_width_var.set(cfg.subtitle.stroke_width)
+            self._sub_position_var.set(cfg.subtitle.position)
+            self._sub_line2_offset_var.set(cfg.subtitle.line2_offset)
+            self._wm_enabled_var.set(cfg.watermark.enabled)
+            self._wm_image_var.set(cfg.watermark.image_path)
+            self._wm_position_var.set(cfg.watermark.position)
+            self._wm_opacity_var.set(cfg.watermark.opacity)
+            self._wm_scale_var.set(cfg.watermark.scale)
+            self._ho_font_var.set(cfg.hook_outro.font)
+            self._ho_size_var.set(cfg.hook_outro.size)
+            self._ho_color_var.set(cfg.hook_outro.color)
+            self._ho_bg_color_var.set(cfg.hook_outro.bg_color)
+            self._ho_bg_opacity_var.set(cfg.hook_outro.bg_opacity)
+            self._ho_hook_dur_var.set(cfg.hook_outro.hook_duration_sec)
+            self._ho_outro_dur_var.set(cfg.hook_outro.outro_duration_sec)
+            self._bgm_path_var.set(cfg.bgm.path)
+            self._bgm_volume_var.set(cfg.bgm.volume)
+        finally:
+            self._suspend_autosave = prev
+
+    def _on_aspect_clicked(self, new_aspect: str) -> None:
+        cur = self._project_config.aspect
+        if new_aspect == cur:
+            return
+        n_with_crop = sum(1 for c in self._clips if c.crop_rect)
+        if n_with_crop > 0:
+            if not messagebox.askyesno(
+                    _tr("tool.clip.title"),
+                    _tr("tool.clip.confirm_aspect_switch").format(
+                        n=n_with_crop)):
+                # Revert without re-firing command (Radiobutton command
+                # only fires on click, set() only updates the indicator).
+                self._aspect_var.set(cur)
+                return
+            for c in self._clips:
+                c.crop_rect = None
+        self._project_config.aspect = new_aspect
+        self._refresh_chapter_list()
+        self._refresh_focused_preview()
+        self._autosave()
 
     # ── Tab 1: master-detail ──────────────────────────────────────────────
 
@@ -1047,6 +1448,7 @@ class ClipWorkbenchApp(ToolBase):
             self._refresh_chapter_list()
             self._build_detail_placeholder()
             self._refresh_export_summary()
+            self._refresh_form_from_config()
             self._out_dir_var.set("")
         finally:
             self._suspend_autosave = False
@@ -1165,6 +1567,7 @@ class ClipWorkbenchApp(ToolBase):
                     except Exception:
                         self._cues = []
             self._refresh_export_summary()
+            self._refresh_form_from_config()
         finally:
             self._suspend_autosave = False
         self._refresh_out_dir()
