@@ -1,7 +1,7 @@
 # 切片稿（Clip Script）
 
-**状态**：Phase A 已上线 / Phase B 待开
-**日期**：2026-05-01（创建）/ 2026-05-01（Phase A 实施同步）
+**状态**：Phase A + B 已上线 / 2026-05-02 完成 UX 重构（章节为中心，2 tab）
+**日期**：2026-05-01（创建）/ 2026-05-02（最近更新）
 **优先级**：P1（节目稿子生成 5 形态之首）
 **命名约定**：本文是 `docs/draft/program-script-<form>.md` 系列的第一份。
 未来 4 份对应：`-summary.md` / `-commentary.md` / `-dialogue.md` / `-theater.md`。
@@ -14,7 +14,9 @@
 | Phase | 状态 | 内容 |
 |-------|------|------|
 | **A** Walking skeleton | ✅ 已上线 | 手工版端到端：cut 文件 + 4 Tab UI + ffmpeg 导出 pipeline，无 AI |
-| **B** AI 叠加 | ⏳ 待开 | 三个 AI 按钮：rank chapters / find peaks / package text |
+| **B** AI 叠加 | ✅ 已上线 (`4e28539`) | 3 prompt + 3 AI 函数 + 3 tri-state 按钮 |
+| **B+** Prompt 契约重构 | ✅ (`da2ef47`) | rank=原文 paragraphs / peaks=cue-id 整数 / package=单 placeholder |
+| **UX 重构** | ✅ (`9c39a38` + `c61b64e`) | 4 tab → 2 tab master-detail，章节为工作单元，全自动 AI |
 
 ---
 
@@ -359,6 +361,99 @@ class ClipDraft:
 
 ## 11. 跟进项
 
-- **Phase B 实施**：3 个 AI 按钮 + 3 个 prompt + tri-state cancel + 失败降级
-- **其余 4 形态文档**（summary / commentary / dialogue / theater）：等 Phase B 跑稳后批量产出，复用本文章节模板
-- **视频生成层**（program-video-synthesis.md）：等切片稿在生产中用过几轮再立项
+- ~~**Phase B 实施**~~ ✅ 已上线
+- **Output Style Control**（用户标记的下一个大问题）：字幕字体/颜色 / hook 样式 / outro 样式 / intro/outro 卡片 / BGM / 水印预设
+- **真实工程跑通 UX 重构验证**：master-detail 还没在真视频上端到端
+- **VLC 实时播放回归**：当前只 keyframe 静态预览
+- **其余 4 形态文档**（summary / commentary / dialogue / theater）：等切片稿真用过几轮再批量产出
+- **视频生成层**（program-video-synthesis.md）：长期项
+
+---
+
+## 12. UX 重构记（2026-05-02）
+
+### 动机
+
+原 4 tab（章节 / 段落 / 文案 / 导出）把同一章节的工作物理切成 4 段：Tab 1 选章节 → Tab 2 再选一遍同一章节找峰 → Tab 3 找到该章节相关 clip 写文案 → Tab 4 一个个预览框选导出。**章节上下文反复丢失，操作发散**。
+
+新模型：**章节是工作单元** —— 一个章节里包含找峰 / 预览 / 框选 / 文案的完整闭环；每个章节有「全自动 AI」一键搞定；最后用「汇总导出页」做总览 + 批量收尾。
+
+### 落地后 2 Tab 架构
+
+**Tab 1「章节」master-detail**（左 320px / 右 expand）
+
+- 左：紧凑章节卡片（标题 + 热度分 + clip 数 + 状态点 ○◐●） + 顶部 [全局 全自动 AI] / [AI 排序]
+- 右：选中章节的 detail pane
+  - 章节头：一行（标题 + 时段 + 时长 + 热度徽章）
+  - 章节级动作：[▶ 全自动 AI] / [找峰 AI] / [+ 手工切片]
+  - meta 行：AI reason + refined 合并一行灰字
+  - **Vertical PanedWindow**（用户可拖，初始 weight 2:3）
+    - 上 = 共享 PreviewPane（keyframe + CropOverlay + [Reset center] + [Apply to all]）
+    - 下 = 滚动 ClipCard 列表
+
+**ClipCard 折叠化**（关键 UX 修复）
+
+- 默认只一行头：`▶ ◯ #id [时段] dur · title  [跳过] [×]`
+- 焦点的那张自动展开 → 露出 excerpt + PackageForm（hook/outro/title/hashtags） + per-clip [文案 AI] 按钮
+- 点击任意 ClipCard → on_focus → 展开自己 + 折叠兄弟 + 共享 PreviewPane seek 到该 clip
+
+**Tab 2「汇总导出」**
+
+- 左：跨章节 ClipSummaryTreeview（# / 章节 / 时段 / 时长 / 状态 / 标题）
+- 批量按钮：[跳过] / [取消跳过] / [重置 Crop] / [跳到该章节] （后者切回 Tab 1 + 自动选中 + clip focus）
+- 右：焦点 clip 编辑（PreviewPane + PackageForm 复用同一对象）
+- 底栏：输出目录 + Browse + [导出选中] + [导出全部]
+
+### 全自动 AI 流（关键新逻辑）
+
+**单章节 `_worker_chapter_full_auto(token, chapter_idx)`**：
+1. `find_peaks(pack, chapter_idx, cues)` → N 个 clip 候选
+2. snap 到 cue 边界 + 抽取 excerpt → 转 `ClipDraft`（in-thread，不操 UI）
+3. 对每条新 clip 串行 `package_clip(clip, pack)` 写回 hook/outro/title/hashtags
+4. 每条默认 `center_crop_rect(video_w, video_h)`
+5. status=reviewed
+6. 全程 cancel_token，单条 package 失败留 draft 不阻塞后续
+
+**全局 `_worker_global_full_auto(token)`**：
+- 章节按 `_ranks` 倒序遍历
+- 跳过已有 clip 的章节（重复保护）
+- 章节级失败不阻塞，记录错误继续下一章
+- 进度回调按 chapter 推进
+
+### 共享 widget 抽象
+
+新建 `src/ui/clip_widgets.py` 定义 4 个 widget，Tab 1 / Tab 2 共用：
+
+| widget | 输入 | 职责 |
+|--------|------|------|
+| `PreviewPane` | `bind_clip(clip, video_path, w, h)` | 抽 keyframe → 显示 → CropOverlay 绑 clip.crop_rect。`on_change` 回调 + `set_apply_all_callback` |
+| `PackageForm` | `bind_clip(clip)` | 4 字段 Entry + 失焦 trace 写回 + 可选 per-clip AI 按钮（通过 ai_button_factory + ai_worker_for_clip） |
+| `ClipCard` | clip + 4 callback | 折叠头 + 展开 body（excerpt + PackageForm） + skip/× 按钮。`set_focused(True)` 自动展开 |
+| `ClipSummaryTreeview` | `bind(clips)` | 跨章节列表，iid=str(clip.id)，多选 + `get_selected_clips()` + `select_clip(id)` |
+
+### 数据层（完全不动）
+
+cut JSON schema 跟 Phase A 一致；ranks 数组、autosave 链路、ClipDraft 字段都不变。重构纯 UI。
+
+### 砍掉了什么
+
+- 老 Tab 2 (Peaks)：合并到章节 detail pane 的 [找峰 AI] / [+ 手工切片]
+- 老 Tab 3 (Package)：合并到 ClipCard 内联 PackageForm
+- VLC 实时播放：keyframe 静态预览已够用（独立 backlog 再加）
+- 「居中/手动」radio：早期已删，仍保留 [Reset center] 单按钮
+
+### 文件清单
+
+| 路径 | 改动 |
+|------|------|
+| `src/ui/clip_widgets.py` | **新增** ~480 行：4 个可复用 widget |
+| `src/tools/program/clip_workbench.py` | 重写主体 ~1450 行 |
+| `src/i18n/zh.json` + `en.json` | 25 keys 双语补全（btn_chapter_auto / btn_global_auto / col_status / hint_pick_chapter / status_global_progress 等） |
+
+### 用户反馈历史（额外补充）
+
+- "章节上下文不能丢"：所以 master-detail，所有章节相关动作都在右 pane
+- "3 clip 详情一个看不到"：所以 ClipCard 折叠化 + PanedWindow 可拖
+- "为啥要单独生成文案"：所以文案与切片同卡片，不再独立 tab
+- "最后通过汇总导出页完成最后工作"：所以保留 Tab 2 做总览 + 批量
+
