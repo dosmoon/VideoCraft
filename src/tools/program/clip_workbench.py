@@ -328,11 +328,15 @@ class ClipWorkbenchApp(ToolBase):
         rank = self._ranks.get(chapter_idx) or {}
         score = rank.get("score") if isinstance(rank.get("score"), int) else None
 
-        # ── Header ──
+        # ── Compact header: title + score + time on one line ──
         header = ttk.Frame(self._detail_pane)
-        header.pack(fill="x", padx=4, pady=(0, 4))
-        title_text = f"#{chapter_idx+1}  {ch['title']}"
-        tk.Label(header, text=title_text, font=("", 13, "bold"),
+        header.pack(fill="x", padx=4, pady=(0, 2))
+        title_text = (
+            f"#{chapter_idx+1}  {ch['title']}    "
+            f"⏱ {_seconds_to_str(ch['start_sec'])} – "
+            f"{_seconds_to_str(ch['end_sec'])} · "
+            f"{int(ch['end_sec']-ch['start_sec'])}s")
+        tk.Label(header, text=title_text, font=("", 12, "bold"),
                  anchor="w", justify="left", wraplength=900).pack(
             side="left", fill="x", expand=True)
         if score is not None:
@@ -341,27 +345,9 @@ class ClipWorkbenchApp(ToolBase):
                      background=badge_bg, foreground="white",
                      font=("", 11, "bold"), padx=8).pack(side="right")
 
-        meta = tk.Label(self._detail_pane,
-                         text=(f"⏱ {_seconds_to_str(ch['start_sec'])} – "
-                               f"{_seconds_to_str(ch['end_sec'])}   ·   "
-                               f"{int(ch['end_sec']-ch['start_sec'])}s"),
-                         fg="#555", anchor="w")
-        meta.pack(fill="x", padx=4)
-
-        if rank.get("reason"):
-            tk.Label(self._detail_pane, text=f"💡 {rank['reason']}",
-                     fg="#5a4520", font=("", 10, "italic"),
-                     anchor="w", justify="left", wraplength=900).pack(
-                fill="x", padx=4, pady=(0, 4))
-
-        if ch.get("refined"):
-            tk.Label(self._detail_pane, text=ch["refined"],
-                     fg="#444", anchor="w", justify="left",
-                     wraplength=900).pack(fill="x", padx=4, pady=(0, 6))
-
         # ── Action bar (chapter-level) ──
         action_bar = ttk.Frame(self._detail_pane)
-        action_bar.pack(fill="x", padx=4, pady=(2, 6))
+        action_bar.pack(fill="x", padx=4, pady=(2, 4))
         chap_auto_btn = self._make_ai_button(
             action_bar,
             idle_text=_tr("tool.clip.btn_chapter_auto"),
@@ -384,20 +370,35 @@ class ClipWorkbenchApp(ToolBase):
                    command=lambda idx=chapter_idx:
                        self._add_manual_clip(idx)).pack(side="left", padx=(6, 0))
 
-        # ── Shared preview (top) ──
-        prev_box = ttk.LabelFrame(self._detail_pane,
+        # AI reason / refined as one compact line under action bar
+        meta_bits = []
+        if rank.get("reason"):
+            meta_bits.append(f"💡 {rank['reason']}")
+        if ch.get("refined"):
+            meta_bits.append(ch["refined"])
+        if meta_bits:
+            tk.Label(self._detail_pane, text="   ·   ".join(meta_bits),
+                     fg="#666", anchor="w", justify="left",
+                     wraplength=900, font=("", 9)).pack(
+                fill="x", padx=4, pady=(0, 4))
+
+        # ── Vertical PanedWindow: preview top, clip cards bottom ──
+        # User can drag the divider; we set a sensible initial split.
+        body_pw = ttk.PanedWindow(self._detail_pane, orient="vertical")
+        body_pw.pack(fill="both", expand=True, padx=4, pady=2)
+
+        prev_box = ttk.LabelFrame(body_pw,
                                     text=_tr("tool.clip.section_preview"))
-        prev_box.pack(fill="x", padx=4, pady=4)
+        cards_box = ttk.LabelFrame(body_pw,
+                                     text=_tr("tool.clip.section_clips_in_ch"))
+        body_pw.add(prev_box, weight=2)
+        body_pw.add(cards_box, weight=3)
+
         self._preview = PreviewPane(
             prev_box, on_change=self._on_preview_crop_changed)
         self._preview.set_apply_all_callback(self._apply_crop_to_all_in_chapter)
-        # Compact height — clip cards below need room
-        self._preview.pack(fill="x", padx=2, pady=2)
+        self._preview.pack(fill="both", expand=True, padx=2, pady=2)
 
-        # ── Clip cards (scrollable) ──
-        cards_box = ttk.LabelFrame(self._detail_pane,
-                                     text=_tr("tool.clip.section_clips_in_ch"))
-        cards_box.pack(fill="both", expand=True, padx=4, pady=4)
         canvas = tk.Canvas(cards_box, highlightthickness=0)
         sb = ttk.Scrollbar(cards_box, orient="vertical", command=canvas.yview)
         self._clips_inner = tk.Frame(canvas)

@@ -292,11 +292,16 @@ _STATUS_COLORS = {
 }
 
 
-class ClipCard(ttk.LabelFrame):
-    """One clip's inline editor: header (time / duration / status) +
-    PackageForm + action buttons (focus / skip / remove).
+class ClipCard(tk.Frame):
+    """One clip's inline editor — collapsible.
 
-    Click anywhere → calls on_focus(clip).
+    Collapsed (default): single-line header showing
+      [▶] glyph #id [time-range] dur · title · [skip] [×]
+    Click the row → calls on_focus(clip); host expands this one and
+    collapses siblings.
+
+    Expanded: header + excerpt + PackageForm + AI / action buttons.
+    Only the focused card is expanded; others stay one row tall.
     """
 
     def __init__(self, master: tk.Misc, clip: ClipDraft, *,
@@ -306,71 +311,131 @@ class ClipCard(ttk.LabelFrame):
                  ai_button_factory: Callable | None = None,
                  ai_worker_for_clip: Callable | None = None,
                  **kwargs):
-        # Header text computed before super().__init__ (LabelFrame uses text=)
-        super().__init__(master, **kwargs)
+        super().__init__(master, highlightthickness=1,
+                          highlightbackground="#d0d0d8", **kwargs)
         self._clip = clip
         self._on_focus = on_focus
         self._on_remove = on_remove
+        self._on_change = on_change
+        self._ai_button_factory = ai_button_factory
+        self._ai_worker_for_clip = ai_worker_for_clip
+        self._expanded = False
+
+        # ── Header row (always visible, clickable) ──
+        self._header = tk.Frame(self, background="#fafafa", cursor="hand2")
+        self._header.pack(fill="x")
+
+        self._chevron_var = tk.StringVar(value="▶")
+        self._chevron_lbl = tk.Label(self._header,
+                                       textvariable=self._chevron_var,
+                                       background="#fafafa", fg="#666",
+                                       width=2, font=("", 10))
+        self._chevron_lbl.pack(side="left", padx=(4, 0))
+
+        self._header_var = tk.StringVar()
+        self._header_lbl = tk.Label(self._header, textvariable=self._header_var,
+                                      background="#fafafa", anchor="w",
+                                      font=("", 10), justify="left")
+        self._header_lbl.pack(side="left", fill="x", expand=True, padx=4,
+                                pady=4)
+
+        # Inline action buttons in the header (always reachable)
+        self._skip_btn = ttk.Button(
+            self._header, text=self._skip_label(),
+            command=self._on_skip_click, width=8)
+        self._skip_btn.pack(side="right", padx=2, pady=2)
+        ttk.Button(self._header, text="×",
+                    command=self._on_remove_click, width=3).pack(
+            side="right", padx=2, pady=2)
+
+        # Click anywhere on header → focus + toggle
+        for w in (self._header, self._header_lbl, self._chevron_lbl):
+            w.bind("<Button-1>", self._on_header_click)
+
+        # ── Body (built lazily on first expand) ──
+        self._body: tk.Frame | None = None
+        self._excerpt_lbl: tk.Label | None = None
+        self._form: PackageForm | None = None
 
         self._refresh_header()
 
-        # Excerpt (compact)
-        self._excerpt_lbl = tk.Label(
-            self, text=(clip.original_excerpt or "")[:240],
-            fg="#666", wraplength=900, justify="left", anchor="w",
-            font=("", 9))
-        self._excerpt_lbl.pack(fill="x", padx=8, pady=(4, 4))
-
-        # Package form
-        self._form = PackageForm(
-            self, on_change=on_change,
-            ai_button_factory=ai_button_factory,
-            ai_worker_for_clip=ai_worker_for_clip)
-        self._form.pack(fill="x", padx=4, pady=(2, 4))
-        self._form.bind_clip(clip)
-
-        # Action row
-        action = ttk.Frame(self)
-        action.pack(fill="x", padx=4, pady=(0, 6))
-        self._skip_btn = ttk.Button(action, text=self._skip_label(),
-                                      command=self._on_skip_click, width=10)
-        self._skip_btn.pack(side="left", padx=2)
-        ttk.Button(action, text=_tr("tool.clip.btn_remove_clip"),
-                   command=self._on_remove_click, width=10).pack(
-            side="left", padx=2)
-
-        # Click-to-focus wiring (header / excerpt)
-        if on_focus:
-            for w in (self, self._excerpt_lbl):
-                w.bind("<Button-1>", lambda _e: on_focus(self._clip))
-
+    # ── public API ──
     def update_clip(self, clip: ClipDraft) -> None:
-        """Re-bind to the (possibly mutated) clip — refresh header + form."""
         self._clip = clip
         self._refresh_header()
-        self._excerpt_lbl.config(text=(clip.original_excerpt or "")[:240])
-        self._form.bind_clip(clip)
         self._skip_btn.config(text=self._skip_label())
+        if self._body is not None:
+            if self._excerpt_lbl is not None:
+                self._excerpt_lbl.config(text=(clip.original_excerpt or "")[:300])
+            if self._form is not None:
+                self._form.bind_clip(clip)
 
     def set_focused(self, focused: bool) -> None:
+        # Border accent + body expansion follow the focus state.
         try:
-            self.config(relief=("solid" if focused else "groove"),
-                        borderwidth=(2 if focused else 1))
+            self.config(highlightbackground=("#2563eb" if focused else "#d0d0d8"),
+                        highlightthickness=(2 if focused else 1))
         except tk.TclError:
             pass
+        bg = "#eef4ff" if focused else "#fafafa"
+        try:
+            self._header.config(background=bg)
+            self._chevron_lbl.config(background=bg)
+            self._header_lbl.config(background=bg)
+        except tk.TclError:
+            pass
+        if focused and not self._expanded:
+            self._expand()
+        elif not focused and self._expanded:
+            self._collapse()
 
     # ── internal ──
     def _refresh_header(self) -> None:
         c = self._clip
         glyph, _ = _STATUS_COLORS.get(c.status, ("◯", "#999"))
-        text = (f"{glyph} #{c.id}  [{_seconds_to_str(c.start_sec)} – "
-                f"{_seconds_to_str(c.end_sec)}]  {int(c.duration)}s   "
-                f"{c.chapter_title}")
-        self.configure(text=text)
+        title = (c.title or c.chapter_title or "").strip()[:60]
+        self._header_var.set(
+            f"{glyph}  #{c.id}   [{_seconds_to_str(c.start_sec)} – "
+            f"{_seconds_to_str(c.end_sec)}]   {int(c.duration)}s   ·  {title}")
 
     def _skip_label(self) -> str:
         return (_tr("tool.clip.btn_unskip") if self._clip.status == "skipped"
                 else _tr("tool.clip.btn_skip"))
+
+    def _on_header_click(self, _event=None) -> None:
+        if self._on_focus:
+            self._on_focus(self._clip)
+
+    def _build_body(self) -> None:
+        if self._body is not None:
+            return
+        self._body = tk.Frame(self)
+        # Excerpt
+        self._excerpt_lbl = tk.Label(
+            self._body,
+            text=(self._clip.original_excerpt or "")[:300],
+            fg="#666", wraplength=900, justify="left", anchor="w",
+            font=("", 9))
+        self._excerpt_lbl.pack(fill="x", padx=8, pady=(4, 4))
+        # Package form
+        self._form = PackageForm(
+            self._body, on_change=self._on_change,
+            ai_button_factory=self._ai_button_factory,
+            ai_worker_for_clip=self._ai_worker_for_clip)
+        self._form.pack(fill="x", padx=4, pady=(2, 6))
+        self._form.bind_clip(self._clip)
+
+    def _expand(self) -> None:
+        self._build_body()
+        self._body.pack(fill="x")
+        self._chevron_var.set("▼")
+        self._expanded = True
+
+    def _collapse(self) -> None:
+        if self._body is not None:
+            self._body.pack_forget()
+        self._chevron_var.set("▶")
+        self._expanded = False
 
     def _on_skip_click(self) -> None:
         if self._clip.status == "skipped":
@@ -379,8 +444,8 @@ class ClipCard(ttk.LabelFrame):
             self._clip.status = "skipped"
         self._skip_btn.config(text=self._skip_label())
         self._refresh_header()
-        if self._form._on_change:
-            self._form._on_change(self._clip)
+        if self._on_change:
+            self._on_change(self._clip)
 
     def _on_remove_click(self) -> None:
         if self._on_remove:
