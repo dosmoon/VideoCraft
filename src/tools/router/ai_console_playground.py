@@ -629,7 +629,7 @@ class PlaygroundController:
         # Serial: A then B (avoids provider rate limits)
         for label, prompt, panel in (("A", prompt_a, self._ab_a_panel),
                                        ("B", prompt_b, self._ab_b_panel)):
-            if token.is_cancelled():
+            if token.cancelled:
                 self.root.after(0, self._fill_panel, panel,
                                   {"sent": prompt, "result": "(cancelled)",
                                    "meta": "—"})
