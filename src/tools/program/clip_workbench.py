@@ -1,25 +1,29 @@
-"""Clip Script workbench — Phase A walking skeleton (manual flow).
+"""Clip Script workbench — chapter-centered UX (2026-05 redesign).
 
-4-tab wizard: Chapters → Peaks → Package → Crop & Export. Phase A has
-no AI buttons; Phase B (separate commit) will add rank / find / package
-buttons. Architecture follows docs/draft/program-script-clip.md.
+2 tabs:
+  Tab 1 「章节」     : master-detail
+                      Left = compact chapter list + global [全自动 AI]
+                      Right = chapter detail (header + actions + shared
+                              preview/crop + scrollable per-clip cards)
+  Tab 2 「汇总导出」 : cross-chapter clip Treeview + focused side panel
+                      (preview + package form) + batch buttons + export bar
+
+A chapter is the unit of work: find peaks → preview/crop → write package
+text — all in one view. Final export work happens in Tab 2.
+
+Architecture: this is the UI layer. Business logic lives in
+core.program.clip (find_peaks / package_clip / export_*). Reusable widgets
+live in ui.clip_widgets. Cut JSON schema is unchanged.
 """
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Callable
-
-try:
-    from PIL import Image
-    _PIL_OK = True
-except ImportError:
-    _PIL_OK = False
 
 from tools.base import ToolBase
 from core.ai.cancellation import CancellationToken
@@ -28,12 +32,12 @@ from core.program import clip as cliplib
 from core.program.clip import ClipDraft
 from core.segment_model import format_timestamp, parse_timestamp
 from ui.ai_error_dialog import show_ai_error
-from ui.crop_overlay import CropOverlay
-from ui.vlc_player import VlcPlayerFrame, is_vlc_available
+from ui.clip_widgets import (
+    ClipCard, ClipSummaryTreeview, PackageForm, PreviewPane,
+)
 
 
 def _tr(key: str) -> str:
-    """Lazy i18n import (avoid circulars)."""
     from i18n import tr
     return tr(key)
 
@@ -42,42 +46,41 @@ def _seconds_to_str(s: float) -> str:
     return format_timestamp(s)
 
 
-def _str_to_seconds(text: str) -> float | None:
-    return parse_timestamp(text)
+# ── Heat-tier colors for chapter cards (kept from prior design) ────────────
+def _heat_colors(score: int | None) -> tuple[str, str]:
+    """Return (card_bg, badge_bg) for a chapter score."""
+    if score is None:
+        return "#ffffff", "#9aa0a6"
+    if score >= 75:
+        return "#fff1d6", "#e07a18"
+    if score >= 50:
+        return "#fbfbe6", "#9c8a26"
+    if score < 30:
+        return "#f0f0f0", "#9aa0a6"
+    return "#ffffff", "#4a86e8"
 
 
 class ClipWorkbenchApp(ToolBase):
-    """Manual clip-script workbench. Reads subtitle.pack output, lets user
-    pick chapters → frame clips → write hook/outro/title → crop → export.
-    """
-
     def __init__(self, master, initial_file: str | None = None):
         self.master = master
         master.title(_tr("tool.clip.title"))
-        master.geometry("1400x880")
+        master.geometry("1480x900")
 
-        # Bigger, more readable Treeview rows for both the chapter list
-        # (Tab 1) and the clip list (Tab 2). Default ttk Treeview row
-        # height is ~20px which is painful on dense AI output.
         try:
             style = ttk.Style(master)
-            style.configure("Clip.Treeview",
-                             rowheight=34, font=("", 11))
+            style.configure("Clip.Treeview", rowheight=30, font=("", 10))
             style.configure("Clip.Treeview.Heading",
-                             font=("", 11, "bold"))
+                             font=("", 10, "bold"))
         except tk.TclError:
             pass
 
         # ── State ─────────────────────────────────────────────────────────
-        # Project folder is the anchor: cuts live under
-        # <project>/.videocraft/clips/<name>.json. Hub passes the folder of
-        # the currently-opened project as initial_file (or None if none open).
         self._project_root: str | None = (
             initial_file if initial_file and os.path.isdir(initial_file)
             else None
         )
-        self._cut_path: str | None = None       # path to current .json cut file
-        self._cut_name: str = ""                # display name (== file stem)
+        self._cut_path: str | None = None
+        self._cut_name: str = ""
         self._pack: dict | None = None
         self._pack_path: str = ""
         self._video_path: str = ""
@@ -86,152 +89,620 @@ class ClipWorkbenchApp(ToolBase):
         self._video_h: int = 0
         self._video_duration: float = 0.0
         self._chapters: list[dict] = []
-        self._cues = []                        # parsed SRT cues for snapping
+        self._cues = []
         self._clips: list[ClipDraft] = []
         self._next_clip_id: int = 1
+        self._ranks: dict[int, dict] = {}
+        self._suspend_autosave: bool = False
+        # Focus state
+        self._selected_chapter_idx: int | None = None
+        self._focused_clip_id: int | None = None
+        # Chapter cards (left pane) keyed by chapter idx
+        self._chapter_card_widgets: dict[int, tk.Frame] = {}
+        # Per-clip cards (right pane) keyed by clip id
+        self._clip_card_widgets: dict[int, ClipCard] = {}
+        # Export
         self._export_thread: threading.Thread | None = None
         self._export_cancel_flag: dict = {"v": False}
-        self._suspend_autosave: bool = False    # set during bulk hydration
-        # AI rank results: chapter_idx → {score, reason}; populated by Tab 1
-        # AI button, consumed by _refresh_chapter_tree to fill score columns.
-        self._ranks: dict[int, dict] = {}
+        # Global auto-run state
+        self._global_auto_token: CancellationToken | None = None
+
+        # ── Cut + Sources sticky header (spans both tabs) ──────────────────
+        self._build_header(master)
 
         # ── Notebook ──────────────────────────────────────────────────────
         self._notebook = ttk.Notebook(master)
         self._notebook.pack(fill="both", expand=True, padx=6, pady=6)
-
-        self._tab_setup = ttk.Frame(self._notebook)
-        self._tab_peaks = ttk.Frame(self._notebook)
-        self._tab_package = ttk.Frame(self._notebook)
-        self._tab_export = ttk.Frame(self._notebook)
-        self._notebook.add(self._tab_setup,   text=_tr("tool.clip.tab_chapters"))
-        self._notebook.add(self._tab_peaks,   text=_tr("tool.clip.tab_peaks"))
-        self._notebook.add(self._tab_package, text=_tr("tool.clip.tab_package"))
-        self._notebook.add(self._tab_export,  text=_tr("tool.clip.tab_export"))
+        self._tab_chapters = ttk.Frame(self._notebook)
+        self._tab_export   = ttk.Frame(self._notebook)
+        self._notebook.add(self._tab_chapters, text=_tr("tool.clip.tab_chapters"))
+        self._notebook.add(self._tab_export,   text=_tr("tool.clip.tab_export"))
         self._notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
-        self._build_tab_setup()
-        self._build_tab_peaks()
-        self._build_tab_package()
+        self._build_tab_chapters()
         self._build_tab_export()
 
         # Bottom status bar
         self._status_var = tk.StringVar(value="")
-        tk.Label(master, textvariable=self._status_var,
-                 fg="blue", anchor="w").pack(fill="x", padx=8, pady=(0, 4))
+        tk.Label(master, textvariable=self._status_var, fg="blue",
+                 anchor="w").pack(fill="x", padx=8, pady=(0, 4))
 
-        # Start in "no cut" mode — Tab 2/3/4 disabled until New / Open.
         self._refresh_cut_state()
 
-    # ── Tab 1: setup + chapters ───────────────────────────────────────────
+    # ── Sticky header (cut + sources) ─────────────────────────────────────
 
-    def _build_tab_setup(self) -> None:
-        f = self._tab_setup
+    def _build_header(self, master: tk.Misc) -> None:
+        header = ttk.Frame(master)
+        header.pack(fill="x", padx=6, pady=(6, 0))
 
-        # ── Cut file management (top) ────────────────────────────────────
-        cut_box = ttk.LabelFrame(f, text=_tr("tool.clip.section_cut"))
-        cut_box.pack(fill="x", padx=6, pady=6)
-        btn_row = ttk.Frame(cut_box)
-        btn_row.pack(fill="x", padx=4, pady=4)
-        ttk.Button(btn_row, text=_tr("tool.clip.btn_new_cut"),
+        # Cut row
+        cut_box = ttk.LabelFrame(header, text=_tr("tool.clip.section_cut"))
+        cut_box.pack(fill="x", pady=(0, 4))
+        row = ttk.Frame(cut_box)
+        row.pack(fill="x", padx=4, pady=4)
+        ttk.Button(row, text=_tr("tool.clip.btn_new_cut"),
                    command=self._on_new_cut).pack(side="left", padx=2)
-        ttk.Button(btn_row, text=_tr("tool.clip.btn_open_cut"),
+        ttk.Button(row, text=_tr("tool.clip.btn_open_cut"),
                    command=self._on_open_cut).pack(side="left", padx=2)
-        ttk.Button(btn_row, text=_tr("tool.clip.btn_save_as_cut"),
+        ttk.Button(row, text=_tr("tool.clip.btn_save_as_cut"),
                    command=self._on_save_as_cut).pack(side="left", padx=2)
         self._cut_status_var = tk.StringVar(value=_tr("tool.clip.cut_none"))
-        tk.Label(cut_box, textvariable=self._cut_status_var,
-                 fg="#2563eb", anchor="w").pack(fill="x", padx=8, pady=(0, 4))
+        tk.Label(row, textvariable=self._cut_status_var, fg="#2563eb",
+                 anchor="w").pack(side="left", padx=(20, 0))
 
-        # ── Sources (manual) ─────────────────────────────────────────────
-        top = ttk.LabelFrame(f, text=_tr("tool.clip.section_inputs"))
-        top.pack(fill="x", padx=6, pady=6)
-
-        # Pack JSON (optional in spirit, but Phase A still requires it)
-        ttk.Label(top, text=_tr("tool.clip.label_pack")).grid(
-            row=0, column=0, sticky="e", padx=4, pady=3)
-        self._pack_var = tk.StringVar()
-        self._pack_var.trace_add("write", self._on_source_path_changed)
-        ttk.Entry(top, textvariable=self._pack_var, width=70).grid(
-            row=0, column=1, sticky="we", padx=4)
-        ttk.Button(top, text=_tr("tool.clip.btn_browse"),
-                   command=self._browse_pack).grid(row=0, column=2, padx=4)
-
-        # Video
-        ttk.Label(top, text=_tr("tool.clip.label_video")).grid(
-            row=1, column=0, sticky="e", padx=4, pady=3)
+        # Sources row (Pack / Video / SRT)
+        src = ttk.LabelFrame(header, text=_tr("tool.clip.section_inputs"))
+        src.pack(fill="x", pady=(0, 4))
+        self._pack_var  = tk.StringVar()
         self._video_var = tk.StringVar()
-        self._video_var.trace_add("write", self._on_source_path_changed)
-        ttk.Entry(top, textvariable=self._video_var, width=70).grid(
-            row=1, column=1, sticky="we", padx=4)
-        ttk.Button(top, text=_tr("tool.clip.btn_browse"),
-                   command=self._browse_video).grid(row=1, column=2, padx=4)
-
-        # SRT
-        ttk.Label(top, text=_tr("tool.clip.label_srt")).grid(
-            row=2, column=0, sticky="e", padx=4, pady=3)
-        self._srt_var = tk.StringVar()
-        self._srt_var.trace_add("write", self._on_source_path_changed)
-        ttk.Entry(top, textvariable=self._srt_var, width=70).grid(
-            row=2, column=1, sticky="we", padx=4)
-        ttk.Button(top, text=_tr("tool.clip.btn_browse"),
-                   command=self._browse_srt).grid(row=2, column=2, padx=4)
-
-        ttk.Button(top, text=_tr("tool.clip.btn_load"),
+        self._srt_var   = tk.StringVar()
+        for var in (self._pack_var, self._video_var, self._srt_var):
+            var.trace_add("write", self._on_source_path_changed)
+        for row_idx, (label, var, browse) in enumerate((
+                (_tr("tool.clip.label_pack"),  self._pack_var,  self._browse_pack),
+                (_tr("tool.clip.label_video"), self._video_var, self._browse_video),
+                (_tr("tool.clip.label_srt"),   self._srt_var,   self._browse_srt))):
+            ttk.Label(src, text=label).grid(row=row_idx, column=0,
+                                             sticky="e", padx=4, pady=2)
+            ttk.Entry(src, textvariable=var).grid(
+                row=row_idx, column=1, sticky="we", padx=4)
+            ttk.Button(src, text=_tr("tool.clip.btn_browse"),
+                       command=browse).grid(row=row_idx, column=2, padx=4)
+        ttk.Button(src, text=_tr("tool.clip.btn_load"),
                    command=self._on_load_clicked).grid(
-            row=3, column=1, sticky="w", padx=4, pady=6)
+            row=3, column=1, sticky="w", padx=4, pady=4)
+        src.columnconfigure(1, weight=1)
 
-        top.columnconfigure(1, weight=1)
+    # ── Tab 1: master-detail ──────────────────────────────────────────────
 
-        # Chapters table + AI rank button on top
-        mid = ttk.LabelFrame(f, text=_tr("tool.clip.section_chapters"))
-        mid.pack(fill="both", expand=True, padx=6, pady=6)
+    def _build_tab_chapters(self) -> None:
+        f = self._tab_chapters
+        pw = ttk.PanedWindow(f, orient="horizontal")
+        pw.pack(fill="both", expand=True)
 
-        rank_bar = ttk.Frame(mid)
-        rank_bar.pack(fill="x", padx=4, pady=(2, 4))
+        left = ttk.Frame(pw, width=320)
+        right = ttk.Frame(pw, width=900)
+        pw.add(left, weight=0)
+        pw.add(right, weight=1)
+
+        # ── Left pane: global actions + chapter list ──
+        tk.Label(left, text=_tr("tool.clip.section_chapters"),
+                 font=("", 10, "bold"), anchor="w").pack(
+            fill="x", padx=8, pady=(6, 4))
+
+        action_bar = ttk.Frame(left)
+        action_bar.pack(fill="x", padx=8, pady=(0, 4))
+        self._global_auto_btn = self._make_ai_button(
+            action_bar,
+            idle_text=_tr("tool.clip.btn_global_auto"),
+            worker=self._worker_global_full_auto,
+            on_success=self._on_global_auto_done,
+        )
+        self._global_auto_btn.pack(side="left")
         self._ai_rank_btn = self._make_ai_button(
-            rank_bar,
+            action_bar,
             idle_text=_tr("tool.clip.btn_ai_rank"),
             worker=self._worker_rank_chapters,
             on_success=self._on_rank_done,
         )
-        self._ai_rank_btn.pack(side="left")
+        self._ai_rank_btn.pack(side="left", padx=(6, 0))
 
-        # Scrollable card list (replaces the cramped Treeview). Each chapter
-        # is a LabelFrame with full-width wrapped text and an AI-score badge.
-        cards_holder = tk.Frame(mid)
-        cards_holder.pack(fill="both", expand=True)
-        self._chap_canvas = tk.Canvas(cards_holder, highlightthickness=0,
+        # Scrollable chapter list
+        list_holder = tk.Frame(left, background="#f4f4f6")
+        list_holder.pack(fill="both", expand=True, padx=4, pady=(2, 4))
+        self._chap_canvas = tk.Canvas(list_holder, highlightthickness=0,
                                        background="#f4f4f6")
-        self._chap_scroll = ttk.Scrollbar(cards_holder, orient="vertical",
+        self._chap_scroll = ttk.Scrollbar(list_holder, orient="vertical",
                                            command=self._chap_canvas.yview)
         self._chap_inner = tk.Frame(self._chap_canvas, background="#f4f4f6")
         self._chap_inner_window = self._chap_canvas.create_window(
             (0, 0), window=self._chap_inner, anchor="nw")
-
-        def _on_inner_configure(_e):
-            self._chap_canvas.configure(scrollregion=self._chap_canvas.bbox("all"))
-        def _on_canvas_configure(e):
-            # Stretch inner frame to canvas width so cards fill horizontally
-            self._chap_canvas.itemconfigure(self._chap_inner_window, width=e.width)
-
-        self._chap_inner.bind("<Configure>", _on_inner_configure)
-        self._chap_canvas.bind("<Configure>", _on_canvas_configure)
         self._chap_canvas.configure(yscrollcommand=self._chap_scroll.set)
         self._chap_canvas.pack(side="left", fill="both", expand=True)
         self._chap_scroll.pack(side="right", fill="y")
-        # Mouse wheel scroll
-        def _on_mousewheel(e):
-            self._chap_canvas.yview_scroll(-int(e.delta / 120), "units")
-        self._chap_canvas.bind_all("<MouseWheel>",
-                                    lambda e: _on_mousewheel(e)
-                                    if self._notebook.index(self._notebook.select()) == 0
-                                    else None)
+        self._chap_inner.bind(
+            "<Configure>",
+            lambda _e: self._chap_canvas.configure(
+                scrollregion=self._chap_canvas.bbox("all")))
+        self._chap_canvas.bind(
+            "<Configure>",
+            lambda e: self._chap_canvas.itemconfigure(
+                self._chap_inner_window, width=e.width))
 
-        # Hint: chapter selection happens implicitly — Tab 2 lets user add
-        # peaks under any chapter.
-        tk.Label(f, text=_tr("tool.clip.hint_chapters"),
-                 fg="gray").pack(padx=8, pady=(0, 6), anchor="w")
+        # ── Right pane: chapter detail ──
+        self._detail_pane = ttk.Frame(right)
+        self._detail_pane.pack(fill="both", expand=True, padx=4, pady=4)
+        # Built (or rebuilt) on chapter selection
+        self._build_detail_placeholder()
+
+    def _build_detail_placeholder(self) -> None:
+        for w in self._detail_pane.winfo_children():
+            w.destroy()
+        tk.Label(self._detail_pane,
+                 text=_tr("tool.clip.hint_pick_chapter"),
+                 fg="gray", font=("", 11)).pack(pady=40)
+
+    def _refresh_chapter_list(self) -> None:
+        for w in list(self._chap_inner.winfo_children()):
+            w.destroy()
+        self._chapter_card_widgets.clear()
+        # Sort by AI score (desc) when ranks exist; else preserve idx order
+        ordered = (sorted(self._chapters,
+                           key=lambda c: -self._ranks.get(c["idx"], {}).get("score", -1))
+                    if self._ranks else list(self._chapters))
+        for ch in ordered:
+            self._build_chapter_list_card(ch)
+
+    def _clip_count_for_chapter(self, chapter_idx: int) -> int:
+        return sum(1 for c in self._clips if c.chapter_idx == chapter_idx)
+
+    def _chapter_status_glyph(self, chapter_idx: int) -> str:
+        clips = [c for c in self._clips if c.chapter_idx == chapter_idx]
+        if not clips:
+            return "○"
+        if all(c.status in ("reviewed", "exported") for c in clips):
+            return "●"
+        return "◐"
+
+    def _build_chapter_list_card(self, ch: dict) -> None:
+        rank = self._ranks.get(ch["idx"]) or {}
+        score = rank.get("score") if isinstance(rank.get("score"), int) else None
+        bg, badge_bg = _heat_colors(score)
+        clip_count = self._clip_count_for_chapter(ch["idx"])
+        glyph = self._chapter_status_glyph(ch["idx"])
+        is_selected = (self._selected_chapter_idx == ch["idx"])
+        border = "#2563eb" if is_selected else "#d0d0d8"
+
+        card = tk.Frame(self._chap_inner, background=bg,
+                         highlightbackground=border,
+                         highlightthickness=2 if is_selected else 1, bd=0,
+                         cursor="hand2")
+        card.pack(fill="x", padx=4, pady=3)
+        self._chapter_card_widgets[ch["idx"]] = card
+
+        # Header
+        head = tk.Frame(card, background=bg)
+        head.pack(fill="x", padx=8, pady=(6, 2))
+        tk.Label(head, text=f"{glyph} #{ch['idx']+1}",
+                 background=bg, font=("", 12, "bold"),
+                 fg="#333").pack(side="left")
+        tk.Label(head, text=f"  ⏱ {ch['time_str']}",
+                 background=bg, font=("", 9), fg="#555").pack(side="left")
+        if score is not None:
+            tk.Label(head, text=f" {score} ",
+                     background=badge_bg, foreground="white",
+                     font=("", 10, "bold"), padx=6).pack(side="right")
+        if clip_count:
+            tk.Label(head, text=f"{clip_count} clip",
+                     background=bg, fg="#2563eb",
+                     font=("", 9)).pack(side="right", padx=(0, 8))
+
+        # Title
+        title_lbl = tk.Label(card, text=ch["title"], background=bg,
+                              font=("", 10, "bold"), anchor="w",
+                              justify="left", wraplength=260)
+        title_lbl.pack(fill="x", padx=8, pady=(0, 6))
+
+        # Click anywhere → select
+        for w in (card, head, title_lbl):
+            w.bind("<Button-1>",
+                    lambda _e, idx=ch["idx"]: self._on_chapter_selected(idx))
+
+    def _on_chapter_selected(self, chapter_idx: int) -> None:
+        self._selected_chapter_idx = chapter_idx
+        # Refresh selection borders cheaply (rebuild list)
+        self._refresh_chapter_list()
+        self._build_detail_pane(chapter_idx)
+        # Reset focused clip to first clip in chapter (if any)
+        clips_here = [c for c in self._clips if c.chapter_idx == chapter_idx]
+        self._focused_clip_id = clips_here[0].id if clips_here else None
+        self._refresh_focused_preview()
+
+    def _build_detail_pane(self, chapter_idx: int) -> None:
+        for w in self._detail_pane.winfo_children():
+            w.destroy()
+        if not (0 <= chapter_idx < len(self._chapters)):
+            self._build_detail_placeholder()
+            return
+        ch = self._chapters[chapter_idx]
+        rank = self._ranks.get(chapter_idx) or {}
+        score = rank.get("score") if isinstance(rank.get("score"), int) else None
+
+        # ── Header ──
+        header = ttk.Frame(self._detail_pane)
+        header.pack(fill="x", padx=4, pady=(0, 4))
+        title_text = f"#{chapter_idx+1}  {ch['title']}"
+        tk.Label(header, text=title_text, font=("", 13, "bold"),
+                 anchor="w", justify="left", wraplength=900).pack(
+            side="left", fill="x", expand=True)
+        if score is not None:
+            _bg, badge_bg = _heat_colors(score)
+            tk.Label(header, text=f" {score} ",
+                     background=badge_bg, foreground="white",
+                     font=("", 11, "bold"), padx=8).pack(side="right")
+
+        meta = tk.Label(self._detail_pane,
+                         text=(f"⏱ {_seconds_to_str(ch['start_sec'])} – "
+                               f"{_seconds_to_str(ch['end_sec'])}   ·   "
+                               f"{int(ch['end_sec']-ch['start_sec'])}s"),
+                         fg="#555", anchor="w")
+        meta.pack(fill="x", padx=4)
+
+        if rank.get("reason"):
+            tk.Label(self._detail_pane, text=f"💡 {rank['reason']}",
+                     fg="#5a4520", font=("", 10, "italic"),
+                     anchor="w", justify="left", wraplength=900).pack(
+                fill="x", padx=4, pady=(0, 4))
+
+        if ch.get("refined"):
+            tk.Label(self._detail_pane, text=ch["refined"],
+                     fg="#444", anchor="w", justify="left",
+                     wraplength=900).pack(fill="x", padx=4, pady=(0, 6))
+
+        # ── Action bar (chapter-level) ──
+        action_bar = ttk.Frame(self._detail_pane)
+        action_bar.pack(fill="x", padx=4, pady=(2, 6))
+        chap_auto_btn = self._make_ai_button(
+            action_bar,
+            idle_text=_tr("tool.clip.btn_chapter_auto"),
+            worker=lambda token, idx=chapter_idx:
+                self._worker_chapter_full_auto(token, idx),
+            on_success=lambda result, idx=chapter_idx:
+                self._on_chapter_auto_done(result, idx),
+        )
+        chap_auto_btn.pack(side="left")
+        find_peaks_btn = self._make_ai_button(
+            action_bar,
+            idle_text=_tr("tool.clip.btn_ai_peaks"),
+            worker=lambda token, idx=chapter_idx:
+                self._worker_find_peaks(token, idx),
+            on_success=lambda peaks, idx=chapter_idx:
+                self._on_peaks_done(peaks, idx),
+        )
+        find_peaks_btn.pack(side="left", padx=(6, 0))
+        ttk.Button(action_bar, text=_tr("tool.clip.btn_add_manual"),
+                   command=lambda idx=chapter_idx:
+                       self._add_manual_clip(idx)).pack(side="left", padx=(6, 0))
+
+        # ── Shared preview (top) ──
+        prev_box = ttk.LabelFrame(self._detail_pane,
+                                    text=_tr("tool.clip.section_preview"))
+        prev_box.pack(fill="x", padx=4, pady=4)
+        self._preview = PreviewPane(
+            prev_box, on_change=self._on_preview_crop_changed)
+        self._preview.set_apply_all_callback(self._apply_crop_to_all_in_chapter)
+        # Compact height — clip cards below need room
+        self._preview.pack(fill="x", padx=2, pady=2)
+
+        # ── Clip cards (scrollable) ──
+        cards_box = ttk.LabelFrame(self._detail_pane,
+                                     text=_tr("tool.clip.section_clips_in_ch"))
+        cards_box.pack(fill="both", expand=True, padx=4, pady=4)
+        canvas = tk.Canvas(cards_box, highlightthickness=0)
+        sb = ttk.Scrollbar(cards_box, orient="vertical", command=canvas.yview)
+        self._clips_inner = tk.Frame(canvas)
+        self._clips_inner_window = canvas.create_window(
+            (0, 0), window=self._clips_inner, anchor="nw")
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        self._clips_inner.bind(
+            "<Configure>",
+            lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind(
+            "<Configure>",
+            lambda e: canvas.itemconfigure(
+                self._clips_inner_window, width=e.width))
+
+        self._refresh_clip_cards_for_chapter(chapter_idx)
+
+    def _refresh_clip_cards_for_chapter(self, chapter_idx: int) -> None:
+        if not hasattr(self, "_clips_inner") or not self._clips_inner.winfo_exists():
+            return
+        for w in list(self._clips_inner.winfo_children()):
+            w.destroy()
+        self._clip_card_widgets.clear()
+        clips = [c for c in self._clips if c.chapter_idx == chapter_idx]
+        if not clips:
+            tk.Label(self._clips_inner,
+                     text=_tr("tool.clip.hint_no_clips_in_chapter"),
+                     fg="gray").pack(pady=20)
+            return
+        for clip in clips:
+            card = ClipCard(
+                self._clips_inner, clip,
+                on_focus=self._on_clip_focused,
+                on_remove=self._on_clip_removed,
+                on_change=self._on_clip_changed,
+                ai_button_factory=self._make_ai_button,
+                ai_worker_for_clip=self._make_pkg_worker,
+            )
+            card.pack(fill="x", padx=4, pady=4)
+            self._clip_card_widgets[clip.id] = card
+            if clip.id == self._focused_clip_id:
+                card.set_focused(True)
+
+    def _refresh_focused_preview(self) -> None:
+        """Rebind the shared PreviewPane to whatever clip is currently focused."""
+        if not hasattr(self, "_preview") or not self._preview.winfo_exists():
+            return
+        clip = next((c for c in self._clips if c.id == self._focused_clip_id),
+                     None)
+        self._preview.bind_clip(clip,
+                                  video_path=self._video_path,
+                                  video_w=self._video_w,
+                                  video_h=self._video_h)
+
+    def _on_clip_focused(self, clip: ClipDraft) -> None:
+        self._focused_clip_id = clip.id
+        # Update card borders
+        for cid, card in self._clip_card_widgets.items():
+            card.set_focused(cid == clip.id)
+        self._refresh_focused_preview()
+
+    def _on_clip_removed(self, clip: ClipDraft) -> None:
+        self._clips = [c for c in self._clips if c.id != clip.id]
+        if self._focused_clip_id == clip.id:
+            self._focused_clip_id = None
+        if self._selected_chapter_idx is not None:
+            self._refresh_clip_cards_for_chapter(self._selected_chapter_idx)
+        self._refresh_chapter_list()    # clip count badge
+        self._refresh_export_summary()
+        self._refresh_focused_preview()
+        self._autosave()
+
+    def _on_clip_changed(self, clip: ClipDraft) -> None:
+        # Keep export summary + chapter status glyph in sync with edits
+        self._refresh_export_summary()
+        self._refresh_chapter_list()
+        self._autosave()
+
+    def _on_preview_crop_changed(self, clip: ClipDraft, _rect: dict) -> None:
+        self._autosave()
+
+    def _apply_crop_to_all_in_chapter(self, rect: dict) -> None:
+        if self._selected_chapter_idx is None:
+            return
+        n = 0
+        for c in self._clips:
+            if c.chapter_idx == self._selected_chapter_idx:
+                c.crop_rect = dict(rect)
+                n += 1
+        self._autosave()
+        self._set_status(_tr("tool.clip.status_crop_applied").format(n=n))
+
+    def _add_manual_clip(self, chapter_idx: int) -> None:
+        """Pop a tiny dialog (offset + duration sec) → add a clip to this chapter."""
+        if not (0 <= chapter_idx < len(self._chapters)):
+            return
+        ch = self._chapters[chapter_idx]
+        dlg = tk.Toplevel(self.master)
+        dlg.title(_tr("tool.clip.dialog_add_manual"))
+        dlg.transient(self.master)
+        dlg.grab_set()
+        ttk.Label(dlg, text=_tr("tool.clip.field_offset")).grid(
+            row=0, column=0, sticky="e", padx=8, pady=6)
+        offset_var = tk.IntVar(value=0)
+        ttk.Spinbox(dlg, from_=0, to=99999, increment=5,
+                     textvariable=offset_var, width=8).grid(
+            row=0, column=1, sticky="w", padx=8)
+        ttk.Label(dlg, text=_tr("tool.clip.field_duration_sec")).grid(
+            row=1, column=0, sticky="e", padx=8, pady=6)
+        dur_var = tk.IntVar(value=45)
+        ttk.Spinbox(dlg, from_=5, to=600, increment=5,
+                     textvariable=dur_var, width=8).grid(
+            row=1, column=1, sticky="w", padx=8)
+
+        def on_ok():
+            try:
+                off = max(0, int(offset_var.get()))
+                dur = max(1, int(dur_var.get()))
+            except (tk.TclError, ValueError):
+                return
+            s = min(ch["start_sec"] + off, ch["end_sec"] - 1)
+            e = min(s + dur, ch["end_sec"])
+            if e <= s:
+                return
+            if self._cues:
+                s, e = cliplib.snap_to_cue_boundaries(self._cues, s, e)
+            self._append_new_clip(ch, s, e)
+            dlg.destroy()
+
+        btns = tk.Frame(dlg)
+        btns.grid(row=2, column=0, columnspan=2, pady=8)
+        ttk.Button(btns, text=_tr("tool.clip.btn_apply"),
+                    command=on_ok).pack(side="left", padx=4)
+        ttk.Button(btns, text=_tr("tool.clip.btn_cancel_dialog"),
+                    command=dlg.destroy).pack(side="left", padx=4)
+
+    def _append_new_clip(self, ch: dict, s: float, e: float) -> ClipDraft:
+        """Create + register a clip; refresh dependent panes."""
+        excerpt = ""
+        if self._cues:
+            buf = []
+            for cue in self._cues:
+                cs = cue.start.total_seconds()
+                ce = cue.end.total_seconds()
+                if ce <= s or cs >= e:
+                    continue
+                buf.append(cue.content.replace("\n", " "))
+            excerpt = " ".join(buf)[:500]
+        clip = ClipDraft(
+            id=self._next_clip_id,
+            chapter_idx=ch["idx"],
+            chapter_title=ch["title"],
+            start_sec=float(s),
+            end_sec=float(e),
+            original_excerpt=excerpt,
+        )
+        self._next_clip_id += 1
+        self._clips.append(clip)
+        if self._selected_chapter_idx == ch["idx"]:
+            self._refresh_clip_cards_for_chapter(ch["idx"])
+            self._focused_clip_id = clip.id
+            self._refresh_focused_preview()
+        self._refresh_chapter_list()
+        self._refresh_export_summary()
+        self._autosave()
+        return clip
+
+    # ── Tab 2: export summary ─────────────────────────────────────────────
+
+    def _build_tab_export(self) -> None:
+        f = self._tab_export
+        pw = ttk.PanedWindow(f, orient="horizontal")
+        pw.pack(fill="both", expand=True)
+
+        left = ttk.Frame(pw)
+        right = ttk.Frame(pw, width=440)
+        pw.add(left, weight=1)
+        pw.add(right, weight=0)
+
+        # ── Left: summary tree + batch buttons ──
+        tk.Label(left, text=_tr("tool.clip.section_summary"),
+                 font=("", 10, "bold"), anchor="w").pack(
+            fill="x", padx=8, pady=(6, 4))
+
+        self._summary_tree = ClipSummaryTreeview(
+            left, on_select=self._on_summary_clip_selected)
+        self._summary_tree.pack(fill="both", expand=True, padx=4, pady=4)
+
+        batch = ttk.Frame(left)
+        batch.pack(fill="x", padx=4, pady=(2, 4))
+        ttk.Button(batch, text=_tr("tool.clip.btn_skip"),
+                   command=lambda: self._batch_status("skipped")).pack(
+            side="left", padx=2)
+        ttk.Button(batch, text=_tr("tool.clip.btn_unskip"),
+                   command=lambda: self._batch_status("draft")).pack(
+            side="left", padx=2)
+        ttk.Button(batch, text=_tr("tool.clip.btn_reset_crop"),
+                   command=self._batch_reset_crop).pack(
+            side="left", padx=2)
+        ttk.Button(batch, text=_tr("tool.clip.btn_jump_to_chapter"),
+                   command=self._jump_to_chapter).pack(side="left", padx=(20, 2))
+
+        # ── Right: focused clip editor ──
+        right_label = tk.Label(right, text=_tr("tool.clip.section_focus_clip"),
+                                font=("", 10, "bold"), anchor="w")
+        right_label.pack(fill="x", padx=8, pady=(6, 4))
+
+        self._focus_preview = PreviewPane(
+            right, on_change=self._on_preview_crop_changed)
+        self._focus_preview.set_apply_all_callback(self._apply_crop_to_all_global)
+        self._focus_preview.pack(fill="x", padx=4, pady=2)
+
+        self._focus_form = PackageForm(
+            right, on_change=self._on_clip_changed,
+            ai_button_factory=self._make_ai_button,
+            ai_worker_for_clip=self._make_pkg_worker)
+        self._focus_form.pack(fill="x", padx=4, pady=4)
+
+        # ── Bottom export bar (full width) ──
+        bot = ttk.Frame(f)
+        bot.pack(fill="x", padx=6, pady=6)
+        ttk.Label(bot, text=_tr("tool.clip.label_output_dir")).pack(
+            side="left", padx=4)
+        self._out_dir_var = tk.StringVar()
+        self._out_dir_var.trace_add("write", lambda *_a: self._autosave())
+
+        self._export_btn = ttk.Button(
+            bot, text=_tr("tool.clip.btn_export_all"),
+            command=self._on_export_clicked)
+        self._export_btn.pack(side="right", padx=(2, 4))
+        self._export_one_btn = ttk.Button(
+            bot, text=_tr("tool.clip.btn_export_selected"),
+            command=self._on_export_selected_clicked)
+        self._export_one_btn.pack(side="right", padx=2)
+        ttk.Button(bot, text=_tr("tool.clip.btn_browse"),
+                   command=self._browse_out_dir).pack(side="right", padx=2)
+        ttk.Entry(bot, textvariable=self._out_dir_var).pack(
+            side="left", fill="x", expand=True, padx=4)
+
+        self._export_progress = ttk.Progressbar(f, mode="determinate")
+        self._export_progress.pack(fill="x", padx=6, pady=(0, 6))
+
+    def _refresh_export_summary(self) -> None:
+        if not hasattr(self, "_summary_tree"):
+            return
+        self._summary_tree.bind(self._clips)
+
+    def _on_summary_clip_selected(self, clip: ClipDraft | None) -> None:
+        self._focused_clip_id = clip.id if clip is not None else None
+        self._focus_preview.bind_clip(
+            clip, video_path=self._video_path,
+            video_w=self._video_w, video_h=self._video_h)
+        self._focus_form.bind_clip(clip)
+
+    def _batch_status(self, new_status: str) -> None:
+        clips = self._summary_tree.get_selected_clips()
+        if not clips:
+            self._set_status(_tr("tool.clip.warn_pick_rows"))
+            return
+        for c in clips:
+            c.status = new_status
+        self._refresh_export_summary()
+        self._refresh_chapter_list()
+        # Refresh open chapter detail too
+        if self._selected_chapter_idx is not None:
+            self._refresh_clip_cards_for_chapter(self._selected_chapter_idx)
+        self._autosave()
+        self._set_status(_tr("tool.clip.status_batch_status").format(
+            n=len(clips), status=new_status))
+
+    def _batch_reset_crop(self) -> None:
+        clips = self._summary_tree.get_selected_clips()
+        if not clips:
+            self._set_status(_tr("tool.clip.warn_pick_rows"))
+            return
+        for c in clips:
+            c.crop_rect = None
+        self._autosave()
+        # Re-render the focused preview if relevant
+        focused = self._summary_tree.get_focused_clip()
+        if focused is not None:
+            self._focus_preview.bind_clip(
+                focused, video_path=self._video_path,
+                video_w=self._video_w, video_h=self._video_h)
+        self._set_status(_tr("tool.clip.status_crop_reset").format(
+            n=len(clips)))
+
+    def _jump_to_chapter(self) -> None:
+        clip = self._summary_tree.get_focused_clip()
+        if clip is None:
+            self._set_status(_tr("tool.clip.warn_pick_rows"))
+            return
+        self._notebook.select(self._tab_chapters)
+        self._focused_clip_id = clip.id
+        self._on_chapter_selected(clip.chapter_idx)
+
+    def _apply_crop_to_all_global(self, rect: dict) -> None:
+        for c in self._clips:
+            c.crop_rect = dict(rect)
+        self._autosave()
+        self._set_status(_tr("tool.clip.status_crop_applied").format(
+            n=len(self._clips)))
+
+    # ── Header / source handlers ──────────────────────────────────────────
 
     def _browse_pack(self) -> None:
         path = filedialog.askopenfilename(
@@ -244,8 +715,7 @@ class ClipWorkbenchApp(ToolBase):
     def _browse_video(self) -> None:
         path = filedialog.askopenfilename(
             title=_tr("tool.clip.dialog_pick_video"),
-            filetypes=[("Video", "*.mp4 *.mkv *.mov *.webm"),
-                       ("All", "*.*")])
+            filetypes=[("Video", "*.mp4 *.mkv *.mov *.webm"), ("All", "*.*")])
         if path:
             self._video_var.set(path)
 
@@ -256,6 +726,11 @@ class ClipWorkbenchApp(ToolBase):
         if path:
             self._srt_var.set(path)
 
+    def _browse_out_dir(self) -> None:
+        d = filedialog.askdirectory(title=_tr("tool.clip.dialog_pick_out_dir"))
+        if d:
+            self._out_dir_var.set(d)
+
     def _on_load_clicked(self) -> None:
         pack_path = self._pack_var.get().strip()
         if not pack_path or not os.path.isfile(pack_path):
@@ -264,10 +739,10 @@ class ClipWorkbenchApp(ToolBase):
             return
         self._load_pack_file(pack_path)
 
+    def _on_source_path_changed(self, *_a) -> None:
+        self._autosave()
+
     def _load_pack_file(self, pack_path: str) -> None:
-        """Load chapters from the user-picked pack file. Sources (video/SRT)
-        are NOT auto-filled — user fills them manually. No manifest sniffing,
-        no restore prompts; restore lives entirely in the cut-file model."""
         try:
             self._pack = cliplib.load_pack(pack_path)
         except Exception as e:
@@ -277,35 +752,31 @@ class ClipWorkbenchApp(ToolBase):
         if self._pack_var.get() != pack_path:
             self._pack_var.set(pack_path)
 
-        # Probe video for duration / resolution
         self._video_path = self._video_var.get().strip()
         self._srt_path = self._srt_var.get().strip()
         if self._video_path and os.path.isfile(self._video_path):
             self._video_duration = cliplib.probe_duration(self._video_path)
-            self._video_w, self._video_h = cliplib.probe_resolution(self._video_path)
-        # Build chapters
+            self._video_w, self._video_h = \
+                cliplib.probe_resolution(self._video_path)
         self._chapters = cliplib.list_chapters(self._pack, self._video_duration)
-        # Load cues for snapping
         if self._srt_path and os.path.isfile(self._srt_path):
             try:
                 self._cues = cliplib.load_cues(self._srt_path)
             except Exception:
                 self._cues = []
 
-        self._refresh_chapter_tree()
-        self._refresh_peaks_chapter_combo()
+        self._refresh_chapter_list()
+        self._refresh_export_summary()
         self._set_status(_tr("tool.clip.status_loaded").format(
             n=len(self._chapters)))
         self._autosave()
 
-    # ── Cut file management ─────────────────────────────────────────────────
+    # ── Cut file management ───────────────────────────────────────────────
 
     def _has_cut(self) -> bool:
         return self._cut_path is not None
 
     def _refresh_cut_state(self) -> None:
-        """Update title-bar status + enable/disable Tab 2/3/4 based on whether
-        a cut is currently open."""
         has = self._has_cut()
         if has:
             self._cut_status_var.set(
@@ -313,23 +784,18 @@ class ClipWorkbenchApp(ToolBase):
                     name=self._cut_name, path=self._cut_path))
         else:
             self._cut_status_var.set(_tr("tool.clip.cut_none"))
-        # Disable tabs 2/3/4 (peaks / package / export) when no cut is loaded.
-        for idx in (1, 2, 3):
-            try:
-                self._notebook.tab(idx, state=("normal" if has else "disabled"))
-            except tk.TclError:
-                pass
+        # Disable export tab when no cut
+        try:
+            self._notebook.tab(1, state=("normal" if has else "disabled"))
+        except tk.TclError:
+            pass
 
     def _default_cut_dir(self) -> str | None:
-        """Canonical home: <project>/.videocraft/clips/.
-        Returns None if no project is open in the Hub."""
         if not self._project_root:
             return None
         return os.path.join(self._project_root, ".videocraft", "clips")
 
     def _suggested_cut_filename(self) -> str:
-        """Default filename for new cuts. Uses video basename if available,
-        else falls back to project folder name."""
         v = self._video_var.get().strip()
         if v:
             return f"{os.path.splitext(os.path.basename(v))[0]}.json"
@@ -352,9 +818,7 @@ class ClipWorkbenchApp(ToolBase):
         name = simpledialog.askstring(
             _tr("tool.clip.title"),
             _tr("tool.clip.dialog_new_cut_name"),
-            initialvalue=default_name,
-            parent=self.master,
-        )
+            initialvalue=default_name, parent=self.master)
         if name is None:
             return
         name = self._sanitize_cut_name(name)
@@ -369,7 +833,6 @@ class ClipWorkbenchApp(ToolBase):
                 _tr("tool.clip.title"),
                 _tr("tool.clip.confirm_overwrite").format(name=name)):
                 return
-        # Reset state to empty — user fills sources next
         self._cut_path = path
         self._cut_name = os.path.splitext(os.path.basename(path))[0]
         self._suspend_autosave = True
@@ -385,18 +848,18 @@ class ClipWorkbenchApp(ToolBase):
             self._cues = []
             self._clips = []
             self._next_clip_id = 1
-            self._refresh_chapter_tree()
-            self._refresh_peaks_chapter_combo()
-            self._refresh_clips_tree()
-            self._refresh_package_cards()
-            self._refresh_export_clip_combo()
-            # Force-clear out_dir so _refresh_out_dir picks up the new default
+            self._ranks = {}
+            self._selected_chapter_idx = None
+            self._focused_clip_id = None
+            self._refresh_chapter_list()
+            self._build_detail_placeholder()
+            self._refresh_export_summary()
             self._out_dir_var.set("")
         finally:
             self._suspend_autosave = False
         self._refresh_out_dir()
         self._refresh_cut_state()
-        self._autosave()    # write the empty cut so the file exists
+        self._autosave()
         self._set_status(_tr("tool.clip.status_cut_new").format(
             name=self._cut_name))
 
@@ -424,8 +887,6 @@ class ClipWorkbenchApp(ToolBase):
         self._open_cut_path(picked)
 
     def _show_cut_picker(self, items: list[tuple[str, str]]) -> str | None:
-        """Modal listbox of cuts. items = [(display_label, full_path)].
-        Returns the chosen full_path, or None on cancel."""
         dlg = tk.Toplevel(self.master)
         dlg.title(_tr("tool.clip.dialog_pick_cut"))
         dlg.transient(self.master)
@@ -434,7 +895,6 @@ class ClipWorkbenchApp(ToolBase):
 
         tk.Label(dlg, text=_tr("tool.clip.dialog_pick_cut_hint"),
                   anchor="w").pack(fill="x", padx=10, pady=(8, 4))
-
         list_frame = tk.Frame(dlg)
         list_frame.pack(fill="both", expand=True, padx=10, pady=4)
         listbox = tk.Listbox(list_frame, activestyle="dotbox")
@@ -443,7 +903,6 @@ class ClipWorkbenchApp(ToolBase):
                             command=listbox.yview)
         listbox.configure(yscrollcommand=sb.set)
         sb.pack(side="right", fill="y")
-
         for label, _path in items:
             listbox.insert("end", label)
         listbox.selection_set(0)
@@ -464,14 +923,12 @@ class ClipWorkbenchApp(ToolBase):
         listbox.bind("<Double-Button-1>", lambda _e: on_ok())
         listbox.bind("<Return>", lambda _e: on_ok())
         dlg.bind("<Escape>", lambda _e: on_cancel())
-
         btn_row = tk.Frame(dlg)
         btn_row.pack(fill="x", pady=(4, 8), padx=10)
         ttk.Button(btn_row, text=_tr("tool.clip.btn_open"),
                     command=on_ok).pack(side="right", padx=4)
         ttk.Button(btn_row, text=_tr("tool.clip.btn_cancel_dialog"),
                     command=on_cancel).pack(side="right", padx=4)
-
         self.master.wait_window(dlg)
         return result["v"]
 
@@ -482,7 +939,8 @@ class ClipWorkbenchApp(ToolBase):
             messagebox.showerror(_tr("tool.clip.title"), str(e))
             return
         self._cut_path = path
-        self._cut_name = cut["name"] or os.path.splitext(os.path.basename(path))[0]
+        self._cut_name = cut["name"] or os.path.splitext(
+            os.path.basename(path))[0]
 
         sources = cut["sources"] or {}
         self._suspend_autosave = True
@@ -494,12 +952,12 @@ class ClipWorkbenchApp(ToolBase):
             self._clips = cut["clips"]
             self._next_clip_id = max((c.id for c in self._clips), default=0) + 1
             self._ranks = cut.get("ranks") or {}
-            # Eagerly load pack chapters + cues so chapters appear immediately.
+            self._selected_chapter_idx = None
+            self._focused_clip_id = None
             pack_path = sources.get("pack_path") or ""
             if pack_path and os.path.isfile(pack_path):
                 self._load_pack_file(pack_path)
             else:
-                # No pack — still need video probe for export.
                 self._video_path = self._video_var.get().strip()
                 self._srt_path = self._srt_var.get().strip()
                 if self._video_path and os.path.isfile(self._video_path):
@@ -511,12 +969,7 @@ class ClipWorkbenchApp(ToolBase):
                         self._cues = cliplib.load_cues(self._srt_path)
                     except Exception:
                         self._cues = []
-            self._refresh_clips_tree()
-            self._refresh_package_cards()
-            self._refresh_export_clip_combo()
-            # If the cut didn't carry an output_dir (legacy / blank), recompute
-            if not self._out_dir_var.get().strip():
-                self._out_dir_var.set("")    # ensure trace fires below
+            self._refresh_export_summary()
         finally:
             self._suspend_autosave = False
         self._refresh_out_dir()
@@ -528,7 +981,8 @@ class ClipWorkbenchApp(ToolBase):
         if not self._has_cut():
             self._on_new_cut()
             return
-        default_dir = self._default_cut_dir() or os.path.dirname(self._cut_path or "")
+        default_dir = self._default_cut_dir() or os.path.dirname(
+            self._cut_path or "")
         if default_dir:
             os.makedirs(default_dir, exist_ok=True)
         path = filedialog.asksaveasfilename(
@@ -547,8 +1001,6 @@ class ClipWorkbenchApp(ToolBase):
             name=self._cut_name))
 
     def _autosave(self) -> None:
-        """Write the current state to the active cut file. No-op if no cut
-        loaded or autosave is suspended (during bulk hydration)."""
         if self._suspend_autosave or not self._has_cut():
             return
         try:
@@ -567,401 +1019,40 @@ class ClipWorkbenchApp(ToolBase):
         except Exception as e:
             self._set_status(f"autosave failed: {e}")
 
-    def _on_source_path_changed(self, *_a) -> None:
-        """Trace callback for the three source path entries — persist."""
-        self._autosave()
+    def _default_out_dir(self) -> str:
+        if self._out_dir_var.get().strip():
+            return self._out_dir_var.get().strip()
+        if self._project_root and self._cut_name:
+            return os.path.join(self._project_root,
+                                f"clip_{self._cut_name}", "output")
+        if self._cut_path and self._cut_name:
+            return os.path.join(os.path.dirname(self._cut_path),
+                                 f"clip_{self._cut_name}", "output")
+        return os.path.join(os.path.dirname(self._video_path) or ".", "clips")
 
-    def _refresh_chapter_tree(self) -> None:
-        # Scrollable card list. Each chapter = a card with full-text wrapping.
-        # Naming kept as `_refresh_chapter_tree` for back-compat with the
-        # call sites; semantically it now renders cards into self._chap_inner.
-        for child in self._chap_inner.winfo_children():
-            child.destroy()
-
-        ordered = sorted(
-            self._chapters,
-            key=lambda c: -self._ranks.get(c["idx"], {}).get("score", -1),
-        ) if self._ranks else list(self._chapters)
-
-        for ch in ordered:
-            self._build_chapter_card(ch)
-
-    def _build_chapter_card(self, ch: dict) -> None:
-        dur = max(0, int(ch["end_sec"] - ch["start_sec"]))
-        mins, secs = divmod(dur, 60)
-        rank = self._ranks.get(ch["idx"]) or {}
-        score = rank.get("score") if isinstance(rank.get("score"), int) else None
-
-        # Heat tier → background color
-        if score is None:
-            bg = "#ffffff"
-            badge_bg = "#9aa0a6"
-        elif score >= 75:
-            bg, badge_bg = "#fff1d6", "#e07a18"   # hot orange
-        elif score >= 50:
-            bg, badge_bg = "#fbfbe6", "#9c8a26"   # warm cream
-        elif score < 30:
-            bg, badge_bg = "#f0f0f0", "#9aa0a6"   # cold gray
+    def _refresh_out_dir(self) -> None:
+        if self._project_root and self._cut_name:
+            target = os.path.join(self._project_root,
+                                   f"clip_{self._cut_name}", "output")
+        elif self._cut_path and self._cut_name:
+            target = os.path.join(os.path.dirname(self._cut_path),
+                                   f"clip_{self._cut_name}", "output")
         else:
-            bg, badge_bg = "#ffffff", "#4a86e8"   # neutral blue
-
-        card = tk.Frame(self._chap_inner, background=bg,
-                         highlightbackground="#d0d0d8",
-                         highlightthickness=1, bd=0)
-        card.pack(fill="x", padx=10, pady=5)
-
-        # Header line: # idx + time + duration + AI score badge
-        header = tk.Frame(card, background=bg)
-        header.pack(fill="x", padx=10, pady=(8, 4))
-
-        tk.Label(header, text=f"#{ch['idx']+1}",
-                  background=bg, font=("", 13, "bold"),
-                  fg="#333").pack(side="left")
-        tk.Label(header, text=f"  ⏱ {ch['time_str']}  ·  {mins}:{secs:02d}",
-                  background=bg, font=("", 10), fg="#555").pack(side="left")
-
-        if score is not None:
-            badge = tk.Label(header, text=f" AI {score} ",
-                              background=badge_bg, foreground="white",
-                              font=("", 11, "bold"), padx=8, pady=1)
-            badge.pack(side="right")
-
-        # Title (chapter name) — bigger, bold
-        tk.Label(card, text=ch["title"], background=bg,
-                  font=("", 13, "bold"), anchor="w", justify="left",
-                  wraplength=900).pack(fill="x", padx=10, pady=(0, 4))
-
-        # AI reason (if ranked)
-        if rank.get("reason"):
-            tk.Label(card,
-                      text=f"💡 {rank['reason']}",
-                      background=bg, foreground="#5a4520",
-                      font=("", 10, "italic"),
-                      anchor="w", justify="left",
-                      wraplength=900).pack(fill="x", padx=10, pady=(0, 4))
-
-        # Refined summary
-        if ch.get("refined"):
-            tk.Label(card, text=ch["refined"],
-                      background=bg, foreground="#444",
-                      font=("", 10),
-                      anchor="w", justify="left",
-                      wraplength=900).pack(fill="x", padx=10, pady=(0, 8))
-
-    # ── Tab 2: peaks ──────────────────────────────────────────────────────
-
-    def _build_tab_peaks(self) -> None:
-        f = self._tab_peaks
-
-        left = ttk.Frame(f)
-        left.pack(side="left", fill="both", expand=True, padx=6, pady=6)
-        right = ttk.Frame(f)
-        right.pack(side="right", fill="both", expand=True, padx=6, pady=6)
-
-        # Add-clip controls (top of left)
-        add_box = ttk.LabelFrame(left, text=_tr("tool.clip.section_add_clip"))
-        add_box.pack(fill="x", pady=(0, 6))
-
-        ttk.Label(add_box, text=_tr("tool.clip.label_chapter")).grid(
-            row=0, column=0, sticky="e", padx=4, pady=3)
-        self._peaks_chapter_var = tk.StringVar()
-        self._peaks_chapter_combo = ttk.Combobox(
-            add_box, textvariable=self._peaks_chapter_var,
-            state="readonly", width=50)
-        self._peaks_chapter_combo.grid(row=0, column=1, columnspan=3,
-                                       sticky="we", padx=4)
-        self._peaks_chapter_combo.bind(
-            "<<ComboboxSelected>>", self._on_peak_chapter_changed)
-
-        # Chapter context label (range + length) — updates as chapter switches
-        self._peaks_chapter_info = tk.StringVar(value="")
-        tk.Label(add_box, textvariable=self._peaks_chapter_info,
-                 fg="gray").grid(row=1, column=0, columnspan=4,
-                                  sticky="w", padx=8, pady=(0, 4))
-
-        # Two simple inputs: offset within chapter + clip duration (seconds)
-        ttk.Label(add_box, text=_tr("tool.clip.field_offset")).grid(
-            row=2, column=0, sticky="e", padx=4)
-        self._peaks_offset_var = tk.IntVar(value=0)
-        ttk.Spinbox(add_box, from_=0, to=99999, increment=5,
-                     textvariable=self._peaks_offset_var, width=8).grid(
-            row=2, column=1, sticky="w", padx=4)
-        ttk.Label(add_box, text=_tr("tool.clip.field_duration_sec")).grid(
-            row=2, column=2, sticky="e", padx=4)
-        self._peaks_dur_var = tk.IntVar(value=45)
-        ttk.Spinbox(add_box, from_=5, to=600, increment=5,
-                     textvariable=self._peaks_dur_var, width=8).grid(
-            row=2, column=3, sticky="w", padx=4)
-
-        # Live "computed range" preview line
-        self._peaks_preview = tk.StringVar(value="")
-        tk.Label(add_box, textvariable=self._peaks_preview,
-                 fg="#2563eb").grid(row=3, column=0, columnspan=4,
-                                     sticky="w", padx=8, pady=(2, 0))
-        for v in (self._peaks_offset_var, self._peaks_dur_var):
-            v.trace_add("write", lambda *_a: self._refresh_peak_preview())
-
-        btn_row = ttk.Frame(add_box)
-        btn_row.grid(row=4, column=0, columnspan=4, sticky="we", pady=4)
-        ttk.Button(btn_row, text=_tr("tool.clip.btn_snap"),
-                   command=self._snap_peak_inputs).pack(side="left", padx=4)
-        ttk.Button(btn_row, text=_tr("tool.clip.btn_add_clip"),
-                   command=self._add_clip_from_inputs).pack(side="left", padx=4)
-        ttk.Button(btn_row, text=_tr("tool.clip.btn_remove_clip"),
-                   command=self._remove_selected_clip).pack(side="left", padx=4)
-        self._make_ai_button(
-            btn_row,
-            idle_text=_tr("tool.clip.btn_ai_peaks"),
-            worker=self._worker_find_peaks,
-            on_success=self._on_peaks_done,
-        ).pack(side="left", padx=12)
-
-        # Clips list
-        clips_box = ttk.LabelFrame(left, text=_tr("tool.clip.section_clips"))
-        clips_box.pack(fill="both", expand=True)
-        cols = ("id", "chapter", "start", "end", "duration")
-        self._clips_tree = ttk.Treeview(
-            clips_box, columns=cols, show="headings",
-            selectmode="browse", style="Clip.Treeview")
-        self._clips_tree.heading("id",       text="#")
-        self._clips_tree.heading("chapter",  text=_tr("tool.clip.col_chapter"))
-        self._clips_tree.heading("start",    text=_tr("tool.clip.field_start"))
-        self._clips_tree.heading("end",      text=_tr("tool.clip.field_end"))
-        self._clips_tree.heading("duration", text=_tr("tool.clip.col_duration"))
-        self._clips_tree.column("id",       width=50,  anchor="center", stretch=False)
-        self._clips_tree.column("chapter",  width=240, anchor="w",      stretch=True)
-        self._clips_tree.column("start",    width=100, anchor="center", stretch=False)
-        self._clips_tree.column("end",      width=100, anchor="center", stretch=False)
-        self._clips_tree.column("duration", width=100, anchor="center", stretch=False)
-        self._clips_tree.pack(fill="both", expand=True, side="left")
-        sb = ttk.Scrollbar(clips_box, orient="vertical",
-                           command=self._clips_tree.yview)
-        self._clips_tree.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        self._clips_tree.bind("<<TreeviewSelect>>", self._on_clip_selected)
-
-        # Right: VLC preview (optional)
-        prev_box = ttk.LabelFrame(right, text=_tr("tool.clip.section_preview"))
-        prev_box.pack(fill="both", expand=True)
-        self._vlc = VlcPlayerFrame(prev_box)
-        self._vlc.pack(fill="both", expand=True)
-        if not is_vlc_available():
-            tk.Label(right, text=_tr("tool.clip.hint_no_vlc"),
-                     fg="gray").pack(pady=4)
-
-    def _refresh_peaks_chapter_combo(self) -> None:
-        labels = [f"#{ch['idx']+1} [{ch['time_str']}] {ch['title']}"
-                  for ch in self._chapters]
-        self._peaks_chapter_combo["values"] = labels
-        if labels and not self._peaks_chapter_var.get():
-            self._peaks_chapter_combo.current(0)
-        self._on_peak_chapter_changed()
-
-    def _selected_chapter(self) -> dict | None:
-        if not self._peaks_chapter_var.get() or not self._chapters:
-            return None
+            return
+        self._suspend_autosave = True
         try:
-            idx = self._peaks_chapter_combo.current()
-            if 0 <= idx < len(self._chapters):
-                return self._chapters[idx]
-        except Exception:
-            pass
-        return None
+            self._out_dir_var.set(target)
+        finally:
+            self._suspend_autosave = False
 
-    def _on_peak_chapter_changed(self, _event=None) -> None:
-        ch = self._selected_chapter()
-        if ch is None:
-            self._peaks_chapter_info.set("")
-            self._peaks_preview.set("")
-            return
-        ch_dur = max(0, int(ch["end_sec"] - ch["start_sec"]))
-        m, s = divmod(ch_dur, 60)
-        self._peaks_chapter_info.set(_tr("tool.clip.label_chapter_range").format(
-            start=_seconds_to_str(ch["start_sec"]),
-            end=_seconds_to_str(ch["end_sec"]),
-            len=f"{m}:{s:02d}"))
-        # Clamp default duration to chapter length
-        if self._peaks_dur_var.get() > ch_dur > 5:
-            self._peaks_dur_var.set(min(60, ch_dur))
-        self._refresh_peak_preview()
-
-    def _peak_absolute_range(self) -> tuple[float, float] | None:
-        """Compute (start_sec, end_sec) absolute from chapter + offset + dur."""
-        ch = self._selected_chapter()
-        if ch is None:
-            return None
-        try:
-            offset = max(0, int(self._peaks_offset_var.get()))
-            dur = max(1, int(self._peaks_dur_var.get()))
-        except (tk.TclError, ValueError):
-            return None
-        ch_start = float(ch["start_sec"])
-        ch_end = float(ch["end_sec"])
-        s = min(ch_start + offset, ch_end - 1)
-        e = min(s + dur, ch_end)
-        if e <= s:
-            return None
-        return (s, e)
-
-    def _refresh_peak_preview(self) -> None:
-        rng = self._peak_absolute_range()
-        if rng is None:
-            self._peaks_preview.set("")
-            return
-        s, e = rng
-        self._peaks_preview.set(_tr("tool.clip.preview_range").format(
-            start=_seconds_to_str(s), end=_seconds_to_str(e),
-            dur=int(e - s)))
-
-    def _snap_peak_inputs(self) -> None:
-        if not self._cues:
-            self._set_status(_tr("tool.clip.warn_no_srt_for_snap"))
-            return
-        rng = self._peak_absolute_range()
-        if rng is None:
-            self._set_status(_tr("tool.clip.warn_bad_range"))
-            return
-        s, e = rng
-        s2, e2 = cliplib.snap_to_cue_boundaries(self._cues, s, e)
-        ch = self._selected_chapter()
-        if ch is not None:
-            self._peaks_offset_var.set(max(0, int(s2 - ch["start_sec"])))
-            self._peaks_dur_var.set(max(1, int(e2 - s2)))
-        self._refresh_peak_preview()
-        self._set_status(_tr("tool.clip.status_snapped"))
-
-    def _add_clip_from_inputs(self) -> None:
-        ch = self._selected_chapter()
-        if ch is None:
-            self._set_status(_tr("tool.clip.warn_pick_chapter"))
-            return
-        rng = self._peak_absolute_range()
-        if rng is None:
-            self._set_status(_tr("tool.clip.warn_bad_range"))
-            return
-        s, e = rng
-        # Pull excerpt from cues if available
-        excerpt = ""
-        if self._cues:
-            buf = []
-            for cue in self._cues:
-                cs = cue.start.total_seconds()
-                ce = cue.end.total_seconds()
-                if ce <= s or cs >= e:
-                    continue
-                buf.append(cue.content.replace("\n", " "))
-            excerpt = " ".join(buf)[:500]
-
-        clip = ClipDraft(
-            id=self._next_clip_id,
-            chapter_idx=ch["idx"],
-            chapter_title=ch["title"],
-            start_sec=float(s),
-            end_sec=float(e),
-            original_excerpt=excerpt,
-        )
-        self._next_clip_id += 1
-        self._clips.append(clip)
-        self._refresh_clips_tree()
-        self._refresh_package_cards()
-        self._refresh_export_clip_combo()
-        self._autosave()
-        self._set_status(_tr("tool.clip.status_clip_added").format(
-            id=clip.id))
-
-    def _remove_selected_clip(self) -> None:
-        sel = self._clips_tree.selection()
-        if not sel:
-            return
-        iid = sel[0]
-        try:
-            cid = int(self._clips_tree.set(iid, "id"))
-        except Exception:
-            return
-        self._clips = [c for c in self._clips if c.id != cid]
-        self._refresh_clips_tree()
-        self._refresh_package_cards()
-        self._refresh_export_clip_combo()
-        self._autosave()
-
-    def _refresh_clips_tree(self) -> None:
-        for iid in self._clips_tree.get_children():
-            self._clips_tree.delete(iid)
-        for c in self._clips:
-            dur = c.duration
-            mins, secs = divmod(int(dur), 60)
-            self._clips_tree.insert(
-                "", "end",
-                values=(c.id,
-                        f"#{c.chapter_idx+1} {c.chapter_title}"[:40],
-                        _seconds_to_str(c.start_sec),
-                        _seconds_to_str(c.end_sec),
-                        f"{mins:d}:{secs:02d}"))
-
-    def _on_clip_selected(self, _event=None) -> None:
-        sel = self._clips_tree.selection()
-        if not sel or not self._video_path:
-            return
-        try:
-            cid = int(self._clips_tree.set(sel[0], "id"))
-        except Exception:
-            return
-        clip = next((c for c in self._clips if c.id == cid), None)
-        if clip is None:
-            return
-        if not self._vlc.is_available():
-            return
-        # Only re-load when the source video actually changed; otherwise
-        # VLC.load() restarts from 0 and its 200ms _show_first_frame callback
-        # races our seek (visible as "jumps to target then snaps back to 0").
-        already_loaded = (
-            getattr(self._vlc, "_loaded_path", None) == self._video_path)
-        if already_loaded:
-            self._vlc.seek(clip.start_sec)
-            return
-        self._vlc.load(self._video_path)
-        # Wait long enough for VLC's _show_first_frame (200ms) to settle
-        # before issuing our seek, so it doesn't get clobbered.
-        self._vlc.master.after(800, lambda: self._vlc.seek(clip.start_sec))
-
-    # ── Tab 3: package ────────────────────────────────────────────────────
-
-    def _build_tab_package(self) -> None:
-        f = self._tab_package
-        # Scrollable cards
-        canvas_holder = tk.Frame(f)
-        canvas_holder.pack(fill="both", expand=True, padx=6, pady=6)
-        self._pkg_canvas = tk.Canvas(canvas_holder, highlightthickness=0)
-        self._pkg_scroll = ttk.Scrollbar(canvas_holder, orient="vertical",
-                                         command=self._pkg_canvas.yview)
-        self._pkg_inner = ttk.Frame(self._pkg_canvas)
-        self._pkg_inner.bind(
-            "<Configure>",
-            lambda e: self._pkg_canvas.configure(
-                scrollregion=self._pkg_canvas.bbox("all")))
-        self._pkg_canvas.create_window((0, 0), window=self._pkg_inner,
-                                        anchor="nw")
-        self._pkg_canvas.configure(yscrollcommand=self._pkg_scroll.set)
-        self._pkg_canvas.pack(side="left", fill="both", expand=True)
-        self._pkg_scroll.pack(side="right", fill="y")
-
-        tk.Label(f, text=_tr("tool.clip.hint_package"),
-                 fg="gray").pack(padx=8, pady=4, anchor="w")
-
-    # ── AI helpers (Phase B) ──────────────────────────────────────────────
+    # ── AI helpers ─────────────────────────────────────────────────────────
 
     def _make_ai_button(self, parent, *, idle_text: str,
                          worker: Callable, on_success: Callable):
-        """Tri-state AI button. `worker(token)` runs in a daemon thread and
-        returns a result; `on_success(result)` is invoked on the main thread.
-
-        State machine:
-          idle → click → start worker, swap to "Cancel" label
-          running → click → token.cancel(), swap to "Cancelling…" disabled
-          done/cancelled/failed → reset to idle
-        """
+        """Tri-state AI button. worker(token) → result; on_success(result)
+        runs on main thread; cancelling routes through token.cancel()."""
         btn = ttk.Button(parent, text=idle_text)
-        btn._token = None       # type: ignore[attr-defined]
+        btn._token = None    # type: ignore[attr-defined]
 
         def _reset():
             btn._token = None    # type: ignore[attr-defined]
@@ -1005,7 +1096,14 @@ class ClipWorkbenchApp(ToolBase):
         btn.config(command=_click)
         return btn
 
-    # ── Tab 1: rank chapters worker ──
+    def _make_pkg_worker(self, clip: ClipDraft):
+        def worker(token, c=clip):
+            return cliplib.package_clip(c, self._pack or {},
+                                          cancel_token=token)
+        return worker
+
+    # ── AI workers ─────────────────────────────────────────────────────────
+
     def _worker_rank_chapters(self, token):
         if not self._pack:
             raise RuntimeError(_tr("tool.clip.warn_no_pack_loaded"))
@@ -1021,37 +1119,59 @@ class ClipWorkbenchApp(ToolBase):
 
     def _on_rank_done(self, ranked: list[dict]) -> None:
         self._ranks = {int(r["idx"]): r for r in ranked}
-        self._refresh_chapter_tree()
+        self._refresh_chapter_list()
         self._autosave()
         self._set_status(_tr("tool.clip.status_rank_done").format(
             n=len(ranked)))
 
-    # ── Tab 2: find peaks worker ──
-    def _worker_find_peaks(self, token):
-        ch = self._selected_chapter()
-        if ch is None:
-            raise RuntimeError(_tr("tool.clip.warn_pick_chapter"))
+    def _worker_find_peaks(self, token, chapter_idx: int):
         if not self._pack:
             raise RuntimeError(_tr("tool.clip.warn_no_pack_loaded"))
         if not self._cues:
             raise RuntimeError(_tr("tool.clip.warn_no_paragraphs").format(
                 path=self._srt_path or "<SRT 未加载>"))
         return cliplib.find_peaks(
-            self._pack, ch["idx"], self._cues,
+            self._pack, chapter_idx, self._cues,
             video_duration=self._video_duration,
             cancel_token=token)
 
-    def _on_peaks_done(self, peaks: list[dict]) -> None:
-        ch = self._selected_chapter()
-        if ch is None:
+    def _on_peaks_done(self, peaks: list[dict], chapter_idx: int) -> None:
+        if not (0 <= chapter_idx < len(self._chapters)):
             return
+        ch = self._chapters[chapter_idx]
         added = 0
         for p in peaks:
             s, e = p["start_sec"], p["end_sec"]
-            # Snap to cue boundaries if cues are loaded
             if self._cues:
                 s, e = cliplib.snap_to_cue_boundaries(self._cues, s, e)
-            # Build excerpt from cues
+            self._append_new_clip(ch, s, e)
+            added += 1
+        self._set_status(_tr("tool.clip.status_peaks_done").format(
+            n=added, ch=ch["title"]))
+
+    def _worker_chapter_full_auto(self, token: CancellationToken,
+                                    chapter_idx: int):
+        """find peaks → for each new clip, package → return summary dict."""
+        if not self._pack:
+            raise RuntimeError(_tr("tool.clip.warn_no_pack_loaded"))
+        if not self._cues:
+            raise RuntimeError(_tr("tool.clip.warn_no_paragraphs").format(
+                path=self._srt_path or "<SRT 未加载>"))
+        peaks = cliplib.find_peaks(
+            self._pack, chapter_idx, self._cues,
+            video_duration=self._video_duration,
+            cancel_token=token)
+        # We need real ClipDrafts. Build them in-thread (no UI ops),
+        # main-thread later wires them in. Snap + excerpt prep here.
+        new_clips: list[ClipDraft] = []
+        ch = self._chapters[chapter_idx]
+        next_id = self._next_clip_id
+        for p in peaks:
+            if token.is_cancelled():
+                break
+            s, e = p["start_sec"], p["end_sec"]
+            if self._cues:
+                s, e = cliplib.snap_to_cue_boundaries(self._cues, s, e)
             excerpt = ""
             if self._cues:
                 buf = []
@@ -1063,274 +1183,113 @@ class ClipWorkbenchApp(ToolBase):
                     buf.append(cue.content.replace("\n", " "))
                 excerpt = " ".join(buf)[:500]
             clip = ClipDraft(
-                id=self._next_clip_id,
-                chapter_idx=ch["idx"],
+                id=next_id, chapter_idx=chapter_idx,
                 chapter_title=ch["title"],
-                start_sec=float(s),
-                end_sec=float(e),
-                original_excerpt=excerpt,
-            )
+                start_sec=float(s), end_sec=float(e),
+                original_excerpt=excerpt)
+            next_id += 1
+            new_clips.append(clip)
+
+        # Run package_clip per new clip, serially, honoring cancel
+        for c in new_clips:
+            if token.is_cancelled():
+                break
+            try:
+                pkg = cliplib.package_clip(c, self._pack,
+                                            cancel_token=token)
+                c.hook  = pkg.get("hook",  "") or ""
+                c.outro = pkg.get("outro", "") or ""
+                c.title = pkg.get("title", "") or ""
+                c.hashtags = list(pkg.get("hashtags") or [])
+                # Center crop default
+                if self._video_w and self._video_h:
+                    c.crop_rect = cliplib.center_crop_rect(
+                        self._video_w, self._video_h)
+                c.status = "reviewed"
+            except AIError as ae:
+                if ae.kind == Kind.CANCELLED:
+                    raise
+                # Single clip package failure: leave it draft, continue
+                c.status = "draft"
+            except Exception:
+                c.status = "draft"
+
+        return {"chapter_idx": chapter_idx, "clips": new_clips}
+
+    def _on_chapter_auto_done(self, result: dict, chapter_idx: int) -> None:
+        clips = result.get("clips") or []
+        for c in clips:
+            c.id = self._next_clip_id
             self._next_clip_id += 1
-            self._clips.append(clip)
-            added += 1
-        if added:
-            self._refresh_clips_tree()
-            self._refresh_package_cards()
-            self._refresh_export_clip_combo()
-            self._autosave()
-        self._set_status(_tr("tool.clip.status_peaks_done").format(
-            n=added, ch=ch["title"]))
-
-    def _refresh_package_cards(self) -> None:
-        for child in self._pkg_inner.winfo_children():
-            child.destroy()
-        for clip in self._clips:
-            self._build_package_card(clip)
-
-    def _build_package_card(self, clip: ClipDraft) -> None:
-        title = (f"#{clip.id} · [{_seconds_to_str(clip.start_sec)}–"
-                 f"{_seconds_to_str(clip.end_sec)}] {clip.chapter_title}")
-        card = ttk.LabelFrame(self._pkg_inner, text=title)
-        card.pack(fill="x", padx=4, pady=4)
-
-        # Excerpt (read-only)
-        if clip.original_excerpt:
-            tk.Label(card, text=clip.original_excerpt[:200],
-                     fg="gray", wraplength=900,
-                     justify="left").grid(row=0, column=0, columnspan=2,
-                                          sticky="w", padx=6, pady=(4, 6))
-
-        # Hook
-        ttk.Label(card, text=_tr("tool.clip.field_hook")).grid(
-            row=1, column=0, sticky="e", padx=4, pady=2)
-        hook_var = tk.StringVar(value=clip.hook)
-        hook_entry = ttk.Entry(card, textvariable=hook_var, width=80)
-        hook_entry.grid(row=1, column=1, sticky="we", padx=4, pady=2)
-        def _save_hook(*_a, c=clip, v=hook_var):
-            setattr(c, "hook", v.get())
-            self._autosave()
-        hook_var.trace_add("write", _save_hook)
-
-        # Outro
-        ttk.Label(card, text=_tr("tool.clip.field_outro")).grid(
-            row=2, column=0, sticky="e", padx=4, pady=2)
-        outro_var = tk.StringVar(value=clip.outro)
-        outro_entry = ttk.Entry(card, textvariable=outro_var, width=80)
-        outro_entry.grid(row=2, column=1, sticky="we", padx=4, pady=2)
-        def _save_outro(*_a, c=clip, v=outro_var):
-            setattr(c, "outro", v.get())
-            self._autosave()
-        outro_var.trace_add("write", _save_outro)
-
-        # Title
-        ttk.Label(card, text=_tr("tool.clip.field_clip_title")).grid(
-            row=3, column=0, sticky="e", padx=4, pady=2)
-        title_var = tk.StringVar(value=clip.title)
-        ttk.Entry(card, textvariable=title_var, width=80).grid(
-            row=3, column=1, sticky="we", padx=4, pady=2)
-        def _save_title(*_a, c=clip, v=title_var):
-            setattr(c, "title", v.get())
-            self._autosave()
-        title_var.trace_add("write", _save_title)
-
-        # Hashtags (comma-separated)
-        ttk.Label(card, text=_tr("tool.clip.field_hashtags")).grid(
-            row=4, column=0, sticky="e", padx=4, pady=2)
-        tags_var = tk.StringVar(value=" ".join(clip.hashtags))
-        ttk.Entry(card, textvariable=tags_var, width=80).grid(
-            row=4, column=1, sticky="we", padx=4, pady=2)
-
-        def _save_tags(*_a, c=clip, v=tags_var):
-            c.hashtags = [t.strip() for t in v.get().split() if t.strip()]
-            self._autosave()
-        tags_var.trace_add("write", _save_tags)
-
-        # Per-card AI [生成文案] button
-        ai_btn_holder = ttk.Frame(card)
-        ai_btn_holder.grid(row=5, column=1, sticky="w", padx=4, pady=(2, 6))
-
-        # Closure capturing this clip + the four StringVars so we can write
-        # back to the UI after AI returns
-        def _on_pkg_done(result, hv=hook_var, ov=outro_var,
-                          tv=title_var, gv=tags_var):
-            hv.set(result.get("hook", ""))
-            ov.set(result.get("outro", ""))
-            tv.set(result.get("title", ""))
-            gv.set(" ".join(result.get("hashtags", [])))
-            self._set_status(_tr("tool.clip.status_pkg_done").format(id=clip.id))
-
-        def _worker_pkg(token, c=clip):
-            return cliplib.package_clip(c, self._pack or {},
-                                          cancel_token=token)
-
-        self._make_ai_button(
-            ai_btn_holder,
-            idle_text=_tr("tool.clip.btn_ai_package"),
-            worker=_worker_pkg,
-            on_success=_on_pkg_done,
-        ).pack(side="left")
-
-        card.columnconfigure(1, weight=1)
-
-    # ── Tab 4: crop & export ──────────────────────────────────────────────
-
-    def _build_tab_export(self) -> None:
-        f = self._tab_export
-
-        # Top: clip selector + crop mode
-        top = ttk.Frame(f)
-        top.pack(fill="x", padx=6, pady=6)
-
-        ttk.Label(top, text=_tr("tool.clip.label_clip")).pack(side="left", padx=4)
-        self._export_clip_var = tk.StringVar()
-        self._export_clip_combo = ttk.Combobox(top, textvariable=self._export_clip_var,
-                                               state="readonly", width=50)
-        self._export_clip_combo.pack(side="left", padx=4)
-        self._export_clip_combo.bind("<<ComboboxSelected>>",
-                                      self._on_export_clip_picked)
-
-        ttk.Button(top, text=_tr("tool.clip.btn_reset_center"),
-                   command=self._reset_crop_to_center).pack(side="left", padx=(20, 4))
-        ttk.Button(top, text=_tr("tool.clip.btn_apply_to_all"),
-                   command=self._apply_crop_to_all).pack(side="left", padx=4)
-
-        # Center: crop overlay
-        mid = ttk.Frame(f)
-        mid.pack(fill="both", expand=True, padx=6, pady=6)
-        self._crop_overlay = CropOverlay(
-            mid, on_change=self._on_crop_changed)
-        self._crop_overlay.pack(fill="both", expand=True)
-
-        # Bottom: output dir + export
-        bot = ttk.Frame(f)
-        bot.pack(fill="x", padx=6, pady=6)
-        ttk.Label(bot, text=_tr("tool.clip.label_output_dir")).pack(side="left", padx=4)
-        self._out_dir_var = tk.StringVar()
-        self._out_dir_var.trace_add("write", lambda *_a: self._autosave())
-        # Pack export buttons first (right side) so the entry can fill the
-        # remaining space between Browse and "Export all".
-        self._export_btn = ttk.Button(bot, text=_tr("tool.clip.btn_export_all"),
-                                       command=self._on_export_clicked)
-        self._export_btn.pack(side="right", padx=(2, 4))
-        self._export_one_btn = ttk.Button(bot, text=_tr("tool.clip.btn_export_current"),
-                                            command=self._on_export_current_clicked)
-        self._export_one_btn.pack(side="right", padx=2)
-        ttk.Button(bot, text=_tr("tool.clip.btn_browse"),
-                   command=self._browse_out_dir).pack(side="right", padx=2)
-        ttk.Entry(bot, textvariable=self._out_dir_var).pack(
-            side="left", fill="x", expand=True, padx=4)
-
-        self._export_progress = ttk.Progressbar(f, mode="determinate")
-        self._export_progress.pack(fill="x", padx=6, pady=4)
-
-    def _refresh_export_clip_combo(self) -> None:
-        labels = [f"#{c.id} [{_seconds_to_str(c.start_sec)}–"
-                  f"{_seconds_to_str(c.end_sec)}] {c.title or c.chapter_title}"
-                  for c in self._clips]
-        self._export_clip_combo["values"] = labels
-        if labels:
-            self._export_clip_combo.current(0)
-            self._on_export_clip_picked()
-
-    def _on_export_clip_picked(self, _event=None) -> None:
-        idx = self._export_clip_combo.current()
-        if not (0 <= idx < len(self._clips)):
-            return
-        clip = self._clips[idx]
-        if not self._video_path or self._video_w == 0:
-            return
-        # Extract a representative keyframe (middle of the clip)
-        if not _PIL_OK:
-            self._set_status(_tr("tool.clip.warn_no_pil"))
-            return
-        midpoint = (clip.start_sec + clip.end_sec) / 2.0
-        try:
-            import tempfile
-            tmp_jpg = os.path.join(tempfile.gettempdir(),
-                                   f"clip-keyframe-{clip.id}.jpg")
-            cliplib.extract_keyframe(self._video_path, midpoint, tmp_jpg)
-            with Image.open(tmp_jpg) as im:
-                im.load()
-                self._crop_overlay.set_image(
-                    im.copy(), self._video_w, self._video_h)
-            os.unlink(tmp_jpg)
-        except Exception as e:
-            self._set_status(f"keyframe: {e}")
-            return
-        # Apply existing rect or center default. set_rect / reset_to_center
-        # both fire _on_crop_changed via the overlay's _notify; that's fine
-        # — it just persists the rect onto the clip again, no mode mucking.
-        if clip.crop_rect:
-            self._crop_overlay.set_rect(clip.crop_rect)
-        else:
-            self._crop_overlay.reset_to_center()
-
-    def _reset_crop_to_center(self) -> None:
-        """Snap the current clip's crop back to a centered 9:16 rect."""
-        idx = self._export_clip_combo.current()
-        if not (0 <= idx < len(self._clips)):
-            return
-        self._crop_overlay.reset_to_center()
-        # _on_crop_changed will fire via _notify and persist the new rect.
-
-    def _on_crop_changed(self, rect: dict) -> None:
-        """Persist whatever rect the overlay currently shows (whether the
-        user dragged or we set it programmatically)."""
-        idx = self._export_clip_combo.current()
-        if not (0 <= idx < len(self._clips)):
-            return
-        self._clips[idx].crop_rect = dict(rect)
+            self._clips.append(c)
+        if self._selected_chapter_idx == chapter_idx:
+            self._refresh_clip_cards_for_chapter(chapter_idx)
+            if clips:
+                self._focused_clip_id = clips[0].id
+            self._refresh_focused_preview()
+        self._refresh_chapter_list()
+        self._refresh_export_summary()
         self._autosave()
+        self._set_status(_tr("tool.clip.status_chapter_auto_done").format(
+            n=len(clips), ch=self._chapters[chapter_idx]["title"]))
 
-    def _apply_crop_to_all(self) -> None:
-        rect = self._crop_overlay.get_rect()
-        for c in self._clips:
-            c.crop_rect = dict(rect)
+    def _worker_global_full_auto(self, token: CancellationToken):
+        """Iterate all chapters by score (desc), skip those that already
+        have clips. Returns total clips created.
+        """
+        if not self._pack:
+            raise RuntimeError(_tr("tool.clip.warn_no_pack_loaded"))
+        if not self._cues:
+            raise RuntimeError(_tr("tool.clip.warn_no_paragraphs").format(
+                path=self._srt_path or "<SRT 未加载>"))
+        # Order by score desc; chapters without rank go last
+        order = sorted(range(len(self._chapters)),
+                        key=lambda i: -self._ranks.get(i, {}).get("score", -1))
+        produced: list[tuple[int, list[ClipDraft]]] = []
+        for ch_idx in order:
+            if token.is_cancelled():
+                break
+            if any(c.chapter_idx == ch_idx for c in self._clips):
+                continue    # skip chapters already populated
+            self.master.after(
+                0, self._set_status,
+                _tr("tool.clip.status_global_progress").format(
+                    ch=self._chapters[ch_idx]["title"]))
+            try:
+                result = self._worker_chapter_full_auto(token, ch_idx)
+                produced.append((ch_idx, result["clips"]))
+            except AIError as ae:
+                if ae.kind == Kind.CANCELLED:
+                    break
+                # Chapter failure → log + continue
+                self.master.after(
+                    0, self._set_status,
+                    _tr("tool.clip.status_global_chapter_fail").format(
+                        ch=self._chapters[ch_idx]["title"], err=str(ae)[:60]))
+            except Exception as e:
+                self.master.after(
+                    0, self._set_status,
+                    _tr("tool.clip.status_global_chapter_fail").format(
+                        ch=self._chapters[ch_idx]["title"], err=str(e)[:60]))
+        return produced
+
+    def _on_global_auto_done(self, produced: list) -> None:
+        total = 0
+        for ch_idx, clips in produced:
+            for c in clips:
+                c.id = self._next_clip_id
+                self._next_clip_id += 1
+                self._clips.append(c)
+                total += 1
+        self._refresh_chapter_list()
+        if self._selected_chapter_idx is not None:
+            self._refresh_clip_cards_for_chapter(self._selected_chapter_idx)
+        self._refresh_export_summary()
         self._autosave()
-        self._set_status(_tr("tool.clip.status_crop_applied").format(
-            n=len(self._clips)))
+        self._set_status(_tr("tool.clip.status_global_auto_done").format(
+            n=total, c=len(produced)))
 
-    def _browse_out_dir(self) -> None:
-        d = filedialog.askdirectory(title=_tr("tool.clip.dialog_pick_out_dir"))
-        if d:
-            self._out_dir_var.set(d)
-
-    def _default_out_dir(self) -> str:
-        """Authoritative output dir: <project>/<cut_name>/output/.
-
-        User-set value (if any) wins. Otherwise we always auto-compute from
-        the project root + cut name so the user never needs to fiddle with
-        Tab 4 paths."""
-        if self._out_dir_var.get().strip():
-            return self._out_dir_var.get().strip()
-        if self._project_root and self._cut_name:
-            return os.path.join(self._project_root,
-                                f"clip_{self._cut_name}", "output")
-        # Fallback for the (rare) case of no project — write next to cut file.
-        if self._cut_path and self._cut_name:
-            return os.path.join(os.path.dirname(self._cut_path),
-                                 f"clip_{self._cut_name}", "output")
-        return os.path.join(os.path.dirname(self._video_path) or ".", "clips")
-
-    def _refresh_out_dir(self) -> None:
-        """Auto-fill the Tab 4 output dir entry from the current default.
-        Called after New / Open so the field reflects where files will land.
-        Computes the default fresh (ignoring any existing user value)."""
-        if self._project_root and self._cut_name:
-            target = os.path.join(self._project_root,
-                                   f"clip_{self._cut_name}", "output")
-        elif self._cut_path and self._cut_name:
-            target = os.path.join(os.path.dirname(self._cut_path),
-                                   f"clip_{self._cut_name}", "output")
-        else:
-            return
-        self._suspend_autosave = True
-        try:
-            self._out_dir_var.set(target)
-        finally:
-            self._suspend_autosave = False
-
-    # ── Export worker ─────────────────────────────────────────────────────
+    # ── Export workers (preserved from prior design) ──────────────────────
 
     def _on_export_clicked(self) -> None:
         if not self._clips:
@@ -1340,96 +1299,53 @@ class ClipWorkbenchApp(ToolBase):
             self._set_status(_tr("tool.clip.warn_no_video"))
             return
         if self._export_thread and self._export_thread.is_alive():
-            # Treat second click as cancel.
             self._export_cancel_flag["v"] = True
             self._export_btn.config(state="disabled",
                                     text=_tr("tool.clip.btn_cancelling"))
             return
-
         out_dir = self._default_out_dir()
         os.makedirs(out_dir, exist_ok=True)
         self._out_dir_var.set(out_dir)
-
-        # Reset cancel flag
         self._export_cancel_flag = {"v": False}
         self._export_btn.config(text=_tr("tool.clip.btn_cancel"))
         self._export_progress["value"] = 0
         self.set_busy()
-
         self._export_thread = threading.Thread(
             target=self._export_worker,
-            args=(out_dir,), daemon=True)
+            args=(out_dir, list(self._clips)), daemon=True)
         self._export_thread.start()
 
-    def _on_export_current_clicked(self) -> None:
-        """Export only the clip currently selected in the export combo."""
-        if not self._video_path:
-            self._set_status(_tr("tool.clip.warn_no_video_loaded"))
+    def _on_export_selected_clicked(self) -> None:
+        clips = self._summary_tree.get_selected_clips()
+        if not clips:
+            self._set_status(_tr("tool.clip.warn_pick_rows"))
             return
-        idx = self._export_clip_combo.current()
-        if idx < 0 or idx >= len(self._clips):
-            self._set_status(_tr("tool.clip.warn_pick_clip_to_export"))
+        if not self._video_path:
+            self._set_status(_tr("tool.clip.warn_no_video"))
             return
         if self._export_thread and self._export_thread.is_alive():
-            # Defer to existing cancel path on the export-all button.
             return
-
         out_dir = self._default_out_dir()
         os.makedirs(out_dir, exist_ok=True)
         self._out_dir_var.set(out_dir)
-
         self._export_cancel_flag = {"v": False}
         self._export_one_btn.config(state="disabled")
         self._export_progress["value"] = 0
         self.set_busy()
-
-        clip = self._clips[idx]
         self._export_thread = threading.Thread(
-            target=self._export_one_worker,
-            args=(clip, out_dir), daemon=True)
+            target=self._export_worker,
+            args=(out_dir, list(clips)), daemon=True)
         self._export_thread.start()
 
-    def _export_one_worker(self, clip, out_dir: str) -> None:
+    def _export_worker(self, out_dir: str, clips: list[ClipDraft]) -> None:
         from i18n import tr
+        eligible = [c for c in clips if c.status != "skipped"]
+        total = len(eligible)
 
         def cancel_check() -> bool:
             return bool(self._export_cancel_flag.get("v"))
 
-        def on_progress(_status: str, pct: int) -> None:
-            self.master.after(0, self._set_status,
-                              tr("tool.clip.status_exporting").format(
-                                  n=1, total=1, pct=pct))
-            self.master.after(0, lambda: self._export_progress.configure(
-                value=int(pct)))
-
-        try:
-            path = cliplib.export_clip(
-                self._video_path, clip, out_dir,
-                source_srt=self._srt_path or None,
-                on_progress=on_progress,
-                cancel_check=cancel_check,
-            )
-            self.master.after(0, self._autosave)
-            self.master.after(0, self._set_status,
-                              tr("tool.clip.status_done").format(
-                                  n=1, out_dir=os.path.dirname(path)))
-            self.set_done()
-        except Exception as e:
-            self.master.after(0, self._set_status, f"✗ {e}")
-            self.set_error(str(e))
-        finally:
-            self.master.after(0, self._export_one_btn.config,
-                              {"state": "normal"})
-            self.master.after(0, lambda: self._export_progress.configure(value=0))
-
-    def _export_worker(self, out_dir: str) -> None:
-        from i18n import tr
-        total = len([c for c in self._clips if c.status != "skipped"])
-
-        def cancel_check() -> bool:
-            return bool(self._export_cancel_flag.get("v"))
-
-        def on_step(i: int, total: int, status: str, pct: int) -> None:
+        def on_step(i: int, total: int, _status: str, pct: int) -> None:
             self.master.after(0, self._set_status,
                               tr("tool.clip.status_exporting").format(
                                   n=i, total=total, pct=pct))
@@ -1438,14 +1354,10 @@ class ClipWorkbenchApp(ToolBase):
 
         try:
             paths = cliplib.export_all(
-                self._video_path, self._clips, out_dir,
+                self._video_path, eligible, out_dir,
                 source_srt=self._srt_path or None,
                 on_progress=on_step,
-                cancel_check=cancel_check,
-            )
-            # The cut file is the source of truth and was already autosaved
-            # during edits. Just refresh it once after export so output_path /
-            # status fields stick.
+                cancel_check=cancel_check)
             self.master.after(0, self._autosave)
             if cancel_check():
                 self.master.after(0, self._set_status,
@@ -1463,9 +1375,12 @@ class ClipWorkbenchApp(ToolBase):
             self.master.after(0, self._export_btn.config,
                               {"state": "normal",
                                "text": tr("tool.clip.btn_export_all")})
+            self.master.after(0, self._export_one_btn.config,
+                              {"state": "normal"})
             self.master.after(0, lambda: self._export_progress.configure(value=0))
+            self.master.after(0, self._refresh_export_summary)
 
-    # ── Helpers ───────────────────────────────────────────────────────────
+    # ── Misc ───────────────────────────────────────────────────────────────
 
     def _set_status(self, msg: str) -> None:
         try:
@@ -1474,16 +1389,12 @@ class ClipWorkbenchApp(ToolBase):
             pass
 
     def _on_tab_changed(self, _event=None) -> None:
-        """Refresh whichever tab the user just switched to so it reflects
-        clips added on other tabs."""
         try:
             tab = self._notebook.index(self._notebook.select())
         except Exception:
             return
-        if tab == 2:        # package
-            self._refresh_package_cards()
-        elif tab == 3:      # export
-            self._refresh_export_clip_combo()
+        if tab == 1:    # export
+            self._refresh_export_summary()
 
 
 # ── Standalone run ──────────────────────────────────────────────────────────

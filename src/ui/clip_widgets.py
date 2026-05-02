@@ -1,0 +1,486 @@
+"""Reusable clip-script widgets used across the workbench tabs.
+
+These widgets own pure UI; they don't touch persistence (cut file) directly.
+The host workbench owns autosave + AI dispatch and wires the widgets via
+callbacks. This keeps the widgets dumb-and-portable so Tab 1 (chapter
+detail pane) and Tab 2 (export summary side panel) can both use them.
+
+Provided widgets:
+  PreviewPane         keyframe + 9:16 crop overlay, bind_clip(clip)
+  PackageForm         hook / outro / title / hashtags entries, bind_clip(clip)
+  ClipCard            LabelFrame with PackageForm + actions, click-to-focus
+  ClipSummaryTreeview cross-chapter Treeview with selection + status badges
+"""
+
+from __future__ import annotations
+
+import os
+import tempfile
+import tkinter as tk
+from tkinter import ttk
+from typing import Callable
+
+try:
+    from PIL import Image
+    _PIL_OK = True
+except ImportError:
+    _PIL_OK = False
+
+from core.program import clip as cliplib
+from core.program.clip import ClipDraft
+from core.segment_model import format_timestamp
+from ui.crop_overlay import CropOverlay
+
+
+def _tr(key: str) -> str:
+    from i18n import tr
+    return tr(key)
+
+
+def _seconds_to_str(s: float) -> str:
+    return format_timestamp(s)
+
+
+# ── PreviewPane ────────────────────────────────────────────────────────────
+
+class PreviewPane(tk.Frame):
+    """Keyframe-based preview with 9:16 crop overlay.
+
+    bind_clip(clip, video_path, video_w, video_h) extracts the midpoint
+    keyframe via ffmpeg, shows it, and binds the crop rect (or center
+    default) to clip.crop_rect. on_change fires after every drag.
+    """
+
+    def __init__(self, master: tk.Misc, *,
+                 on_change: Callable[[ClipDraft, dict], None] | None = None,
+                 **kwargs):
+        super().__init__(master, **kwargs)
+        self._on_change = on_change
+        self._clip: ClipDraft | None = None
+        self._video_path: str = ""
+        self._video_w: int = 0
+        self._video_h: int = 0
+
+        self._overlay = CropOverlay(self, on_change=self._handle_overlay_change)
+        self._overlay.pack(fill="both", expand=True, padx=2, pady=2)
+
+        # Action bar — sits below the overlay
+        bar = ttk.Frame(self)
+        bar.pack(fill="x", padx=2, pady=(2, 4))
+        ttk.Button(bar, text=_tr("tool.clip.btn_reset_center"),
+                   command=self.reset_to_center).pack(side="left", padx=2)
+        ttk.Button(bar, text=_tr("tool.clip.btn_apply_to_all"),
+                   command=self._on_apply_all_click).pack(side="left", padx=2)
+        self._info_var = tk.StringVar(value="")
+        tk.Label(bar, textvariable=self._info_var, fg="#666",
+                 font=("", 9)).pack(side="left", padx=(10, 0))
+
+        # apply-to-all callback (set by host)
+        self._on_apply_all: Callable[[dict], None] | None = None
+
+    # ── public API ──
+    def set_apply_all_callback(self, cb: Callable[[dict], None]) -> None:
+        self._on_apply_all = cb
+
+    def bind_clip(self, clip: ClipDraft | None, *,
+                  video_path: str, video_w: int, video_h: int) -> None:
+        self._clip = clip
+        self._video_path = video_path
+        self._video_w = video_w
+        self._video_h = video_h
+        if clip is None:
+            self._info_var.set("")
+            return
+        self._info_var.set(
+            f"#{clip.id}  [{_seconds_to_str(clip.start_sec)} – "
+            f"{_seconds_to_str(clip.end_sec)}]  {int(clip.duration)}s")
+        if not _PIL_OK or not video_path or not os.path.isfile(video_path) \
+                or video_w == 0:
+            return
+        midpoint = (clip.start_sec + clip.end_sec) / 2.0
+        try:
+            tmp = os.path.join(tempfile.gettempdir(),
+                               f"clip-keyframe-{clip.id}.jpg")
+            cliplib.extract_keyframe(video_path, midpoint, tmp)
+            with Image.open(tmp) as im:
+                im.load()
+                self._overlay.set_image(im.copy(), video_w, video_h)
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+        except Exception as e:
+            self._info_var.set(f"keyframe: {e}")
+            return
+        if clip.crop_rect:
+            self._overlay.set_rect(clip.crop_rect)
+        else:
+            self._overlay.reset_to_center()
+
+    def reset_to_center(self) -> None:
+        if self._clip is None:
+            return
+        self._overlay.reset_to_center()
+
+    def get_rect(self) -> dict:
+        return self._overlay.get_rect()
+
+    # ── internal ──
+    def _handle_overlay_change(self, rect: dict) -> None:
+        if self._clip is None:
+            return
+        self._clip.crop_rect = dict(rect)
+        if self._on_change:
+            self._on_change(self._clip, dict(rect))
+
+    def _on_apply_all_click(self) -> None:
+        rect = self.get_rect()
+        if self._on_apply_all:
+            self._on_apply_all(rect)
+
+
+# ── PackageForm ────────────────────────────────────────────────────────────
+
+class PackageForm(tk.Frame):
+    """Hook / Outro / Title / Hashtags entries.
+
+    bind_clip(clip) fills the entries from the clip; subsequent edits write
+    back to clip via trace + fire on_change(clip).
+    """
+
+    def __init__(self, master: tk.Misc, *,
+                 on_change: Callable[[ClipDraft], None] | None = None,
+                 ai_button_factory: Callable | None = None,
+                 ai_worker_for_clip: Callable | None = None,
+                 **kwargs):
+        super().__init__(master, **kwargs)
+        self._on_change = on_change
+        self._clip: ClipDraft | None = None
+        self._suspend = False
+        self._ai_button_factory = ai_button_factory
+        self._ai_worker_for_clip = ai_worker_for_clip
+
+        self._hook_var  = tk.StringVar()
+        self._outro_var = tk.StringVar()
+        self._title_var = tk.StringVar()
+        self._tags_var  = tk.StringVar()
+
+        # Hook
+        ttk.Label(self, text=_tr("tool.clip.field_hook")).grid(
+            row=0, column=0, sticky="e", padx=4, pady=2)
+        ttk.Entry(self, textvariable=self._hook_var, width=70).grid(
+            row=0, column=1, sticky="we", padx=4, pady=2)
+
+        # Outro
+        ttk.Label(self, text=_tr("tool.clip.field_outro")).grid(
+            row=1, column=0, sticky="e", padx=4, pady=2)
+        ttk.Entry(self, textvariable=self._outro_var, width=70).grid(
+            row=1, column=1, sticky="we", padx=4, pady=2)
+
+        # Title
+        ttk.Label(self, text=_tr("tool.clip.field_clip_title")).grid(
+            row=2, column=0, sticky="e", padx=4, pady=2)
+        ttk.Entry(self, textvariable=self._title_var, width=70).grid(
+            row=2, column=1, sticky="we", padx=4, pady=2)
+
+        # Hashtags
+        ttk.Label(self, text=_tr("tool.clip.field_hashtags")).grid(
+            row=3, column=0, sticky="e", padx=4, pady=2)
+        ttk.Entry(self, textvariable=self._tags_var, width=70).grid(
+            row=3, column=1, sticky="we", padx=4, pady=2)
+
+        self.columnconfigure(1, weight=1)
+
+        # AI button row
+        if ai_button_factory is not None and ai_worker_for_clip is not None:
+            self._ai_holder = ttk.Frame(self)
+            self._ai_holder.grid(row=4, column=1, sticky="w", padx=4,
+                                  pady=(4, 2))
+            self._ai_btn = None  # rebuilt on each bind_clip
+        else:
+            self._ai_holder = None
+            self._ai_btn = None
+
+        # Wire trace AFTER widgets are built
+        self._hook_var .trace_add("write", self._on_hook_changed)
+        self._outro_var.trace_add("write", self._on_outro_changed)
+        self._title_var.trace_add("write", self._on_title_changed)
+        self._tags_var .trace_add("write", self._on_tags_changed)
+
+    # ── public API ──
+    def bind_clip(self, clip: ClipDraft | None) -> None:
+        self._clip = clip
+        self._suspend = True
+        try:
+            if clip is None:
+                self._hook_var.set("")
+                self._outro_var.set("")
+                self._title_var.set("")
+                self._tags_var.set("")
+            else:
+                self._hook_var .set(clip.hook  or "")
+                self._outro_var.set(clip.outro or "")
+                self._title_var.set(clip.title or "")
+                self._tags_var .set(" ".join(clip.hashtags or []))
+        finally:
+            self._suspend = False
+        # Rebuild AI button so it captures this clip in its closure
+        if self._ai_holder is not None:
+            for w in self._ai_holder.winfo_children():
+                w.destroy()
+            if clip is None:
+                return
+            worker = self._ai_worker_for_clip(clip)
+            self._ai_btn = self._ai_button_factory(
+                self._ai_holder,
+                idle_text=_tr("tool.clip.btn_ai_package"),
+                worker=worker,
+                on_success=lambda result, c=clip: self._apply_ai_result(c, result),
+            )
+            self._ai_btn.pack(side="left")
+
+    def _apply_ai_result(self, clip: ClipDraft, result: dict) -> None:
+        if self._clip is not clip:
+            return    # user moved on; AI result lands on clip directly anyway
+        self._suspend = True
+        try:
+            self._hook_var .set(result.get("hook",  "") or "")
+            self._outro_var.set(result.get("outro", "") or "")
+            self._title_var.set(result.get("title", "") or "")
+            self._tags_var .set(" ".join(result.get("hashtags") or []))
+        finally:
+            self._suspend = False
+        # Now apply to the clip itself (mirrors what trace would do)
+        clip.hook  = self._hook_var.get()
+        clip.outro = self._outro_var.get()
+        clip.title = self._title_var.get()
+        clip.hashtags = [t.strip() for t in self._tags_var.get().split()
+                          if t.strip()]
+        if self._on_change:
+            self._on_change(clip)
+
+    # ── internal ──
+    def _on_hook_changed(self, *_a):
+        if self._suspend or self._clip is None: return
+        self._clip.hook = self._hook_var.get()
+        if self._on_change: self._on_change(self._clip)
+
+    def _on_outro_changed(self, *_a):
+        if self._suspend or self._clip is None: return
+        self._clip.outro = self._outro_var.get()
+        if self._on_change: self._on_change(self._clip)
+
+    def _on_title_changed(self, *_a):
+        if self._suspend or self._clip is None: return
+        self._clip.title = self._title_var.get()
+        if self._on_change: self._on_change(self._clip)
+
+    def _on_tags_changed(self, *_a):
+        if self._suspend or self._clip is None: return
+        self._clip.hashtags = [t.strip() for t in self._tags_var.get().split()
+                                if t.strip()]
+        if self._on_change: self._on_change(self._clip)
+
+
+# ── ClipCard ───────────────────────────────────────────────────────────────
+
+_STATUS_COLORS = {
+    "draft":    ("◯", "#9aa0a6"),
+    "reviewed": ("✓", "#1a7f37"),
+    "exported": ("●", "#2563eb"),
+    "skipped":  ("✗", "#9aa0a6"),
+}
+
+
+class ClipCard(ttk.LabelFrame):
+    """One clip's inline editor: header (time / duration / status) +
+    PackageForm + action buttons (focus / skip / remove).
+
+    Click anywhere → calls on_focus(clip).
+    """
+
+    def __init__(self, master: tk.Misc, clip: ClipDraft, *,
+                 on_focus: Callable[[ClipDraft], None] | None = None,
+                 on_remove: Callable[[ClipDraft], None] | None = None,
+                 on_change: Callable[[ClipDraft], None] | None = None,
+                 ai_button_factory: Callable | None = None,
+                 ai_worker_for_clip: Callable | None = None,
+                 **kwargs):
+        # Header text computed before super().__init__ (LabelFrame uses text=)
+        super().__init__(master, **kwargs)
+        self._clip = clip
+        self._on_focus = on_focus
+        self._on_remove = on_remove
+
+        self._refresh_header()
+
+        # Excerpt (compact)
+        self._excerpt_lbl = tk.Label(
+            self, text=(clip.original_excerpt or "")[:240],
+            fg="#666", wraplength=900, justify="left", anchor="w",
+            font=("", 9))
+        self._excerpt_lbl.pack(fill="x", padx=8, pady=(4, 4))
+
+        # Package form
+        self._form = PackageForm(
+            self, on_change=on_change,
+            ai_button_factory=ai_button_factory,
+            ai_worker_for_clip=ai_worker_for_clip)
+        self._form.pack(fill="x", padx=4, pady=(2, 4))
+        self._form.bind_clip(clip)
+
+        # Action row
+        action = ttk.Frame(self)
+        action.pack(fill="x", padx=4, pady=(0, 6))
+        self._skip_btn = ttk.Button(action, text=self._skip_label(),
+                                      command=self._on_skip_click, width=10)
+        self._skip_btn.pack(side="left", padx=2)
+        ttk.Button(action, text=_tr("tool.clip.btn_remove_clip"),
+                   command=self._on_remove_click, width=10).pack(
+            side="left", padx=2)
+
+        # Click-to-focus wiring (header / excerpt)
+        if on_focus:
+            for w in (self, self._excerpt_lbl):
+                w.bind("<Button-1>", lambda _e: on_focus(self._clip))
+
+    def update_clip(self, clip: ClipDraft) -> None:
+        """Re-bind to the (possibly mutated) clip — refresh header + form."""
+        self._clip = clip
+        self._refresh_header()
+        self._excerpt_lbl.config(text=(clip.original_excerpt or "")[:240])
+        self._form.bind_clip(clip)
+        self._skip_btn.config(text=self._skip_label())
+
+    def set_focused(self, focused: bool) -> None:
+        try:
+            self.config(relief=("solid" if focused else "groove"),
+                        borderwidth=(2 if focused else 1))
+        except tk.TclError:
+            pass
+
+    # ── internal ──
+    def _refresh_header(self) -> None:
+        c = self._clip
+        glyph, _ = _STATUS_COLORS.get(c.status, ("◯", "#999"))
+        text = (f"{glyph} #{c.id}  [{_seconds_to_str(c.start_sec)} – "
+                f"{_seconds_to_str(c.end_sec)}]  {int(c.duration)}s   "
+                f"{c.chapter_title}")
+        self.configure(text=text)
+
+    def _skip_label(self) -> str:
+        return (_tr("tool.clip.btn_unskip") if self._clip.status == "skipped"
+                else _tr("tool.clip.btn_skip"))
+
+    def _on_skip_click(self) -> None:
+        if self._clip.status == "skipped":
+            self._clip.status = "draft"
+        else:
+            self._clip.status = "skipped"
+        self._skip_btn.config(text=self._skip_label())
+        self._refresh_header()
+        if self._form._on_change:
+            self._form._on_change(self._clip)
+
+    def _on_remove_click(self) -> None:
+        if self._on_remove:
+            self._on_remove(self._clip)
+
+
+# ── ClipSummaryTreeview ────────────────────────────────────────────────────
+
+class ClipSummaryTreeview(ttk.Frame):
+    """Cross-chapter clip list (Treeview) for the export summary tab.
+
+    bind(clips) repopulates. on_select fires when the user clicks a row.
+    get_selected_clips() returns the focused-then-multi-selected list.
+    """
+
+    def __init__(self, master: tk.Misc,
+                 on_select: Callable[[ClipDraft | None], None] | None = None,
+                 **kwargs):
+        super().__init__(master, **kwargs)
+        self._on_select = on_select
+        self._clips: list[ClipDraft] = []
+
+        cols = ("id", "chapter", "range", "duration", "status", "title")
+        self._tree = ttk.Treeview(self, columns=cols, show="headings",
+                                    selectmode="extended",
+                                    style="Clip.Treeview")
+        self._tree.heading("id",       text="#")
+        self._tree.heading("chapter",  text=_tr("tool.clip.col_chapter"))
+        self._tree.heading("range",    text=_tr("tool.clip.col_range"))
+        self._tree.heading("duration", text=_tr("tool.clip.col_duration"))
+        self._tree.heading("status",   text=_tr("tool.clip.col_status"))
+        self._tree.heading("title",    text=_tr("tool.clip.col_clip_title"))
+        self._tree.column("id",       width=50,  anchor="center", stretch=False)
+        self._tree.column("chapter",  width=200, anchor="w",      stretch=True)
+        self._tree.column("range",    width=160, anchor="center", stretch=False)
+        self._tree.column("duration", width=70,  anchor="center", stretch=False)
+        self._tree.column("status",   width=80,  anchor="center", stretch=False)
+        self._tree.column("title",    width=300, anchor="w",      stretch=True)
+        self._tree.pack(fill="both", expand=True, side="left")
+        sb = ttk.Scrollbar(self, orient="vertical", command=self._tree.yview)
+        self._tree.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+
+        self._tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+
+    # ── public API ──
+    def bind(self, clips: list[ClipDraft]) -> None:
+        # Preserve selection across rebinds when possible
+        prior_sel = set(self._tree.selection())
+        self._clips = list(clips)
+        for iid in self._tree.get_children():
+            self._tree.delete(iid)
+        for c in clips:
+            iid = str(c.id)
+            dur = int(c.duration)
+            mins, secs = divmod(dur, 60)
+            glyph, _ = _STATUS_COLORS.get(c.status, ("◯", "#999"))
+            self._tree.insert(
+                "", "end", iid=iid,
+                values=(c.id,
+                        f"#{c.chapter_idx+1}  {c.chapter_title}"[:40],
+                        f"{_seconds_to_str(c.start_sec)} – "
+                        f"{_seconds_to_str(c.end_sec)}",
+                        f"{mins}:{secs:02d}",
+                        f"{glyph} {c.status}",
+                        c.title or ""))
+        # restore selection where iids still exist
+        keep = [iid for iid in prior_sel if self._tree.exists(iid)]
+        if keep:
+            self._tree.selection_set(keep)
+
+    def get_selected_clips(self) -> list[ClipDraft]:
+        sel = self._tree.selection()
+        out = []
+        by_id = {str(c.id): c for c in self._clips}
+        for iid in sel:
+            c = by_id.get(iid)
+            if c is not None:
+                out.append(c)
+        return out
+
+    def get_focused_clip(self) -> ClipDraft | None:
+        focus = self._tree.focus()
+        if not focus:
+            sel = self._tree.selection()
+            focus = sel[0] if sel else ""
+        if not focus:
+            return None
+        for c in self._clips:
+            if str(c.id) == focus:
+                return c
+        return None
+
+    def select_clip(self, clip_id: int) -> None:
+        iid = str(clip_id)
+        if self._tree.exists(iid):
+            self._tree.selection_set(iid)
+            self._tree.focus(iid)
+            self._tree.see(iid)
+
+    def _on_tree_select(self, _event=None) -> None:
+        if self._on_select:
+            self._on_select(self.get_focused_clip())
