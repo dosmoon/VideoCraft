@@ -18,10 +18,6 @@ import re
 import json
 import srt
 from datetime import timedelta, datetime
-try:
-    from tkcalendar import DateEntry
-except ImportError:
-    DateEntry = None  # fallback to plain Entry
 from hub_logger import logger
 
 
@@ -327,13 +323,8 @@ class SubtitleToolApp(ToolBase):
         # Row 2：日期（独立字号 + 颜色 + 透明度）
         tk.Checkbutton(frame_watermark, text=tr("tool.subtitle.watermark.show_date"),
                        variable=self.watermark_show_date_var).grid(row=2, column=0, sticky="e", padx=5)
-        date_widget_cls = DateEntry if DateEntry else tk.Entry
-        date_kwargs = (dict(textvariable=self.watermark_date_var, width=12,
-                            background='darkblue', foreground='white', borderwidth=2,
-                            date_pattern='yyyy-mm-dd')
-                       if DateEntry else
-                       dict(textvariable=self.watermark_date_var, width=12))
-        date_widget_cls(frame_watermark, **date_kwargs).grid(row=2, column=1, sticky="w", padx=4)
+        tk.Entry(frame_watermark, textvariable=self.watermark_date_var,
+                 width=12).grid(row=2, column=1, sticky="w", padx=4)
         tk.Label(frame_watermark, text=tr("tool.subtitle.sub.fontsize")).grid(row=2, column=2, sticky="e")
         tk.Spinbox(frame_watermark, from_=10, to=100, width=4,
                    textvariable=self.watermark_date_fontsize_var).grid(row=2, column=3, padx=2)
