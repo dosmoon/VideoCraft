@@ -308,6 +308,11 @@ class ClipWorkbenchApp(ToolBase):
         self._ho_color_var = tk.StringVar(value=cfg.hook_outro.color)
         self._ho_bg_color_var = tk.StringVar(value=cfg.hook_outro.bg_color)
         self._ho_bg_opacity_var = tk.IntVar(value=cfg.hook_outro.bg_opacity)
+        self._ho_stroke_color_var = tk.StringVar(value=cfg.hook_outro.stroke_color)
+        self._ho_stroke_width_var = tk.IntVar(value=cfg.hook_outro.stroke_width)
+        self._ho_box_padding_var = tk.IntVar(value=cfg.hook_outro.box_padding)
+        self._ho_hook_position_var = tk.StringVar(value=cfg.hook_outro.hook_position)
+        self._ho_outro_position_var = tk.StringVar(value=cfg.hook_outro.outro_position)
         self._ho_hook_dur_var = tk.DoubleVar(value=cfg.hook_outro.hook_duration_sec)
         self._ho_outro_dur_var = tk.DoubleVar(value=cfg.hook_outro.outro_duration_sec)
         # BGM
@@ -497,15 +502,21 @@ class ClipWorkbenchApp(ToolBase):
         sec.columnconfigure(1, weight=1)
         sec.columnconfigure(3, weight=1)
 
+        # Row 0: Font (Combobox of bundled Windows fonts) + size
         ttk.Label(sec, text=_tr("tool.clip.hook_outro_font")).grid(
             row=0, column=0, sticky="e", padx=4, pady=2)
-        ttk.Entry(sec, textvariable=self._ho_font_var, width=20).grid(
+        font_choices = ("Microsoft YaHei", "微软雅黑", "SimHei", "黑体",
+                         "SimSun", "宋体", "KaiTi", "楷体", "DengXian", "等线",
+                         "Arial", "Times New Roman")
+        ttk.Combobox(sec, textvariable=self._ho_font_var,
+                       values=font_choices, width=18).grid(
             row=0, column=1, sticky="we", padx=4)
         ttk.Label(sec, text=_tr("tool.clip.hook_outro_size")).grid(
             row=0, column=2, sticky="e", padx=4)
         ttk.Spinbox(sec, from_=8, to=200, textvariable=self._ho_size_var,
                      width=6).grid(row=0, column=3, sticky="w", padx=4)
 
+        # Row 1: Foreground color + bg color
         ttk.Label(sec, text=_tr("tool.clip.hook_outro_color")).grid(
             row=1, column=0, sticky="e", padx=4, pady=2)
         self._build_color_picker(sec, self._ho_color_var).grid(
@@ -515,22 +526,53 @@ class ClipWorkbenchApp(ToolBase):
         self._build_color_picker(sec, self._ho_bg_color_var).grid(
             row=1, column=3, sticky="w", padx=4)
 
+        # Row 2: bg opacity + box padding
         ttk.Label(sec, text=_tr("tool.clip.hook_outro_bg_opacity")).grid(
             row=2, column=0, sticky="e", padx=4, pady=2)
         ttk.Spinbox(sec, from_=0, to=100, increment=5,
                      textvariable=self._ho_bg_opacity_var,
                      width=6).grid(row=2, column=1, sticky="w", padx=4)
+        ttk.Label(sec, text=_tr("tool.clip.hook_outro_box_padding")).grid(
+            row=2, column=2, sticky="e", padx=4)
+        ttk.Spinbox(sec, from_=0, to=80, textvariable=self._ho_box_padding_var,
+                     width=6).grid(row=2, column=3, sticky="w", padx=4)
 
-        ttk.Label(sec, text=_tr("tool.clip.hook_duration")).grid(
+        # Row 3: stroke color + stroke width
+        ttk.Label(sec, text=_tr("tool.clip.hook_outro_stroke_color")).grid(
             row=3, column=0, sticky="e", padx=4, pady=2)
+        self._build_color_picker(sec, self._ho_stroke_color_var).grid(
+            row=3, column=1, sticky="w", padx=4)
+        ttk.Label(sec, text=_tr("tool.clip.hook_outro_stroke_width")).grid(
+            row=3, column=2, sticky="e", padx=4)
+        ttk.Spinbox(sec, from_=0, to=20,
+                     textvariable=self._ho_stroke_width_var,
+                     width=6).grid(row=3, column=3, sticky="w", padx=4)
+
+        # Row 4: hook position + outro position
+        position_choices = ("top", "upper-third", "center",
+                              "lower-third", "bottom")
+        ttk.Label(sec, text=_tr("tool.clip.hook_position")).grid(
+            row=4, column=0, sticky="e", padx=4, pady=2)
+        ttk.Combobox(sec, textvariable=self._ho_hook_position_var,
+                       values=position_choices, state="readonly",
+                       width=14).grid(row=4, column=1, sticky="w", padx=4)
+        ttk.Label(sec, text=_tr("tool.clip.outro_position")).grid(
+            row=4, column=2, sticky="e", padx=4)
+        ttk.Combobox(sec, textvariable=self._ho_outro_position_var,
+                       values=position_choices, state="readonly",
+                       width=14).grid(row=4, column=3, sticky="w", padx=4)
+
+        # Row 5: hook duration + outro duration
+        ttk.Label(sec, text=_tr("tool.clip.hook_duration")).grid(
+            row=5, column=0, sticky="e", padx=4, pady=2)
         ttk.Spinbox(sec, from_=0.0, to=30.0, increment=0.5, format="%.1f",
                      textvariable=self._ho_hook_dur_var,
-                     width=6).grid(row=3, column=1, sticky="w", padx=4)
+                     width=6).grid(row=5, column=1, sticky="w", padx=4)
         ttk.Label(sec, text=_tr("tool.clip.outro_duration")).grid(
-            row=3, column=2, sticky="e", padx=4)
+            row=5, column=2, sticky="e", padx=4)
         ttk.Spinbox(sec, from_=0.0, to=30.0, increment=0.5, format="%.1f",
                      textvariable=self._ho_outro_dur_var,
-                     width=6).grid(row=3, column=3, sticky="w", padx=4)
+                     width=6).grid(row=5, column=3, sticky="w", padx=4)
 
         # ── Encoding section ──
         sec = ttk.LabelFrame(outer, text=_tr("tool.clip.section_encode"))
@@ -634,13 +676,18 @@ class ClipWorkbenchApp(ToolBase):
             (self._wm_text_opacity_var,    self._sync_watermark_from_form),
             (self._wm_position_var,        self._sync_watermark_from_form),
             # Hook/Outro
-            (self._ho_font_var,        self._sync_hook_outro_from_form),
-            (self._ho_size_var,        self._sync_hook_outro_from_form),
-            (self._ho_color_var,       self._sync_hook_outro_from_form),
-            (self._ho_bg_color_var,    self._sync_hook_outro_from_form),
-            (self._ho_bg_opacity_var,  self._sync_hook_outro_from_form),
-            (self._ho_hook_dur_var,    self._sync_hook_outro_from_form),
-            (self._ho_outro_dur_var,   self._sync_hook_outro_from_form),
+            (self._ho_font_var,           self._sync_hook_outro_from_form),
+            (self._ho_size_var,           self._sync_hook_outro_from_form),
+            (self._ho_color_var,          self._sync_hook_outro_from_form),
+            (self._ho_bg_color_var,       self._sync_hook_outro_from_form),
+            (self._ho_bg_opacity_var,     self._sync_hook_outro_from_form),
+            (self._ho_stroke_color_var,   self._sync_hook_outro_from_form),
+            (self._ho_stroke_width_var,   self._sync_hook_outro_from_form),
+            (self._ho_box_padding_var,    self._sync_hook_outro_from_form),
+            (self._ho_hook_position_var,  self._sync_hook_outro_from_form),
+            (self._ho_outro_position_var, self._sync_hook_outro_from_form),
+            (self._ho_hook_dur_var,       self._sync_hook_outro_from_form),
+            (self._ho_outro_dur_var,      self._sync_hook_outro_from_form),
             # BGM
             (self._bgm_path_var,   self._sync_bgm_from_form),
             (self._bgm_volume_var, self._sync_bgm_from_form),
@@ -759,6 +806,11 @@ class ClipWorkbenchApp(ToolBase):
             h.color = self._ho_color_var.get()
             h.bg_color = self._ho_bg_color_var.get()
             h.bg_opacity = int(self._ho_bg_opacity_var.get())
+            h.stroke_color = self._ho_stroke_color_var.get()
+            h.stroke_width = int(self._ho_stroke_width_var.get())
+            h.box_padding = int(self._ho_box_padding_var.get())
+            h.hook_position = self._ho_hook_position_var.get()
+            h.outro_position = self._ho_outro_position_var.get()
             h.hook_duration_sec = float(self._ho_hook_dur_var.get())
             h.outro_duration_sec = float(self._ho_outro_dur_var.get())
         except (tk.TclError, ValueError):
@@ -822,6 +874,11 @@ class ClipWorkbenchApp(ToolBase):
             self._ho_color_var.set(cfg.hook_outro.color)
             self._ho_bg_color_var.set(cfg.hook_outro.bg_color)
             self._ho_bg_opacity_var.set(cfg.hook_outro.bg_opacity)
+            self._ho_stroke_color_var.set(cfg.hook_outro.stroke_color)
+            self._ho_stroke_width_var.set(cfg.hook_outro.stroke_width)
+            self._ho_box_padding_var.set(cfg.hook_outro.box_padding)
+            self._ho_hook_position_var.set(cfg.hook_outro.hook_position)
+            self._ho_outro_position_var.set(cfg.hook_outro.outro_position)
             self._ho_hook_dur_var.set(cfg.hook_outro.hook_duration_sec)
             self._ho_outro_dur_var.set(cfg.hook_outro.outro_duration_sec)
             self._bgm_path_var.set(cfg.bgm.path)

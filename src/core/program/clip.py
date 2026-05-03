@@ -117,13 +117,74 @@ class WatermarkStyle:
 
 @dataclass
 class HookOutroStyle:
-    font: str = "Arial"
+    font: str = "Microsoft YaHei"   # font NAME, resolved via _hook_outro_font_path
     size: int = 48
     color: str = "#FFFFFF"
     bg_color: str = "#000000"
-    bg_opacity: int = 70           # 0-100
+    bg_opacity: int = 70           # 0-100. 0 disables the box entirely.
+    stroke_color: str = "#000000"
+    stroke_width: int = 3          # 0 disables the outline
+    box_padding: int = 10          # drawtext boxborderw
+    hook_position: str = "upper-third"   # see HOOK_OUTRO_POSITIONS
+    outro_position: str = "lower-third"
     hook_duration_sec: float = 5.0
     outro_duration_sec: float = 5.0
+
+
+# Vertical anchor presets — mapped to ffmpeg drawtext y= expressions in
+# _y_expr_for_position(). Keys are the canonical names persisted in cfg.
+HOOK_OUTRO_POSITIONS: tuple[str, ...] = (
+    "top", "upper-third", "center", "lower-third", "bottom"
+)
+
+
+# Windows-bundled font name → file path map. Names are what the user
+# picks in the Tab 0 dropdown; lookup is case-insensitive. Unknown names
+# fall back to msyh.ttc (Microsoft YaHei) which is always installed on
+# zh-CN Windows. Latin-only fonts (Arial / Times New Roman) won't render
+# CJK; the dropdown should warn the user but we don't enforce.
+_HOOK_OUTRO_FONT_MAP: dict[str, str] = {
+    "microsoft yahei":   "C:/Windows/Fonts/msyh.ttc",
+    "微软雅黑":          "C:/Windows/Fonts/msyh.ttc",
+    "simhei":            "C:/Windows/Fonts/simhei.ttf",
+    "黑体":              "C:/Windows/Fonts/simhei.ttf",
+    "simsun":            "C:/Windows/Fonts/simsun.ttc",
+    "宋体":              "C:/Windows/Fonts/simsun.ttc",
+    "kaiti":             "C:/Windows/Fonts/simkai.ttf",
+    "楷体":              "C:/Windows/Fonts/simkai.ttf",
+    "dengxian":          "C:/Windows/Fonts/Deng.ttf",
+    "等线":              "C:/Windows/Fonts/Deng.ttf",
+    "arial":             "C:/Windows/Fonts/arial.ttf",
+    "times new roman":   "C:/Windows/Fonts/times.ttf",
+}
+
+
+def _hook_outro_font_path(font_name: str) -> str:
+    """Resolve a user-facing font name to an absolute Windows path. Falls
+    back to Microsoft YaHei when the name isn't recognized or the file is
+    absent (so a typo doesn't kill the render)."""
+    fallback = "C:/Windows/Fonts/msyh.ttc"
+    if not font_name:
+        return fallback
+    raw = font_name.strip()
+    # If user gave an absolute path that exists, use it directly.
+    if os.path.isfile(raw):
+        return raw.replace("\\", "/")
+    path = _HOOK_OUTRO_FONT_MAP.get(raw.lower())
+    if path and os.path.isfile(path):
+        return path
+    return fallback
+
+
+def _y_expr_for_position(position: str) -> str:
+    """Translate a position preset to an ffmpeg drawtext y= expression."""
+    return {
+        "top":          "h*0.08",
+        "upper-third":  "h*0.25",
+        "center":       "(h-text_h)/2",
+        "lower-third":  "h*0.65",
+        "bottom":       "h*0.85",
+    }.get(position, "h*0.25")
 
 
 @dataclass
@@ -653,32 +714,42 @@ def _escape_drawtext(text: str) -> str:
     return out
 
 
-def _drawtext_filter(text: str, *, position: str, font_size: int,
-                     duration: float, hook_secs: float = 5.0,
-                     outro_secs: float = 5.0,
-                     font_color: str = "white",
-                     border_color: str = "black",
-                     bg_color: str = "black",
-                     bg_opacity: float = 0.4) -> str:
-    """Build a drawtext filter for hook (top, first hook_secs) or outro
-    (bottom, last outro_secs). `position` ∈ {'hook', 'outro'}."""
+def _drawtext_filter(text: str, *, role: str, ho: "HookOutroStyle",
+                     duration: float) -> str:
+    """Build a drawtext filter for hook (first hook_duration_sec) or outro
+    (last outro_duration_sec). `role` ∈ {'hook', 'outro'} drives both the
+    enable= window and which position preset is read from `ho`."""
     txt = _escape_drawtext(text)
     if not txt:
         return ""
-    if position == "hook":
-        y = "h*0.08"
-        enable = f"between(t,0,{hook_secs})"
+    if role == "hook":
+        position = ho.hook_position
+        enable = f"between(t,0,{ho.hook_duration_sec})"
     else:
-        y = "h*0.78"
-        start = max(0.0, duration - outro_secs)
+        position = ho.outro_position
+        start = max(0.0, duration - ho.outro_duration_sec)
         enable = f"between(t,{start},{duration})"
-    # Microsoft YaHei is also used by burn_subs.py; consistent across platform.
-    return (f"drawtext=text='{txt}':fontfile='C\\:/Windows/Fonts/msyh.ttc':"
-            f"fontcolor={font_color}:fontsize={font_size}:"
-            f"x=(w-text_w)/2:y={y}:"
-            f"borderw=3:bordercolor={border_color}:"
-            f"box=1:boxcolor={bg_color}@{bg_opacity}:boxborderw=10:"
-            f"enable='{enable}'")
+
+    fontfile = _hook_outro_font_path(ho.font).replace(":", "\\:")
+    y_expr = _y_expr_for_position(position)
+    parts = [
+        f"drawtext=text='{txt}'",
+        f"fontfile='{fontfile}'",
+        f"fontcolor={ho.color}",
+        f"fontsize={ho.size}",
+        f"x=(w-text_w)/2",
+        f"y={y_expr}",
+    ]
+    if ho.stroke_width > 0:
+        parts.append(f"borderw={int(ho.stroke_width)}")
+        parts.append(f"bordercolor={ho.stroke_color}")
+    if ho.bg_opacity > 0:
+        parts.append("box=1")
+        opacity = max(0.0, min(1.0, ho.bg_opacity / 100.0))
+        parts.append(f"boxcolor={ho.bg_color}@{opacity:.2f}")
+        parts.append(f"boxborderw={int(ho.box_padding)}")
+    parts.append(f"enable='{enable}'")
+    return ":".join(parts)
 
 
 def _target_dims_for_aspect(aspect_ratio: tuple[int, int],
@@ -880,16 +951,10 @@ def export_clip(
     ho = cfg.hook_outro
     if clip.hook:
         overlay_filters.append(_drawtext_filter(
-            clip.hook, position="hook", font_size=ho.size, duration=duration,
-            hook_secs=ho.hook_duration_sec,
-            font_color=ho.color, bg_color=ho.bg_color,
-            bg_opacity=max(0.0, min(1.0, ho.bg_opacity / 100.0))))
+            clip.hook, role="hook", ho=ho, duration=duration))
     if clip.outro:
         overlay_filters.append(_drawtext_filter(
-            clip.outro, position="outro", font_size=ho.size, duration=duration,
-            outro_secs=ho.outro_duration_sec,
-            font_color=ho.color, bg_color=ho.bg_color,
-            bg_opacity=max(0.0, min(1.0, ho.bg_opacity / 100.0))))
+            clip.outro, role="outro", ho=ho, duration=duration))
     if overlay_filters:
         parts.append(f"{cur}{','.join(overlay_filters)}[vout]")
     else:
