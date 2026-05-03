@@ -1105,6 +1105,27 @@ class VideoCraftHub:
 # ── 入口 ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # Per-monitor DPI awareness MUST be enabled before any Tk window is
+    # created. Required by ui.web_preview.WebPreviewFrame (clip-script
+    # preview etc.) — SetParent across DPI-awareness boundaries breaks
+    # WebView2 sizing. tk scaling is then bumped to compensate so existing
+    # widgets/fonts keep their on-screen size.
+    try:
+        from ui.web_preview import setup_dpi_aware
+        setup_dpi_aware()
+    except Exception:
+        pass
+
     root = tk.Tk()
+
+    # Compensate for the DPI-aware shift so Tk fonts/widgets keep their
+    # logical inch size. tk's scaling unit is points (1/72 inch).
+    try:
+        import ctypes
+        dpi = ctypes.windll.user32.GetDpiForSystem()
+        root.tk.call("tk", "scaling", dpi / 72.0)
+    except Exception:
+        pass
+
     app = VideoCraftHub(root)
     root.mainloop()
