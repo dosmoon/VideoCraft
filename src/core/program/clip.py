@@ -229,15 +229,20 @@ class ClipProjectConfig:
 # ── Auto max-chars per subtitle line ────────────────────────────────────────
 
 def compute_subtitle_max_chars(aspect: str, fontsize: int, is_chinese: bool,
-                                 *, density: float = 0.55,
+                                 *, density: float = 1.0,
                                  font_path: str | None = None) -> int:
-    """How many chars per line before the subtitle visually overflows.
+    """How many chars per line before the subtitle visually overflows when
+    burned via ffmpeg's `subtitles=` (libass) filter.
 
-    Visual fit = available_width / avg_glyph_width. Multiplied by `density`
-    to leave breathing room (default 0.55 — full visual fit feels cramped).
+    The catch: libass renders an SRT against a default PlayResX/Y of ~384
+    while the video is 1080-class — so a "Fontsize=24" style is rendered at
+    roughly 24×(1080/384)≈4.7x its nominal pixel size. PIL or empirical
+    glyph widths at the nominal fontsize under-estimate the actual on-
+    screen glyph by that same factor, leading to lines that overflow.
 
-    Glyph width is measured via PIL when possible (most accurate) and
-    falls back to empirical ratios (CJK 1.0×fs, Latin 0.55×fs) otherwise.
+    The empirical scale factor `ASS_RENDER_SCALE` was reverse-engineered
+    from the legacy LAYOUT_DEFAULTS: 9:16 + fontsize=20 → max_chars_zh=10
+    implies effective glyph_w ≈ 99 px, i.e. ~5× the nominal fontsize.
     """
     short_edge = 1080
     try:
@@ -253,9 +258,11 @@ def compute_subtitle_max_chars(aspect: str, fontsize: int, is_chinese: bool,
     safe_margin = 0.92
     available_px = video_width * safe_margin
 
-    glyph_w = _measure_glyph_width(fontsize, is_chinese, font_path)
-    if glyph_w <= 0:
-        glyph_w = fontsize * (1.0 if is_chinese else 0.55)
+    ASS_RENDER_SCALE = 4.7
+    glyph_w_nominal = _measure_glyph_width(fontsize, is_chinese, font_path)
+    if glyph_w_nominal <= 0:
+        glyph_w_nominal = fontsize * (1.0 if is_chinese else 0.55)
+    glyph_w = glyph_w_nominal * ASS_RENDER_SCALE
     return max(8, int(available_px / glyph_w * density))
 
 
@@ -648,10 +655,13 @@ def _escape_drawtext(text: str) -> str:
 
 def _drawtext_filter(text: str, *, position: str, font_size: int,
                      duration: float, hook_secs: float = 5.0,
+                     outro_secs: float = 5.0,
                      font_color: str = "white",
-                     border_color: str = "black") -> str:
-    """Build a drawtext filter for hook (top, first N seconds) or outro
-    (bottom, last N seconds). `position` ∈ {'hook', 'outro'}."""
+                     border_color: str = "black",
+                     bg_color: str = "black",
+                     bg_opacity: float = 0.4) -> str:
+    """Build a drawtext filter for hook (top, first hook_secs) or outro
+    (bottom, last outro_secs). `position` ∈ {'hook', 'outro'}."""
     txt = _escape_drawtext(text)
     if not txt:
         return ""
@@ -660,15 +670,111 @@ def _drawtext_filter(text: str, *, position: str, font_size: int,
         enable = f"between(t,0,{hook_secs})"
     else:
         y = "h*0.78"
-        start = max(0.0, duration - hook_secs)
+        start = max(0.0, duration - outro_secs)
         enable = f"between(t,{start},{duration})"
     # Microsoft YaHei is also used by burn_subs.py; consistent across platform.
     return (f"drawtext=text='{txt}':fontfile='C\\:/Windows/Fonts/msyh.ttc':"
             f"fontcolor={font_color}:fontsize={font_size}:"
             f"x=(w-text_w)/2:y={y}:"
             f"borderw=3:bordercolor={border_color}:"
-            f"box=1:boxcolor=black@0.4:boxborderw=10:"
+            f"box=1:boxcolor={bg_color}@{bg_opacity}:boxborderw=10:"
             f"enable='{enable}'")
+
+
+def _target_dims_for_aspect(aspect_ratio: tuple[int, int],
+                              short_edge: int = 1080) -> tuple[int, int]:
+    """Pick output (w, h) honoring the requested aspect at a 1080-class
+    short-edge. h264 requires even dimensions, so we round up."""
+    aw, ah = aspect_ratio
+    if aw < ah:        # vertical
+        w, h = short_edge, round(short_edge * ah / aw)
+    else:              # horizontal or square
+        h, w = short_edge, round(short_edge * aw / ah)
+    return ((w + 1) // 2 * 2, (h + 1) // 2 * 2)
+
+
+def _ass_alignment_for_position(position: str) -> int:
+    """ASS alignment code for a top/middle/bottom subtitle position."""
+    return {"top": 8, "middle": 5, "bottom": 2}.get(position, 2)
+
+
+def _build_subtitle_force_style(subtitle: "SubtitleStyle") -> str:
+    """Translate the project-level SubtitleStyle into an ASS force_style
+    string used by ffmpeg's subtitles= filter. Only sub1 is rendered for
+    now — sub2 (bilingual second line) needs a separate SRT source which
+    the current burn pipeline doesn't accept yet (M-H.5)."""
+    sub1 = subtitle.sub1
+    font_name = "Microsoft YaHei" if sub1.is_chinese else "Arial"
+    margin_v = 60        # top/bottom margin in pixels at 1080 short-edge
+    return (f"Fontname={font_name},"
+            f"Fontsize={sub1.fontsize},"
+            f"PrimaryColour={hex_color_to_ass(sub1.color)},"
+            f"OutlineColour={hex_color_to_ass(subtitle.stroke_color)},"
+            f"BorderStyle=1,"
+            f"Outline={max(0, int(subtitle.stroke_width))},"
+            f"Shadow=0,"
+            f"Bold={1 if sub1.bold else 0},"
+            f"Alignment={_ass_alignment_for_position(subtitle.position)},"
+            f"MarginV={margin_v}")
+
+
+def _build_text_watermark_drawtext(watermark: "WatermarkStyle",
+                                      target_w: int) -> str:
+    """Single drawtext snippet for a text-mode watermark, joined into the
+    main filter chain. Returns '' when not applicable."""
+    if not watermark.enabled or watermark.type != "text":
+        return ""
+    txt = _escape_drawtext(watermark.text)
+    if not txt:
+        return ""
+    margin = max(20, int(target_w * 0.025))
+    pos = watermark.position or "top-right"
+    x = f"w-text_w-{margin}" if pos.endswith("right") else f"{margin}"
+    y = f"h-text_h-{margin}" if pos.startswith("bottom") else f"{margin}"
+    opacity = max(0.0, min(1.0, (watermark.text_opacity or 70) / 100.0))
+    return (f"drawtext=text='{txt}':"
+            f"fontfile='C\\:/Windows/Fonts/msyh.ttc':"
+            f"fontcolor={hex_color_to_ass_rgba(watermark.text_color, opacity)}:"
+            f"fontsize={watermark.text_fontsize}:"
+            f"x={x}:y={y}:"
+            f"borderw=2:bordercolor=black@{opacity*0.5:.2f}")
+
+
+def _build_image_watermark_chain(watermark: "WatermarkStyle",
+                                    target_w: int,
+                                    prev_label: str) -> tuple[list[str], str]:
+    """Image-mode watermark needs a separate `movie` source + `overlay`
+    pair (drawtext can't render external images). Returns:
+      (extra_filter_nodes, new_chain_head_label)
+    The caller appends `extra_filter_nodes` to the filter_complex parts
+    list and uses `new_chain_head_label` as input for downstream filters.
+    `prev_label` is what the main chain currently exits as (e.g. "[v1]")."""
+    if not watermark.enabled or watermark.type != "image":
+        return [], prev_label
+    img_path = (watermark.image_path or "").strip()
+    if not img_path or not os.path.exists(img_path):
+        return [], prev_label
+    img_ff = escape_ffmpeg_path(img_path)
+    wm_w = max(1, int(target_w * max(0.01, watermark.image_scale or 0.15)))
+    opacity = max(0.0, min(1.0, (watermark.image_opacity or 100) / 100.0))
+    pos = watermark.position or "top-right"
+    margin = max(20, int(target_w * 0.025))
+    # In overlay= expressions: W/H = main video dims, w/h = overlay dims.
+    x = f"W-w-{margin}" if pos.endswith("right") else f"{margin}"
+    y = f"H-h-{margin}" if pos.startswith("bottom") else f"{margin}"
+    return ([
+        f"movie='{img_ff}',scale={wm_w}:-1,"
+        f"format=rgba,colorchannelmixer=aa={opacity:.3f}[vcwm]",
+        f"{prev_label}[vcwm]overlay={x}:{y}[vcvw]",
+    ], "[vcvw]")
+
+
+def hex_color_to_ass_rgba(hex_color: str, alpha: float) -> str:
+    """Like hex_color_to_ass but for drawtext (which takes #RRGGBB@alpha)."""
+    h = (hex_color or "#FFFFFF").lstrip("#")
+    if len(h) == 6:
+        return f"#{h.upper()}@{max(0.0, min(1.0, alpha)):.2f}"
+    return f"white@{max(0.0, min(1.0, alpha)):.2f}"
 
 
 def export_clip(
@@ -677,24 +783,30 @@ def export_clip(
     out_dir: str,
     *,
     source_srt: str | None = None,
-    target_w: int = 1080,
-    target_h: int = 1920,
-    encode_preset: str = "veryfast",
+    project_config: "ClipProjectConfig | None" = None,
     crf: int = 23,
     on_progress: ProgressCallback | None = None,
     cancel_check: Callable[[], bool] | None = None,
 ) -> str:
-    """Render one clip to mp4: trim → crop → scale → burn subtitle → hook/outro.
+    """Render one clip to mp4: trim → crop → scale → burn subtitle →
+    watermark → hook/outro. Single ffmpeg invocation via filter_complex.
 
-    Single ffmpeg invocation via filter_complex. Returns the output path.
-    Raises RuntimeError on ffmpeg failure.
+    project_config drives aspect/encode/subtitle/watermark/hook-outro
+    styling. When None, sensible 9:16 defaults are used (back-compat).
+
+    Returns the output path. Raises RuntimeError on ffmpeg failure.
     """
+    cfg = project_config or ClipProjectConfig()
+    target_w, target_h = _target_dims_for_aspect(cfg.aspect_ratio())
+    encode_preset = cfg.encode_preset
+
     src_w, src_h = probe_resolution(video_path)
     if src_w == 0 or src_h == 0:
         raise RuntimeError(f"Cannot probe video resolution: {video_path}")
 
-    # Crop rect → pixels (default to center crop if not set)
-    rect = clip.crop_rect or center_crop_rect(src_w, src_h)
+    # Crop rect → pixels (default: center-fit at the project's aspect)
+    rect = clip.crop_rect or center_crop_rect(src_w, src_h,
+                                                aspect_ratio=cfg.aspect_ratio())
     cw, ch, cx, cy = crop_rect_to_pixels(rect, src_w, src_h)
 
     duration = clip.duration
@@ -711,20 +823,22 @@ def export_clip(
     if source_srt and os.path.exists(source_srt):
         try:
             cues = load_cues(source_srt)
-            # Pre-split for vertical width to avoid overflow.
+            # Pre-split for layout to avoid overflow. Use max_chars from
+            # cfg.subtitle.sub1 (auto-computed when enabled).
+            sub1 = cfg.subtitle.sub1
+            if sub1.auto_max_chars:
+                max_chars = compute_subtitle_max_chars(
+                    cfg.aspect, sub1.fontsize, sub1.is_chinese)
+            else:
+                max_chars = max(8, sub1.manual_max_chars)
             tmp_srt_path = os.path.join(
                 tempfile.gettempdir(),
                 f"clip-{clip.id}-{int(clip.start_sec)}.srt"
             )
             slice_srt_for_clip(cues, clip.start_sec, clip.end_sec, tmp_srt_path)
-            # Re-split each cue line for vertical layout (max ~10 zh chars)
             try:
-                vlayout = LAYOUT_DEFAULTS["vertical"]
                 split_subs = process_srt_split(
-                    tmp_srt_path,
-                    vlayout["max_chars_zh"],
-                    is_chinese=True,
-                )
+                    tmp_srt_path, max_chars, is_chinese=sub1.is_chinese)
                 with open(tmp_srt_path, "w", encoding="utf-8") as f:
                     f.write(_srt.compose(split_subs))
             except Exception:
@@ -741,27 +855,41 @@ def export_clip(
                  f"setsar=1[v0]")
     cur = "[v0]"
 
-    if tmp_srt_path and os.path.exists(tmp_srt_path) and os.path.getsize(tmp_srt_path) > 0:
+    burn_subs = (cfg.subtitle.sub1.enabled and tmp_srt_path
+                 and os.path.exists(tmp_srt_path)
+                 and os.path.getsize(tmp_srt_path) > 0)
+    if burn_subs:
         srt_ff = escape_ffmpeg_path(tmp_srt_path)
-        vlayout = LAYOUT_DEFAULTS["vertical"]
-        style = (f"Fontname=Microsoft YaHei,"
-                 f"Fontsize={vlayout['fontsize']},"
-                 f"PrimaryColour={hex_color_to_ass('#FFFFFF')},"
-                 f"OutlineColour=&H00000000&,"
-                 f"BorderStyle=1,Outline=2,Shadow=0,"
-                 f"Bold=1,Alignment=2,MarginV={vlayout['margin_v']}")
+        force_style = _build_subtitle_force_style(cfg.subtitle)
         parts.append(f"{cur}subtitles=filename='{srt_ff}':"
-                     f"force_style='{style}'[v1]")
+                     f"force_style='{force_style}'[v1]")
         cur = "[v1]"
 
-    # Hook + outro overlays
+    # Image watermark — separate `movie` source + overlay (cannot ride the
+    # drawtext chain). When applicable, this advances `cur` to the post-
+    # overlay label.
+    img_wm_nodes, cur = _build_image_watermark_chain(
+        cfg.watermark, target_w, cur)
+    parts.extend(img_wm_nodes)
+
+    # Text watermark + hook + outro — concatenated drawtext filters
     overlay_filters: list[str] = []
+    text_wm = _build_text_watermark_drawtext(cfg.watermark, target_w)
+    if text_wm:
+        overlay_filters.append(text_wm)
+    ho = cfg.hook_outro
     if clip.hook:
         overlay_filters.append(_drawtext_filter(
-            clip.hook, position="hook", font_size=46, duration=duration))
+            clip.hook, position="hook", font_size=ho.size, duration=duration,
+            hook_secs=ho.hook_duration_sec,
+            font_color=ho.color, bg_color=ho.bg_color,
+            bg_opacity=max(0.0, min(1.0, ho.bg_opacity / 100.0))))
     if clip.outro:
         overlay_filters.append(_drawtext_filter(
-            clip.outro, position="outro", font_size=42, duration=duration))
+            clip.outro, position="outro", font_size=ho.size, duration=duration,
+            outro_secs=ho.outro_duration_sec,
+            font_color=ho.color, bg_color=ho.bg_color,
+            bg_opacity=max(0.0, min(1.0, ho.bg_opacity / 100.0))))
     if overlay_filters:
         parts.append(f"{cur}{','.join(overlay_filters)}[vout]")
     else:
@@ -833,6 +961,7 @@ def export_all(
     out_dir: str,
     *,
     source_srt: str | None = None,
+    project_config: "ClipProjectConfig | None" = None,
     on_progress: Callable[[int, int, str, int], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
 ) -> list[str]:
@@ -850,6 +979,7 @@ def export_all(
         out_paths.append(export_clip(
             video_path, clip, out_dir,
             source_srt=source_srt,
+            project_config=project_config,
             on_progress=_step_progress,
             cancel_check=cancel_check,
         ))

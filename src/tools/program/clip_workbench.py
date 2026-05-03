@@ -2491,6 +2491,7 @@ class ClipWorkbenchApp(ToolBase):
             paths = cliplib.export_all(
                 self._video_path, eligible, out_dir,
                 source_srt=self._srt_path or None,
+                project_config=self._project_config,
                 on_progress=on_step,
                 cancel_check=cancel_check)
             self.master.after(0, self._autosave)
