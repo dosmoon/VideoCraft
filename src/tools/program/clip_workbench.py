@@ -30,7 +30,7 @@ from hub_logger import logger
 from tools.base import ToolBase
 from core.ai.cancellation import CancellationToken
 from core.ai.errors import AIError, Kind
-from core import clip_presets
+from core import clip_presets, clip_hook_outro_presets
 from core.program import clip as cliplib
 from core.program.clip import ClipDraft, ClipProjectConfig
 from core.program.clip_render import compose_style_preview
@@ -502,77 +502,97 @@ class ClipWorkbenchApp(ToolBase):
         sec.columnconfigure(1, weight=1)
         sec.columnconfigure(3, weight=1)
 
-        # Row 0: Font (Combobox of bundled Windows fonts) + size
+        # Template selector row (8 builtin styles + user saves)
+        tpl_row = ttk.Frame(sec)
+        tpl_row.grid(row=0, column=0, columnspan=4, sticky="we", padx=4, pady=(4, 6))
+        ttk.Label(tpl_row,
+                   text=_tr("tool.clip.ho_template_label")).pack(side="left")
+        self._ho_tpl_var = tk.StringVar()
+        self._ho_tpl_combo = ttk.Combobox(
+            tpl_row, textvariable=self._ho_tpl_var,
+            state="readonly", width=36)
+        self._ho_tpl_combo.pack(side="left", padx=(4, 8))
+        ttk.Button(tpl_row, text=_tr("tool.clip.btn_preset_apply"),
+                   command=self._on_ho_template_apply).pack(side="left", padx=2)
+        ttk.Button(tpl_row, text=_tr("tool.clip.btn_preset_save_as"),
+                   command=self._on_ho_template_save_as).pack(side="left", padx=2)
+        ttk.Button(tpl_row, text=_tr("tool.clip.btn_preset_overwrite"),
+                   command=self._on_ho_template_overwrite).pack(side="left", padx=2)
+        ttk.Button(tpl_row, text=_tr("tool.clip.btn_preset_delete"),
+                   command=self._on_ho_template_delete).pack(side="left", padx=2)
+        self._refresh_ho_template_combo()
+
+        # Row 1: Font (Combobox of bundled Windows fonts) + size
         ttk.Label(sec, text=_tr("tool.clip.hook_outro_font")).grid(
-            row=0, column=0, sticky="e", padx=4, pady=2)
+            row=1, column=0, sticky="e", padx=4, pady=2)
         font_choices = ("Microsoft YaHei", "微软雅黑", "SimHei", "黑体",
                          "SimSun", "宋体", "KaiTi", "楷体", "DengXian", "等线",
                          "Arial", "Times New Roman")
         ttk.Combobox(sec, textvariable=self._ho_font_var,
                        values=font_choices, width=18).grid(
-            row=0, column=1, sticky="we", padx=4)
+            row=1, column=1, sticky="we", padx=4)
         ttk.Label(sec, text=_tr("tool.clip.hook_outro_size")).grid(
-            row=0, column=2, sticky="e", padx=4)
-        ttk.Spinbox(sec, from_=8, to=200, textvariable=self._ho_size_var,
-                     width=6).grid(row=0, column=3, sticky="w", padx=4)
-
-        # Row 1: Foreground color + bg color
-        ttk.Label(sec, text=_tr("tool.clip.hook_outro_color")).grid(
-            row=1, column=0, sticky="e", padx=4, pady=2)
-        self._build_color_picker(sec, self._ho_color_var).grid(
-            row=1, column=1, sticky="w", padx=4)
-        ttk.Label(sec, text=_tr("tool.clip.hook_outro_bg_color")).grid(
             row=1, column=2, sticky="e", padx=4)
-        self._build_color_picker(sec, self._ho_bg_color_var).grid(
-            row=1, column=3, sticky="w", padx=4)
+        ttk.Spinbox(sec, from_=8, to=200, textvariable=self._ho_size_var,
+                     width=6).grid(row=1, column=3, sticky="w", padx=4)
 
-        # Row 2: bg opacity + box padding
-        ttk.Label(sec, text=_tr("tool.clip.hook_outro_bg_opacity")).grid(
+        # Row 2: Foreground color + bg color
+        ttk.Label(sec, text=_tr("tool.clip.hook_outro_color")).grid(
             row=2, column=0, sticky="e", padx=4, pady=2)
+        self._build_color_picker(sec, self._ho_color_var).grid(
+            row=2, column=1, sticky="w", padx=4)
+        ttk.Label(sec, text=_tr("tool.clip.hook_outro_bg_color")).grid(
+            row=2, column=2, sticky="e", padx=4)
+        self._build_color_picker(sec, self._ho_bg_color_var).grid(
+            row=2, column=3, sticky="w", padx=4)
+
+        # Row 3: bg opacity + box padding
+        ttk.Label(sec, text=_tr("tool.clip.hook_outro_bg_opacity")).grid(
+            row=3, column=0, sticky="e", padx=4, pady=2)
         ttk.Spinbox(sec, from_=0, to=100, increment=5,
                      textvariable=self._ho_bg_opacity_var,
-                     width=6).grid(row=2, column=1, sticky="w", padx=4)
+                     width=6).grid(row=3, column=1, sticky="w", padx=4)
         ttk.Label(sec, text=_tr("tool.clip.hook_outro_box_padding")).grid(
-            row=2, column=2, sticky="e", padx=4)
-        ttk.Spinbox(sec, from_=0, to=80, textvariable=self._ho_box_padding_var,
-                     width=6).grid(row=2, column=3, sticky="w", padx=4)
-
-        # Row 3: stroke color + stroke width
-        ttk.Label(sec, text=_tr("tool.clip.hook_outro_stroke_color")).grid(
-            row=3, column=0, sticky="e", padx=4, pady=2)
-        self._build_color_picker(sec, self._ho_stroke_color_var).grid(
-            row=3, column=1, sticky="w", padx=4)
-        ttk.Label(sec, text=_tr("tool.clip.hook_outro_stroke_width")).grid(
             row=3, column=2, sticky="e", padx=4)
-        ttk.Spinbox(sec, from_=0, to=20,
-                     textvariable=self._ho_stroke_width_var,
+        ttk.Spinbox(sec, from_=0, to=80, textvariable=self._ho_box_padding_var,
                      width=6).grid(row=3, column=3, sticky="w", padx=4)
 
-        # Row 4: hook position + outro position
+        # Row 4: stroke color + stroke width
+        ttk.Label(sec, text=_tr("tool.clip.hook_outro_stroke_color")).grid(
+            row=4, column=0, sticky="e", padx=4, pady=2)
+        self._build_color_picker(sec, self._ho_stroke_color_var).grid(
+            row=4, column=1, sticky="w", padx=4)
+        ttk.Label(sec, text=_tr("tool.clip.hook_outro_stroke_width")).grid(
+            row=4, column=2, sticky="e", padx=4)
+        ttk.Spinbox(sec, from_=0, to=20,
+                     textvariable=self._ho_stroke_width_var,
+                     width=6).grid(row=4, column=3, sticky="w", padx=4)
+
+        # Row 5: hook position + outro position
         position_choices = ("top", "upper-third", "center",
                               "lower-third", "bottom")
         ttk.Label(sec, text=_tr("tool.clip.hook_position")).grid(
-            row=4, column=0, sticky="e", padx=4, pady=2)
+            row=5, column=0, sticky="e", padx=4, pady=2)
         ttk.Combobox(sec, textvariable=self._ho_hook_position_var,
                        values=position_choices, state="readonly",
-                       width=14).grid(row=4, column=1, sticky="w", padx=4)
+                       width=14).grid(row=5, column=1, sticky="w", padx=4)
         ttk.Label(sec, text=_tr("tool.clip.outro_position")).grid(
-            row=4, column=2, sticky="e", padx=4)
+            row=5, column=2, sticky="e", padx=4)
         ttk.Combobox(sec, textvariable=self._ho_outro_position_var,
                        values=position_choices, state="readonly",
-                       width=14).grid(row=4, column=3, sticky="w", padx=4)
+                       width=14).grid(row=5, column=3, sticky="w", padx=4)
 
-        # Row 5: hook duration + outro duration
+        # Row 6: hook duration + outro duration
         ttk.Label(sec, text=_tr("tool.clip.hook_duration")).grid(
-            row=5, column=0, sticky="e", padx=4, pady=2)
+            row=6, column=0, sticky="e", padx=4, pady=2)
         ttk.Spinbox(sec, from_=0.0, to=30.0, increment=0.5, format="%.1f",
                      textvariable=self._ho_hook_dur_var,
-                     width=6).grid(row=5, column=1, sticky="w", padx=4)
+                     width=6).grid(row=6, column=1, sticky="w", padx=4)
         ttk.Label(sec, text=_tr("tool.clip.outro_duration")).grid(
-            row=5, column=2, sticky="e", padx=4)
+            row=6, column=2, sticky="e", padx=4)
         ttk.Spinbox(sec, from_=0.0, to=30.0, increment=0.5, format="%.1f",
                      textvariable=self._ho_outro_dur_var,
-                     width=6).grid(row=5, column=3, sticky="w", padx=4)
+                     width=6).grid(row=6, column=3, sticky="w", padx=4)
 
         # ── Encoding section ──
         sec = ttk.LabelFrame(outer, text=_tr("tool.clip.section_encode"))
@@ -1122,6 +1142,105 @@ class ClipWorkbenchApp(ToolBase):
         clip_presets.save_store(store)
         self._refresh_preset_combo()
         self._set_status(_tr("tool.clip.status_preset_deleted").format(
+            name=name))
+
+    # ── Hook/Outro template handlers ─────────────────────────────────────
+
+    def _refresh_ho_template_combo(self, select: str | None = None) -> None:
+        store = clip_hook_outro_presets.load_store()
+        names = clip_hook_outro_presets.list_preset_names(store)
+        self._ho_tpl_combo.configure(values=names)
+        target = select or clip_hook_outro_presets.get_last_used(store)
+        if target not in names:
+            target = clip_hook_outro_presets.BUILTIN_DEFAULT_NAME
+        self._ho_tpl_var.set(target)
+
+    def _on_ho_template_apply(self) -> None:
+        name = self._ho_tpl_var.get()
+        if not name:
+            return
+        store = clip_hook_outro_presets.load_store()
+        raw = clip_hook_outro_presets.get_preset(store, name)
+        if raw is None:
+            return
+        # Replace the project's HookOutroStyle with the template, then drive
+        # the form Vars so the UI catches up. _refresh_form_from_config runs
+        # under _suspend_autosave so the trace cascade doesn't write back
+        # stale values mid-update — same pattern as project preset apply.
+        new_ho = cliplib.HookOutroStyle(**{
+            k: v for k, v in raw.items()
+            if k in cliplib.HookOutroStyle.__dataclass_fields__})
+        self._project_config.hook_outro = new_ho
+        self._refresh_form_from_config()
+        clip_hook_outro_presets.set_last_used(store, name)
+        clip_hook_outro_presets.save_store(store)
+        self._autosave()
+        self._set_status(_tr("tool.clip.status_ho_template_applied").format(
+            name=name))
+
+    def _on_ho_template_save_as(self) -> None:
+        name = simpledialog.askstring(
+            _tr("tool.clip.dialog_ho_template_save_title"),
+            _tr("tool.clip.dialog_ho_template_save_prompt"),
+            parent=self.master,
+        )
+        if name is None:
+            return
+        name = name.strip()
+        if not name:
+            messagebox.showwarning(_tr("tool.clip.title"),
+                                    _tr("tool.clip.warn_preset_name_empty"))
+            return
+        store = clip_hook_outro_presets.load_store()
+        if name in store.get("presets", {}):
+            messagebox.showwarning(
+                _tr("tool.clip.title"),
+                _tr("tool.clip.warn_preset_name_taken").format(name=name))
+            return
+        clip_hook_outro_presets.upsert_preset(
+            store, name, asdict(self._project_config.hook_outro))
+        clip_hook_outro_presets.set_last_used(store, name)
+        clip_hook_outro_presets.save_store(store)
+        self._refresh_ho_template_combo(select=name)
+        self._set_status(_tr("tool.clip.status_ho_template_saved").format(
+            name=name))
+
+    def _on_ho_template_overwrite(self) -> None:
+        name = self._ho_tpl_var.get()
+        if not name:
+            return
+        if clip_hook_outro_presets.is_builtin(name):
+            messagebox.showwarning(
+                _tr("tool.clip.title"),
+                _tr("tool.clip.warn_preset_builtin_protected").format(
+                    name=name))
+            return
+        store = clip_hook_outro_presets.load_store()
+        clip_hook_outro_presets.upsert_preset(
+            store, name, asdict(self._project_config.hook_outro))
+        clip_hook_outro_presets.save_store(store)
+        self._set_status(
+            _tr("tool.clip.status_ho_template_overwritten").format(name=name))
+
+    def _on_ho_template_delete(self) -> None:
+        name = self._ho_tpl_var.get()
+        if not name:
+            return
+        if clip_hook_outro_presets.is_builtin(name):
+            messagebox.showwarning(
+                _tr("tool.clip.title"),
+                _tr("tool.clip.warn_preset_builtin_protected").format(
+                    name=name))
+            return
+        if not messagebox.askyesno(
+                _tr("tool.clip.title"),
+                _tr("tool.clip.confirm_preset_delete").format(name=name)):
+            return
+        store = clip_hook_outro_presets.load_store()
+        clip_hook_outro_presets.delete_preset(store, name)
+        clip_hook_outro_presets.save_store(store)
+        self._refresh_ho_template_combo()
+        self._set_status(_tr("tool.clip.status_ho_template_deleted").format(
             name=name))
 
     def _on_aspect_clicked(self, new_aspect: str) -> None:
