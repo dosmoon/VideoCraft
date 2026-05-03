@@ -44,8 +44,9 @@ let clipStart = 0, clipEnd = 0;  // playback bounds within the source video
 let vSrcW = 0, vSrcH = 0;        // source video pixel size (set on metadata)
 
 // Style state mirrors ClipProjectConfig schema. Sent from Python via
-// vc.setStyle(...). Used by drawSubtitles / drawWatermark to render
-// placeholder text inside the crop region — purely a layout preview.
+// vc.setStyle(...). Used by drawSubtitles / drawWatermark / drawHookOutro
+// to render placeholder text inside the crop region — purely a layout
+// preview.
 let styleState = {
   subtitle: {
     position: "bottom",
@@ -62,12 +63,43 @@ let styleState = {
     image_scale: 0.15, image_opacity: 100,
     position: "top-right",
   },
+  hookOutro: {
+    size: 48,
+    color: "#FFFFFF",
+    bg_color: "#000000",
+    bg_opacity: 70,
+    stroke_color: "#000000",
+    stroke_width: 3,
+    box_padding: 10,
+    hook_position: "upper-third",
+    outro_position: "lower-third",
+    hook_duration_sec: 5.0,
+    outro_duration_sec: 5.0,
+  },
 };
 
-// Reference output height in pixels — used to scale config fontsizes
-// (which are authored against e.g. 1080p output) into the canvas's source
-// pixel space. The crop region maps to the output frame height.
-const REF_OUTPUT_HEIGHT = 1080;
+// Per-clip text state — independent of styleState because hook/outro text
+// changes per clip while the visual style is project-level.
+let clipMeta = { hook: "", outro: "" };
+
+// Output dimensions are derived from the project aspect at a 1080-class
+// short edge (matches Python's _target_dims_for_aspect). The crop region
+// maps to the output frame, so we scale font sizes by ch / target_h.
+const SHORT_EDGE = 1080;
+
+function targetDims() {
+  if (aspectRatio < 1.0) {
+    // vertical (w/h < 1) — short edge is width, long edge is height
+    return { tw: SHORT_EDGE, th: Math.round(SHORT_EDGE / aspectRatio) };
+  }
+  return { tw: Math.round(SHORT_EDGE * aspectRatio), th: SHORT_EDGE };
+}
+
+// libass renders an SRT against PlayResX≈384 while the output is ~1080
+// wide → effective glyph width ≈ 4.7× the nominal Fontsize. Mirrors
+// ASS_RENDER_SCALE in core/program/clip.py so preview char-fit matches
+// the burn pipeline.
+const ASS_RENDER_SCALE = 4.7;
 
 // ── public JS API (called from Python via evaluate_js) ──────────────────
 
@@ -105,6 +137,14 @@ window.vc = {
     if (s && typeof s === 'object') {
       if (s.subtitle)  styleState.subtitle  = Object.assign({}, styleState.subtitle,  s.subtitle);
       if (s.watermark) styleState.watermark = Object.assign({}, styleState.watermark, s.watermark);
+      if (s.hookOutro) styleState.hookOutro = Object.assign({}, styleState.hookOutro, s.hookOutro);
+    }
+    drawOverlay();
+  },
+  setClipMeta(meta) {
+    if (meta && typeof meta === 'object') {
+      if (typeof meta.hook  === 'string') clipMeta.hook  = meta.hook;
+      if (typeof meta.outro === 'string') clipMeta.outro = meta.outro;
     }
     drawOverlay();
   },
@@ -190,10 +230,11 @@ function drawOverlay() {
   ctx.moveTo(rect.x*vSrcW, (rect.y+rect.h/2)*vSrcH);
   ctx.lineTo((rect.x+rect.w)*vSrcW, (rect.y+rect.h/2)*vSrcH);
   ctx.stroke();
-  // Subtitles + watermark live INSIDE the crop region (they get burned
-  // into the output frame, which is the cropped + scaled view).
+  // Subtitles + watermark + hook/outro live INSIDE the crop region (they
+  // get burned into the output frame, which is the cropped + scaled view).
   drawSubtitles();
   drawWatermark();
+  drawHookOutro();
 }
 
 function cropBox() {
@@ -203,14 +244,21 @@ function cropBox() {
   };
 }
 
-// Convert config fontsize (authored vs REF_OUTPUT_HEIGHT) to canvas pixels.
-// 4x boost matches the static preview convention (clip_render.py) — the
-// preview is shrunk into a small pane, exaggerating fontsize keeps layout
-// intent visible. Not pixel-accurate vs the final burn output.
-const PREVIEW_FONT_BOOST = 4;
-function fontPx(configSize) {
+// Subtitle font px on canvas. cfg.fontsize is the libass-style nominal
+// value; actual rendered glyph in the output is ~4.7× that (PlayResX
+// scaling). Translate to source/canvas pixels by `ch / target_h`.
+function subtitleFontPx(configSize) {
   const { ch } = cropBox();
-  return Math.max(8, configSize * (ch / REF_OUTPUT_HEIGHT) * PREVIEW_FONT_BOOST);
+  const { th } = targetDims();
+  return Math.max(8, configSize * ASS_RENDER_SCALE * (ch / th));
+}
+
+// Hook/outro/watermark font px on canvas. ffmpeg drawtext uses real
+// output pixels (no PlayResX scaling), so just `ch / target_h`.
+function drawtextFontPx(configSize) {
+  const { ch } = cropBox();
+  const { th } = targetDims();
+  return Math.max(8, configSize * (ch / th));
 }
 
 function drawSubtitles() {
@@ -225,7 +273,7 @@ function drawSubtitles() {
   // Vertical position of the BOTTOM-most subtitle line baseline
   let baseY;
   if (sub.position === "top") {
-    baseY = oy + ch * 0.10 + fontPx(lines[0].fontsize);
+    baseY = oy + ch * 0.10 + subtitleFontPx(lines[0].fontsize);
   } else if (sub.position === "middle") {
     baseY = oy + ch * 0.50;
   } else {
@@ -237,14 +285,14 @@ function drawSubtitles() {
   // upper one, the second is below it.
   const lineSpacing = 1.25;
   // Compute total stacked height to anchor by the chosen position
-  const totalH = lines.reduce((acc, l) => acc + fontPx(l.fontsize) * lineSpacing, 0);
+  const totalH = lines.reduce((acc, l) => acc + subtitleFontPx(l.fontsize) * lineSpacing, 0);
   let y;
-  if (sub.position === "top") y = oy + ch * 0.10 + fontPx(lines[0].fontsize);
-  else if (sub.position === "middle") y = oy + ch * 0.50 - totalH / 2 + fontPx(lines[0].fontsize);
-  else y = oy + ch * 0.92 - totalH + fontPx(lines[0].fontsize);
+  if (sub.position === "top") y = oy + ch * 0.10 + subtitleFontPx(lines[0].fontsize);
+  else if (sub.position === "middle") y = oy + ch * 0.50 - totalH / 2 + subtitleFontPx(lines[0].fontsize);
+  else y = oy + ch * 0.92 - totalH + subtitleFontPx(lines[0].fontsize);
 
   for (const line of lines) {
-    const px = fontPx(line.fontsize);
+    const px = subtitleFontPx(line.fontsize);
     const weight = line.bold ? "bold " : "";
     ctx.font = `${weight}${px}px sans-serif`;
     ctx.textAlign = "center";
@@ -262,6 +310,84 @@ function drawSubtitles() {
   }
 }
 
+function _hoYForPosition(pos, oy, ch, textHeight) {
+  // Mirror _y_expr_for_position in Python — but here we resolve to a
+  // concrete pixel y for canvas drawing within the crop region.
+  switch (pos) {
+    case "top":          return oy + ch * 0.08;
+    case "upper-third":  return oy + ch * 0.25;
+    case "center":       return oy + ch * 0.50 - textHeight * 0.35;
+    case "lower-third":  return oy + ch * 0.65;
+    case "bottom":       return oy + ch * 0.85 - textHeight * 0.7;
+    default:             return oy + ch * 0.25;
+  }
+}
+
+function drawHookOutro() {
+  const ho = styleState.hookOutro;
+  if (!ho) return;
+  const { ox, oy, cw, ch } = cropBox();
+
+  // Decide which (if any) text to render based on the live playhead. We
+  // sit inside the source video's timeline, so the hook window is
+  // [clipStart, clipStart + hook_duration_sec] and the outro window is
+  // [clipEnd - outro_duration_sec, clipEnd]. When both windows are zero
+  // (no clip loaded) we render nothing.
+  const t = vid.currentTime || 0;
+  let text = "";
+  let position = ho.hook_position;
+  if (clipStart > 0 || clipEnd > 0) {
+    const hookEnd  = clipStart + (ho.hook_duration_sec  || 0);
+    const outroStart = clipEnd - (ho.outro_duration_sec || 0);
+    if (clipMeta.hook && t >= clipStart && t < hookEnd) {
+      text = clipMeta.hook;
+      position = ho.hook_position;
+    } else if (clipMeta.outro && t >= outroStart && t <= clipEnd) {
+      text = clipMeta.outro;
+      position = ho.outro_position;
+    }
+  } else {
+    // No clip range yet — show hook as a static layout placeholder so
+    // user can iterate on style.
+    if (clipMeta.hook) { text = clipMeta.hook; position = ho.hook_position; }
+  }
+  if (!text) return;
+
+  const px = drawtextFontPx(ho.size);
+  ctx.font = `bold ${px}px sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+
+  const textWidth = ctx.measureText(text).width;
+  const textHeight = px;  // approx; works visually
+  const cx = ox + cw / 2;
+  const baselineY = _hoYForPosition(position, oy, ch, textHeight) + textHeight;
+
+  // Optional background box
+  const bgOpacity = (ho.bg_opacity || 0) / 100.0;
+  if (bgOpacity > 0) {
+    const padding = (ho.box_padding || 10) * (px / 24);
+    const boxX = cx - textWidth / 2 - padding;
+    const boxY = baselineY - textHeight - padding;
+    const boxW = textWidth + padding * 2;
+    const boxH = textHeight + padding * 1.6;
+    ctx.fillStyle = ho.bg_color || "#000";
+    ctx.globalAlpha = bgOpacity;
+    ctx.fillRect(boxX, boxY, boxW, boxH);
+    ctx.globalAlpha = 1;
+  }
+
+  // Stroke + fill
+  if ((ho.stroke_width || 0) > 0) {
+    ctx.strokeStyle = ho.stroke_color || "#000";
+    ctx.lineWidth = ho.stroke_width * (px / 24);
+    ctx.lineJoin = "round";
+    ctx.strokeText(text, cx, baselineY);
+  }
+  ctx.fillStyle = ho.color || "#FFF";
+  ctx.fillText(text, cx, baselineY);
+}
+
 function drawWatermark() {
   const wm = styleState.watermark;
   if (!wm || !wm.enabled) return;
@@ -271,7 +397,7 @@ function drawWatermark() {
   const bottom = wm.position && wm.position.startsWith("bottom");
 
   if (wm.type === "text") {
-    const px = fontPx(wm.text_fontsize || 36);
+    const px = drawtextFontPx(wm.text_fontsize || 36);
     ctx.font = `bold ${px}px sans-serif`;
     ctx.textAlign = right ? "right" : "left";
     ctx.textBaseline = bottom ? "bottom" : "top";
@@ -387,6 +513,10 @@ vid.addEventListener('timeupdate', () => {
   } else if (clipStart > 0 && vid.currentTime < clipStart) {
     vid.currentTime = clipStart;
   }
+  // Re-draw so hook/outro show/hide tracks the playhead smoothly
+  // (browsers fire timeupdate ~4x/sec — same cadence as our setInterval
+  // fallback, but actually pegged to the video clock).
+  drawOverlay();
 });
 
 window.addEventListener('resize', drawOverlay);

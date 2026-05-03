@@ -118,6 +118,16 @@ class PreviewPane(tk.Frame):
             return
         self._send(f"vc.setAspect({int(w_ratio)}, {int(h_ratio)})")
 
+    def push_clip_meta(self, clip: ClipDraft) -> None:
+        """Push the clip's hook/outro text to the HTML preview without
+        re-loading the video. Called when the user types in PackageForm."""
+        if not self._page_loaded or clip is None:
+            return
+        meta = json.dumps({"hook":  clip.hook  or "",
+                            "outro": clip.outro or ""},
+                           ensure_ascii=False)
+        self._send(f"vc.setClipMeta({meta})")
+
     def push_style(self, style_dict: dict) -> None:
         """Push subtitle/watermark style to the HTML preview.
 
@@ -181,6 +191,11 @@ class PreviewPane(tk.Frame):
         # Crop rect: existing dict or null → JS centers
         crop_arg = "null" if not clip.crop_rect else json.dumps(clip.crop_rect)
         self._send(f"vc.setCrop({crop_arg})")
+        # Hook / outro text — pushed per-clip; style stays project-level
+        meta = json.dumps({"hook":  clip.hook  or "",
+                            "outro": clip.outro or ""},
+                           ensure_ascii=False)
+        self._send(f"vc.setClipMeta({meta})")
 
     def _send(self, code: str) -> None:
         try:

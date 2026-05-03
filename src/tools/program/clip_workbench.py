@@ -150,9 +150,21 @@ class ClipWorkbenchApp(ToolBase):
     def _build_tab_project(self) -> None:
         f = self._tab_project
 
-        # Scrollable container — output-style form gets long.
-        canvas = tk.Canvas(f, highlightthickness=0)
-        sb = ttk.Scrollbar(f, orient="vertical", command=canvas.yview)
+        # Vertical split: form on top (scrollable, since it's long), preview
+        # on bottom (large + always visible). User can drag the divider to
+        # rebalance — bigger preview when iterating on style, more form
+        # space when editing many fields at once.
+        pw = ttk.PanedWindow(f, orient="vertical")
+        pw.pack(fill="both", expand=True)
+
+        form_pane = ttk.Frame(pw)
+        preview_pane = ttk.Frame(pw)
+        pw.add(form_pane, weight=3)
+        pw.add(preview_pane, weight=2)
+
+        # Scrollable container for the form — output-style fields are long.
+        canvas = tk.Canvas(form_pane, highlightthickness=0)
+        sb = ttk.Scrollbar(form_pane, orient="vertical", command=canvas.yview)
         inner = ttk.Frame(canvas)
         inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
         canvas.configure(yscrollcommand=sb.set)
@@ -163,6 +175,10 @@ class ClipWorkbenchApp(ToolBase):
                        scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>",
                     lambda e: canvas.itemconfigure(inner_id, width=e.width))
+
+        # Stash the preview pane parent so _build_output_style_form can put
+        # the preview row down there instead of inside the form.
+        self._project_preview_pane = preview_pane
 
         # Cut row
         cut_box = ttk.LabelFrame(inner, text=_tr("tool.clip.section_cut"))
@@ -237,13 +253,15 @@ class ClipWorkbenchApp(ToolBase):
                    command=self._on_preset_delete).pack(side="left", padx=2)
         self._refresh_preset_combo()
 
-        # ── Preview row (image + mode selector) ──
-        preview_row = ttk.Frame(outer)
-        preview_row.pack(fill="x", padx=6, pady=(2, 6))
-        # Fixed-size container so layout is stable as aspect changes.
+        # ── Preview row goes into the dedicated bottom pane (built in
+        # _build_tab_project) so the form above can scroll independently
+        # while the preview stays visible.
+        preview_pane = getattr(self, "_project_preview_pane", outer)
+        preview_row = ttk.Frame(preview_pane)
+        preview_row.pack(fill="both", expand=True, padx=6, pady=6)
         self._preview_label = tk.Label(
-            preview_row, background="#222", width=300, height=240)
-        self._preview_label.pack(side="left", padx=(0, 12))
+            preview_row, background="#222", width=420, height=480, anchor="center")
+        self._preview_label.pack(side="left", padx=(0, 12), fill="both", expand=True)
         side = ttk.Frame(preview_row)
         side.pack(side="left", anchor="n", pady=4)
         ttk.Label(side,
@@ -913,7 +931,7 @@ class ClipWorkbenchApp(ToolBase):
 
     # ── Output-style preview ──────────────────────────────────────────────
 
-    _PREVIEW_HEIGHT = 240
+    _PREVIEW_HEIGHT = 480
     _PREVIEW_DEBOUNCE_MS = 200
 
     def _resolve_preview_source(self) -> "Image.Image | None":
@@ -1039,6 +1057,19 @@ class ClipWorkbenchApp(ToolBase):
                 "image_scale": wm.image_scale,
                 "image_opacity": wm.image_opacity,
                 "position": wm.position,
+            },
+            "hookOutro": {
+                "size":               cfg.hook_outro.size,
+                "color":              cfg.hook_outro.color,
+                "bg_color":           cfg.hook_outro.bg_color,
+                "bg_opacity":         cfg.hook_outro.bg_opacity,
+                "stroke_color":       cfg.hook_outro.stroke_color,
+                "stroke_width":       cfg.hook_outro.stroke_width,
+                "box_padding":        cfg.hook_outro.box_padding,
+                "hook_position":      cfg.hook_outro.hook_position,
+                "outro_position":     cfg.hook_outro.outro_position,
+                "hook_duration_sec":  cfg.hook_outro.hook_duration_sec,
+                "outro_duration_sec": cfg.hook_outro.outro_duration_sec,
             },
         }
 
@@ -1796,6 +1827,13 @@ class ClipWorkbenchApp(ToolBase):
         # avoid widget churn on every keystroke.
         self._refresh_export_summary()
         self._autosave()
+        # Live-update WebView preview's hook/outro text as the user types
+        # in the PackageForm.
+        if hasattr(self, "_preview") and self._preview.winfo_exists():
+            try:
+                self._preview.push_clip_meta(clip)
+            except Exception:
+                pass
 
     def _on_preview_crop_changed(self, clip: ClipDraft, _rect: dict) -> None:
         self._autosave()
