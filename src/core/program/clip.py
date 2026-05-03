@@ -1298,15 +1298,70 @@ def find_peaks(pack: dict, chapter_idx: int, cues: list["_srt.Subtitle"],
     return out
 
 
+def _build_package_context_block(clip: ClipDraft, pack: dict,
+                                   project_config: "ClipProjectConfig | None"
+                                   ) -> str:
+    """Render the {context_block} that clip.package.md expects.
+
+    Pulls from project background (who/where/audience/tone), pack
+    metadata (episode title) and clip metadata (chapter title, position
+    within episode). Empty fields are skipped — we don't want the prompt
+    to read "Host: " with a blank value.
+    """
+    lines: list[str] = []
+
+    def _row(label: str, value: str) -> None:
+        v = (value or "").strip()
+        if v:
+            lines.append(f"- **{label}**: {v}")
+
+    bg = project_config.background if project_config else None
+    if bg is not None:
+        _row("节目类型 Show type",     bg.show_type)
+        _row("主讲人 Host",             bg.host)
+        _row("主讲人身份 Host bio",     bg.host_bio)
+        _row("其他出场人 Guests",       bg.guests)
+        _row("目标观众 Audience",       bg.audience)
+        _row("整集主题 Episode topic",  bg.episode_topic)
+        _row("平台基调 Platform tone",  bg.platform_tone)
+        _row("备注 / 避雷词 Notes",     bg.notes)
+
+    # Episode title from pack (a separate signal — pack.title is the
+    # YouTube/source title; bg.episode_topic is what the user typed,
+    # they may differ).
+    pack_title = ""
+    if isinstance(pack, dict):
+        pack_title = str(pack.get("title") or pack.get("video_title")
+                          or "").strip()
+    if pack_title and pack_title != (bg.episode_topic if bg else ""):
+        _row("原片标题 Source title", pack_title)
+
+    # Clip-level: chapter + position.
+    if clip.chapter_title:
+        _row("所属章节 Chapter", clip.chapter_title)
+    segs = pack.get("segments") if isinstance(pack, dict) else None
+    if isinstance(segs, list) and segs and clip.chapter_idx >= 0:
+        _row("切片位置 Position",
+              f"第 {clip.chapter_idx + 1} / {len(segs)} 章 节选")
+
+    if not lines:
+        return "_（暂无背景信息——请仅基于字幕原文生成，并尽量避免泛化）_"
+    return "\n".join(lines)
+
+
 def package_clip(clip: ClipDraft, pack: dict, *,
+                  project_config: "ClipProjectConfig | None" = None,
                   cancel_token=None) -> dict:
     """Generate hook / outro / title / hashtags for one clip.
     Returns {hook, outro, title, hashtags}."""
     from core import prompts as _prompts
     from core.ai.tiers import TIER_PREMIUM
 
+    context_block = _build_package_context_block(clip, pack, project_config)
     template = _prompts.get("clip.package")
-    prompt = template.replace("{clip_excerpt}", clip.original_excerpt or "")
+    prompt = (template
+               .replace("{context_block}", context_block)
+               .replace("{clip_excerpt}", clip.original_excerpt or ""))
     result = _ai_call_json(prompt, schema=PACKAGE_SCHEMA,
                             task="clip.package", tier=TIER_PREMIUM,
                             cancel_token=cancel_token)

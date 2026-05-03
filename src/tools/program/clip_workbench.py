@@ -2565,6 +2565,7 @@ class ClipWorkbenchApp(ToolBase):
     def _make_pkg_worker(self, clip: ClipDraft):
         def worker(token, c=clip):
             return cliplib.package_clip(c, self._pack or {},
+                                          project_config=self._project_config,
                                           cancel_token=token)
         return worker
 
@@ -2672,6 +2673,7 @@ class ClipWorkbenchApp(ToolBase):
                 break
             try:
                 pkg = cliplib.package_clip(c, self._pack,
+                                            project_config=self._project_config,
                                             cancel_token=token)
                 c.hook  = pkg.get("hook",  "") or ""
                 c.outro = pkg.get("outro", "") or ""
