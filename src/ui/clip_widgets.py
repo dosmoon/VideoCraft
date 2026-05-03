@@ -63,6 +63,7 @@ class PreviewPane(tk.Frame):
         self._page_loaded = False
         self._pending_aspect: tuple[int, int] | None = None
         self._pending_bind: tuple[ClipDraft, str] | None = None
+        self._pending_style: dict | None = None
 
         # Top: WebView preview
         initial_url = "file:///" + _CLIP_HTML.replace("\\", "/")
@@ -117,6 +118,29 @@ class PreviewPane(tk.Frame):
             return
         self._send(f"vc.setAspect({int(w_ratio)}, {int(h_ratio)})")
 
+    def push_style(self, style_dict: dict) -> None:
+        """Push subtitle/watermark style to the HTML preview.
+
+        style_dict mirrors the relevant subset of ClipProjectConfig:
+          {"subtitle": {position, stroke_color, stroke_width,
+                        sub1: {enabled, fontsize, color, bold, text},
+                        sub2: {...}},
+           "watermark": {enabled, type, text, text_fontsize,
+                         text_color, text_opacity, image_scale,
+                         image_opacity, position}}
+
+        If the page hasn't loaded yet, the latest style is buffered and
+        replayed on load.
+        """
+        self._pending_style = dict(style_dict or {})
+        if not self._page_loaded:
+            return
+        try:
+            payload = json.dumps(style_dict, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return
+        self._send(f"vc.setStyle({payload})")
+
     def destroy(self) -> None:
         # WebPreviewFrame.destroy() shuts down the child process.
         try:
@@ -133,6 +157,8 @@ class PreviewPane(tk.Frame):
             w, h = self._pending_aspect
             self._send(f"vc.setAspect({w}, {h})")
             self._pending_aspect = None
+        if self._pending_style is not None:
+            self.push_style(self._pending_style)
         if self._pending_bind is not None:
             clip, video_path = self._pending_bind
             self._pending_bind = None

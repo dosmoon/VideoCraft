@@ -43,6 +43,32 @@ let aspectRatio = 9 / 16;        // width / height of crop rect in source pixels
 let clipStart = 0, clipEnd = 0;  // playback bounds within the source video
 let vSrcW = 0, vSrcH = 0;        // source video pixel size (set on metadata)
 
+// Style state mirrors ClipProjectConfig schema. Sent from Python via
+// vc.setStyle(...). Used by drawSubtitles / drawWatermark to render
+// placeholder text inside the crop region — purely a layout preview.
+let styleState = {
+  subtitle: {
+    position: "bottom",
+    stroke_color: "#000000",
+    stroke_width: 2,
+    sub1: { enabled: true, fontsize: 24, color: "#FFFF00", bold: true,
+            text: "字幕预览第一行 sub1" },
+    sub2: { enabled: false, fontsize: 24, color: "#FFFFFF", bold: false,
+            text: "subtitle preview line 2" },
+  },
+  watermark: {
+    enabled: false, type: "text", text: "@channel",
+    text_fontsize: 36, text_color: "#FFFFFF", text_opacity: 70,
+    image_scale: 0.15, image_opacity: 100,
+    position: "top-right",
+  },
+};
+
+// Reference output height in pixels — used to scale config fontsizes
+// (which are authored against e.g. 1080p output) into the canvas's source
+// pixel space. The crop region maps to the output frame height.
+const REF_OUTPUT_HEIGHT = 1080;
+
 // ── public JS API (called from Python via evaluate_js) ──────────────────
 
 window.vc = {
@@ -72,6 +98,13 @@ window.vc = {
       resetCropCenter();
     } else {
       rect = { x: r.x, y: r.y, w: r.w, h: r.h };
+    }
+    drawOverlay();
+  },
+  setStyle(s) {
+    if (s && typeof s === 'object') {
+      if (s.subtitle)  styleState.subtitle  = Object.assign({}, styleState.subtitle,  s.subtitle);
+      if (s.watermark) styleState.watermark = Object.assign({}, styleState.watermark, s.watermark);
     }
     drawOverlay();
   },
@@ -157,6 +190,120 @@ function drawOverlay() {
   ctx.moveTo(rect.x*vSrcW, (rect.y+rect.h/2)*vSrcH);
   ctx.lineTo((rect.x+rect.w)*vSrcW, (rect.y+rect.h/2)*vSrcH);
   ctx.stroke();
+  // Subtitles + watermark live INSIDE the crop region (they get burned
+  // into the output frame, which is the cropped + scaled view).
+  drawSubtitles();
+  drawWatermark();
+}
+
+function cropBox() {
+  return {
+    ox: rect.x * vSrcW, oy: rect.y * vSrcH,
+    cw: rect.w * vSrcW, ch: rect.h * vSrcH,
+  };
+}
+
+// Convert config fontsize (authored vs REF_OUTPUT_HEIGHT) to canvas pixels.
+// 4x boost matches the static preview convention (clip_render.py) — the
+// preview is shrunk into a small pane, exaggerating fontsize keeps layout
+// intent visible. Not pixel-accurate vs the final burn output.
+const PREVIEW_FONT_BOOST = 4;
+function fontPx(configSize) {
+  const { ch } = cropBox();
+  return Math.max(8, configSize * (ch / REF_OUTPUT_HEIGHT) * PREVIEW_FONT_BOOST);
+}
+
+function drawSubtitles() {
+  const sub = styleState.subtitle;
+  if (!sub) return;
+  const { ox, oy, cw, ch } = cropBox();
+  const lines = [];
+  if (sub.sub1 && sub.sub1.enabled) lines.push(sub.sub1);
+  if (sub.sub2 && sub.sub2.enabled) lines.push(sub.sub2);
+  if (lines.length === 0) return;
+
+  // Vertical position of the BOTTOM-most subtitle line baseline
+  let baseY;
+  if (sub.position === "top") {
+    baseY = oy + ch * 0.10 + fontPx(lines[0].fontsize);
+  } else if (sub.position === "middle") {
+    baseY = oy + ch * 0.50;
+  } else {
+    baseY = oy + ch * 0.92;
+  }
+
+  // Stack from bottom up: lines[0] above lines[1] would feel wrong; per
+  // burn convention sub1 is above sub2. So the first declared line is the
+  // upper one, the second is below it.
+  const lineSpacing = 1.25;
+  // Compute total stacked height to anchor by the chosen position
+  const totalH = lines.reduce((acc, l) => acc + fontPx(l.fontsize) * lineSpacing, 0);
+  let y;
+  if (sub.position === "top") y = oy + ch * 0.10 + fontPx(lines[0].fontsize);
+  else if (sub.position === "middle") y = oy + ch * 0.50 - totalH / 2 + fontPx(lines[0].fontsize);
+  else y = oy + ch * 0.92 - totalH + fontPx(lines[0].fontsize);
+
+  for (const line of lines) {
+    const px = fontPx(line.fontsize);
+    const weight = line.bold ? "bold " : "";
+    ctx.font = `${weight}${px}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    // Stroke
+    if (sub.stroke_width > 0) {
+      ctx.strokeStyle = sub.stroke_color || "#000";
+      ctx.lineWidth = (sub.stroke_width || 2) * (px / 24);
+      ctx.lineJoin = "round";
+      ctx.strokeText(line.text || "", ox + cw / 2, y);
+    }
+    ctx.fillStyle = line.color || "#FFF";
+    ctx.fillText(line.text || "", ox + cw / 2, y);
+    y += px * lineSpacing;
+  }
+}
+
+function drawWatermark() {
+  const wm = styleState.watermark;
+  if (!wm || !wm.enabled) return;
+  const { ox, oy, cw, ch } = cropBox();
+  const margin = Math.max(10, cw * 0.025);
+  const right  = wm.position && wm.position.endsWith("right");
+  const bottom = wm.position && wm.position.startsWith("bottom");
+
+  if (wm.type === "text") {
+    const px = fontPx(wm.text_fontsize || 36);
+    ctx.font = `bold ${px}px sans-serif`;
+    ctx.textAlign = right ? "right" : "left";
+    ctx.textBaseline = bottom ? "bottom" : "top";
+    const tx = right ? (ox + cw - margin) : (ox + margin);
+    const ty = bottom ? (oy + ch - margin) : (oy + margin);
+    ctx.globalAlpha = (wm.text_opacity != null ? wm.text_opacity : 70) / 100;
+    // Text shadow for visibility against any background
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.fillText(wm.text || "@channel", tx + 2, ty + 2);
+    ctx.fillStyle = wm.text_color || "#FFFFFF";
+    ctx.fillText(wm.text || "@channel", tx, ty);
+    ctx.globalAlpha = 1;
+  } else {
+    // Image watermark — draw a placeholder box (we don't load the image
+    // here, just show where it would land and how big it would be).
+    const ww = (wm.image_scale || 0.15) * cw;
+    const wh = ww * 0.6;  // arbitrary aspect for placeholder
+    const wx = right  ? (ox + cw - margin - ww) : (ox + margin);
+    const wy = bottom ? (oy + ch - margin - wh) : (oy + margin);
+    ctx.globalAlpha = (wm.image_opacity != null ? wm.image_opacity : 100) / 100;
+    ctx.fillStyle = "rgba(255,255,255,0.20)";
+    ctx.fillRect(wx, wy, ww, wh);
+    ctx.strokeStyle = "rgba(255,255,255,0.65)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(wx, wy, ww, wh);
+    ctx.fillStyle = "rgba(255,255,255,0.80)";
+    ctx.font = `${Math.max(12, ww*0.10)}px sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("LOGO", wx + ww/2, wy + wh/2);
+    ctx.globalAlpha = 1;
+  }
 }
 
 // ── interaction ──────────────────────────────────────────────────────────

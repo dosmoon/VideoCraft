@@ -688,6 +688,8 @@ class ClipWorkbenchApp(ToolBase):
             _tr("tool.clip.subtitle_auto_max").format(n1=n1, n2=n2))
 
     def _sync_encode_from_form(self) -> None:
+        if self._suspend_autosave:
+            return
         try:
             self._project_config.encode_preset = self._encode_preset_var.get()
         except tk.TclError:
@@ -695,6 +697,12 @@ class ClipWorkbenchApp(ToolBase):
         self._autosave()
 
     def _sync_subtitle_from_form(self) -> None:
+        # Refusing to mutate project_config while we're driving the form
+        # FROM project_config (during _refresh_form_from_config). Otherwise
+        # an early-fired trace overwrites cfg using stale values from vars
+        # that haven't been re-populated yet — the sub2.enabled bug.
+        if self._suspend_autosave:
+            return
         s = self._project_config.subtitle
         try:
             auto = bool(self._sub_auto_max_var.get())
@@ -722,6 +730,8 @@ class ClipWorkbenchApp(ToolBase):
         self._schedule_preview_render()
 
     def _sync_watermark_from_form(self) -> None:
+        if self._suspend_autosave:
+            return
         w = self._project_config.watermark
         try:
             w.enabled = bool(self._wm_enabled_var.get())
@@ -740,6 +750,8 @@ class ClipWorkbenchApp(ToolBase):
         self._schedule_preview_render()
 
     def _sync_hook_outro_from_form(self) -> None:
+        if self._suspend_autosave:
+            return
         h = self._project_config.hook_outro
         try:
             h.font = self._ho_font_var.get()
@@ -755,6 +767,8 @@ class ClipWorkbenchApp(ToolBase):
         self._schedule_preview_render()
 
     def _sync_bgm_from_form(self) -> None:
+        if self._suspend_autosave:
+            return
         b = self._project_config.bgm
         try:
             b.path = self._bgm_path_var.get()
@@ -900,6 +914,56 @@ class ClipWorkbenchApp(ToolBase):
                 width=img.size[0], height=img.size[1])
         except tk.TclError:
             return
+        # Mirror style updates to the live WebView preview when it's open.
+        if hasattr(self, "_preview") and self._preview.winfo_exists():
+            try:
+                self._preview.push_style(self._build_web_style_dict())
+            except Exception as exc:
+                logger.error(f"[切片稿] push_style 失败：{type(exc).__name__}: {exc}")
+
+    def _build_web_style_dict(self) -> dict:
+        """Translate ClipProjectConfig into the JSON shape expected by
+        web_preview_clip.html's vc.setStyle(). Placeholder text is used —
+        D.2-mini is a layout preview, not real subtitle content."""
+        cfg = self._project_config
+        sub = cfg.subtitle
+        wm = cfg.watermark
+        return {
+            "subtitle": {
+                "position": sub.position,
+                "stroke_color": sub.stroke_color,
+                "stroke_width": sub.stroke_width,
+                "sub1": {
+                    "enabled": sub.sub1.enabled,
+                    "fontsize": sub.sub1.fontsize,
+                    "color": sub.sub1.color,
+                    "bold": sub.sub1.bold,
+                    "text": ("字幕预览第一行 sub1"
+                             if sub.sub1.is_chinese
+                             else "Subtitle preview line 1"),
+                },
+                "sub2": {
+                    "enabled": sub.sub2.enabled,
+                    "fontsize": sub.sub2.fontsize,
+                    "color": sub.sub2.color,
+                    "bold": sub.sub2.bold,
+                    "text": ("字幕预览第二行 sub2"
+                             if sub.sub2.is_chinese
+                             else "Subtitle preview line 2"),
+                },
+            },
+            "watermark": {
+                "enabled": wm.enabled,
+                "type": wm.type,
+                "text": wm.text or "@channel",
+                "text_fontsize": wm.text_fontsize,
+                "text_color": wm.text_color,
+                "text_opacity": wm.text_opacity,
+                "image_scale": wm.image_scale,
+                "image_opacity": wm.image_opacity,
+                "position": wm.position,
+            },
+        }
 
     # ── Preset handlers ───────────────────────────────────────────────────
 
@@ -1469,6 +1533,7 @@ class ClipWorkbenchApp(ToolBase):
         self._preview = PreviewPane(
             prev_holder, on_change=self._on_preview_crop_changed)
         self._preview.set_aspect_ratio(*self._project_config.aspect_ratio())
+        self._preview.push_style(self._build_web_style_dict())
         self._preview.bind_clip(clip,
                                   video_path=self._video_path,
                                   video_w=self._video_w,

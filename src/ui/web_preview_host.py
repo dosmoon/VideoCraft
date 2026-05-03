@@ -27,6 +27,16 @@ import json
 import sys
 import threading
 
+# Force UTF-8 for stdin/stdout regardless of Windows console code page —
+# the parent sends JSON with ensure_ascii=False (may contain CJK), and a
+# default GBK decode would silently mojibake the JSON payload, breaking
+# evaluate_js calls without raising.
+try:
+    sys.stdin.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 import webview
 
 
