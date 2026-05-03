@@ -152,3 +152,6 @@ DeepL.key
 # User data (per-install state: settings, layout, recent projects, presets, autosave)
 user_data/
 
+
+# WebView2 user data (Edge profile created during preview embed)
+.webview_userdata/
