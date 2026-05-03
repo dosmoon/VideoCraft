@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>VideoCraft – clip preview</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #1a1a1a; color: #ddd;
+               font-family: -apple-system, "Segoe UI", sans-serif;
+               overflow: hidden; height: 100%; }
+  .stage { position: relative; width: 100%; height: 100%;
+           background: black; display: flex; flex-direction: column; }
+  .video-wrap { position: relative; flex: 1; min-height: 0;
+                display: flex; align-items: center; justify-content: center; }
+  video { max-width: 100%; max-height: 100%; display: block; background: #000; }
+  canvas { position: absolute; pointer-events: none;
+           cursor: grab; }
+  canvas.draggable { pointer-events: auto; }
+  .empty { color: #666; font-size: 14px; }
+  .err { position: absolute; left: 8px; top: 8px;
+         background: rgba(180,30,30,0.85); color: #fff;
+         padding: 4px 8px; font: 12px Consolas, monospace; }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="video-wrap" id="vwrap">
+    <video id="vid" controls playsinline></video>
+    <canvas id="canvas"></canvas>
+  </div>
+  <div class="empty" id="emptyMsg" style="display:none">no clip loaded</div>
+</div>
+
+<script>
+const vid    = document.getElementById('vid');
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+const stage  = document.getElementById('stage');
+const empty  = document.getElementById('emptyMsg');
+
+// Crop rect in normalized [0..1] coords. {x,y,w,h}
+let rect = { x: 0, y: 0, w: 1, h: 1 };
+let aspectRatio = 9 / 16;        // width / height of crop rect in source pixels
+let clipStart = 0, clipEnd = 0;  // playback bounds within the source video
+let vSrcW = 0, vSrcH = 0;        // source video pixel size (set on metadata)
+
+// ── public JS API (called from Python via evaluate_js) ──────────────────
+
+window.vc = {
+  setSource(url, startSec, endSec) {
+    if (vid.src !== url) {
+      vid.src = url;
+    }
+    clipStart = startSec || 0;
+    clipEnd   = endSec   || 0;
+    vid.currentTime = clipStart;
+  },
+  setClipRange(startSec, endSec) {
+    clipStart = startSec || 0;
+    clipEnd   = endSec   || 0;
+    if (vid.currentTime < clipStart || vid.currentTime > clipEnd) {
+      vid.currentTime = clipStart;
+    }
+  },
+  setAspect(w, h) {
+    aspectRatio = (w && h) ? (w / h) : (9 / 16);
+    fitRectToAspect();
+    drawOverlay();
+  },
+  setCrop(r) {
+    if (!r || r.w == null || r.h == null) {
+      // null → reset to centered max-fit at current aspect
+      resetCropCenter();
+    } else {
+      rect = { x: r.x, y: r.y, w: r.w, h: r.h };
+    }
+    drawOverlay();
+  },
+  clear() {
+    vid.removeAttribute('src');
+    vid.load();
+    empty.style.display = '';
+  },
+};
+
+// ── crop math ────────────────────────────────────────────────────────────
+
+function fitRectToAspect() {
+  if (!vSrcW || !vSrcH) return;
+  // Largest centered crop at aspectRatio that fits the source.
+  const cur = vSrcW / vSrcH;
+  if (cur > aspectRatio) {
+    const newW = vSrcH * aspectRatio;
+    rect = { x: (vSrcW - newW) / 2 / vSrcW, y: 0, w: newW / vSrcW, h: 1 };
+  } else {
+    const newH = vSrcW / aspectRatio;
+    rect = { x: 0, y: (vSrcH - newH) / 2 / vSrcH, w: 1, h: newH / vSrcH };
+  }
+}
+
+function resetCropCenter() { fitRectToAspect(); }
+
+function clampRect() {
+  // Keep aspect, keep within [0,1]^2.
+  if (!vSrcW || !vSrcH) return;
+  // Re-derive w,h from aspect anchored at current center, fit to source.
+  // Width-led:
+  let w = rect.w;
+  let h = (w * vSrcW) / aspectRatio / vSrcH;
+  if (h > 1) {
+    h = 1;
+    w = (h * vSrcH * aspectRatio) / vSrcW;
+  }
+  rect.w = w;
+  rect.h = h;
+  rect.x = Math.max(0, Math.min(1 - rect.w, rect.x));
+  rect.y = Math.max(0, Math.min(1 - rect.h, rect.y));
+}
+
+// ── canvas overlay sizing & drawing ──────────────────────────────────────
+
+function syncCanvasToVideo() {
+  // Place the canvas exactly over the rendered <video> rect (which letter-
+  // boxes inside vwrap because of object-fit semantics).
+  const wrapR = document.getElementById('vwrap').getBoundingClientRect();
+  const vidR  = vid.getBoundingClientRect();
+  // Position canvas relative to wrap
+  canvas.style.left   = (vidR.left - wrapR.left) + 'px';
+  canvas.style.top    = (vidR.top  - wrapR.top)  + 'px';
+  canvas.style.width  = vidR.width  + 'px';
+  canvas.style.height = vidR.height + 'px';
+  // Set bitmap size to source pixels for crisp lines
+  if (vSrcW && vSrcH) {
+    if (canvas.width !== vSrcW)  canvas.width  = vSrcW;
+    if (canvas.height !== vSrcH) canvas.height = vSrcH;
+  }
+}
+
+function drawOverlay() {
+  syncCanvasToVideo();
+  if (!vSrcW || !vSrcH) return;
+  clampRect();
+  ctx.clearRect(0, 0, vSrcW, vSrcH);
+  // Dim outside
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, 0, vSrcW, vSrcH);
+  ctx.clearRect(rect.x*vSrcW, rect.y*vSrcH, rect.w*vSrcW, rect.h*vSrcH);
+  // Border
+  ctx.strokeStyle = '#00ff88';
+  ctx.lineWidth   = Math.max(2, vSrcW / 480);
+  ctx.strokeRect(rect.x*vSrcW, rect.y*vSrcH, rect.w*vSrcW, rect.h*vSrcH);
+  // Crosshair
+  ctx.strokeStyle = 'rgba(0,255,136,0.4)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo((rect.x+rect.w/2)*vSrcW, rect.y*vSrcH);
+  ctx.lineTo((rect.x+rect.w/2)*vSrcW, (rect.y+rect.h)*vSrcH);
+  ctx.moveTo(rect.x*vSrcW, (rect.y+rect.h/2)*vSrcH);
+  ctx.lineTo((rect.x+rect.w)*vSrcW, (rect.y+rect.h/2)*vSrcH);
+  ctx.stroke();
+}
+
+// ── interaction ──────────────────────────────────────────────────────────
+
+function pointInRect(nx, ny) {
+  return nx >= rect.x && nx <= rect.x+rect.w
+      && ny >= rect.y && ny <= rect.y+rect.h;
+}
+
+// Native <video controls> reserves ~50px at the bottom for the transport
+// bar (play/pause/seek/volume). Don't capture pointer events in that strip
+// even when the crop rect covers it, otherwise the buttons are unclickable.
+const CONTROLS_RESERVE_PX = 50;
+
+function isInControlsStrip(clientY, rect) {
+  return (clientY - rect.top) > (rect.height - CONTROLS_RESERVE_PX);
+}
+
+stage.addEventListener('mousemove', e => {
+  // Translate cursor to normalized video coords
+  const r = canvas.getBoundingClientRect();
+  if (r.width <= 0 || r.height <= 0) return;
+  const nx = (e.clientX - r.left) / r.width;
+  const ny = (e.clientY - r.top)  / r.height;
+  const inControls = isInControlsStrip(e.clientY, r);
+  if (!inControls && (dragging || pointInRect(nx, ny))) {
+    canvas.classList.add('draggable');
+  } else {
+    canvas.classList.remove('draggable');
+  }
+});
+
+let dragging = false, dragOff = {x:0, y:0};
+canvas.addEventListener('mousedown', e => {
+  const r = canvas.getBoundingClientRect();
+  const nx = (e.clientX - r.left) / r.width;
+  const ny = (e.clientY - r.top)  / r.height;
+  if (isInControlsStrip(e.clientY, r)) return;
+  if (pointInRect(nx, ny)) {
+    dragging = true;
+    dragOff = { x: nx - rect.x, y: ny - rect.y };
+    canvas.style.cursor = 'grabbing';
+  }
+});
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const r = canvas.getBoundingClientRect();
+  const nx = (e.clientX - r.left) / r.width;
+  const ny = (e.clientY - r.top)  / r.height;
+  rect.x = Math.max(0, Math.min(1-rect.w, nx - dragOff.x));
+  rect.y = Math.max(0, Math.min(1-rect.h, ny - dragOff.y));
+  drawOverlay();
+});
+window.addEventListener('mouseup', () => {
+  if (!dragging) return;
+  dragging = false;
+  canvas.style.cursor = 'grab';
+  notifyCrop();
+});
+
+function notifyCrop() {
+  if (window.pywebview && window.pywebview.api) {
+    window.pywebview.api.notify({type: 'crop', rect: rect});
+  }
+}
+
+// ── video lifecycle ──────────────────────────────────────────────────────
+
+vid.addEventListener('loadedmetadata', () => {
+  vSrcW = vid.videoWidth;
+  vSrcH = vid.videoHeight;
+  empty.style.display = 'none';
+  fitRectToAspect();
+  drawOverlay();
+});
+
+vid.addEventListener('timeupdate', () => {
+  if (clipEnd > 0 && vid.currentTime >= clipEnd) {
+    vid.currentTime = clipEnd - 0.05;
+    vid.pause();
+  } else if (clipStart > 0 && vid.currentTime < clipStart) {
+    vid.currentTime = clipStart;
+  }
+});
+
+window.addEventListener('resize', drawOverlay);
+// Periodic redraw catches font load / first paint hiccups
+setInterval(drawOverlay, 250);
+</script>
+</body>
+</html>

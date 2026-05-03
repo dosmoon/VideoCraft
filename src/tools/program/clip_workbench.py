@@ -1463,7 +1463,7 @@ class ClipWorkbenchApp(ToolBase):
         body_pw.pack(fill="both", expand=True, padx=4, pady=2)
         prev_holder = ttk.Frame(body_pw)
         form_holder = ttk.Frame(body_pw)
-        body_pw.add(prev_holder, weight=2)
+        body_pw.add(prev_holder, weight=4)
         body_pw.add(form_holder, weight=3)
 
         self._preview = PreviewPane(

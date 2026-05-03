@@ -6,7 +6,7 @@ callbacks. This keeps the widgets dumb-and-portable so Tab 1 (chapter
 detail pane) and Tab 2 (export summary side panel) can both use them.
 
 Provided widgets:
-  PreviewPane         keyframe + 9:16 crop overlay, bind_clip(clip)
+  PreviewPane         WebView2-backed video preview + crop overlay
   PackageForm         hook / outro / title / hashtags entries, bind_clip(clip)
   ClipCard            LabelFrame with PackageForm + actions, click-to-focus
   ClipSummaryTreeview cross-chapter Treeview with selection + status badges
@@ -14,22 +14,17 @@ Provided widgets:
 
 from __future__ import annotations
 
+import json
 import os
-import tempfile
 import tkinter as tk
 from tkinter import ttk
 from typing import Callable
 
-try:
-    from PIL import Image
-    _PIL_OK = True
-except ImportError:
-    _PIL_OK = False
-
-from core.program import clip as cliplib
 from core.program.clip import ClipDraft
 from core.segment_model import format_timestamp
-from ui.crop_overlay import CropOverlay
+from ui.web_preview import WebPreviewFrame
+
+_CLIP_HTML = os.path.join(os.path.dirname(__file__), "web_preview_clip.html")
 
 
 def _tr(key: str) -> str:
@@ -44,11 +39,15 @@ def _seconds_to_str(s: float) -> str:
 # ── PreviewPane ────────────────────────────────────────────────────────────
 
 class PreviewPane(tk.Frame):
-    """Keyframe-based preview with 9:16 crop overlay.
+    """WebView2-backed clip preview: real video playback + crop overlay.
 
-    bind_clip(clip, video_path, video_w, video_h) extracts the midpoint
-    keyframe via ffmpeg, shows it, and binds the crop rect (or center
-    default) to clip.crop_rect. on_change fires after every drag.
+    bind_clip(clip, video_path, video_w, video_h) loads the source file (if
+    different from the previous clip), constrains playback to clip.start_sec
+    .. clip.end_sec, and pushes the crop rect (or null → center default) to
+    the embedded HTML. on_change fires when the user drags the crop rect.
+
+    set_aspect_ratio(w, h) updates the locked aspect; rect re-fits on the
+    HTML side.
     """
 
     def __init__(self, master: tk.Misc, *,
@@ -57,14 +56,22 @@ class PreviewPane(tk.Frame):
         super().__init__(master, **kwargs)
         self._on_change = on_change
         self._clip: ClipDraft | None = None
-        self._video_path: str = ""
+        self._video_path: str = ""           # last-loaded source on the HTML side
         self._video_w: int = 0
         self._video_h: int = 0
+        self._aspect: tuple[int, int] = (9, 16)
+        self._page_loaded = False
+        self._pending_aspect: tuple[int, int] | None = None
+        self._pending_bind: tuple[ClipDraft, str] | None = None
 
-        self._overlay = CropOverlay(self, on_change=self._handle_overlay_change)
-        self._overlay.pack(fill="both", expand=True, padx=2, pady=2)
+        # Top: WebView preview
+        initial_url = "file:///" + _CLIP_HTML.replace("\\", "/")
+        self._web = WebPreviewFrame(
+            self, on_message=self._on_web_message,
+            on_loaded=self._on_page_loaded, initial_url=initial_url)
+        self._web.pack(fill="both", expand=True, padx=2, pady=2)
 
-        # Action bar — sits below the overlay
+        # Action bar
         bar = ttk.Frame(self)
         bar.pack(fill="x", padx=2, pady=(2, 4))
         ttk.Button(bar, text=_tr("tool.clip.btn_reset_center"),
@@ -78,57 +85,95 @@ class PreviewPane(tk.Frame):
     def bind_clip(self, clip: ClipDraft | None, *,
                   video_path: str, video_w: int, video_h: int) -> None:
         self._clip = clip
-        self._video_path = video_path
         self._video_w = video_w
         self._video_h = video_h
         if clip is None:
             self._info_var.set("")
+            self._video_path = ""
+            self._send("vc.clear()")
             return
         self._info_var.set(
             f"#{clip.id}  [{_seconds_to_str(clip.start_sec)} – "
             f"{_seconds_to_str(clip.end_sec)}]  {int(clip.duration)}s")
-        if not _PIL_OK or not video_path or not os.path.isfile(video_path) \
-                or video_w == 0:
+        if not self._page_loaded:
+            self._pending_bind = (clip, video_path)
             return
-        midpoint = (clip.start_sec + clip.end_sec) / 2.0
-        try:
-            tmp = os.path.join(tempfile.gettempdir(),
-                               f"clip-keyframe-{clip.id}.jpg")
-            cliplib.extract_keyframe(video_path, midpoint, tmp)
-            with Image.open(tmp) as im:
-                im.load()
-                self._overlay.set_image(im.copy(), video_w, video_h)
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-        except Exception as e:
-            self._info_var.set(f"keyframe: {e}")
-            return
-        if clip.crop_rect:
-            self._overlay.set_rect(clip.crop_rect)
-        else:
-            self._overlay.reset_to_center()
+        self._push_clip(clip, video_path)
 
     def reset_to_center(self) -> None:
         if self._clip is None:
             return
-        self._overlay.reset_to_center()
+        self._clip.crop_rect = None
+        self._send("vc.setCrop(null)")
+        if self._on_change:
+            # Notify with whatever the JS side resolves to (centered fit at
+            # current aspect). Worker can re-derive from None too.
+            self._on_change(self._clip, {})
 
     def set_aspect_ratio(self, w_ratio: int, h_ratio: int) -> None:
-        """Forward the locked aspect to the embedded crop overlay."""
-        self._overlay.set_aspect_ratio(w_ratio, h_ratio)
+        self._aspect = (int(w_ratio), int(h_ratio))
+        if not self._page_loaded:
+            self._pending_aspect = self._aspect
+            return
+        self._send(f"vc.setAspect({int(w_ratio)}, {int(h_ratio)})")
 
-    def get_rect(self) -> dict:
-        return self._overlay.get_rect()
+    def destroy(self) -> None:
+        # WebPreviewFrame.destroy() shuts down the child process.
+        try:
+            self._web.destroy()
+        except Exception:
+            pass
+        super().destroy()
 
     # ── internal ──
-    def _handle_overlay_change(self, rect: dict) -> None:
-        if self._clip is None:
+
+    def _on_page_loaded(self) -> None:
+        self._page_loaded = True
+        if self._pending_aspect is not None:
+            w, h = self._pending_aspect
+            self._send(f"vc.setAspect({w}, {h})")
+            self._pending_aspect = None
+        if self._pending_bind is not None:
+            clip, video_path = self._pending_bind
+            self._pending_bind = None
+            self._push_clip(clip, video_path)
+
+    def _push_clip(self, clip: ClipDraft, video_path: str) -> None:
+        if not video_path:
             return
-        self._clip.crop_rect = dict(rect)
-        if self._on_change:
-            self._on_change(self._clip, dict(rect))
+        # Only reload the source when the path changes; otherwise just adjust
+        # the time range and crop.
+        if video_path != self._video_path:
+            self._video_path = video_path
+            url = "file:///" + os.path.abspath(video_path).replace("\\", "/")
+            url_json = json.dumps(url)
+            self._send(
+                f"vc.setSource({url_json}, {clip.start_sec}, {clip.end_sec})")
+        else:
+            self._send(
+                f"vc.setClipRange({clip.start_sec}, {clip.end_sec})")
+        # Crop rect: existing dict or null → JS centers
+        crop_arg = "null" if not clip.crop_rect else json.dumps(clip.crop_rect)
+        self._send(f"vc.setCrop({crop_arg})")
+
+    def _send(self, code: str) -> None:
+        try:
+            self._web.evaluate_js(code)
+        except Exception:
+            pass
+
+    def _on_web_message(self, data) -> None:
+        if not isinstance(data, dict):
+            return
+        if data.get("type") == "crop" and self._clip is not None:
+            rect = data.get("rect") or {}
+            try:
+                rect = {k: float(rect[k]) for k in ("x", "y", "w", "h")}
+            except (KeyError, ValueError, TypeError):
+                return
+            self._clip.crop_rect = rect
+            if self._on_change:
+                self._on_change(self._clip, dict(rect))
 
 # ── PackageForm ────────────────────────────────────────────────────────────
 
