@@ -194,6 +194,24 @@ class BgmConfig:
 
 
 @dataclass
+class ProjectBackground:
+    """Free-form context describing the source material.
+
+    Fed into AI prompts (clip.package etc.) so generation has
+    enough situational context to produce non-generic hooks/titles.
+    All fields optional; expand over time.
+    """
+    show_type: str = ""        # 访谈 / 演讲 / 直播切片 / 课程 / 评论 / 解说
+    host: str = ""             # 主讲人姓名
+    host_bio: str = ""         # 一句话身份
+    guests: str = ""           # 其他出场人 (free text, comma-separated)
+    audience: str = ""         # 目标观众画像
+    episode_topic: str = ""    # 整集主题 / YouTube 标题
+    platform_tone: str = ""    # B站 / 抖音 / 小红书 / YouTube
+    notes: str = ""            # 杂项: 敏感话题 / 避雷词 / 特殊语气
+
+
+@dataclass
 class ClipProjectConfig:
     """Output-style settings shared by all clips in a cut file."""
     aspect: str = "9:16"            # "9:16"|"16:9"|"1:1"|"4:5"
@@ -202,6 +220,7 @@ class ClipProjectConfig:
     watermark: WatermarkStyle = field(default_factory=WatermarkStyle)
     hook_outro: HookOutroStyle = field(default_factory=HookOutroStyle)
     bgm: BgmConfig = field(default_factory=BgmConfig)
+    background: ProjectBackground = field(default_factory=ProjectBackground)
 
     def aspect_ratio(self) -> tuple[int, int]:
         """Parse aspect string. Falls back to 9:16 on any oddity."""
@@ -225,6 +244,7 @@ class ClipProjectConfig:
         wm_d  = d.get("watermark") if isinstance(d.get("watermark"), dict) else {}
         ho_d  = d.get("hook_outro") if isinstance(d.get("hook_outro"), dict) else {}
         bg_d  = d.get("bgm") if isinstance(d.get("bgm"), dict) else {}
+        bgr_d = d.get("background") if isinstance(d.get("background"), dict) else {}
 
         # ── Subtitle ──
         if "sub1" in sub_d or "sub2" in sub_d:
@@ -284,6 +304,9 @@ class ClipProjectConfig:
                                          if k in HookOutroStyle.__dataclass_fields__}),
             bgm=BgmConfig(**{k: v for k, v in bg_d.items()
                              if k in BgmConfig.__dataclass_fields__}),
+            background=ProjectBackground(**{
+                k: str(v) for k, v in bgr_d.items()
+                if k in ProjectBackground.__dataclass_fields__}),
         )
 
 
@@ -1299,6 +1322,7 @@ def package_clip(clip: ClipDraft, pack: dict, *,
 __all__ = [
     "ClipDraft",
     "ClipProjectConfig",
+    "ProjectBackground",
     "SubtitleStyle",
     "SubtitleLineStyle",
     "WatermarkStyle",

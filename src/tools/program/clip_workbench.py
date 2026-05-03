@@ -82,6 +82,18 @@ class ClipWorkbenchApp(ToolBase):
             style.configure("Clip.Treeview", rowheight=30, font=("", 10))
             style.configure("Clip.Treeview.Heading",
                              font=("", 10, "bold"))
+            # Make Notebook tabs visually prominent. Caveat: on Windows
+            # vista theme, mapping tab `background` breaks native drawing
+            # and CJK glyphs fall back to a non-CJK font (showing as
+            # squares). So we keep the native background and only change
+            # font + foreground colour. Explicit Microsoft YaHei UI guards
+            # against any further font fallback.
+            style.configure("TNotebook.Tab",
+                             font=("Microsoft YaHei UI", 11, "bold"),
+                             padding=(18, 8))
+            style.map("TNotebook.Tab",
+                       foreground=[("selected", "#2563eb"),
+                                   ("active", "#1e3a8a")])
         except tk.TclError:
             pass
 
@@ -127,14 +139,17 @@ class ClipWorkbenchApp(ToolBase):
         self._notebook = ttk.Notebook(master)
         self._notebook.pack(fill="both", expand=True, padx=6, pady=6)
         self._tab_project  = ttk.Frame(self._notebook)
+        self._tab_style    = ttk.Frame(self._notebook)
         self._tab_chapters = ttk.Frame(self._notebook)
         self._tab_export   = ttk.Frame(self._notebook)
         self._notebook.add(self._tab_project,  text=_tr("tool.clip.tab_project"))
+        self._notebook.add(self._tab_style,    text=_tr("tool.clip.tab_style"))
         self._notebook.add(self._tab_chapters, text=_tr("tool.clip.tab_chapters"))
         self._notebook.add(self._tab_export,   text=_tr("tool.clip.tab_export"))
         self._notebook.bind("<<NotebookTabChanged>>", self._on_tab_changed)
 
         self._build_tab_project()
+        self._build_tab_style()
         self._build_tab_chapters()
         self._build_tab_export()
 
@@ -150,21 +165,10 @@ class ClipWorkbenchApp(ToolBase):
     def _build_tab_project(self) -> None:
         f = self._tab_project
 
-        # Vertical split: form on top (scrollable, since it's long), preview
-        # on bottom (large + always visible). User can drag the divider to
-        # rebalance — bigger preview when iterating on style, more form
-        # space when editing many fields at once.
-        pw = ttk.PanedWindow(f, orient="vertical")
-        pw.pack(fill="both", expand=True)
-
-        form_pane = ttk.Frame(pw)
-        preview_pane = ttk.Frame(pw)
-        pw.add(form_pane, weight=3)
-        pw.add(preview_pane, weight=2)
-
-        # Scrollable container for the form — output-style fields are long.
-        canvas = tk.Canvas(form_pane, highlightthickness=0)
-        sb = ttk.Scrollbar(form_pane, orient="vertical", command=canvas.yview)
+        # Project tab: cut file ops + sources + project background card.
+        # Style/preview moved to dedicated style tab.
+        canvas = tk.Canvas(f, highlightthickness=0)
+        sb = ttk.Scrollbar(f, orient="vertical", command=canvas.yview)
         inner = ttk.Frame(canvas)
         inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
         canvas.configure(yscrollcommand=sb.set)
@@ -175,10 +179,6 @@ class ClipWorkbenchApp(ToolBase):
                        scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>",
                     lambda e: canvas.itemconfigure(inner_id, width=e.width))
-
-        # Stash the preview pane parent so _build_output_style_form can put
-        # the preview row down there instead of inside the form.
-        self._project_preview_pane = preview_pane
 
         # Cut row
         cut_box = ttk.LabelFrame(inner, text=_tr("tool.clip.section_cut"))
@@ -218,7 +218,120 @@ class ClipWorkbenchApp(ToolBase):
             row=3, column=1, sticky="w", padx=4, pady=4)
         src.columnconfigure(1, weight=1)
 
-        # Output style form
+        # Project background card
+        self._build_background_card(inner)
+
+    # ── Tab 0: project background card ────────────────────────────────────
+
+    def _build_background_card(self, parent: tk.Misc) -> None:
+        bg = self._project_config.background
+        bgr = ttk.LabelFrame(parent,
+                              text=_tr("tool.clip.section_background"))
+        bgr.pack(fill="x", padx=6, pady=(4, 8))
+        bgr.columnconfigure(1, weight=1)
+
+        # Build vars first; wire traces after.
+        self._bg_show_type_var     = tk.StringVar(value=bg.show_type)
+        self._bg_host_var          = tk.StringVar(value=bg.host)
+        self._bg_host_bio_var      = tk.StringVar(value=bg.host_bio)
+        self._bg_guests_var        = tk.StringVar(value=bg.guests)
+        self._bg_audience_var      = tk.StringVar(value=bg.audience)
+        self._bg_episode_topic_var = tk.StringVar(value=bg.episode_topic)
+        self._bg_platform_tone_var = tk.StringVar(value=bg.platform_tone)
+        # notes is multiline → bound via _read/_write helpers, not StringVar.
+
+        rows = [
+            ("tool.clip.bg_show_type",     "tool.clip.bg_show_type_hint",     self._bg_show_type_var),
+            ("tool.clip.bg_host",          "",                                self._bg_host_var),
+            ("tool.clip.bg_host_bio",      "tool.clip.bg_host_bio_hint",      self._bg_host_bio_var),
+            ("tool.clip.bg_guests",        "tool.clip.bg_guests_hint",        self._bg_guests_var),
+            ("tool.clip.bg_audience",      "tool.clip.bg_audience_hint",      self._bg_audience_var),
+            ("tool.clip.bg_episode_topic", "tool.clip.bg_episode_topic_hint", self._bg_episode_topic_var),
+            ("tool.clip.bg_platform_tone", "tool.clip.bg_platform_tone_hint", self._bg_platform_tone_var),
+        ]
+        for r, (label_key, hint_key, var) in enumerate(rows):
+            ttk.Label(bgr, text=_tr(label_key)).grid(
+                row=r, column=0, sticky="e", padx=4, pady=2)
+            ttk.Entry(bgr, textvariable=var).grid(
+                row=r, column=1, sticky="we", padx=4, pady=2)
+            if hint_key:
+                tk.Label(bgr, text=_tr(hint_key), fg="#6b7280",
+                         font=("", 8)).grid(row=r, column=2, sticky="w",
+                                             padx=4)
+
+        # Notes — multiline
+        notes_row = len(rows)
+        ttk.Label(bgr, text=_tr("tool.clip.bg_notes")).grid(
+            row=notes_row, column=0, sticky="ne", padx=4, pady=4)
+        self._bg_notes_text = tk.Text(bgr, height=3, wrap="word")
+        self._bg_notes_text.grid(row=notes_row, column=1, sticky="we",
+                                  padx=4, pady=4)
+        self._bg_notes_text.insert("1.0", bg.notes)
+        tk.Label(bgr, text=_tr("tool.clip.bg_notes_hint"), fg="#6b7280",
+                 font=("", 8)).grid(row=notes_row, column=2, sticky="nw",
+                                     padx=4, pady=4)
+        self._bg_notes_text.bind(
+            "<<Modified>>",
+            lambda _e: (self._bg_notes_text.edit_modified(False),
+                         self._sync_background_from_form()))
+
+        # Wire StringVar traces.
+        for v in (self._bg_show_type_var, self._bg_host_var,
+                   self._bg_host_bio_var, self._bg_guests_var,
+                   self._bg_audience_var, self._bg_episode_topic_var,
+                   self._bg_platform_tone_var):
+            v.trace_add("write",
+                         lambda *_a: self._sync_background_from_form())
+
+    def _sync_background_from_form(self) -> None:
+        if self._suspend_autosave:
+            return
+        bg = self._project_config.background
+        try:
+            bg.show_type     = self._bg_show_type_var.get()
+            bg.host          = self._bg_host_var.get()
+            bg.host_bio      = self._bg_host_bio_var.get()
+            bg.guests        = self._bg_guests_var.get()
+            bg.audience      = self._bg_audience_var.get()
+            bg.episode_topic = self._bg_episode_topic_var.get()
+            bg.platform_tone = self._bg_platform_tone_var.get()
+            bg.notes         = self._bg_notes_text.get("1.0", "end-1c")
+        except tk.TclError:
+            return
+        self._autosave()
+
+    # ── Tab 1: style settings + preview ───────────────────────────────────
+
+    def _build_tab_style(self) -> None:
+        f = self._tab_style
+
+        # Same vertical split that used to be in tab_project: scrollable
+        # form on top, large preview on bottom.
+        pw = ttk.PanedWindow(f, orient="vertical")
+        pw.pack(fill="both", expand=True)
+
+        form_pane = ttk.Frame(pw)
+        preview_pane = ttk.Frame(pw)
+        pw.add(form_pane, weight=3)
+        pw.add(preview_pane, weight=2)
+
+        canvas = tk.Canvas(form_pane, highlightthickness=0)
+        sb = ttk.Scrollbar(form_pane, orient="vertical", command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        inner.bind("<Configure>",
+                   lambda _e: canvas.configure(
+                       scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfigure(inner_id, width=e.width))
+
+        # Preview pane parent — _build_output_style_form drops the preview
+        # row down here so the form scrolls independently.
+        self._project_preview_pane = preview_pane
+
         self._build_output_style_form(inner)
 
     # ── Tab 0: output-style form ──────────────────────────────────────────
@@ -921,6 +1034,22 @@ class ClipWorkbenchApp(ToolBase):
             self._ho_outro_dur_var.set(cfg.hook_outro.outro_duration_sec)
             self._bgm_path_var.set(cfg.bgm.path)
             self._bgm_volume_var.set(cfg.bgm.volume)
+            # Project background
+            bg = cfg.background
+            if hasattr(self, "_bg_show_type_var"):
+                self._bg_show_type_var.set(bg.show_type)
+                self._bg_host_var.set(bg.host)
+                self._bg_host_bio_var.set(bg.host_bio)
+                self._bg_guests_var.set(bg.guests)
+                self._bg_audience_var.set(bg.audience)
+                self._bg_episode_topic_var.set(bg.episode_topic)
+                self._bg_platform_tone_var.set(bg.platform_tone)
+                try:
+                    self._bg_notes_text.delete("1.0", "end")
+                    self._bg_notes_text.insert("1.0", bg.notes)
+                    self._bg_notes_text.edit_modified(False)
+                except tk.TclError:
+                    pass
         finally:
             self._suspend_autosave = prev
         # Apply visibility-dependent controls; refresh hint + preview.
@@ -2104,12 +2233,13 @@ class ClipWorkbenchApp(ToolBase):
                     name=self._cut_name, path=self._cut_path))
         else:
             self._cut_status_var.set(_tr("tool.clip.cut_none"))
-        # Tab 0 (project) always enabled. Tab 1 (chapters) and Tab 2 (export)
+        # Tab 0 (project) always enabled. Tabs 1-3 (style/chapters/export)
         # require a loaded cut.
         state = "normal" if has else "disabled"
         try:
             self._notebook.tab(1, state=state)
             self._notebook.tab(2, state=state)
+            self._notebook.tab(3, state=state)
         except tk.TclError:
             pass
         # When no cut is open, force the user back to the project tab so the
@@ -2740,10 +2870,10 @@ class ClipWorkbenchApp(ToolBase):
 
     def _on_tab_changed(self, _event=None) -> None:
         try:
-            tab = self._notebook.index(self._notebook.select())
+            sel = self._notebook.select()
         except Exception:
             return
-        if tab == 1:    # export
+        if sel == str(self._tab_export):
             self._refresh_export_summary()
 
 
