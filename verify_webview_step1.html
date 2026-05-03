@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>VideoCraft – WebView preview verification</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #1a1a1a; color: #ddd;
+               font-family: -apple-system, "Segoe UI", sans-serif; }
+  .bar { padding: 8px 12px; background: #222; display: flex; gap: 12px;
+         align-items: center; }
+  .bar input[type=file] { color: #ddd; }
+  .bar label { font-size: 13px; }
+  .stage { position: relative; width: 100%; max-width: 1280px; margin: 12px auto;
+           background: black; }
+  video { width: 100%; display: block; }
+  canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%;
+           cursor: grab; pointer-events: none; }
+  canvas.draggable { pointer-events: auto; }
+  .stats { position: absolute; left: 8px; top: 8px; padding: 4px 8px;
+           background: rgba(0,0,0,0.6); color: yellow;
+           font: bold 12px Consolas, monospace; pointer-events: none; }
+  .hint { color: #888; font-size: 12px; padding: 0 12px; }
+</style>
+</head>
+<body>
+
+<div class="bar">
+  <input id="file" type="file" accept="video/*" />
+  <label><input id="aspect" type="checkbox" /> 9:16 crop (default 16:9)</label>
+  <span class="hint">drag the green frame · this proves the overlay layer composites over the video</span>
+</div>
+
+<div class="stage" id="stage">
+  <video id="vid" controls playsinline></video>
+  <canvas id="canvas"></canvas>
+  <div class="stats" id="stats">load a video</div>
+</div>
+
+<script>
+const vid    = document.getElementById('vid');
+const canvas = document.getElementById('canvas');
+const ctx    = canvas.getContext('2d');
+const stats  = document.getElementById('stats');
+const aspectChk = document.getElementById('aspect');
+
+document.getElementById('file').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  vid.src = URL.createObjectURL(f);
+  vid.play();
+});
+
+// Crop rect in normalized coords [0..1]
+let rect = { x: 0.05, y: 0.05, w: 0.40, h: 0.80 };
+
+function aspectRatio() {
+  return aspectChk.checked ? (9/16) : (16/9);
+}
+
+function fitRectToAspect() {
+  // Re-fit rect.w/h to chosen aspect, keeping center.
+  const cx = rect.x + rect.w/2, cy = rect.y + rect.h/2;
+  const vw = vid.videoWidth, vh = vid.videoHeight;
+  if (!vw || !vh) return;
+  const targetAR = aspectRatio();      // crop width/height in source pixels
+  const curAR    = (rect.w * vw) / (rect.h * vh);
+  if (Math.abs(curAR - targetAR) < 0.01) return;
+  // Try preserving height, adjust width
+  let newW = (rect.h * vh * targetAR) / vw;
+  if (newW > 1) {
+    newW = 1;
+    rect.h = (newW * vw / targetAR) / vh;
+  }
+  rect.w = newW;
+  rect.x = Math.max(0, Math.min(1 - rect.w, cx - rect.w/2));
+  rect.y = Math.max(0, Math.min(1 - rect.h, cy - rect.h/2));
+}
+
+aspectChk.addEventListener('change', () => { fitRectToAspect(); });
+
+// Toggle canvas hit-testing: only capture pointer events when the cursor is
+// actually over the crop rect. Otherwise the canvas would swallow clicks
+// meant for the native <video> controls (play/pause, seek bar, volume).
+function pointInRect(px, py) {
+  return px >= rect.x && px <= rect.x+rect.w
+      && py >= rect.y && py <= rect.y+rect.h;
+}
+document.getElementById('stage').addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  const px = (e.clientX - r.left) / r.width;
+  const py = (e.clientY - r.top)  / r.height;
+  if (dragging || pointInRect(px, py)) {
+    canvas.classList.add('draggable');
+  } else {
+    canvas.classList.remove('draggable');
+  }
+});
+
+// Drag to move
+let dragging = false, dragOff = {x:0, y:0};
+canvas.addEventListener('mousedown', e => {
+  const r = canvas.getBoundingClientRect();
+  const px = (e.clientX - r.left) / r.width;
+  const py = (e.clientY - r.top)  / r.height;
+  if (px >= rect.x && px <= rect.x+rect.w && py >= rect.y && py <= rect.y+rect.h) {
+    dragging = true;
+    dragOff = { x: px - rect.x, y: py - rect.y };
+    canvas.style.cursor = 'grabbing';
+  }
+});
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const r = canvas.getBoundingClientRect();
+  const px = (e.clientX - r.left) / r.width;
+  const py = (e.clientY - r.top)  / r.height;
+  rect.x = Math.max(0, Math.min(1-rect.w, px - dragOff.x));
+  rect.y = Math.max(0, Math.min(1-rect.h, py - dragOff.y));
+});
+window.addEventListener('mouseup', () => {
+  dragging = false;
+  canvas.style.cursor = 'grab';
+});
+
+// Render loop — draws crop rect + measures fps
+let lastT = performance.now();
+let frames = 0, fpsAcc = 0, fpsTimer = lastT;
+let dispFps = 0;
+
+function render() {
+  // Resize canvas to video pixel size for crisp lines
+  const vw = vid.videoWidth, vh = vid.videoHeight;
+  if (vw && vh) {
+    if (canvas.width !== vw)  canvas.width  = vw;
+    if (canvas.height !== vh) canvas.height = vh;
+    fitRectToAspect();
+    ctx.clearRect(0, 0, vw, vh);
+    // Dim outside region
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(0, 0, vw, vh);
+    ctx.clearRect(rect.x*vw, rect.y*vh, rect.w*vw, rect.h*vh);
+    // Border
+    ctx.strokeStyle = '#00ff88';
+    ctx.lineWidth   = Math.max(2, vw / 480);
+    ctx.strokeRect(rect.x*vw, rect.y*vh, rect.w*vw, rect.h*vh);
+    // Crosshair
+    ctx.strokeStyle = 'rgba(0,255,136,0.4)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo((rect.x+rect.w/2)*vw, rect.y*vh);
+    ctx.lineTo((rect.x+rect.w/2)*vw, (rect.y+rect.h)*vh);
+    ctx.moveTo(rect.x*vw, (rect.y+rect.h/2)*vh);
+    ctx.lineTo((rect.x+rect.w)*vw, (rect.y+rect.h/2)*vh);
+    ctx.stroke();
+  }
+  // FPS counter (render-loop fps; video decode fps is independent in browser)
+  const now = performance.now();
+  frames++;
+  if (now - fpsTimer >= 500) {
+    dispFps = frames * 1000 / (now - fpsTimer);
+    frames = 0;
+    fpsTimer = now;
+  }
+  // Use the video element's mozPaintedFrames / webkitDecodedFrameCount when available
+  let decoded = '';
+  if (vid.getVideoPlaybackQuality) {
+    const q = vid.getVideoPlaybackQuality();
+    decoded = `decoded: ${q.totalVideoFrames}  dropped: ${q.droppedVideoFrames}`;
+  }
+  stats.textContent =
+      `render: ${dispFps.toFixed(1)} fps   src: ${vw}x${vh}   ${decoded}`;
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);
+</script>
+</body>
+</html>
