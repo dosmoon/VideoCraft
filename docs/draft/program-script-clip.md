@@ -1,7 +1,7 @@
 # 切片稿（Clip Script）
 
-**状态**：Phase A + B 已上线 / 2026-05-02 完成 UX 重构（章节为中心，2 tab）
-**日期**：2026-05-01（创建）/ 2026-05-02（最近更新）
+**状态**：Phase A + B + UX 重构 + Phase C（4-tab + 项目背景 + AI context 注入）已上线
+**日期**：2026-05-01（创建）/ 2026-05-03（最近更新）
 **优先级**：P1（节目稿子生成 5 形态之首）
 **命名约定**：本文是 `docs/draft/program-script-<form>.md` 系列的第一份。
 未来 4 份对应：`-summary.md` / `-commentary.md` / `-dialogue.md` / `-theater.md`。
@@ -17,6 +17,9 @@
 | **B** AI 叠加 | ✅ 已上线 (`4e28539`) | 3 prompt + 3 AI 函数 + 3 tri-state 按钮 |
 | **B+** Prompt 契约重构 | ✅ (`da2ef47`) | rank=原文 paragraphs / peaks=cue-id 整数 / package=单 placeholder |
 | **UX 重构** | ✅ (`9c39a38` + `c61b64e`) | 4 tab → 2 tab master-detail，章节为工作单元，全自动 AI |
+| **M-A~M-D + M-H** | ✅ (`140568f`/`77e9790`/`5942d22`/`4c0d5a0`) | Output style 数据模型 + Tab 0 表单 + WebView 真视频预览 + 字幕水印叠层 + 导出 pipeline 接通 cfg |
+| **Hook/Outro 样式系统** | ✅ (`f293be1`) | HookOutroStyle 扩字段 + 9 个工业级模板 + WebView 实时预览 + aspect-aware 字号公式 |
+| **Phase C** UX 拆分 + 项目背景 + AI context 注入 | ✅ (`b2ead2a` + `401745a`) | 4 tab（项目/样式/章节/导出）+ ProjectBackground dataclass + clip.package prompt 注入"谁/对谁/什么场合"上下文 |
 
 ---
 
@@ -457,3 +460,83 @@ cut JSON schema 跟 Phase A 一致；ranks 数组、autosave 链路、ClipDraft 
 - "为啥要单独生成文案"：所以文案与切片同卡片，不再独立 tab
 - "最后通过汇总导出页完成最后工作"：所以保留 Tab 2 做总览 + 批量
 
+
+---
+
+## 13. Phase C 重构记（2026-05-03）
+
+### 动机
+
+切片稿越用越发现两个问题相互绞杀：
+
+1. **Tab 0 太挤**：cut 文件管理 + 输入文件 + 完整输出样式（aspect/字幕/水印/Hook-Outro）+ 预览窗，全塞一个 tab 里，垂直滚动条永远在动。
+2. **AI 文案产出平淡**：`package_clip` 的 prompt 只塞了 `{clip_excerpt}`，prompt 里甚至明确写"只有这一段，没有别的上下文"——AI 不知道说话人是谁、对谁说、什么场合，自然生成不出有人设的 hook/outro。
+   - 用户原话："关键是生成内容的 prompt，以及获得'人们关注的那个 hook'……不够，不足"
+   - 进一步追因："最大的问题是，提交上去的信息不够，这个是谁什么时候在哪里面向谁说什么"
+
+两个问题指向同一个解：**项目级背景信息卡片**——既给 UI 减负（独立成区），又给 AI 喂料（接入 prompt）。
+
+### 落地后 4 Tab 架构
+
+| Tab | 内容 |
+|-----|------|
+| **0 项目** | cut 文件管理（new/open/save as）+ 输入文件（pack/video/srt）+ **项目背景卡片**（8 字段：show_type / host / host_bio / guests / audience / episode_topic / platform_tone / notes，含 multiline notes textarea） |
+| **1 样式** | 原 Tab 0 的输出样式部分整体迁过来：preset 选择 / aspect / 字幕 / 水印 / Hook-Outro / BGM + 大尺寸 WebView 预览（PanedWindow 可拖） |
+| **2 章节** | master-detail（不变） |
+| **3 导出** | 汇总 + 批量（不变） |
+
+### 项目背景数据模型
+
+```python
+@dataclass
+class ProjectBackground:
+    show_type: str = ""        # 访谈 / 演讲 / 直播切片 / 课程 / 评论 / 解说
+    host: str = ""             # 主讲人姓名
+    host_bio: str = ""         # 一句话身份
+    guests: str = ""           # 其他出场人
+    audience: str = ""         # 目标观众画像
+    episode_topic: str = ""    # 整集主题
+    platform_tone: str = ""    # B站 / 抖音 / 小红书 / YouTube
+    notes: str = ""            # 杂项: 敏感话题 / 避雷词 / 特殊语气
+```
+
+挂在 `ClipProjectConfig.background`，跟着 cut 文件自动 round-trip（asdict + from_dict 同步处理）。
+
+### AI context 注入
+
+`package_clip(clip, pack, *, project_config=None, cancel_token=None)` 新增 keyword 参数。新增 helper：
+
+```python
+def _build_package_context_block(clip, pack, project_config) -> str:
+    # 渲染 markdown bullet 列表，空字段跳过
+    # 输出 8 个 bg 字段 + pack.title + clip.chapter_title + 切片在整集的位置
+    # 全空时返回 fallback 提示
+```
+
+`prompts/clip.package.md` 加 `{context_block}` 占位 + 新区块「## 视频背景上下文」+ 在「约束」里明确告诉 AI："必须结合视频背景，同一句话不同人在不同场合说出来 hook 完全不一样（巴菲特在股东大会 vs 街头采访路人）"。
+
+### Tab 标题美化（细节坑）
+
+- ttk Notebook tab 在默认 vista 主题下文字小、颜色弱
+- 第一版用 `style.map(background=[(selected, blue)])`：在 vista 上会破坏原生 tab 绘制，CJK 字形 fallback 成方框
+- 修法：保留 vista 原生 background，只改 font + foreground，显式指定 `Microsoft YaHei UI 11 bold`
+
+### 用户验证
+
+- "tab 拆分 + 项目背景"：通过
+- "tab 标题点击后变方框"：vista 主题坑，已修
+- AI 文案产出："明显改善"——证明 context 注入这一步有效
+
+### 下一步（不急）
+
+- **Step B**（推迟）：hook 原型清单 + few-shot 范本 + 自评 rubric。等收集 20-30 条用户认可的真实 hook 范本再做。
+- **战略层方向**：用户已表态——"VideoCraft 会逐渐走向优化 AI、Prompt 与引入定制化 agent、harness，随着内容处理深度加深难以避免"。AI 能力是水到渠成的事，先把功能骨架搭完，AI 是后面的"调味"层。
+
+### 文件清单
+
+| 路径 | 改动 |
+|------|------|
+| `src/core/program/clip.py` | 新增 `ProjectBackground` dataclass + `_build_package_context_block` helper + `package_clip` 加 project_config 参数 |
+| `src/tools/program/clip_workbench.py` | 4-tab 拆分 + `_build_background_card` + `_build_tab_style` + `_sync_background_from_form` + Notebook.Tab restyle |
+| `prompts/clip.package.md` | 新增 `{context_block}` 占位 + 视频背景区块 + 强化约束 |
+| `src/i18n/zh.json` + `en.json` | 17 个 key 双语对齐（tab_style + section_background + bg_*） |
