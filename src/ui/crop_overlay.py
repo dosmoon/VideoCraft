@@ -1,4 +1,8 @@
-"""9:16 crop rectangle picker on a static video keyframe.
+"""Crop rectangle picker on a static video keyframe.
+
+Aspect ratio is configurable per instance via set_aspect_ratio(); defaults
+to 9:16 portrait. Used by the clip-script workbench to let the user frame
+the output crop window over a representative chapter keyframe.
 
 Why a thumbnail and not a VLC overlay: on Windows VLC takes over the
 embedded surface's HWND (see ui/vlc_player.py:_bind_surface), and any
@@ -9,6 +13,7 @@ ffmpeg) sidesteps the problem and works regardless of VLC availability.
 Usage:
     overlay = CropOverlay(parent, on_change=lambda r: print(r))
     overlay.pack(fill="both", expand=True)
+    overlay.set_aspect_ratio(9, 16)              # optional; default 9:16
     overlay.set_image(pil_image, video_w=1920, video_h=1080)
     overlay.set_rect({"x": 0.1, "y": 0.0, "w": 0.5625, "h": 1.0})
     rect = overlay.get_rect()    # normalized {x, y, w, h} in 0..1
@@ -26,16 +31,15 @@ except ImportError:
     _PIL_OK = False
 
 
-_ASPECT = 9.0 / 16.0    # width / height for a 9:16 portrait crop
 _HANDLE_PX = 8
 
 
 class CropOverlay(tk.Frame):
-    """Static-image canvas with a draggable / resizable 9:16 rectangle.
+    """Static-image canvas with a draggable / resizable rectangle of a
+    fixed aspect ratio (default 9:16).
 
-    The rectangle aspect is always locked to 9:16. Resizing from any handle
-    keeps the aspect; the longest dimension follows the cursor and the
-    other one is derived.
+    Resizing from any handle keeps the locked aspect; the longest
+    dimension follows the cursor and the other is derived.
 
     Coordinates exposed via get_rect() / set_rect() are normalized to the
     *original video* dimensions (0..1), independent of how the thumbnail
@@ -47,6 +51,8 @@ class CropOverlay(tk.Frame):
                  **kwargs):
         super().__init__(master, **kwargs)
         self._on_change = on_change
+        # Aspect ratio = width / height; default 9:16 portrait.
+        self._aspect_ratio = 9.0 / 16.0
         self._video_w = 0
         self._video_h = 0
         self._image_pil = None
@@ -78,6 +84,19 @@ class CropOverlay(tk.Frame):
             )
 
     # ── Public API ────────────────────────────────────────────────────────
+
+    def set_aspect_ratio(self, w_ratio: int, h_ratio: int) -> None:
+        """Update the locked aspect of the crop rect. Re-clamps any
+        existing rect to honor the new ratio."""
+        new_ar = max(0.001, float(w_ratio) / max(0.001, float(h_ratio)))
+        if abs(new_ar - self._aspect_ratio) < 1e-6:
+            return
+        self._aspect_ratio = new_ar
+        # Re-clamp any existing rect to honor the new aspect.
+        if self._video_w > 0 and self._rect["w"] > 0:
+            self._clamp_rect()
+            self._redraw()
+            self._notify()
 
     def set_image(self, pil_image, video_w: int, video_h: int) -> None:
         """Load a PIL image as the backdrop. video_w/h are the *source video*
@@ -119,10 +138,11 @@ class CropOverlay(tk.Frame):
         }
 
     def reset_to_center(self) -> None:
-        """Center crop: largest 9:16 rect that fits in the source video."""
+        """Center crop: largest rect at the locked aspect that fits in the
+        source video."""
         if self._video_w <= 0 or self._video_h <= 0:
             return
-        target_ar = _ASPECT
+        target_ar = self._aspect_ratio
         cur_ar = self._video_w / self._video_h
         if cur_ar > target_ar:
             new_w = self._video_h * target_ar
@@ -257,10 +277,10 @@ class CropOverlay(tk.Frame):
         elif self._drag_mode == "resize":
             # Resize from bottom-right; keep top-left anchored, lock 9:16 AR.
             new_w = max(40.0, self._drag_start_rect["w"] + dx_video)
-            new_h = new_w / _ASPECT
+            new_h = new_w / self._aspect_ratio
             if (self._drag_start_rect["y"] + new_h) > self._video_h:
                 new_h = self._video_h - self._drag_start_rect["y"]
-                new_w = new_h * _ASPECT
+                new_w = new_h * self._aspect_ratio
             self._rect = dict(self._drag_start_rect)
             self._rect["w"] = new_w
             self._rect["h"] = new_h
@@ -280,14 +300,14 @@ class CropOverlay(tk.Frame):
         if self._rect["w"] <= 0 or self._rect["h"] <= 0:
             return
         # If width is the constraint:
-        self._rect["h"] = self._rect["w"] / _ASPECT
+        self._rect["h"] = self._rect["w"] / self._aspect_ratio
         # Bound by video size; if too tall, cap height and recompute width
         if self._rect["h"] > self._video_h:
             self._rect["h"] = float(self._video_h)
-            self._rect["w"] = self._rect["h"] * _ASPECT
+            self._rect["w"] = self._rect["h"] * self._aspect_ratio
         if self._rect["w"] > self._video_w:
             self._rect["w"] = float(self._video_w)
-            self._rect["h"] = self._rect["w"] / _ASPECT
+            self._rect["h"] = self._rect["w"] / self._aspect_ratio
         # Clamp position
         max_x = max(0.0, self._video_w - self._rect["w"])
         max_y = max(0.0, self._video_h - self._rect["h"])

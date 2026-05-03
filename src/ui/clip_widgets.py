@@ -115,6 +115,10 @@ class PreviewPane(tk.Frame):
             return
         self._overlay.reset_to_center()
 
+    def set_aspect_ratio(self, w_ratio: int, h_ratio: int) -> None:
+        """Forward the locked aspect to the embedded crop overlay."""
+        self._overlay.set_aspect_ratio(w_ratio, h_ratio)
+
     def get_rect(self) -> dict:
         return self._overlay.get_rect()
 

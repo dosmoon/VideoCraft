@@ -1468,6 +1468,7 @@ class ClipWorkbenchApp(ToolBase):
 
         self._preview = PreviewPane(
             prev_holder, on_change=self._on_preview_crop_changed)
+        self._preview.set_aspect_ratio(*self._project_config.aspect_ratio())
         self._preview.bind_clip(clip,
                                   video_path=self._video_path,
                                   video_w=self._video_w,
@@ -1487,6 +1488,7 @@ class ClipWorkbenchApp(ToolBase):
             return
         clip = next((c for c in self._clips if c.id == self._focused_clip_id),
                      None)
+        self._preview.set_aspect_ratio(*self._project_config.aspect_ratio())
         self._preview.bind_clip(clip,
                                   video_path=self._video_path,
                                   video_w=self._video_w,
@@ -2269,7 +2271,8 @@ class ClipWorkbenchApp(ToolBase):
                 # Center crop default
                 if self._video_w and self._video_h:
                     c.crop_rect = cliplib.center_crop_rect(
-                        self._video_w, self._video_h)
+                        self._video_w, self._video_h,
+                        aspect_ratio=self._project_config.aspect_ratio())
                 c.status = "reviewed"
             except AIError as ae:
                 if ae.kind == Kind.CANCELLED:

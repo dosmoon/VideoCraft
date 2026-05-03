@@ -480,20 +480,22 @@ def extract_keyframe(video_path: str, at_sec: float, out_path: str) -> str:
 
 # ── Crop helpers ────────────────────────────────────────────────────────────
 
-def center_crop_rect(video_w: int, video_h: int) -> dict:
-    """Default 9:16 center crop rect for a given video resolution.
-    Returns normalized {x, y, w, h} 0..1."""
+def center_crop_rect(video_w: int, video_h: int,
+                       aspect_ratio: tuple[int, int] = (9, 16)) -> dict:
+    """Largest centered crop rect at the given aspect that fits in the
+    source video. Returns normalized {x, y, w, h} 0..1."""
     if video_w <= 0 or video_h <= 0:
         return {"x": 0.0, "y": 0.0, "w": 1.0, "h": 1.0}
-    target_ar = 9.0 / 16.0           # width / height
+    aw, ah = aspect_ratio
+    target_ar = max(0.001, aw / ah)        # width / height
     cur_ar = video_w / video_h
     if cur_ar > target_ar:
-        # Source is wider than 9:16 → take vertical strip in middle
+        # Source wider than target → take vertical strip in middle
         new_w = video_h * target_ar
         x = (video_w - new_w) / 2.0
         return {"x": x / video_w, "y": 0.0,
                 "w": new_w / video_w, "h": 1.0}
-    # Source is taller (or equal) → take horizontal strip in middle
+    # Source taller (or equal) → take horizontal strip in middle
     new_h = video_w / target_ar
     y = (video_h - new_h) / 2.0
     return {"x": 0.0, "y": y / video_h,
