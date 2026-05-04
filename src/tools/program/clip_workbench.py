@@ -1139,7 +1139,7 @@ class ClipWorkbenchApp(ToolBase):
         except tk.TclError:
             return
         # Mirror style updates to the live WebView preview when it's open.
-        if hasattr(self, "_preview") and self._preview.winfo_exists():
+        if self._preview is not None and self._preview.winfo_exists():
             try:
                 self._preview.push_style(self._build_web_style_dict())
             except Exception as exc:
@@ -1493,14 +1493,35 @@ class ClipWorkbenchApp(ToolBase):
         self._chap_tree.bind("<<TreeviewSelect>>", self._on_tree_selection)
         self._chap_tree.bind("<<TreeviewOpen>>", self._on_chapter_expanded)
 
-        # ── Right pane: detail (chapter-mode or clip-mode, rebuilt on select) ──
+        # ── Right pane: chrome (rebuilt per mode) + stable body ──
+        # Chrome holds mode-specific chrome (placeholder / chapter header /
+        # clip header+time+actions) and is fully torn down on each mode
+        # switch. Body holds the long-lived PreviewPane + PackageForm,
+        # mapped only in clip-detail mode and never destroyed. This avoids
+        # respawning the WebView2 child process on every clip click.
         self._detail_pane = ttk.Frame(right)
-        self._detail_pane.pack(fill="both", expand=True, padx=4, pady=4)
+        self._detail_pane.pack(fill="x", padx=4, pady=(4, 0))
+
+        self._detail_body = ttk.PanedWindow(right, orient="vertical")
+        self._preview_holder = ttk.Frame(self._detail_body)
+        self._form_holder = ttk.Frame(self._detail_body)
+        self._detail_body.add(self._preview_holder, weight=4)
+        self._detail_body.add(self._form_holder, weight=3)
+        # Lazy: created on first clip-detail entry, lives until workbench
+        # close (which destroys the holders → cascades to PreviewPane.destroy
+        # → kills the WebView child process).
+        self._preview: PreviewPane | None = None
+        self._clip_form: PackageForm | None = None
+
         self._build_detail_placeholder()
 
     def _build_detail_placeholder(self) -> None:
         for w in self._detail_pane.winfo_children():
             w.destroy()
+        self._detail_body.pack_forget()
+        # Restore chrome to fill the right pane while body is hidden.
+        self._detail_pane.pack_configure(fill="both", expand=True,
+                                            pady=(4, 4))
         tk.Label(self._detail_pane,
                  text=_tr("tool.clip.hint_pick_chapter"),
                  fg="gray", font=("", 11)).pack(pady=40)
@@ -1682,6 +1703,9 @@ class ClipWorkbenchApp(ToolBase):
     def _build_detail_chapter(self, chapter_idx: int) -> None:
         for w in self._detail_pane.winfo_children():
             w.destroy()
+        self._detail_body.pack_forget()
+        self._detail_pane.pack_configure(fill="both", expand=True,
+                                            pady=(4, 4))
         if not (0 <= chapter_idx < len(self._chapters)):
             self._build_detail_placeholder()
             return
@@ -1799,12 +1823,21 @@ class ClipWorkbenchApp(ToolBase):
         render()
 
     def _build_detail_clip(self, clip_id: int) -> None:
+        # Tear down chrome only — PreviewPane / PackageForm are long-lived
+        # and live in self._detail_body, which we just rebind.
         for w in self._detail_pane.winfo_children():
             w.destroy()
         clip = next((c for c in self._clips if c.id == clip_id), None)
         if clip is None:
             self._build_detail_placeholder()
             return
+
+        # Chrome shrinks back to fixed-height; body fills below.
+        self._detail_pane.pack_configure(fill="x", expand=False,
+                                            pady=(4, 0))
+        if not self._detail_body.winfo_ismapped():
+            self._detail_body.pack(fill="both", expand=True,
+                                     padx=4, pady=(0, 4))
 
         # Header
         header = ttk.Frame(self._detail_pane)
@@ -1858,34 +1891,32 @@ class ClipWorkbenchApp(ToolBase):
                    command=lambda c=clip: self._delete_focused_clip(c)).pack(
             side="left", padx=(20, 2))
 
-        # Body: preview (top) + package form (bottom)
-        body_pw = ttk.PanedWindow(self._detail_pane, orient="vertical")
-        body_pw.pack(fill="both", expand=True, padx=4, pady=2)
-        prev_holder = ttk.Frame(body_pw)
-        form_holder = ttk.Frame(body_pw)
-        body_pw.add(prev_holder, weight=4)
-        body_pw.add(form_holder, weight=3)
-
-        self._preview = PreviewPane(
-            prev_holder, on_change=self._on_preview_crop_changed)
+        # Body: PreviewPane and PackageForm are long-lived. First entry
+        # spawns them inside the stable holders; subsequent clip clicks
+        # just rebind, keeping the WebView2 child process alive.
+        if self._preview is None:
+            self._preview = PreviewPane(
+                self._preview_holder,
+                on_change=self._on_preview_crop_changed)
+            self._preview.pack(fill="both", expand=True, padx=2, pady=2)
         self._preview.set_aspect_ratio(*self._project_config.aspect_ratio())
         self._preview.push_style(self._build_web_style_dict())
         self._preview.bind_clip(clip,
                                   video_path=self._video_path,
                                   video_w=self._video_w,
                                   video_h=self._video_h)
-        self._preview.pack(fill="both", expand=True, padx=2, pady=2)
 
-        self._clip_form = PackageForm(
-            form_holder, on_change=self._on_clip_changed,
-            ai_button_factory=self._make_ai_button,
-            ai_worker_for_clip=self._make_pkg_worker)
+        if self._clip_form is None:
+            self._clip_form = PackageForm(
+                self._form_holder, on_change=self._on_clip_changed,
+                ai_button_factory=self._make_ai_button,
+                ai_worker_for_clip=self._make_pkg_worker)
+            self._clip_form.pack(fill="both", expand=True, padx=2, pady=2)
         self._clip_form.bind_clip(clip)
-        self._clip_form.pack(fill="both", expand=True, padx=2, pady=2)
 
     def _refresh_focused_preview(self) -> None:
         """Rebind the active PreviewPane (only present in clip-detail mode)."""
-        if not hasattr(self, "_preview") or not self._preview.winfo_exists():
+        if self._preview is None or not self._preview.winfo_exists():
             return
         clip = next((c for c in self._clips if c.id == self._focused_clip_id),
                      None)
@@ -1958,7 +1989,7 @@ class ClipWorkbenchApp(ToolBase):
         self._autosave()
         # Live-update WebView preview's hook/outro text as the user types
         # in the PackageForm.
-        if hasattr(self, "_preview") and self._preview.winfo_exists():
+        if self._preview is not None and self._preview.winfo_exists():
             try:
                 self._preview.push_clip_meta(clip)
             except Exception:
