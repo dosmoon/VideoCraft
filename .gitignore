@@ -152,6 +152,9 @@ DeepL.key
 # User data (per-install state: settings, layout, recent projects, presets, autosave)
 user_data/
 
+# AI Console Playground fixtures (per-user test data; never commit — may contain real subtitles/transcripts)
+prompts/_fixtures/
+
 
 # WebView2 user data (Edge profile created during preview embed)
 .webview_userdata/
