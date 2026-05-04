@@ -540,3 +540,50 @@ def _build_package_context_block(clip, pack, project_config) -> str:
 | `src/tools/program/clip_workbench.py` | 4-tab 拆分 + `_build_background_card` + `_build_tab_style` + `_sync_background_from_form` + Notebook.Tab restyle |
 | `prompts/clip.package.md` | 新增 `{context_block}` 占位 + 视频背景区块 + 强化约束 |
 | `src/i18n/zh.json` + `en.json` | 17 个 key 双语对齐（tab_style + section_background + bg_*） |
+
+## 14. 二改：drawtext `%` 修复 + 预览长寿化（2026-05-04）
+
+两件独立但同日完成的小事，因为体量都不大合并记录。
+
+### 14.1 drawtext 含 `%` 静默失败
+
+**症状**：导出"成功"（ffmpeg returncode 0）但 hook 文字完全不渲染，outro 正常。出现在 401745a 注入项目背景之后——AI 开始写出"失业率4.3%, 问题出在哪?"这种带数据的 hook，触发隐性 bug。
+
+**根因**：ffmpeg drawtext `text=` 默认 `expansion=normal`，把不带 `{...}` 的裸 `%` 当残缺的 `%{...}` 表达式 → "Stray %" warning + **整条 drawtext filter 静默丢弃**。原 `_escape_drawtext` 用 `\%` 转义同样被丢。
+
+**修法**（commit `3467052`）：
+- `_drawtext_filter` / `_build_text_watermark_drawtext`：drawtext 加 `expansion=none`
+- `_escape_drawtext`：删掉错误的 `\%` 转义
+
+**经验**：ffmpeg drawtext 的 expansion 语法很容易给「短文本场景」埋雷，以后任何 drawtext 默认都加 `expansion=none`，不需要 `%{...}` 表达式时一律关掉。
+
+### 14.2 PreviewPane 长寿化（章节 tab clip 切换从秒级降到毫秒级）
+
+**症状**：用户反映「章节界面预览总是调一下，效率很低」。每点一次切片，预览要花 1~3 秒重新出来。
+
+**根因**：`_build_detail_clip` 第一行 `for w in self._detail_pane.winfo_children(): w.destroy()` 把整个 detail pane 砍光，包括 PreviewPane —— 每次切片都要：派生新 pywebview 子进程 + WebView2 init + 加载 HTML + `vid.src=` 重新解码视频。1~3 秒级。
+
+但 PreviewPane 内部本来就为复用设计：`_push_clip` 在 `video_path` 不变时只发 `vc.setClipRange(start, end)`（毫秒级）。这条优化路径被 destroy 大杀器废掉。
+
+**修法**（commit `154aaa9`）：右侧 detail pane 拆成
+- `_detail_pane` —— chrome 区，仍按 mode 整片重建（placeholder / 章节摘要 / 切片 header+time+actions）
+- `_detail_body` —— 稳定 PanedWindow，含 `_preview_holder` + `_form_holder`，仅在 clip-detail mode `pack`，PreviewPane / PackageForm **首次进入时懒构造，之后永驻直到工作台关闭**
+
+切片切换路径：`_build_detail_clip` 只清 chrome，调 `self._preview.bind_clip(new_clip, ...)` + `self._clip_form.bind_clip(new_clip)` 完成切换。Mode 切换走 `_detail_body.pack_forget()` / `pack()`。Inner tab 切换（项目↔样式↔章节↔导出）由 `ttk.Notebook` 自然 unmap 处理，不破坏 SetParent 关系。
+
+**性能对比**：
+- 切片→切片：1~3s → ~50ms
+- inner tab 切换 + 切回：原本要重建预览，现在零成本
+- 副作用：样式 tab 调样式时 push_style 路径终于稳定生效（之前预览常被销毁导致看似不刷）
+
+**架构教训**：
+- `winfo_children() + destroy()` 是粗活儿，对长寿组件杀伤过大。chrome 和长寿组件**必须分开 holder**。
+- pywebview 子进程的 spawn 成本（WebView2 + HTML + video first-frame decode）远超过 Tk widget 重建，复用 PreviewPane 的收益是数量级的。
+- ttk.Notebook unmap 不销毁，SetParent 关系在 unmap/remap 间稳定——验证过 4 tab 来回切换无异常。
+
+### 14.3 文件清单（§14 整体）
+
+| 路径 | 改动 |
+|------|------|
+| `src/core/program/clip.py` | drawtext 加 `expansion=none`，去掉 `\%` 转义 |
+| `src/tools/program/clip_workbench.py` | 右侧 detail pane chrome / body 拆分，PreviewPane / PackageForm 长寿化，3 处 `hasattr` 守卫改 `is not None` |
