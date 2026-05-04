@@ -728,11 +728,14 @@ def load_clips_json(path: str) -> list[ClipDraft]:
 def _escape_drawtext(text: str) -> str:
     if not text:
         return ""
+    # Note on '%': in ffmpeg drawtext, '%' is only special inside %{...}
+    # expansion syntax. Bare '%' is a valid literal — escaping it as '\%'
+    # makes ffmpeg silently drop the entire drawtext filter (no error, no
+    # render). Hooks like "失业率4.3%" hit this exact path.
     out = (
         text.replace("\\", "\\\\")
             .replace(":", "\\:")
             .replace("'", "’")    # convert straight quote to curly to avoid escaping hell
-            .replace("%", "\\%")
     )
     return out
 
@@ -756,7 +759,11 @@ def _drawtext_filter(text: str, *, role: str, ho: "HookOutroStyle",
     fontfile = _hook_outro_font_path(ho.font).replace(":", "\\:")
     y_expr = _y_expr_for_position(position)
     parts = [
-        f"drawtext=text='{txt}'",
+        # expansion=none: treat % literally instead of as %{...} expansion
+        # syntax. Without this, hooks like "失业率4.3%" trigger "Stray %"
+        # and ffmpeg silently drops the entire drawtext filter.
+        f"drawtext=expansion=none",
+        f"text='{txt}'",
         f"fontfile='{fontfile}'",
         f"fontcolor={ho.color}",
         f"fontsize={ho.size}",
@@ -826,7 +833,8 @@ def _build_text_watermark_drawtext(watermark: "WatermarkStyle",
     x = f"w-text_w-{margin}" if pos.endswith("right") else f"{margin}"
     y = f"h-text_h-{margin}" if pos.startswith("bottom") else f"{margin}"
     opacity = max(0.0, min(1.0, (watermark.text_opacity or 70) / 100.0))
-    return (f"drawtext=text='{txt}':"
+    return (f"drawtext=expansion=none:"
+            f"text='{txt}':"
             f"fontfile='C\\:/Windows/Fonts/msyh.ttc':"
             f"fontcolor={hex_color_to_ass_rgba(watermark.text_color, opacity)}:"
             f"fontsize={watermark.text_fontsize}:"
