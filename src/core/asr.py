@@ -23,7 +23,7 @@ def transcribe_audio(
     language: str | None = None,
     translate: bool = False,
     speaker_labels: bool = False,
-    provider: str = "lemonfox",
+    provider: str | None = None,
     on_event: Callable[..., None] | None = None,
     cancel_token=None,
 ) -> dict:
@@ -41,7 +41,9 @@ def transcribe_audio(
                            None for auto-detect).
         translate:         If True, output is translated to English.
         speaker_labels:    If True, SRT lines prefixed with [SPEAKER_xx].
-        provider:          ASR provider (Phase 1 only supports "lemonfox").
+        provider:          ASR provider override. None (default) resolves
+                           from AI Console task_routing[asr.transcribe];
+                           falls back to "lemonfox" when unset.
         on_event:          Optional (event_type, **kwargs) callback for
                            upload progress / retries / wait ticks. UI
                            translates event types via i18n.

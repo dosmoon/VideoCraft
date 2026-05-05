@@ -247,7 +247,8 @@ class AIRouter:
     # ── ASR API ──────────────────────────────────────────────────────────────
 
     def asr(self, audio_path: str, *,
-            provider: str = "lemonfox",
+            task: str = "asr.transcribe",
+            provider: str | None = None,
             language: str | None = None,
             translate: bool = False,
             speaker_labels: bool = False,
@@ -257,14 +258,20 @@ class AIRouter:
 
         Args:
             audio_path:     Path to audio/video file.
-            provider:       ASR provider name. Phase 1 only supports
-                            "lemonfox".
+            task:           Task ID used to resolve the provider when
+                            none is passed explicitly. Default
+                            "asr.transcribe" matches the AI Console row.
+            provider:       Explicit provider name overrides task_routing.
+                            None = resolve from task_routing[task],
+                            falling back to "lemonfox" when unset.
             language:       Optional source-language hint. None = auto.
             translate:      If True, provider returns English translation.
             speaker_labels: If True, provider tags speakers.
             on_event:       Optional callback(event_type, **kwargs) for
                             upload progress / wait ticks / retries.
-                            See core.ai.providers.lemonfox for event types.
+                            See providers/lemonfox.py and
+                            providers/faster_whisper_local.py for event
+                            types.
 
         Returns:
             Raw verbose_json dict from the provider (language, duration,
@@ -274,6 +281,10 @@ class AIRouter:
             RuntimeError: provider unknown, key missing, or all HTTP
                           attempts failed.
         """
+        if provider is None:
+            routed = (self._task_routing or {}).get(task) or {}
+            provider = routed.get("provider") or "lemonfox"
+
         cfg = self._asr_providers.get(provider)
         if cfg is None:
             raise RuntimeError(f"Unknown ASR provider: {provider!r}")

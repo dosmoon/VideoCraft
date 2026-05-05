@@ -78,7 +78,7 @@ def describe(task: str = "", tier: str = TIER_STANDARD) -> dict:
 
 def asr(audio_path: str, *,
         task: str = "asr.transcribe",
-        provider: str = "lemonfox",
+        provider: str | None = None,
         language: str | None = None,
         translate: bool = False,
         speaker_labels: bool = False,
@@ -86,13 +86,15 @@ def asr(audio_path: str, *,
         cancel_token=None) -> dict:
     """Transcribe audio. Returns raw provider response dict.
 
-    `task` is recorded for forward compatibility (future routing); Phase 1
-    ignores it beyond the default. `on_event` receives structured state
-    events — see core.ai.providers.lemonfox.transcribe() for event types.
+    When `provider` is None, the router resolves it from
+    task_routing[task] (configurable in AI Console). Pass an explicit
+    provider name to override routing. `on_event` receives structured
+    state events — see core.ai.providers.lemonfox.transcribe() and
+    core.ai.providers.faster_whisper_local.transcribe() for event types.
     """
-    _ = task
     return router.asr(
         audio_path,
+        task=task,
         provider=provider,
         language=language,
         translate=translate,
