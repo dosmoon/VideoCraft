@@ -145,6 +145,15 @@ _DEFAULT_ASR_PROVIDERS = {
         "description":   "NVIDIA NeMo Parakeet TDT 0.6B v3,25 种欧洲语言;首次加载下载约 1.2GB",
         "model":         "nvidia/parakeet-tdt-0.6b-v3",
     },
+    "sensevoice": {
+        "name":          "SenseVoice (本地,中日韩英)",
+        "enabled":       False,
+        "key_file":      "",
+        "base_url":      "",
+        "auth_required": False,
+        "description":   "Alibaba FunASR + SenseVoiceSmall,中文/粤语/日韩英;首次加载约 900MB",
+        "model":         "iic/SenseVoiceSmall",
+    },
 }
 
 # ── Default TTS providers ────────────────────────────────────────────────────

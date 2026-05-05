@@ -442,6 +442,16 @@ class AIRouter:
                     on_event=on_event,
                     cancel_token=cancel_token,
                 )
+            elif provider == "sensevoice":
+                from core.ai.providers import sensevoice_local as _sv
+                result = _sv.transcribe(
+                    audio_path,
+                    model_name=cfg.get("model", "iic/SenseVoiceSmall"),
+                    language=language,
+                    translate=translate,
+                    on_event=on_event,
+                    cancel_token=cancel_token,
+                )
             else:
                 raise RuntimeError(f"Unsupported ASR provider type: {provider!r}")
 

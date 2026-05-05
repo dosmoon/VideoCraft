@@ -79,10 +79,14 @@ _CACHE_ENV_MAP = {
     # datasets / faster-whisper all derive their caches from it. Avoid setting
     # the legacy TRANSFORMERS_CACHE: transformers ≥ 4.42 deprecates it and
     # warns at import.
-    "HF_HOME":        "hf",
-    "HF_HUB_CACHE":   "hf/hub",
-    "TORCH_HOME":     "torch",
-    "NEMO_CACHE_DIR": "nemo",
+    "HF_HOME":          "hf",
+    "HF_HUB_CACHE":     "hf/hub",
+    "TORCH_HOME":       "torch",
+    "NEMO_CACHE_DIR":   "nemo",
+    # FunASR / SenseVoice pull weights from ModelScope (Alibaba's HF mirror)
+    # by default. ModelScope SDK respects MODELSCOPE_CACHE for the snapshot
+    # root.
+    "MODELSCOPE_CACHE": "modelscope",
 }
 
 

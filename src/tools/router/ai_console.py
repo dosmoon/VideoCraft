@@ -532,19 +532,25 @@ class AIConsoleApp(ToolBase):
 
     def _language_routing_options(self) -> list[str]:
         """ISO codes shown in the language column dropdown. Pulls the
-        union of (1) Parakeet's supported language list, (2) common ASR
-        targets, so users can express overrides for the languages local
-        models actually handle.
+        union of (1) Parakeet's supported European languages,
+        (2) SenseVoice's supported Asian languages + English, and
+        (3) a small extra set so users can target Whisper-only langs.
         """
         try:
             from core.ai.providers.parakeet_local import SUPPORTED_LANGUAGES as _PK_LANGS
         except Exception:
             _PK_LANGS = ()
-        # A small extra set so users targeting Whisper-only languages can
-        # still pick them (e.g. zh, ja, ko routed back to faster_whisper).
-        extras = ("zh", "ja", "ko", "ar", "hi", "tr", "vi", "th", "id")
+        try:
+            from core.ai.providers.sensevoice_local import SUPPORTED_LANGUAGES as _SV_LANGS
+        except Exception:
+            _SV_LANGS = ()
+        # Whisper-only fallback targets for users who want to keep certain
+        # languages on faster-whisper.
+        extras = ("ar", "hi", "tr", "vi", "th", "id")
         seen: list[str] = []
-        for code in tuple(_PK_LANGS) + extras:
+        for code in tuple(_PK_LANGS) + tuple(_SV_LANGS) + extras:
+            if code in ("auto",):
+                continue
             if code not in seen:
                 seen.append(code)
         return seen
