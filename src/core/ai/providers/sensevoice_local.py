@@ -8,15 +8,25 @@ Output normalized to the same lemonfox verbose_json shape as Parakeet /
 faster-whisper:
     {language, duration, text, segments[], words[]}
 
+Architecture: VAD + SenseVoice run **separately**, NOT via FunASR's
+AutoModel-with-vad wrapper. The wrapper merges all VAD chunks into a
+single concatenated text result, throwing away per-chunk timestamps —
+unusable for SRT generation. Here we run fsmn-vad first to get
+[start_ms, end_ms] per chunk, then transcribe each chunk individually
+so timestamps survive.
+
 SenseVoice is non-autoregressive and does not produce word-level
-timestamps natively. We get segment-level timestamps via FunASR's VAD +
-SenseVoice pipeline (fsmn-vad chunks audio first, SenseVoice transcribes
-each chunk). `words[]` is intentionally returned empty — downstream SRT
-generation only needs segment timestamps.
+timestamps natively. Per-chunk segments are sufficient for SRT;
+`words[]` is intentionally returned empty.
+
+Each per-chunk SV output is prefixed with rich tokens:
+    <|zh|><|NEUTRAL|><|Speech|><|withitn|>actual text...
+Use these tokens — not text length — to filter noise hallucinations:
+the model's own `<|nospeech|>` / language-mismatch signals are reliable
+"this isn't real speech" indicators.
 
 Models download to MODELSCOPE_CACHE / HF cache (set by core.paths
-.apply_cache_env at process start). FunASR pulls weights from ModelScope
-by default; the SDK respects MODELSCOPE_CACHE for the snapshot directory.
+.apply_cache_env at process start).
 """
 
 from __future__ import annotations
@@ -36,26 +46,33 @@ from core.ai.errors import AIError, Kind
 EventCallback = Callable[..., None]
 
 
-# SenseVoice supports these language codes. "auto" means let the model
-# detect. Used by the AI Console language-routing dropdown to advertise
-# which Asian languages are routable here.
 SUPPORTED_LANGUAGES = ("zh", "yue", "en", "ja", "ko", "auto")
+
+# Event-only chunks (model says "this segment is just music / laughter /
+# applause / cough / breath" with no actual speech text). Drop these.
+_EVENT_NOISE_TAGS = ("BGM", "Laughter", "Applause", "Cry",
+                     "Sneeze", "Cough", "Breath")
+
+# Threshold for "short text" used in the language-mismatch filter. Not a
+# blunt length filter — only triggers when the model also disagrees with
+# the user-requested language for this chunk.
+_LANG_MISMATCH_TEXT_THRESHOLD = 10
 
 
 # ── Model cache ──────────────────────────────────────────────────────────────
-# The FunASR AutoModel object is multi-hundred-MB. Cache per-process so
-# back-to-back transcriptions reuse weights.
 
-_MODEL_CACHE: dict[str, object] = {}
-_MODEL_CACHE_LOCK = threading.Lock()
+_VAD_MODEL = None
+_VAD_LOCK = threading.Lock()
+_SV_CACHE: dict[str, object] = {}
+_SV_LOCK = threading.Lock()
 
 
-def _get_model(model_name: str, emit: Callable):
-    with _MODEL_CACHE_LOCK:
-        cached = _MODEL_CACHE.get(model_name)
-        if cached is not None:
-            return cached
-    emit("model_loading", model=model_name, device="auto", compute_type="auto")
+def _get_vad_model(emit: Callable):
+    global _VAD_MODEL
+    with _VAD_LOCK:
+        if _VAD_MODEL is not None:
+            return _VAD_MODEL
+    emit("model_loading", model="fsmn-vad", device="auto", compute_type="auto")
     try:
         from funasr import AutoModel
     except ImportError as e:
@@ -64,27 +81,37 @@ def _get_model(model_name: str, emit: Callable):
             "FunASR not installed. Run: pip install funasr",
             raw=e,
         ) from e
-    # VAD chunking keeps SenseVoice's max segment under 30s (the model's
-    # training horizon). merge_vad + merge_length_s=15 keeps subtitle-
-    # friendly chunk lengths so the SRT doesn't end up with 1-word lines
-    # or 60s monologues.
+    model = AutoModel(
+        model="fsmn-vad",
+        disable_update=True,
+        disable_log=True,
+        disable_pbar=True,
+    )
+    with _VAD_LOCK:
+        _VAD_MODEL = model
+    return model
+
+
+def _get_sv_model(model_name: str, emit: Callable):
+    with _SV_LOCK:
+        cached = _SV_CACHE.get(model_name)
+        if cached is not None:
+            return cached
+    emit("model_loading", model=model_name, device="auto", compute_type="auto")
+    from funasr import AutoModel
     model = AutoModel(
         model=model_name,
-        vad_model="fsmn-vad",
-        vad_kwargs={"max_single_segment_time": 30000},
-        trust_remote_code=False,
-        disable_update=True,    # don't phone home for SDK updates
+        disable_update=True,
+        disable_log=True,
+        disable_pbar=True,
     )
-    with _MODEL_CACHE_LOCK:
-        _MODEL_CACHE[model_name] = model
+    with _SV_LOCK:
+        _SV_CACHE[model_name] = model
     emit("model_loaded", model=model_name, device="auto", compute_type="auto")
     return model
 
 
 # ── Audio preprocessing ──────────────────────────────────────────────────────
-# Same convention as parakeet_local: 16 kHz mono PCM WAV via ffmpeg. FunASR
-# does internal resampling but explicit preprocessing makes the pipeline
-# format-agnostic (mp4 / m4a / flac all work).
 
 def _ensure_16k_mono_wav(src_path: str, tmp_dir: str) -> str:
     if not shutil.which("ffmpeg"):
@@ -122,24 +149,48 @@ def _audio_duration_sec(path: str) -> float:
         return 0.0
 
 
-# ── Output postprocessing ────────────────────────────────────────────────────
+# ── SenseVoice rich-token parsing ────────────────────────────────────────────
 
-# SenseVoice embeds language / emotion / audio-event tokens inside the text
-# stream. For SRT we want plain text. This regex strips ALL <|...|> markers;
-# FunASR ships rich_transcription_postprocess() for the same job but its
-# import path varies between versions, so we keep our own.
-_RICH_TOKEN_RE = re.compile(r"<\|[^|]*\|>")
+# Matches the leading metadata tokens emitted by SenseVoice for each chunk:
+#   <|zh|><|NEUTRAL|><|Speech|><|withitn|>...
+_LEADING_TOKEN_RE = re.compile(r"^((?:<\|[^|]+\|>)+)")
+_TOKEN_RE = re.compile(r"<\|([^|]+)\|>")
+_LANG_TAGS = {"zh", "en", "yue", "ja", "ko", "nospeech"}
+_EMO_TAGS = {"HAPPY", "SAD", "ANGRY", "NEUTRAL", "FEARFUL",
+             "DISGUSTED", "SURPRISED", "EMO_UNKNOWN"}
 
 
-def _clean_text(text: str) -> str:
-    if not text:
-        return ""
-    return _RICH_TOKEN_RE.sub("", text).strip()
+def _parse_sv_chunk(raw: str) -> dict:
+    """Split a per-chunk SV output into metadata + clean text.
+
+    Returns {"language": str|None, "emotion": str|None, "event": str|None,
+             "text": str (rich tokens stripped)}.
+    """
+    if not raw:
+        return {"language": None, "emotion": None, "event": None, "text": ""}
+
+    leading = _LEADING_TOKEN_RE.match(raw)
+    tags_section = leading.group(1) if leading else ""
+    rest = raw[len(tags_section):]
+
+    language = emotion = event = None
+    for m in _TOKEN_RE.finditer(tags_section):
+        tag = m.group(1)
+        if tag in _LANG_TAGS and language is None:
+            language = tag
+        elif tag in _EMO_TAGS and emotion is None:
+            emotion = tag
+        elif tag in ("withitn", "woitn"):
+            continue
+        elif event is None:
+            event = tag
+
+    # Strip any stray tokens still embedded in the body (rare but defensive).
+    text = _TOKEN_RE.sub("", rest).strip()
+    return {"language": language, "emotion": emotion, "event": event, "text": text}
 
 
 def _normalize_language(language: str | None) -> str:
-    """SenseVoice expects 'auto' / 'zh' / 'en' / 'yue' / 'ja' / 'ko' /
-    'nospeech'. None or empty string → 'auto'."""
     if not language:
         return "auto"
     s = language.strip().lower()
@@ -159,22 +210,23 @@ def transcribe(
     on_event: EventCallback | None = None,
     cancel_token=None,
 ) -> dict:
-    """Transcribe audio locally via FunASR + SenseVoiceSmall.
+    """Transcribe audio locally via FunASR fsmn-vad + SenseVoiceSmall.
 
     Args:
-        audio_path:  Path to audio/video. Transcoded to 16 kHz mono WAV
-                     internally via ffmpeg.
-        model_name:  FunASR model id. Default `iic/SenseVoiceSmall`.
-        language:    SenseVoice language hint: auto / zh / en / yue /
-                     ja / ko. None = auto.
-        translate:   Not supported — SenseVoice does ASR only. Raises if True.
-        on_event:    Optional callback(event_type, **kwargs). Same event
-                     vocabulary as parakeet_local for UI consistency.
-        cancel_token: Cooperative cancel (coarse — checked before/after
-                     the blocking generate() call).
+        audio_path:  Path to audio/video. Transcoded to 16 kHz mono WAV.
+        model_name:  FunASR SV model id. Default `iic/SenseVoiceSmall`.
+        language:    auto / zh / en / yue / ja / ko. Used both as inference
+                     hint and as filter signal — chunks the model classifies
+                     as a different language with very short text get
+                     dropped (the model's own "this isn't your language"
+                     signal is more reliable than text-length heuristics).
+        translate:   Not supported. Raises if True.
+        on_event:    Optional callback(event_type, **kwargs). Same vocabulary
+                     as parakeet_local for UI consistency.
+        cancel_token: Cooperative cancel checked between VAD chunks.
 
     Returns:
-        dict normalized to lemonfox verbose_json shape. words[] is empty
+        dict normalized to lemonfox verbose_json shape. words[] empty
         because SenseVoice does not produce word-level timestamps.
 
     Raises:
@@ -191,7 +243,6 @@ def transcribe(
     if not os.path.exists(audio_path):
         raise AIError(Kind.MALFORMED, "SenseVoice",
                       f"Audio file not found: {audio_path}")
-
     if translate:
         raise AIError(Kind.MALFORMED, "SenseVoice",
                       "SenseVoice does not support translation — disable the "
@@ -213,7 +264,8 @@ def transcribe(
         raise AIError(Kind.CANCELLED, "SenseVoice", "Cancelled by user")
 
     try:
-        model = _get_model(model_name, emit)
+        vad_model = _get_vad_model(emit)
+        sv_model = _get_sv_model(model_name, emit)
     except AIError:
         raise
     except Exception as e:
@@ -230,103 +282,124 @@ def transcribe(
         duration = _audio_duration_sec(wav_path)
 
         try:
-            results = model.generate(
+            import soundfile as sf
+        except ImportError as e:
+            raise AIError(Kind.NETWORK, "SenseVoice",
+                          "soundfile not installed (transitive funasr dep)",
+                          raw=e) from e
+
+        try:
+            audio_data, sr = sf.read(wav_path)
+        except Exception as e:
+            raise AIError(Kind.MALFORMED, "SenseVoice",
+                          f"Failed to read WAV: {e}", raw=e) from e
+
+        # Step 1: VAD → list of [start_ms, end_ms]
+        try:
+            vad_out = vad_model.generate(
                 input=wav_path,
-                cache={},
-                language=sv_lang,
-                use_itn=True,        # inverse text norm: 数字/单位 normalize
-                batch_size_s=60,     # batch by total seconds
-                merge_vad=True,      # merge tiny VAD chunks
-                merge_length_s=15,   # subtitle-friendly chunk size
+                max_single_segment_time=30000,
             )
+            vad_chunks = vad_out[0].get("value") or []
         except Exception as e:
             raise AIError(Kind.UNKNOWN, "SenseVoice",
-                          f"Inference failed: {e}", raw=e) from e
+                          f"VAD failed: {e}", raw=e) from e
 
-        if cancel_token is not None and cancel_token.cancelled:
-            raise AIError(Kind.CANCELLED, "SenseVoice", "Cancelled by user")
+        if not vad_chunks:
+            emit("state_done", segment_count=0,
+                 elapsed=int(time.time() - started))
+            return {"language": sv_lang, "duration": duration,
+                    "text": "", "segments": [], "words": []}
 
-        segments_out, full_text = _normalize_results(results)
+        # Step 2: per-chunk SV inference
+        segments_out = []
+        text_parts = []
+        seg_id = 0
+
+        for chunk_idx, (start_ms, end_ms) in enumerate(vad_chunks):
+            if cancel_token is not None and cancel_token.cancelled:
+                raise AIError(Kind.CANCELLED, "SenseVoice", "Cancelled by user")
+
+            start_sample = int(start_ms * sr / 1000)
+            end_sample = int(end_ms * sr / 1000)
+            if end_sample <= start_sample:
+                continue
+            slice_audio = audio_data[start_sample:end_sample]
+
+            try:
+                sv_out = sv_model.generate(
+                    input=slice_audio,
+                    language=sv_lang,
+                    use_itn=True,
+                    ban_emo_unk=True,
+                )
+            except Exception as e:
+                raise AIError(Kind.UNKNOWN, "SenseVoice",
+                              f"Inference failed on chunk {chunk_idx}: {e}",
+                              raw=e) from e
+
+            raw = (sv_out[0].get("text") if sv_out else "") or ""
+            parsed = _parse_sv_chunk(raw)
+
+            if not _keep_chunk(parsed, sv_lang):
+                continue
+
+            segments_out.append({
+                "id":    seg_id,
+                "start": start_ms / 1000.0,
+                "end":   end_ms / 1000.0,
+                "text":  parsed["text"],
+            })
+            text_parts.append(parsed["text"])
+            seg_id += 1
+
+            if (chunk_idx + 1) % 5 == 0:
+                emit("state_processing",
+                     segment_count=seg_id,
+                     elapsed=int(time.time() - started))
 
         elapsed = int(time.time() - started)
         emit("state_done", segment_count=len(segments_out), elapsed=elapsed)
 
         return {
-            "language": sv_lang if sv_lang != "auto" else "auto",
+            "language": sv_lang,
             "duration": duration,
-            "text":     full_text,
+            "text":     " ".join(text_parts).strip(),
             "segments": segments_out,
-            "words":    [],   # not produced by SenseVoice
+            "words":    [],
         }
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
-def _normalize_results(results) -> tuple[list, str]:
-    """Convert FunASR's varied return shapes into our standard segments.
+def _keep_chunk(parsed: dict, requested_lang: str) -> bool:
+    """Decide whether a per-VAD-chunk SV result should make it into the
+    final SRT. Uses the model's own signals — not blunt text-length
+    filtering — to drop noise hallucinations.
 
-    FunASR's return for an AutoModel(VAD + SenseVoice) call is a list.
-    Each item typically carries:
-      - 'key':       input filename
-      - 'text':      text with rich-transcription tokens
-      - 'timestamp': list of [start_ms, end_ms] per char/token
-      - 'sentence_info' (when VAD merging is on, newer versions):
-            list of {'start','end','text'} dicts in milliseconds
-
-    We prefer sentence_info (already segment-level). When absent, fall
-    back to one segment per top-level result item using its overall
-    text + first/last timestamp.
+    Drop rules:
+      1. Model says <|nospeech|>: chunk is silence / pure noise.
+      2. Event-only tag (<|BGM|>, <|Laughter|>, <|Applause|>, ...) with
+         empty text: a non-speech audio event the model labelled but
+         couldn't transcribe.
+      3. Empty text after token stripping.
+      4. Language mismatch + short text: when user asked for `zh` but
+         the model classified this short chunk as `<|en|>` / `<|ko|>`,
+         it's almost always a noise/breath misrecognition (e.g. "Yeah."
+         or "그." in our reference Trump-clip test). Long text in
+         another language is genuine code-switch and kept.
     """
-    if not results:
-        return [], ""
+    text = (parsed.get("text") or "").strip()
+    lang = parsed.get("language")
+    event = parsed.get("event")
 
-    segments_out = []
-    text_parts = []
-    seg_id = 0
-
-    for item in results:
-        if not isinstance(item, dict):
-            continue
-
-        sent_info = item.get("sentence_info")
-        if sent_info and isinstance(sent_info, list):
-            for sent in sent_info:
-                seg_text = _clean_text(sent.get("text", ""))
-                if not seg_text:
-                    continue
-                start_ms = float(sent.get("start", 0))
-                end_ms = float(sent.get("end", start_ms))
-                segments_out.append({
-                    "id":    seg_id,
-                    "start": start_ms / 1000.0,
-                    "end":   end_ms / 1000.0,
-                    "text":  seg_text,
-                })
-                text_parts.append(seg_text)
-                seg_id += 1
-            continue
-
-        # Fallback: one segment per item, derive bounds from timestamp[]
-        seg_text = _clean_text(item.get("text", ""))
-        if not seg_text:
-            continue
-        ts = item.get("timestamp") or []
-        if ts and isinstance(ts, list) and len(ts) > 0:
-            try:
-                start_ms = float(ts[0][0])
-                end_ms = float(ts[-1][1])
-            except (TypeError, IndexError, ValueError):
-                start_ms = end_ms = 0.0
-        else:
-            start_ms = end_ms = 0.0
-        segments_out.append({
-            "id":    seg_id,
-            "start": start_ms / 1000.0,
-            "end":   end_ms / 1000.0,
-            "text":  seg_text,
-        })
-        text_parts.append(seg_text)
-        seg_id += 1
-
-    full_text = " ".join(text_parts).strip()
-    return segments_out, full_text
+    if lang == "nospeech":
+        return False
+    if event in _EVENT_NOISE_TAGS and not text:
+        return False
+    if not text:
+        return False
+    if requested_lang != "auto" and lang and lang != requested_lang:
+        if len(text) < _LANG_MISMATCH_TEXT_THRESHOLD:
+            return False
+    return True
