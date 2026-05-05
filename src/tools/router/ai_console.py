@@ -744,8 +744,11 @@ class AIConsoleApp(ToolBase):
         tk.Button(btn_row, text=tr("tool.router.btn_cancel"), command=dlg.destroy, width=10).pack(side="left")
 
     def _open_asr_tts_edit_dialog(self, name: str, cfg: dict, category: str):
-        # ASR has timeout fields; TTS has only the key.
         is_asr = (category == "asr")
+        is_local = cfg.get("auth_required") is False
+        if is_local and is_asr:
+            self._open_local_asr_edit_dialog(name, cfg)
+            return
         display_name = cfg.get("name", name)
         dlg = tk.Toplevel(self.master)
         dlg.title(tr("tool.router.edit_dialog_title", name=display_name))
@@ -821,6 +824,87 @@ class AIConsoleApp(ToolBase):
 
         btn_row = tk.Frame(dlg)
         btn_row.grid(row=5, column=0, columnspan=4, pady=14)
+        tk.Button(btn_row, text=tr("tool.router.btn_save"), command=save,
+                  width=10).pack(side="left", padx=10)
+        tk.Button(btn_row, text=tr("tool.router.btn_cancel"), command=dlg.destroy,
+                  width=10).pack(side="left")
+
+    def _open_local_asr_edit_dialog(self, name: str, cfg: dict):
+        """Edit dialog for a local ASR provider (faster-whisper).
+
+        No API key row; instead exposes model size, device, compute type,
+        and beam size. First-time use of a model triggers a HuggingFace
+        download — emit that warning in the hint label.
+        """
+        display_name = cfg.get("name", name)
+        dlg = tk.Toplevel(self.master)
+        dlg.title(tr("tool.router.edit_dialog_title", name=display_name))
+        dlg.geometry("620x360")
+        dlg.resizable(True, True)
+        dlg.grab_set()
+
+        tk.Label(dlg, text=tr("tool.router.local_asr_hint"),
+                 fg="#666", anchor="w", justify="left",
+                 wraplength=580).grid(
+            row=0, column=0, columnspan=2, padx=12, pady=(12, 6), sticky="w")
+
+        # Model size dropdown — sorted from smallest to largest, with a
+        # short capability hint per option.
+        MODEL_OPTIONS = [
+            "tiny",
+            "base",
+            "small",
+            "medium",
+            "large-v3-turbo",
+            "large-v3",
+        ]
+        DEVICE_OPTIONS = ["auto", "cpu", "cuda"]
+        COMPUTE_OPTIONS = ["auto", "int8", "int8_float16", "float16", "float32"]
+
+        model_var   = tk.StringVar(value=cfg.get("model", "small"))
+        device_var  = tk.StringVar(value=cfg.get("device", "auto"))
+        compute_var = tk.StringVar(value=cfg.get("compute_type", "auto"))
+        beam_var    = tk.StringVar(value=str(cfg.get("beam_size", 5)))
+
+        def _row(r, label_key, var, values):
+            tk.Label(dlg, text=tr(label_key), anchor="e", width=14).grid(
+                row=r, column=0, padx=10, pady=6, sticky="e")
+            ttk.Combobox(dlg, textvariable=var, values=values,
+                         state="readonly", width=24).grid(
+                row=r, column=1, padx=4, pady=6, sticky="w")
+
+        _row(1, "tool.router.label_fw_model", model_var, MODEL_OPTIONS)
+        _row(2, "tool.router.label_fw_device", device_var, DEVICE_OPTIONS)
+        _row(3, "tool.router.label_fw_compute", compute_var, COMPUTE_OPTIONS)
+
+        tk.Label(dlg, text=tr("tool.router.label_fw_beam_size"),
+                 anchor="e", width=14).grid(
+            row=4, column=0, padx=10, pady=6, sticky="e")
+        tk.Entry(dlg, textvariable=beam_var, width=10).grid(
+            row=4, column=1, padx=4, pady=6, sticky="w")
+
+        def save():
+            try:
+                bs = _parse_int_range(beam_var.get(), minimum=1, maximum=10,
+                                      field_label=tr("tool.router.label_fw_beam_size"))
+            except ValueError as e:
+                messagebox.showerror(tr("dialog.common.error"), str(e), parent=dlg)
+                return
+            router.update_asr_provider(
+                name,
+                model=model_var.get(),
+                device=device_var.get(),
+                compute_type=compute_var.get(),
+                beam_size=bs,
+            )
+            messagebox.showinfo(tr("tool.router.saved_title"),
+                                tr("tool.router.saved_config_msg", name=display_name),
+                                parent=dlg)
+            self._rebuild_routing_tab()
+            dlg.destroy()
+
+        btn_row = tk.Frame(dlg)
+        btn_row.grid(row=5, column=0, columnspan=2, pady=18)
         tk.Button(btn_row, text=tr("tool.router.btn_save"), command=save,
                   width=10).pack(side="left", padx=10)
         tk.Button(btn_row, text=tr("tool.router.btn_cancel"), command=dlg.destroy,

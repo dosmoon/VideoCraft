@@ -139,7 +139,41 @@ ffmpeg -version
 
 至此云端 Key 完全不需要,翻译 / 字幕处理全部走本地。
 
-> 📌 当前阶段(Phase L1)只有 LLM 任务支持本地化。**ASR(语音转字幕)和 TTS(文本转语音)**仍然依赖云端 Key,会在后续阶段补齐。
+> 📌 LLM 任务(翻译 / 字幕处理 / 切片排序)走 Ollama;**TTS(文本转语音)**仍然依赖云端 Key,会在 Phase L3 补齐。
+
+---
+
+### 🎙️ 使用本地 Faster-Whisper(语音转字幕,无需任何云端 Key)
+
+ASR(语音转字幕)也可以完全本地跑,**告别 LemonFox API key**。引擎是 [faster-whisper](https://github.com/SYSTRAN/faster-whisper)(CTranslate2 后端),覆盖中英西法德俄等 99 种语言。
+
+**步骤**:
+
+1. `requirements.txt` 已经包含 `faster-whisper`,正常 `pip install -r requirements.txt` 即可
+2. 启动 VideoCraft → **Tools → AI Console** → **Providers** 区域找 **Faster-Whisper (本地)** → 点 **Edit**
+3. 选择模型尺寸(默认 `small`,质量速度均衡;CPU 用户推荐 `small`,GPU 用户可上 `medium` / `large-v3-turbo`):
+
+   | 尺寸 | 体积 | CPU 速度 | 质量 |
+   |---|---|---|---|
+   | `tiny` | 75 MB | 极快 | 一般 |
+   | `base` | 145 MB | 快 | 中等 |
+   | `small` | 244 MB | 较快 | **推荐** |
+   | `medium` | 770 MB | 中等 | 较高 |
+   | `large-v3-turbo` | 1.5 GB | 较慢 | 高 |
+   | `large-v3` | 3 GB | 慢 | 最高 |
+
+4. **Device**:`auto`(默认 CPU)/ `cpu` / `cuda`。**注意**:选 `cuda` 需要本机已安装 CUDA 12 Toolkit + cuDNN(否则推理时报 `cublas64_12.dll not found`)。一般用户保持 `auto` 即可
+5. 点 **保存** → Enable provider
+6. 主界面 **Task Routing** → `asr.transcribe` 行 → Provider 改为 **Faster-Whisper (本地)**
+
+**首次使用**:第一次跑会自动从 HuggingFace 下载模型到本机缓存(`~/.cache/huggingface/hub/`),之后完全离线。
+
+**性能参考**(20 秒中文音频):
+- CPU (8 核) + small 模型:约 9 秒(RTF 0.43)
+- GPU (RTX 4090) + medium 模型:约 1 秒
+- CPU + large-v3:约 60 秒(慢但质量最高)
+
+> 至此 LLM(翻译/字幕处理)+ ASR(语音转字幕)整条链路都可以**完全无云端 key 跑通**。剩下 TTS(文本转语音)在 Phase L3 补齐。
 
 ---
 

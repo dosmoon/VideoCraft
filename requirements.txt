@@ -16,6 +16,10 @@ google-genai==1.55.0
 fish-audio-sdk==1.3.0
 openai==2.30.0
 
+# Local ASR — faster-whisper bundles CTranslate2 + tokenizers; CUDA is
+# auto-used when ctranslate2 detects an available device.
+faster-whisper==1.2.1
+
 # Media
 Pillow==12.0.0
 

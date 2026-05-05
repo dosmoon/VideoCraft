@@ -279,16 +279,19 @@ class AIRouter:
             raise RuntimeError(f"Unknown ASR provider: {provider!r}")
         if not cfg.get("enabled", True):
             raise RuntimeError(f"ASR provider {provider!r} is disabled")
-        api_key = _cfg.read_key(cfg)
-        if api_key is None:
-            raise RuntimeError(
-                f"ASR API key not configured for {provider!r} — "
-                f"set it in AI Router manager"
-            )
 
+        is_local = cfg.get("auth_required") is False
+        api_key = None
         base_url = cfg.get("base_url") or ""
-        if not base_url:
-            raise RuntimeError(f"ASR provider {provider!r} has no base_url")
+        if not is_local:
+            api_key = _cfg.read_key(cfg)
+            if api_key is None:
+                raise RuntimeError(
+                    f"ASR API key not configured for {provider!r} — "
+                    f"set it in AI Router manager"
+                )
+            if not base_url:
+                raise RuntimeError(f"ASR provider {provider!r} has no base_url")
 
         try:
             if provider == "lemonfox":
@@ -302,6 +305,19 @@ class AIRouter:
                     connect_timeout=cfg.get("connect_timeout_sec", 60),
                     read_timeout=cfg.get("read_timeout_sec", 120),
                     max_retries=cfg.get("max_retries", 1),
+                    on_event=on_event,
+                    cancel_token=cancel_token,
+                )
+            elif provider == "faster_whisper":
+                from core.ai.providers import faster_whisper_local as _fw
+                result = _fw.transcribe(
+                    audio_path,
+                    model_name=cfg.get("model", "small"),
+                    device=cfg.get("device", "auto"),
+                    compute_type=cfg.get("compute_type", "auto"),
+                    beam_size=cfg.get("beam_size", 5),
+                    language=language,
+                    translate=translate,
                     on_event=on_event,
                     cancel_token=cancel_token,
                 )

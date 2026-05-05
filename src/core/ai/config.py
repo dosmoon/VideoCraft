@@ -124,6 +124,18 @@ _DEFAULT_ASR_PROVIDERS = {
         "read_timeout_sec": 120,
         "max_retries": 1,
     },
+    "faster_whisper": {
+        "name":          "Faster-Whisper (本地)",
+        "enabled":       False,         # User opts in via AI Console
+        "key_file":      "",            # Local — no API key
+        "base_url":      "",            # Not applicable
+        "auth_required": False,         # Skip key check at dispatch time
+        "description":   "本地 Whisper 推理 (CPU/GPU,首次加载会下载模型)",
+        "model":         "small",       # tiny / base / small / medium / large-v3 / large-v3-turbo
+        "device":        "auto",        # auto / cpu / cuda
+        "compute_type":  "auto",        # auto / int8 / int8_float16 / float16 / float32
+        "beam_size":     5,
+    },
 }
 
 # ── Default TTS providers ────────────────────────────────────────────────────
