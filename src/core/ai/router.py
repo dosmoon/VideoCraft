@@ -221,6 +221,19 @@ class AIRouter:
         cell = self._task_routing.get(task, {})
         return copy.deepcopy(cell.get("language_routing") or {})
 
+    def get_task_language_routing_enabled(self, task: str) -> bool:
+        """Master switch — when False, the language_routing map is ignored
+        at dispatch time even if it has entries. User must flip this on
+        explicitly (no auto-toggle on add/remove)."""
+        return bool(self._task_routing.get(task, {})
+                                       .get("language_routing_enabled"))
+
+    def set_task_language_routing_enabled(self, task: str, enabled: bool) -> None:
+        cell = self._task_routing.setdefault(
+            task, {"provider": "", "model": ""})
+        cell["language_routing_enabled"] = bool(enabled)
+        self._persist()
+
     def set_task_language_routing(self, task: str, mapping: dict) -> None:
         """Replace the full language_routing map for a task and persist.
 
@@ -354,14 +367,17 @@ class AIRouter:
         """
         if provider is None:
             routed = (self._task_routing or {}).get(task) or {}
-            # Language-aware routing: task_routing[task].language_routing[iso]
-            # wins when the user (or upstream UI) specified a concrete
-            # language hint AND the task has a per-language override mapped
-            # for it. Otherwise fall back to the task's default provider,
-            # then to lemonfox as the historical default.
+            # Language-aware routing: applied ONLY when the per-task master
+            # switch `language_routing_enabled` is True. Without that flag,
+            # the language_routing map is treated as inert config — so a
+            # user can switch the default provider back to a cloud service
+            # without their old per-language overrides silently hijacking
+            # the call. Without an explicit lang_iso we can't pre-route
+            # anyway (we'd need the audio analyzed first) — fall through.
             lang_iso = _normalize_lang_iso(language)
             lang_routing = routed.get("language_routing") or {}
-            lang_pick = lang_routing.get(lang_iso) if lang_iso else None
+            lr_enabled = bool(routed.get("language_routing_enabled"))
+            lang_pick = lang_routing.get(lang_iso) if (lr_enabled and lang_iso) else None
             if lang_pick and lang_pick.get("provider"):
                 provider = lang_pick["provider"]
             else:

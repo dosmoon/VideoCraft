@@ -442,5 +442,12 @@ def _migrate_task_routing(task_routing: dict | None, tier_routing: dict) -> tupl
             if "model" not in cell:
                 cell["model"] = defaults[tid]["model"]
                 dirty = True
+            # If a task carries a language_routing map but is missing the
+            # master switch, default it to False — safer than silently
+            # honoring legacy overrides after the user changed default
+            # provider. User must explicitly flip the switch on.
+            if "language_routing" in cell and "language_routing_enabled" not in cell:
+                cell["language_routing_enabled"] = False
+                dirty = True
 
     return flattened, dirty

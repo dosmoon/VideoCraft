@@ -336,19 +336,46 @@ class AIConsoleApp(ToolBase):
                 model_cb.bind("<Return>",
                               lambda _e, t=tid: self._on_routing_model_changed(t))
             elif cat == "asr":
-                # Replace the empty model cell with a language-routing
-                # entry button. Count reflects how many per-language
-                # overrides are currently configured.
+                # Replace the empty model cell with a small frame holding
+                # the master enable switch + the language-routing entry
+                # button. Count in button reflects how many per-language
+                # overrides are currently configured. The Enable switch
+                # is the master gate — when off, lang_routing entries are
+                # ignored at dispatch (so the user can swap default
+                # provider freely without surprise hijacking).
+                lr_frame = tk.Frame(parent)
+                lr_frame.grid(row=i, column=2, sticky="w", padx=4, pady=4)
+
+                lr_enabled = router.get_task_language_routing_enabled(tid)
                 lr = router.get_task_language_routing(tid)
+
+                self._task_lang_enable_vars = getattr(
+                    self, "_task_lang_enable_vars", {})
+                en_var = tk.BooleanVar(value=lr_enabled)
+                self._task_lang_enable_vars[tid] = en_var
+
                 btn_text = tr("tool.router.lang_routing_btn", n=len(lr))
                 btn = tk.Button(
-                    parent, text=btn_text, anchor="w", width=22,
+                    lr_frame, text=btn_text, anchor="w", width=18,
                     command=lambda t=tid: self._open_language_routing_dialog(t),
                 )
-                btn.grid(row=i, column=2, sticky="w", padx=4, pady=4)
-                # Store reference so the dialog can refresh the label after edits
+
+                def _on_toggle_lr(t=tid, var=en_var, b=btn):
+                    new_val = bool(var.get())
+                    router.set_task_language_routing_enabled(t, new_val)
+                    self._refresh_lang_button_state(t)
+
+                ttk.Checkbutton(
+                    lr_frame, text=tr("tool.router.btn_enable"),
+                    variable=en_var, command=_on_toggle_lr,
+                ).pack(side="left")
+                btn.pack(side="left", padx=(4, 0))
+
+                # Store references so the dialog refresh path can update
+                # both the button label and its disabled state.
                 self._task_lang_buttons = getattr(self, "_task_lang_buttons", {})
                 self._task_lang_buttons[tid] = btn
+                self._refresh_lang_button_state(tid)
             else:
                 tk.Label(parent, text="—", fg="#999", anchor="w",
                          ).grid(row=i, column=2, sticky="w", padx=4, pady=4)
@@ -398,6 +425,22 @@ class AIConsoleApp(ToolBase):
 
     # ── Language routing dialog (ASR per-language provider override) ───────
 
+    def _refresh_lang_button_state(self, task_id: str) -> None:
+        """Sync the 🌐 button's text + visual disabled state with the
+        current enable flag and override count. Called after toggling the
+        master switch and after the dialog persists changes."""
+        btn = getattr(self, "_task_lang_buttons", {}).get(task_id)
+        if btn is None:
+            return
+        lr = router.get_task_language_routing(task_id)
+        enabled = router.get_task_language_routing_enabled(task_id)
+        btn.configure(text=tr("tool.router.lang_routing_btn", n=len(lr)))
+        # Keep button clickable either way — user may want to view/edit
+        # overrides while the master switch is off. Visual cue only:
+        # gray foreground when inactive so the row clearly shows the
+        # current dispatch behavior.
+        btn.configure(fg=("#000" if enabled else "#999"))
+
     def _open_language_routing_dialog(self, task_id: str):
         dlg = tk.Toplevel(self.master)
         dlg.title(tr("tool.router.lang_routing_title", task=task_id))
@@ -441,11 +484,7 @@ class AIConsoleApp(ToolBase):
                 if iso and prov:
                     mapping[iso] = {"provider": prov}
             router.set_task_language_routing(task_id, mapping)
-            # Refresh button label on the routing table
-            btns = getattr(self, "_task_lang_buttons", {})
-            if task_id in btns:
-                btns[task_id].configure(
-                    text=tr("tool.router.lang_routing_btn", n=len(mapping)))
+            self._refresh_lang_button_state(task_id)
 
         def add_row(iso: str = "", prov: str = ""):
             row = tk.Frame(rows_frame)
