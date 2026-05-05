@@ -138,39 +138,65 @@ ffmpeg -version
 4. Providers 行勾上 **启用**
 5. **Task Routing** → `translate` / `subtitle.post` 等行 → Provider 改为 **Ollama**,Model 选 `qwen3:4b`
 
-#### 🎙️ ASR 走本地 Faster-Whisper
+#### 🎙️ ASR 本地引擎选型
+
+VideoCraft 内置两个本地 ASR 引擎,定位互补,可在 AI Console 按语言路由共存:
+
+| 引擎 | 强项 | 弱项 | 速度 (CPU, 200s 音频) |
+|---|---|---|---|
+| **Parakeet TDT v3** (NeMo) | 英语 / 25 种欧洲语言:精度高,段落切分自然,做字幕直接可用 | 不支持中日韩阿等亚洲语言 | **~13 秒** (RTF 0.065) |
+| **Faster-Whisper** | 99 种语言全覆盖,小语种唯一选择 | 英语精度劣于 Parakeet,small 档常见专业词错误 | small ~90 秒, large-v3-turbo ~5 分钟 |
+
+**推荐路由**:
+- 英语 / 欧洲语言 → **Parakeet**(`asr.transcribe` 行点 🌐 Lang,添加 `en→parakeet`,勾 Enable)
+- 中文 → 当前用 Faster-Whisper(Phase L2.2 下半场会上 SenseVoice 替代)
+- 其他语言 → Faster-Whisper(`auto` 默认 provider)
+
+#### 🎙️ ASR 走本地 Parakeet TDT v3 (欧语高质量档)
+
+引擎:[NVIDIA NeMo Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)(CC-BY-4.0,商用允许)。
+
+1. 已在 `requirements.txt`,正常 `pip install -r requirements.txt` 即可(NeMo 装包较大,首次约 2~3 GB)
+2. **AI Console → Providers → Parakeet TDT v3 → 启用**
+3. **Task Routing** → `asr.transcribe` 行 → 点 **🌐 Lang** → "+ 添加" → 第一栏选 `en`(及其他需要的欧洲语言)→ 第二栏选 `parakeet` → 关闭弹窗 → 勾上行内 **Enable** 复选框激活语言路由
+
+**首次跑**:模型自动下载到 `<repo>/user_data/models/hf/hub/`(~1.2 GB),Portable 自包含,之后完全离线。
+
+#### 🎙️ ASR 走本地 Faster-Whisper (通用 / 小语种兜底)
 
 引擎:[faster-whisper](https://github.com/SYSTRAN/faster-whisper)(MIT, CTranslate2 后端,99 种语言)。
 
-1. 已在 `requirements.txt`,正常 `pip install -r requirements.txt` 即可
+1. 已在 `requirements.txt`
 2. **AI Console → Providers → Faster-Whisper (本地) → Edit**:选模型尺寸 / 设备 / 计算精度,**保存**
 
    | 尺寸 | 体积 | CPU 速度 | 质量 |
    |---|---|---|---|
    | `tiny` | 75 MB | 极快 | 一般 |
    | `base` | 145 MB | 快 | 中等 |
-   | `small` | 244 MB | 较快 | **推荐** |
+   | `small` | 244 MB | 较快 | **小语种推荐** |
    | `medium` | 770 MB | 中等 | 较高 |
    | `large-v3-turbo` | 1.5 GB | 较慢 | 高 |
    | `large-v3` | 3 GB | 慢 | 最高 |
 
 3. **设备**:保持 `auto`(= CPU)即可。**`cuda` 需要本机已装 CUDA 12 Toolkit + cuDNN**,否则推理时报 `cublas64_12.dll not found`
 4. Providers 行勾上 **启用**
-5. **Task Routing** → `asr.transcribe` 行 → Provider 改为 **Faster-Whisper (本地)**
+5. **Task Routing** → `asr.transcribe` 行 → Provider 改为 **Faster-Whisper (本地)** 作为默认兜底
 
-**首次跑**:模型自动从 HuggingFace 下载到本机缓存(`~/.cache/huggingface/hub/`),之后完全离线。
+**首次跑**:模型自动下载到 `<repo>/user_data/models/hf/hub/`,之后完全离线。
 
-**性能参考**:
-- 20 秒中文音频 / CPU 8 核 / small 模型:约 9 秒(RTF 0.43)
-- 200 秒英文音频 / CPU 8 核 / small 模型:约 90 秒
-- GPU (RTX 4090) / medium:约 1 秒 / 20s 音频
+#### 📁 模型缓存目录
+
+VideoCraft 默认把所有本地模型下载到 `<repo>/user_data/models/`(Parakeet / faster-whisper / 其他 HF 系):
+- 内置目录,Portable 整包带走零外部依赖
+- 想多 app 共享(LM Studio / ComfyUI 等):AI Console → 本地模型缓存 → 改成共享目录(如 `D:\AI_Models`),重启 VideoCraft 生效
+- **Ollama 例外**:Ollama 自己管模型,需在 Windows 系统环境变量里设 `OLLAMA_MODELS`(AI Console 提供一键打开按钮)
 
 #### ✅ 现在闭环里还剩什么云端依赖?
 
 | 任务 | 本地方案 | 云端兜底 |
 |---|---|---|
 | 翻译 / 字幕处理 / 切片排序 | ✅ Ollama | Gemini / DeepSeek 等 |
-| 语音转字幕 (ASR) | ✅ Faster-Whisper | LemonFox |
+| 语音转字幕 (ASR) | ✅ Parakeet (欧语) + Faster-Whisper (小语种) | LemonFox |
 | 文本转语音 (TTS) | ⏳ Phase L3 计划中 | Fish Audio |
 | 联网下载视频 | n/a | n/a (yt-dlp 本地) |
 
