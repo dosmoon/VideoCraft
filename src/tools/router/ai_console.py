@@ -29,6 +29,15 @@ from core import prompts as _prompts
 from core.ai.router import router
 from core.ai import config as _ai_cfg
 from core.ai.config import keys_dir as _keys_dir
+from core import paths as _paths
+
+
+def _human_bytes(n: int) -> str:
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if n < 1024 or unit == "TB":
+            return f"{n:.1f} {unit}" if unit != "B" else f"{n} {unit}"
+        n /= 1024
+    return f"{n:.1f} TB"
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -139,7 +148,15 @@ class AIConsoleApp(ToolBase):
         self._task_model_vars: dict[str, tk.StringVar] = {}
         self._task_model_combos: dict[str, ttk.Combobox] = {}
 
-        # ── Top: task routing ──
+        # ── Top: local model cache ──
+        cache_frame = tk.LabelFrame(
+            body, text=tr("tool.router.section_cache_title"),
+            padx=10, pady=8, font=("", 10, "bold"),
+        )
+        cache_frame.pack(fill="x", pady=(0, 12), anchor="w")
+        self._build_cache_section(cache_frame)
+
+        # ── Middle: task routing ──
         routing_frame = tk.LabelFrame(
             body, text=tr("tool.router.section_routing_title"),
             padx=10, pady=8, font=("", 10, "bold"),
@@ -154,6 +171,119 @@ class AIConsoleApp(ToolBase):
         )
         providers_frame.pack(fill="x", anchor="w")
         self._build_providers_section(providers_frame)
+
+    # ── Cache section: models_dir + legacy banner + Ollama hint ────────────
+
+    def _build_cache_section(self, parent):
+        # Row 0: directory entry + buttons
+        tk.Label(parent, text=tr("tool.router.cache_dir_label"),
+                 anchor="w").grid(row=0, column=0, sticky="w", padx=4, pady=2)
+
+        default_path = os.path.join(
+            os.path.dirname(os.path.abspath(_paths.__file__)),
+            "..", "..", "user_data", "models",
+        )
+        default_path = os.path.normpath(default_path)
+        current = router.get_models_dir()
+
+        self._cache_dir_var = tk.StringVar(
+            value=current or default_path
+        )
+        self._cache_dir_is_default = not current
+        entry = tk.Entry(parent, textvariable=self._cache_dir_var, width=68)
+        entry.grid(row=0, column=1, sticky="ew", padx=4, pady=2, columnspan=4)
+        if self._cache_dir_is_default:
+            entry.configure(fg="#888")  # hint that it's the default
+
+        tk.Button(parent, text=tr("tool.router.cache_dir_browse"),
+                  command=self._on_cache_dir_browse,
+                  ).grid(row=1, column=1, sticky="w", padx=4, pady=(2, 4))
+        tk.Button(parent, text=tr("tool.router.cache_dir_reset"),
+                  command=self._on_cache_dir_reset,
+                  ).grid(row=1, column=2, sticky="w", padx=4, pady=(2, 4))
+        tk.Button(parent, text=tr("tool.router.cache_dir_apply"),
+                  command=self._on_cache_dir_apply,
+                  ).grid(row=1, column=3, sticky="w", padx=4, pady=(2, 4))
+        self._cache_dir_status = tk.Label(parent, text="", fg="#2a7", anchor="w")
+        self._cache_dir_status.grid(row=1, column=4, sticky="w", padx=8)
+
+        tk.Label(parent, text=tr("tool.router.cache_dir_help"),
+                 fg="#777", anchor="w", wraplength=900, justify="left",
+                 ).grid(row=2, column=0, columnspan=5, sticky="w",
+                        padx=4, pady=(0, 6))
+
+        parent.columnconfigure(1, weight=1)
+
+        # Row 3: legacy cache banner (only if found)
+        legacy = _paths.detect_legacy_hf_cache()
+        if legacy is not None:
+            legacy_path, legacy_size = legacy
+            warn_text = tr(
+                "tool.router.cache_legacy_warn",
+                path=legacy_path, size=_human_bytes(legacy_size),
+            )
+            tk.Label(parent, text=warn_text, fg="#b85", anchor="w",
+                     wraplength=820, justify="left",
+                     ).grid(row=3, column=0, columnspan=4, sticky="w",
+                            padx=4, pady=(2, 2))
+            tk.Button(
+                parent, text=tr("tool.router.cache_legacy_copy_cmd"),
+                command=lambda p=legacy_path: self._copy_cleanup_cmd(p),
+            ).grid(row=3, column=4, sticky="w", padx=8)
+
+        # Row 4: Ollama guidance
+        tk.Label(parent, text=tr("tool.router.cache_ollama_hint"),
+                 fg="#557", anchor="w", wraplength=820, justify="left",
+                 ).grid(row=4, column=0, columnspan=4, sticky="w",
+                        padx=4, pady=(4, 2))
+        tk.Button(parent, text=tr("tool.router.cache_ollama_open_envvars"),
+                  command=self._open_env_vars_panel,
+                  ).grid(row=4, column=4, sticky="w", padx=8)
+
+    def _on_cache_dir_browse(self):
+        from tkinter import filedialog
+        initial = self._cache_dir_var.get() or os.path.expanduser("~")
+        chosen = filedialog.askdirectory(
+            initialdir=initial if os.path.isdir(initial) else os.path.expanduser("~"),
+        )
+        if chosen:
+            self._cache_dir_var.set(os.path.normpath(chosen))
+
+    def _on_cache_dir_reset(self):
+        self._cache_dir_var.set("")
+        router.set_models_dir("")
+        self._cache_dir_status.configure(text=tr("tool.router.cache_dir_saved"))
+
+    def _on_cache_dir_apply(self):
+        path = self._cache_dir_var.get().strip()
+        # Treat the auto-shown default path as "no override" when the user
+        # hasn't actually changed it — keeps providers.json clean.
+        router.set_models_dir(path)
+        self._cache_dir_status.configure(text=tr("tool.router.cache_dir_saved"))
+
+    def _copy_cleanup_cmd(self, legacy_path: str):
+        # Cross-shell command — Windows users usually run cmd or PowerShell.
+        cmd = f'rmdir /S /Q "{legacy_path}"'
+        try:
+            self.master.clipboard_clear()
+            self.master.clipboard_append(cmd)
+            self.master.update()  # required for clipboard to persist after window close
+        except tk.TclError:
+            pass
+        self._cache_dir_status.configure(
+            text=tr("tool.router.cache_legacy_cmd_copied"))
+
+    def _open_env_vars_panel(self):
+        # rundll32 sysdm.cpl,EditEnvironmentVariables — opens the Windows
+        # "Environment Variables" dialog directly (Win 10+).
+        import subprocess
+        try:
+            subprocess.Popen(
+                ["rundll32.exe", "sysdm.cpl,EditEnvironmentVariables"],
+                shell=False,
+            )
+        except OSError:
+            pass
 
     # ── Top section: 4-row task routing table ──────────────────────────────
 
@@ -205,6 +335,20 @@ class AIConsoleApp(ToolBase):
                               lambda _e, t=tid: self._on_routing_model_changed(t))
                 model_cb.bind("<Return>",
                               lambda _e, t=tid: self._on_routing_model_changed(t))
+            elif cat == "asr":
+                # Replace the empty model cell with a language-routing
+                # entry button. Count reflects how many per-language
+                # overrides are currently configured.
+                lr = router.get_task_language_routing(tid)
+                btn_text = tr("tool.router.lang_routing_btn", n=len(lr))
+                btn = tk.Button(
+                    parent, text=btn_text, anchor="w", width=22,
+                    command=lambda t=tid: self._open_language_routing_dialog(t),
+                )
+                btn.grid(row=i, column=2, sticky="w", padx=4, pady=4)
+                # Store reference so the dialog can refresh the label after edits
+                self._task_lang_buttons = getattr(self, "_task_lang_buttons", {})
+                self._task_lang_buttons[tid] = btn
             else:
                 tk.Label(parent, text="—", fg="#999", anchor="w",
                          ).grid(row=i, column=2, sticky="w", padx=4, pady=4)
@@ -251,6 +395,120 @@ class AIConsoleApp(ToolBase):
         prov = self._task_provider_vars[task_id].get()
         model = self._task_model_vars[task_id].get().strip()
         router.set_task_routing(task_id, prov, model)
+
+    # ── Language routing dialog (ASR per-language provider override) ───────
+
+    def _open_language_routing_dialog(self, task_id: str):
+        dlg = tk.Toplevel(self.master)
+        dlg.title(tr("tool.router.lang_routing_title", task=task_id))
+        dlg.transient(self.master)
+        dlg.grab_set()
+
+        default_prov = (router.get_task_routing()
+                          .get(task_id, {})
+                          .get("provider")
+                          or tr("tool.router.lang_routing_no_default"))
+
+        tk.Label(
+            dlg,
+            text=tr("tool.router.lang_routing_help", default=default_prov),
+            wraplength=520, justify="left", fg="#555",
+        ).pack(anchor="w", padx=12, pady=(10, 8))
+
+        # Header row
+        header = tk.Frame(dlg)
+        header.pack(fill="x", padx=12)
+        tk.Label(header, text=tr("tool.router.lang_routing_lang_col"),
+                 font=("", 9, "bold"), width=20, anchor="w").pack(side="left")
+        tk.Label(header, text=tr("tool.router.lang_routing_provider_col"),
+                 font=("", 9, "bold"), width=22, anchor="w").pack(side="left")
+
+        # Dynamic body — one row per (iso, provider) pair
+        rows_frame = tk.Frame(dlg)
+        rows_frame.pack(fill="both", expand=True, padx=12, pady=(4, 4))
+
+        asr_provider_names = list(router._asr_providers.keys())
+        lang_options = self._language_routing_options()
+
+        # Each row: (iso_var, provider_var, frame_widget)
+        row_widgets: list[dict] = []
+
+        def persist():
+            mapping = {}
+            for r in row_widgets:
+                iso = r["iso_var"].get().strip().lower()
+                prov = r["prov_var"].get().strip()
+                if iso and prov:
+                    mapping[iso] = {"provider": prov}
+            router.set_task_language_routing(task_id, mapping)
+            # Refresh button label on the routing table
+            btns = getattr(self, "_task_lang_buttons", {})
+            if task_id in btns:
+                btns[task_id].configure(
+                    text=tr("tool.router.lang_routing_btn", n=len(mapping)))
+
+        def add_row(iso: str = "", prov: str = ""):
+            row = tk.Frame(rows_frame)
+            row.pack(fill="x", pady=2)
+            iso_var = tk.StringVar(value=iso)
+            prov_var = tk.StringVar(value=prov)
+
+            iso_cb = ttk.Combobox(
+                row, textvariable=iso_var, values=lang_options,
+                state="normal", width=18,
+            )
+            iso_cb.pack(side="left")
+            iso_cb.bind("<<ComboboxSelected>>", lambda _e: persist())
+            iso_cb.bind("<FocusOut>", lambda _e: persist())
+
+            prov_cb = ttk.Combobox(
+                row, textvariable=prov_var, values=asr_provider_names,
+                state="readonly", width=20,
+            )
+            prov_cb.pack(side="left", padx=(4, 4))
+            prov_cb.bind("<<ComboboxSelected>>", lambda _e: persist())
+
+            entry = {"iso_var": iso_var, "prov_var": prov_var, "frame": row}
+
+            def remove():
+                row.destroy()
+                row_widgets.remove(entry)
+                persist()
+
+            tk.Button(row, text="×", width=2, command=remove,
+                      ).pack(side="left", padx=4)
+            row_widgets.append(entry)
+
+        # Seed with existing entries
+        for iso, sub in router.get_task_language_routing(task_id).items():
+            add_row(iso, sub.get("provider", ""))
+
+        # Footer
+        footer = tk.Frame(dlg)
+        footer.pack(fill="x", padx=12, pady=(4, 12))
+        tk.Button(footer, text=tr("tool.router.lang_routing_add"),
+                  command=lambda: add_row()).pack(side="left")
+        tk.Button(footer, text=tr("tool.router.lang_routing_close"),
+                  command=dlg.destroy).pack(side="right")
+
+    def _language_routing_options(self) -> list[str]:
+        """ISO codes shown in the language column dropdown. Pulls the
+        union of (1) Parakeet's supported language list, (2) common ASR
+        targets, so users can express overrides for the languages local
+        models actually handle.
+        """
+        try:
+            from core.ai.providers.parakeet_local import SUPPORTED_LANGUAGES as _PK_LANGS
+        except Exception:
+            _PK_LANGS = ()
+        # A small extra set so users targeting Whisper-only languages can
+        # still pick them (e.g. zh, ja, ko routed back to faster_whisper).
+        extras = ("zh", "ja", "ko", "ar", "hi", "tr", "vi", "th", "id")
+        seen: list[str] = []
+        for code in tuple(_PK_LANGS) + extras:
+            if code not in seen:
+                seen.append(code)
+        return seen
 
     # ── Bottom section: provider management list ───────────────────────────
 

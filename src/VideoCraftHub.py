@@ -21,6 +21,14 @@ if sys.stdout and hasattr(sys.stdout, "buffer"):
 if sys.stderr and hasattr(sys.stderr, "buffer"):
     sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
+# Redirect HF / Torch / NeMo model caches into VideoCraft's user_data tree
+# (or the user-configured models_dir override). MUST happen before anything
+# imports torch / huggingface_hub / nemo / faster_whisper, otherwise those
+# libs read the env vars only once at import time and the user gets stuck
+# downloading multi-GB weights into C:\Users\<name>\.cache\huggingface\.
+from core.paths import apply_cache_env as _apply_cache_env
+_apply_cache_env()
+
 from project import Project, add_recent_project, get_recent_projects, file_icon
 from operations import get_operations
 

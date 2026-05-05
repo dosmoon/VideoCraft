@@ -20,6 +20,16 @@ openai==2.30.0
 # auto-used when ctranslate2 detects an available device.
 faster-whisper==1.2.1
 
+# Local ASR (European-language tier) — Parakeet TDT 0.6B v3 via NVIDIA NeMo.
+# nemo_toolkit pulls torch / pyarrow / pandas / datasets transitively. The
+# version pins below pre-empt a Windows-specific access violation in
+# pyarrow 24.x and the pandas 3.0 / datasets 4.x ABI mismatch they ship
+# alongside (see commit log for the original crash trace).
+nemo_toolkit[asr]==2.7.3
+pyarrow==19.0.1
+pandas==2.3.3
+datasets==3.6.0
+
 # Media
 Pillow==12.0.0
 

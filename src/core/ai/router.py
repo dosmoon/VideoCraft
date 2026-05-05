@@ -21,6 +21,33 @@ from core.ai.providers import lemonfox as _lemonfox
 from core.ai.providers import fish_audio as _fish_audio
 from core.ai.errors import AIError, Kind
 from core.ai.stats import Stats
+
+
+# ── Language hint normalization (for ASR language_routing lookup) ────────────
+
+def _normalize_lang_iso(language: str | None) -> str | None:
+    """Return a lowercase ISO code (en/zh/...) for a user-supplied language
+    hint. Display names like 'English' / '英语' are mapped via core.translate
+    if available. Returns None for empty / 'auto' / unknown values — callers
+    should fall back to the task's default provider."""
+    if not language:
+        return None
+    s = language.strip()
+    if not s or s.lower() in ("auto", "auto detect"):
+        return None
+    if 2 <= len(s) <= 3 and s.isalpha():
+        return s.lower()
+    try:
+        from core.translate import SUPPORTED_LANGUAGES
+    except Exception:
+        return None
+    sl = s.lower()
+    for iso, (english, chinese) in SUPPORTED_LANGUAGES.items():
+        if iso == "auto":
+            continue
+        if english.lower() == sl or chinese == s:
+            return iso
+    return None
 from core.ai.tiers import (
     TIER_PREMIUM,
     TIER_STANDARD,
@@ -42,6 +69,7 @@ class AIRouter:
         self._tts_providers: dict = {}
         self._tier_routing:  dict = {}
         self._task_routing:  dict = {}
+        self._models_dir:    str  = ""
         self._stats = Stats()
         self._load_config()
 
@@ -172,8 +200,51 @@ class AIRouter:
         return copy.deepcopy(self._task_routing)
 
     def set_task_routing(self, task: str, provider: str, model: str) -> None:
-        """Set the single routing entry for a task and persist."""
-        self._task_routing[task] = {"provider": provider, "model": model}
+        """Set the single routing entry for a task and persist.
+
+        Preserves any existing `language_routing` map on the task — only the
+        default (provider, model) cell is rewritten. Use
+        set_task_language_routing() to update the per-language overrides.
+        """
+        existing = self._task_routing.get(task, {})
+        cell = {"provider": provider, "model": model}
+        lr = existing.get("language_routing")
+        if lr:
+            cell["language_routing"] = lr
+        self._task_routing[task] = cell
+        self._persist()
+
+    def get_task_language_routing(self, task: str) -> dict:
+        """Deep-copy of {iso_code: {'provider': str}} for a task.
+        Returns empty dict if the task has no per-language overrides."""
+        import copy
+        cell = self._task_routing.get(task, {})
+        return copy.deepcopy(cell.get("language_routing") or {})
+
+    def set_task_language_routing(self, task: str, mapping: dict) -> None:
+        """Replace the full language_routing map for a task and persist.
+
+        `mapping` is {iso_code: {'provider': str}} (model deliberately
+        omitted — local providers carry their own model in asr_providers
+        config; this layer only routes to a provider). Empty mapping
+        removes the field entirely.
+        """
+        if not isinstance(mapping, dict):
+            raise ValueError("mapping must be dict")
+        cell = self._task_routing.get(task, {"provider": "", "model": ""})
+        clean = {}
+        for iso, sub in mapping.items():
+            if not isinstance(sub, dict):
+                continue
+            prov = (sub.get("provider") or "").strip()
+            if not iso or not prov:
+                continue
+            clean[iso.strip().lower()] = {"provider": prov}
+        if clean:
+            cell["language_routing"] = clean
+        else:
+            cell.pop("language_routing", None)
+        self._task_routing[task] = cell
         self._persist()
 
     def get_provider_names(self) -> list:
@@ -283,7 +354,18 @@ class AIRouter:
         """
         if provider is None:
             routed = (self._task_routing or {}).get(task) or {}
-            provider = routed.get("provider") or "lemonfox"
+            # Language-aware routing: task_routing[task].language_routing[iso]
+            # wins when the user (or upstream UI) specified a concrete
+            # language hint AND the task has a per-language override mapped
+            # for it. Otherwise fall back to the task's default provider,
+            # then to lemonfox as the historical default.
+            lang_iso = _normalize_lang_iso(language)
+            lang_routing = routed.get("language_routing") or {}
+            lang_pick = lang_routing.get(lang_iso) if lang_iso else None
+            if lang_pick and lang_pick.get("provider"):
+                provider = lang_pick["provider"]
+            else:
+                provider = routed.get("provider") or "lemonfox"
 
         cfg = self._asr_providers.get(provider)
         if cfg is None:
@@ -329,6 +411,16 @@ class AIRouter:
                     device=cfg.get("device", "auto"),
                     compute_type=cfg.get("compute_type", "auto"),
                     beam_size=cfg.get("beam_size", 5),
+                    language=language,
+                    translate=translate,
+                    on_event=on_event,
+                    cancel_token=cancel_token,
+                )
+            elif provider == "parakeet":
+                from core.ai.providers import parakeet_local as _pk
+                result = _pk.transcribe(
+                    audio_path,
+                    model_name=cfg.get("model", "nvidia/parakeet-tdt-0.6b-v3"),
                     language=language,
                     translate=translate,
                     on_event=on_event,
@@ -710,6 +802,7 @@ class AIRouter:
         self._tts_providers = data["tts_providers"]
         self._tier_routing  = data["tier_routing"]
         self._task_routing  = data["task_routing"]
+        self._models_dir    = data.get("models_dir", "")
         self._stats.init_providers(list(self._providers.keys()))
 
     def _persist(self) -> None:
@@ -719,7 +812,24 @@ class AIRouter:
             "tts_providers": self._tts_providers,
             "tier_routing":  self._tier_routing,
             "task_routing":  self._task_routing,
+            "models_dir":    self._models_dir,
         })
+
+    # ── Models cache directory ──────────────────────────────────────────────
+
+    def get_models_dir(self) -> str:
+        """User-configured override for the model cache root (or empty string
+        meaning 'use the default <repo>/user_data/models/'). The actual
+        resolved path lives in core.paths.models_dir().
+        """
+        return self._models_dir or ""
+
+    def set_models_dir(self, path: str) -> None:
+        """Persist a new override. Empty string reverts to default. Change
+        only takes effect on the next process start (env vars are read once
+        by torch / huggingface_hub at import time)."""
+        self._models_dir = (path or "").strip()
+        self._persist()
 
 
 # Module-level singleton. Exposed via `core.ai.router` and the legacy

@@ -136,6 +136,15 @@ _DEFAULT_ASR_PROVIDERS = {
         "compute_type":  "auto",        # auto / int8 / int8_float16 / float16 / float32
         "beam_size":     5,
     },
+    "parakeet": {
+        "name":          "Parakeet TDT v3 (本地,欧语)",
+        "enabled":       False,         # User opts in via AI Console
+        "key_file":      "",            # Local — no API key
+        "base_url":      "",            # Not applicable
+        "auth_required": False,
+        "description":   "NVIDIA NeMo Parakeet TDT 0.6B v3,25 种欧洲语言;首次加载下载约 1.2GB",
+        "model":         "nvidia/parakeet-tdt-0.6b-v3",
+    },
 }
 
 # ── Default TTS providers ────────────────────────────────────────────────────
@@ -249,7 +258,8 @@ def load_config() -> dict:
     """Load providers.json, applying defaults + migrations. Writes back on
     first run or when schema migration triggered a fix.
 
-    Returns dict with keys: providers / asr_providers / tts_providers / tier_routing.
+    Returns dict with keys: providers / asr_providers / tts_providers /
+    tier_routing / task_routing / models_dir.
     """
     cfg_path = os.path.join(keys_dir(), "providers.json")
     if os.path.exists(cfg_path):
@@ -260,6 +270,8 @@ def load_config() -> dict:
         tts_providers = data.get("tts_providers", copy.deepcopy(_DEFAULT_TTS_PROVIDERS))
         tier_routing  = data.get("tier_routing",  copy.deepcopy(_DEFAULT_TIER_ROUTING))
         task_routing  = data.get("task_routing")
+        models_dir    = data.get("models_dir", "")
+        models_dir_dirty = "models_dir" not in data
         wrote_on_first_run = False
     else:
         providers     = copy.deepcopy(_DEFAULT_PROVIDERS)
@@ -267,6 +279,8 @@ def load_config() -> dict:
         tts_providers = copy.deepcopy(_DEFAULT_TTS_PROVIDERS)
         tier_routing  = copy.deepcopy(_DEFAULT_TIER_ROUTING)
         task_routing  = None
+        models_dir    = ""
+        models_dir_dirty = False
         wrote_on_first_run = True
         # First-run write happens below after migrations run
 
@@ -283,9 +297,10 @@ def load_config() -> dict:
         "tts_providers": tts_providers,
         "tier_routing":  tier_routing,
         "task_routing":  task_routing,
+        "models_dir":    models_dir,
     }
 
-    if wrote_on_first_run or migrated or normalized or task_routing_dirty:
+    if wrote_on_first_run or migrated or normalized or task_routing_dirty or models_dir_dirty:
         save_config(result)
 
     return result
@@ -297,6 +312,7 @@ def save_config(data: dict) -> None:
     os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump({
+            "models_dir":    data.get("models_dir", ""),
             "tier_routing":  data["tier_routing"],
             "task_routing":  data.get("task_routing", {}),
             "providers":     data["providers"],
