@@ -12,7 +12,7 @@
 | **L2.2 上半场** | ASR 欧语高质量档 | NVIDIA NeMo Parakeet TDT 0.6B v3 (CC-BY-4.0) | ✅ 已上线 2026-05-05 | `b1c1d7d` `4aa9f24` |
 | **L2.2 下半场** | ASR 中日韩档 | Alibaba FunASR + SenseVoiceSmall (MIT) | ✅ 已上线 2026-05-05 | `bc3cd34` `8bae520` `2d3860c` |
 | **基础设施** | 模型缓存重定向 / 语言路由 | `core/paths.py` + `router.asr().language_routing` | ✅ 随 L2.2 上线 | `b1c1d7d` |
-| **L3** | TTS (文本转语音) | 待定 (Qwen3-TTS / Piper) | ⏳ 用户主动暂缓 | — |
+| **L3 探索** | TTS (文本转语音) | Qwen3-TTS-12Hz-0.6B-CustomVoice + vLLM-Omni Docker | 🔬 推理引擎选定 + RTF 0.78 实测;Tier 2/3 综合测试待做 | `46cfa48` |
 | **L4** | 首启自动化 / 一键安装 | — | ⏳ Backlog | — |
 
 ---
@@ -149,9 +149,120 @@ VideoCraft 当前 Portable + 单 CPU 友好定位,所以 4B 是合理默认。**
 
 ---
 
-## L3 — TTS 本地化(暂缓)
+## L3 — TTS 本地化(探索阶段:推理引擎选定,综合测试待做)
 
-用户主动暂缓:"TTS 不着急,先放着"。后续选型见 `tts_local_selection_v4.md`,推荐档 Qwen3-TTS 1.7B + Piper 兜底。
+**协议**:Qwen3-TTS Apache 2.0,商用允许;vLLM-Omni Apache 2.0,商用允许。
+
+**模型选择回顾**:此前 `tts_local_selection_v4.md` 推荐 Qwen3-TTS 1.7B + Piper 兜底。本轮探索从 0.6B-CustomVoice 起步(显存压力小、含零样本声音克隆能力)。1.7B 与 Piper 留作后续 T3.4 / T3.5 验证。
+
+**性能(2026-05-05 实测,4060 Laptop 8GB,Chinese 长文本约 23s 音频)**:
+
+| 推理栈 | RTF(稳态) | 含义 |
+|---|---|---|
+| qwen-tts pip 包(参考实现)+ sdpa | 2.08 - 2.22 | 比实时慢 2x |
+| qwen-tts pip 包 + flash_attention_2 | 2.42 - 2.45 | flash-attn 反而拖累 TTS |
+| qwen-tts pip 包 + 整体 torch.compile | 2.41 - 2.53 | 变长 TTS 用 reduce-overhead 回退 |
+| **vllm/vllm-omni:v0.18.0**(官方) | **0.72 - 0.86** | **比实时快 1.3x;3x 提升;社区博客预测 4060 Ti 可达 0.85-1.15 完全吻合** |
+| 论文 Qwen3-TTS-12Hz-0.6B 单并发 | 0.288 | 未披露 GPU,推测 H100 / A100 |
+
+---
+
+### 关键决策(踩坑大头)
+
+#### 1. **不要用官方 `qwen-tts` pip 包做生产推理 —— 它是参考实现,无任何论文优化**
+
+最大教训。pip 包的 `Qwen3TTSModel.generate_custom_voice()` 只是 `transformers.AutoModelForCausalLM` 的薄封装,**论文里写的 vLLM 引擎 / torch.compile / CUDA Graph / triton SnakeBeta kernel 一个都没有**。
+
+走这条路时实测 RTF 2.2,我们花了几小时折腾 flash-attn 编译、torch.compile、各种 attention 后端,**完全是错的方向**。
+
+判断依据:HF 讨论区 #18 上有用户 1.7B 跑出 RTF 3x、GPU util 12%,跟我们症状一模一样;论文 Table 2 footnote 明说 "latency is measured on our internal vLLM engine (vLLM V0 backend) ... with optimizations applied via torch.compile and CUDA Graph acceleration to the decoding stage of the tokenizer"。
+
+#### 2. **真正的路是 `vllm/vllm-omni` 官方 Docker 镜像**
+
+vLLM 团队为多模态模型(TTS / ASR / 图像)单独维护的 fork(同 vLLM 主线版本号)。Qwen 团队 day-0 支持已合并(PR #895 + #968),**论文的全部优化栈在镜像里默认开启**:
+- vLLM PagedAttention + 连续批处理
+- CodePredictor torch.compile
+- Code2Wav triton SnakeBeta kernel + CUDA Graph
+- async_scheduling 默认开
+
+接口:OpenAI 兼容 `/v1/audio/speech`,扩展字段 `task_type` / `voice` / `language` / `instructions` / `ref_audio` / `ref_text` / `max_new_tokens`。另有 `/stream` `/batch` `/voices` 三组扩展端点。
+
+#### 3. **TTS 用 flash-attn 反而慢**
+
+反直觉但真实(实测 sdpa 2.1 vs flash-attn 2.4)。原因:TTS token 序列短(几十个),flash-attn kernel launch 开销 > 计算节省。flash-attn 是为 LLM 长上下文设计的,TTS 这种短输入逐帧解码不在其优势区。
+
+vLLM-Omni 内部会针对 attention 后端做更细的选择(对 LM 段用 paged attention,对 codec decoder 用 triton kernel),这种适配单靠 attn_implementation 切换做不到。
+
+#### 4. **整体 torch.compile 对 TTS 推理没用**
+
+变长输入输出(每段文本长度不同、每次合成音频长度不同)让 `mode=reduce-overhead` 频繁 recompile,抵消优化。论文做法是**只编译 tokenizer 解码段(8 token → 320ms 音频,形状静态)** + **CUDA Graph 复用**,不是包整个模型。
+
+#### 5. **GPU util 不是 TTS 性能瓶颈的可靠指标**
+
+nvidia-smi 跑合成时报 32-40% util,以为 GPU 没用满,误以为有调度优化空间。实际上 Windows Task Manager 看 3D engine 已 90%+ —— **WSL2 + CUDA 在 Windows 上经常被归到 3D engine 而非 Compute**,nvidia-smi 的"总 util"对短脉冲负载抓不准。
+
+教训:TTS 这种 autoregressive 短脉冲负载,**用宿主机 Task Manager 验证**比 nvidia-smi 准。
+
+---
+
+### 工程设置(Windows + Docker Desktop + WSL2)
+
+**前置安装链**:
+1. Docker Desktop for Windows(带 WSL2 后端)
+2. **WSL2 内核** —— Win11 26200 inbox `wsl.exe` 的存根版本太老,`wsl --install` / `wsl --update` 会循环报"未安装",需要管理员 PowerShell 跑 `wsl --install`(会装 Ubuntu 发行版,后续 Docker 集成里关掉避免 Permission denied)
+3. **重启**(WSL2 内核生效) —— 这一步会**断 Claude Code session**,重启前必须把上下文记进 memory
+
+**关键运维**:
+- **Docker 默认存 C 盘** —— Docker Desktop 的 VHDX 在 `C:\Users\<user>\AppData\Local\Docker\wsl\`,几个 build 后吃掉 60GB+ 不还。**必须迁到 D 盘** —— Docker Desktop → Settings → Resources → Advanced → Disk image location 改 `D:\Docker`,一次性自动迁移
+- **`docker image prune -a` 不可逆** —— 没回收站,任何 untagged 或没运行容器引用的镜像直接干掉。常用 `docker image prune`(不带 -a)只清 dangling 安全
+
+**模型缓存**:复用 L2.2 已建好的 `D:\AI_Models\hf` 共享池(HF 标准 cache 布局),容器挂 `/root/.cache/huggingface`,不重复下载。
+
+**docker-compose 关键参数**:
+```yaml
+ipc: host                          # vLLM 需要 SHMEM > 64MB,默认会警告
+ports: "7860:8091"                 # 外部 7860 保留(VideoCraft 兼容),内部 vllm 默认 8091
+gpu_memory_utilization: 0.45       # 4060 Laptop 8GB 共享 Windows 桌面 ~5GB,留余量
+max_model_len: 4096                # TTS 不需要长上下文
+```
+
+镜像:`vllm/vllm-omni:v0.18.0`(`:latest` 标签不存在,Docker Hub 只有打 tag 的)。
+
+---
+
+### 待做的综合测试(下一阶段)
+
+当前 RTF 0.78 只是"单点能跑通"。生产化前必须扫:
+
+**Tier 1 决定能不能用**:
+- T1.1 并发 1/2/4 RTF + 总吞吐
+- T1.2 流式 `/v1/audio/speech/stream` TTFP(论文 97ms 在 4060 上达多少)
+- T1.3 多语种 zh / en / ja / ko 质量与速度
+- T1.4 长文本 500 / 2000 字 RTF 曲线
+- T1.5 VRAM 上限扫(`gpu_memory_utilization` 与 `max_model_len`)
+
+**Tier 2 杀手特性(决定是否替代云 TTS)**:
+- T2.1 9 个预设 voice 听感对比
+- T2.2 Voice Clone(参考音频零样本克隆) —— 云 API 没这能力
+- T2.3 Voice Design(自然语言风格指令)
+- T2.4 emotion / instructions(节目情感色彩控制)
+
+**Tier 3 运维稳健 + 模型升档**:
+- T3.1 失败用例(空输入 / 超长 / 特殊字符 / 混合语种)
+- T3.2 容器重启后注册 voice 是否持久
+- T3.3 持续负载 30 次循环 RTF 稳定性
+- T3.4 1.7B 试装(4060 8GB 装得下吗、质量与速度差)
+- T3.5 Piper 兜底比对(纯 CPU 退路)
+
+测试报告固化为独立 markdown(待写)。所有产物落 `scratch/tts_qwen3/`(已加 `.gitignore`)。
+
+### 与 VideoCraft 集成路径(待落地)
+
+VideoCraft 现有 `lemonfox` provider 走 OpenAI `/v1/audio/speech`,**理论上改 base URL 就能切到 `http://localhost:7860`**。但要用 Qwen3-TTS 的扩展能力(voice clone / design / instructions),需要给 provider 加扩展字段透传。具体接法等 Tier 1 测完决定。
+
+## L4 — 首启自动化(Backlog)
+
+GPU 检测、一键安装 Ollama、自动 pull 模型、首启 onboarding 弹窗。当前用户已经能配通,这个等用户反馈再决定优先级。
 
 ## L4 — 首启自动化(Backlog)
 
