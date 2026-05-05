@@ -119,6 +119,30 @@ ffmpeg -version
 
 ---
 
+### 🖥️ 使用本地 Ollama（无需任何云端 Key）
+
+如果你不愿意申请云端 Key、或希望数据完全本地处理,可以用 [Ollama](https://ollama.com) 在本机跑开源 LLM。
+**翻译 / 字幕后处理 / 切片排序等所有 LLM 任务**都可以走本地,**整条链路 0 个云端 API Key**。
+
+**步骤**:
+
+1. 从 [ollama.com](https://ollama.com) 下载并安装 Ollama(Windows / macOS / Linux 都支持)
+2. 命令行拉一个开源模型(推荐 Qwen3-4B,约 2.5 GB,Apache 2.0 协议可商用,3 GB 显存即可跑):
+   ```bash
+   ollama pull qwen3:4b
+   ```
+3. 启动 VideoCraft → 顶部菜单 **Tools → AI Console** → **Providers** 区域找到 **Ollama** → 点 **Edit**
+4. 不需要填 API Key;点 **Health Check** 应该显示"已连接"
+5. 点 **刷新并选择…** → 勾选 `qwen3:4b` → **Save**
+6. 回到 Providers 列表 → 把 Ollama 行勾选 **Enable**
+7. 顶部 **Task Routing** 区域,把 `translate` / `subtitle.post` 等行的 Provider 改成 **Ollama**,Model 选 `qwen3:4b`
+
+至此云端 Key 完全不需要,翻译 / 字幕处理全部走本地。
+
+> 📌 当前阶段(Phase L1)只有 LLM 任务支持本地化。**ASR(语音转字幕)和 TTS(文本转语音)**仍然依赖云端 Key,会在后续阶段补齐。
+
+---
+
 ## 🗺️ 功能介绍
 
 ### 主界面

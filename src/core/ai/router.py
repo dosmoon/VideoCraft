@@ -597,9 +597,14 @@ class AIRouter:
         ptype = cfg.get("type")
         api_key = None
         if ptype != "claude_code":
-            api_key = _cfg.read_key(cfg)
-            if api_key is None:
-                raise RuntimeError(f"API Key not configured: {cfg.get('key_file', '?')}")
+            if cfg.get("auth_required") is False:
+                # Local provider (e.g. Ollama). OpenAI SDK requires a non-empty
+                # api_key string, but the local server ignores its content.
+                api_key = "ollama"
+            else:
+                api_key = _cfg.read_key(cfg)
+                if api_key is None:
+                    raise RuntimeError(f"API Key not configured: {cfg.get('key_file', '?')}")
 
         try:
             if ptype == "gemini":
@@ -626,9 +631,12 @@ class AIRouter:
         ptype = cfg.get("type")
         api_key = None
         if ptype != "claude_code":
-            api_key = _cfg.read_key(cfg)
-            if api_key is None:
-                raise RuntimeError(f"API Key not configured: {cfg.get('key_file', '?')}")
+            if cfg.get("auth_required") is False:
+                api_key = "ollama"
+            else:
+                api_key = _cfg.read_key(cfg)
+                if api_key is None:
+                    raise RuntimeError(f"API Key not configured: {cfg.get('key_file', '?')}")
 
         try:
             if ptype == "gemini":

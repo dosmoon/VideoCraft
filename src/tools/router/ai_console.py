@@ -333,26 +333,46 @@ class AIConsoleApp(ToolBase):
     def _open_llm_edit_dialog(self, name: str, cfg: dict):
         dlg = tk.Toplevel(self.master)
         dlg.title(tr("tool.router.edit_dialog_title", name=name))
-        dlg.geometry("560x420")
-        dlg.resizable(False, False)
+
+        # Local providers (e.g. Ollama) use auth_required=False — they have no
+        # API key, so we hide the key row entirely and seed key_var with a
+        # placeholder so the model-picker's fetch path still works.
+        is_local = cfg.get("auth_required") is False
+
+        # Local mode adds a hint row that needs more horizontal room; widen
+        # the dialog so the right-side button column (Pick / Remove / Health
+        # Check) doesn't get clipped (especially under Windows DPI scaling).
+        dlg.geometry("900x460" if is_local else "560x420")
+        dlg.resizable(True, True)
         dlg.grab_set()
+        # Ensure column 3 always reserves room for the action buttons even
+        # when no widget in that column has a wide natural request.
+        dlg.grid_columnconfigure(3, minsize=180)
 
         r = 0
-        tk.Label(dlg, text=tr("tool.router.label_api_key"),
-                 anchor="e", width=12).grid(
-            row=r, column=0, padx=10, pady=10, sticky="e")
-        key_var = tk.StringVar()
-        key_entry = tk.Entry(dlg, textvariable=key_var, width=42, show="*")
-        key_entry.grid(row=r, column=1, columnspan=2, pady=10, sticky="w")
-        kp = os.path.join(_keys_dir(), cfg.get("key_file", ""))
-        if kp and os.path.exists(kp):
-            with open(kp, "r", encoding="utf-8") as f:
-                key_var.set(f.read().strip())
-        show_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(dlg, text=tr("tool.router.label_show"), variable=show_var,
-                        command=lambda: key_entry.config(show="" if show_var.get() else "*"),
-                        ).grid(row=r, column=3, padx=6)
-        r += 1
+        if is_local:
+            tk.Label(dlg, text=tr("tool.router.local_provider_hint"),
+                     fg="#666", anchor="w", justify="left",
+                     wraplength=680).grid(
+                row=r, column=0, columnspan=4, padx=12, pady=(12, 6), sticky="w")
+            key_var = tk.StringVar(value="ollama")
+            r += 1
+        else:
+            tk.Label(dlg, text=tr("tool.router.label_api_key"),
+                     anchor="e", width=12).grid(
+                row=r, column=0, padx=10, pady=10, sticky="e")
+            key_var = tk.StringVar()
+            key_entry = tk.Entry(dlg, textvariable=key_var, width=42, show="*")
+            key_entry.grid(row=r, column=1, columnspan=2, pady=10, sticky="w")
+            kp = os.path.join(_keys_dir(), cfg.get("key_file", ""))
+            if kp and os.path.exists(kp) and os.path.isfile(kp):
+                with open(kp, "r", encoding="utf-8") as f:
+                    key_var.set(f.read().strip())
+            show_var = tk.BooleanVar(value=False)
+            ttk.Checkbutton(dlg, text=tr("tool.router.label_show"), variable=show_var,
+                            command=lambda: key_entry.config(show="" if show_var.get() else "*"),
+                            ).grid(row=r, column=3, padx=6)
+            r += 1
 
         url_var = None
         if cfg.get("type") == "openai_compatible":
@@ -409,19 +429,44 @@ class AIConsoleApp(ToolBase):
                   width=18).pack(pady=2, fill="x")
         tk.Button(btn_col, text=tr("tool.router.btn_remove_model"),
                   command=_remove_selected, width=18).pack(pady=2, fill="x")
+        if is_local:
+            def _health_check():
+                base = (url_var.get().strip() if url_var is not None
+                        else cfg.get("base_url", ""))
+                if not base:
+                    messagebox.showerror(tr("dialog.common.error"),
+                                         tr("tool.router.error_no_base_url"),
+                                         parent=dlg)
+                    return
+                try:
+                    from core.ai.providers import openai_compat as _oc
+                    models = _oc.list_models("ollama", base)
+                    messagebox.showinfo(
+                        tr("tool.router.saved_title"),
+                        tr("tool.router.health_ok", n=len(models)),
+                        parent=dlg)
+                except Exception as e:
+                    messagebox.showerror(
+                        tr("dialog.common.error"),
+                        tr("tool.router.health_fail") + f"\n\n{e}",
+                        parent=dlg)
+            tk.Button(btn_col, text=tr("tool.router.btn_health_check"),
+                      command=_health_check, width=18).pack(pady=2, fill="x")
         r += 1
 
         def save():
-            key = key_var.get().strip()
-            if not key:
-                messagebox.showerror(tr("dialog.common.error"),
-                                     tr("tool.router.error_key_empty"), parent=dlg)
-                return
-            kp_save = os.path.join(_keys_dir(), cfg.get("key_file", ""))
-            if kp_save:
-                os.makedirs(os.path.dirname(kp_save), exist_ok=True)
-                with open(kp_save, "w", encoding="utf-8") as f:
-                    f.write(key)
+            if not is_local:
+                key = key_var.get().strip()
+                if not key:
+                    messagebox.showerror(tr("dialog.common.error"),
+                                         tr("tool.router.error_key_empty"), parent=dlg)
+                    return
+                key_file = cfg.get("key_file", "")
+                if key_file:
+                    kp_save = os.path.join(_keys_dir(), key_file)
+                    os.makedirs(os.path.dirname(kp_save), exist_ok=True)
+                    with open(kp_save, "w", encoding="utf-8") as f:
+                        f.write(key)
             kwargs = {}
             if url_var is not None:
                 kwargs["base_url"] = url_var.get().strip()
@@ -593,6 +638,8 @@ class AIConsoleApp(ToolBase):
             status_var.set(tr("tool.router.error_key_empty"))
             return
 
+        is_local_pick = cfg.get("auth_required") is False
+
         def _do_fetch():
             try:
                 ptype = cfg.get("type")
@@ -609,9 +656,15 @@ class AIConsoleApp(ToolBase):
                 dlg.after(0, lambda m=models: _on_loaded(m))
             except Exception as e:
                 err = str(e)
-                dlg.after(0,
-                    lambda em=err: status_var.set(
-                        tr("tool.router.refresh_models_fail", e=em[:100])))
+                if is_local_pick:
+                    hint = tr("tool.router.health_fail")
+                    dlg.after(0,
+                        lambda em=err, h=hint: status_var.set(
+                            f"{h}\n[{em[:160]}]"))
+                else:
+                    dlg.after(0,
+                        lambda em=err: status_var.set(
+                            tr("tool.router.refresh_models_fail", e=em[:100])))
 
         def _on_loaded(models):
             nonlocal api_models
@@ -794,9 +847,20 @@ class AIConsoleApp(ToolBase):
 
         def _run():
             try:
+                # Local providers (Ollama) ship with empty tier defaults;
+                # fall back to the first picked model so the smoke test
+                # can resolve a model_id to call.
+                cfg_now = router._providers.get(name, {})
+                tiers = cfg_now.get("tiers", {}) or {}
+                model_override = None
+                if not any(tiers.values()):
+                    picked = cfg_now.get("models") or []
+                    if picked:
+                        model_override = picked[0]
                 txt = ai.complete(
                     "Please reply with the single word OK and nothing else.",
                     provider=name,
+                    model=model_override,
                 )
                 self.master.after(0,
                     lambda t=(txt or "").strip(): self._show_test_result(name, "ok", t))

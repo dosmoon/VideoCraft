@@ -84,6 +84,20 @@ _DEFAULT_PROVIDERS = {
             TIER_ECONOMY:  "haiku",
         },
     },
+    "Ollama": {
+        "type":          "openai_compatible",
+        "base_url":      "http://localhost:11434/v1",
+        "key_file":      "",            # Local service — no API key
+        "auth_required": False,         # Skip key check at dispatch time
+        "enabled":       False,         # User opts in via AI Console
+        "priority":      5,             # After Custom(4)
+        "models":        [],            # Populated via "Pick Models" → /v1/models
+        "tiers": {
+            TIER_PREMIUM:  "",
+            TIER_STANDARD: "",
+            TIER_ECONOMY:  "",
+        },
+    },
 }
 
 # ── Default tier routing ─────────────────────────────────────────────────────
@@ -207,8 +221,12 @@ def read_key(provider_cfg: dict) -> str | None:
 def has_auth(provider_cfg: dict) -> bool:
     """True if provider has credentials to run. claude_code relies on the
     local CLI's own login state — presence of the entry is enough.
+    Providers with `auth_required: False` (e.g. Ollama on localhost) skip
+    the key check entirely.
     """
     if provider_cfg.get("type") == "claude_code":
+        return True
+    if provider_cfg.get("auth_required") is False:
         return True
     return read_key(provider_cfg) is not None
 
