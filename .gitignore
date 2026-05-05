@@ -158,3 +158,6 @@ prompts/_fixtures/
 
 # WebView2 user data (Edge profile created during preview embed)
 .webview_userdata/
+
+# Local scratch / experiment artifacts (test outputs, payloads)
+scratch/

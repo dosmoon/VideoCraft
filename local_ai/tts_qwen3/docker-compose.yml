@@ -1,0 +1,38 @@
+# Qwen3-TTS via vLLM-Omni (official path).
+# Replaces the previous custom Dockerfile + qwen-tts package server.
+# vLLM-Omni provides an OpenAI-compatible /v1/audio/speech endpoint natively
+# with all paper-grade optimizations (torch.compile, CUDA Graph, triton kernels).
+services:
+  qwen3-tts:
+    image: vllm/vllm-omni:v0.18.0
+    container_name: qwen3-tts
+    ipc: host  # vLLM needs SHMEM > 64MB
+    ports:
+      - "7860:8091"  # external 7860 unchanged for VideoCraft compat → internal 8091
+    volumes:
+      - "D:/AI_Models/hf:/root/.cache/huggingface"
+    environment:
+      HF_HUB_OFFLINE: "0"
+    command:
+      - "vllm"
+      - "serve"
+      - "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+      - "--omni"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8091"
+      - "--dtype"
+      - "bfloat16"
+      - "--gpu-memory-utilization"
+      - "0.45"   # 4060 Laptop has 8GB; desktop already uses ~5GB → leave headroom
+      - "--max-model-len"
+      - "4096"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
