@@ -20,6 +20,47 @@ from typing import Callable
 from core.ai.errors import AIError, Kind
 
 
+# Map English / Chinese display names back to ISO codes. faster-whisper
+# only accepts ISO codes (en, zh, …); upstream UI happily passes "English"
+# / "Chinese" because LemonFox tolerates both. Built lazily to avoid a
+# hard import-time dep on core.translate when this module is imported by
+# tooling/tests.
+_LANG_NAME_TO_ISO: dict[str, str] | None = None
+
+
+def _resolve_language(language: str | None) -> str | None:
+    """Normalize a language hint to a Whisper ISO code (or None for auto).
+
+    Accepts:
+      - None or "" / "auto"      -> None (auto-detect)
+      - already-ISO codes        -> as-is when 2-3 chars
+      - English display names    -> mapped via core.translate
+      - Chinese display names    -> mapped via core.translate
+    """
+    if not language or language.strip().lower() in ("auto", "auto detect"):
+        return None
+    s = language.strip()
+    # Shortcut: already looks like an ISO code (2-3 lowercase letters).
+    if 2 <= len(s) <= 3 and s.isalpha() and s.islower():
+        return s
+
+    global _LANG_NAME_TO_ISO
+    if _LANG_NAME_TO_ISO is None:
+        try:
+            from core.translate import SUPPORTED_LANGUAGES
+            _LANG_NAME_TO_ISO = {}
+            for iso, (english, chinese) in SUPPORTED_LANGUAGES.items():
+                if iso == "auto":
+                    continue
+                _LANG_NAME_TO_ISO[english.lower()] = iso
+                _LANG_NAME_TO_ISO[chinese] = iso
+        except Exception:
+            _LANG_NAME_TO_ISO = {}
+
+    iso = _LANG_NAME_TO_ISO.get(s.lower()) or _LANG_NAME_TO_ISO.get(s)
+    return iso  # may be None if name unknown — let caller decide
+
+
 EventCallback = Callable[..., None]
 
 
@@ -125,15 +166,25 @@ def transcribe(
 
     resolved_device = _resolve_device(device)
     resolved_compute = _resolve_compute_type(compute_type, resolved_device)
+    resolved_language = _resolve_language(language)
 
+    # Reuse LemonFox's request_summary keys so Speech2Text's existing
+    # i18n format string substitutes cleanly. The fields that don't
+    # apply to a local provider (url, mime, speaker, timeout) are filled
+    # with sensible placeholders rather than omitted.
     emit(
         "request_summary",
+        url=f"local://faster-whisper/{model_name}",
         filename=os.path.basename(audio_path),
+        mime="audio/local",
+        language=resolved_language or "auto",
+        translate=str(translate).lower(),
+        speaker="false",
+        timeout="n/a",
+        # Local-only extras — UI may surface them in future log lines.
         model=model_name,
         device=resolved_device,
         compute_type=resolved_compute,
-        language=language or "auto",
-        translate=str(translate).lower(),
     )
 
     if cancel_token is not None and cancel_token.cancelled:
@@ -152,7 +203,7 @@ def transcribe(
     try:
         segments_iter, info = model.transcribe(
             audio_path,
-            language=language,
+            language=resolved_language,
             task="translate" if translate else "transcribe",
             beam_size=beam_size,
             word_timestamps=True,
