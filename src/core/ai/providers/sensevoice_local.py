@@ -58,6 +58,21 @@ _EVENT_NOISE_TAGS = ("BGM", "Laughter", "Applause", "Cry",
 # the user-requested language for this chunk.
 _LANG_MISMATCH_TEXT_THRESHOLD = 10
 
+# Subtitle-friendly segment length. VAD natural chunks can run 12-15s on
+# Chinese news clips — too long to read comfortably as one SRT line. We
+# use SenseVoice's char-level timestamps + sentence punctuation to break
+# long chunks into shorter sub-segments at natural sentence boundaries.
+_MAX_SEGMENT_SECONDS = 7.0
+# Hard escape: if a sub-segment runs this much over the soft cap with no
+# punctuation in sight, force a break at the next word boundary anyway.
+_HARD_SPLIT_SECONDS = 12.0
+
+# Punctuation classes for SRT splitting:
+#   strong: end-of-sentence — break here whenever it appears
+#   soft:   intra-sentence — break only after we exceed _MAX_SEGMENT_SECONDS
+_STRONG_PUNCT = {"。", "！", "？", "?", "!", "."}
+_SOFT_PUNCT   = {"，", "、", "；", ":", ",", ";"}
+
 
 # ── Model cache ──────────────────────────────────────────────────────────────
 
@@ -311,8 +326,13 @@ def transcribe(
             return {"language": sv_lang, "duration": duration,
                     "text": "", "segments": [], "words": []}
 
-        # Step 2: per-chunk SV inference
+        # Step 2: per-chunk SV inference, with output_timestamp=True so we
+        # get char-level [start_ms, end_ms] (relative to chunk start) plus
+        # the corresponding word/char strings. Used both to fill the
+        # words[] field for downstream tools AND to split long VAD chunks
+        # into subtitle-friendly sub-segments at sentence boundaries.
         segments_out = []
+        words_out = []
         text_parts = []
         seg_id = 0
 
@@ -332,26 +352,39 @@ def transcribe(
                     language=sv_lang,
                     use_itn=True,
                     ban_emo_unk=True,
+                    output_timestamp=True,
                 )
             except Exception as e:
                 raise AIError(Kind.UNKNOWN, "SenseVoice",
                               f"Inference failed on chunk {chunk_idx}: {e}",
                               raw=e) from e
 
-            raw = (sv_out[0].get("text") if sv_out else "") or ""
-            parsed = _parse_sv_chunk(raw)
-
+            if not sv_out:
+                continue
+            item = sv_out[0]
+            raw_text = item.get("text") or ""
+            parsed = _parse_sv_chunk(raw_text)
             if not _keep_chunk(parsed, sv_lang):
                 continue
 
-            segments_out.append({
-                "id":    seg_id,
-                "start": start_ms / 1000.0,
-                "end":   end_ms / 1000.0,
-                "text":  parsed["text"],
-            })
-            text_parts.append(parsed["text"])
-            seg_id += 1
+            chunk_words = item.get("words") or []
+            chunk_ts    = item.get("timestamp") or []
+
+            sub_segs = _split_chunk_by_punctuation(
+                chunk_words, chunk_ts, chunk_start_ms=int(start_ms),
+                fallback_text=parsed["text"], fallback_end_ms=int(end_ms),
+            )
+
+            for sub in sub_segs:
+                segments_out.append({
+                    "id":    seg_id,
+                    "start": sub["start"],
+                    "end":   sub["end"],
+                    "text":  sub["text"],
+                })
+                words_out.extend(sub["words"])
+                text_parts.append(sub["text"])
+                seg_id += 1
 
             if (chunk_idx + 1) % 5 == 0:
                 emit("state_processing",
@@ -364,9 +397,9 @@ def transcribe(
         return {
             "language": sv_lang,
             "duration": duration,
-            "text":     " ".join(text_parts).strip(),
+            "text":     "".join(text_parts).strip(),
             "segments": segments_out,
-            "words":    [],
+            "words":    words_out,
         }
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -403,3 +436,114 @@ def _keep_chunk(parsed: dict, requested_lang: str) -> bool:
         if len(text) < _LANG_MISMATCH_TEXT_THRESHOLD:
             return False
     return True
+
+
+def _split_chunk_by_punctuation(
+    words: list,
+    timestamps: list,
+    *,
+    chunk_start_ms: int,
+    fallback_text: str,
+    fallback_end_ms: int,
+) -> list:
+    """Walk a VAD chunk's word stream and emit subtitle-friendly sub-segments.
+
+    Splitting rules:
+      1. Strong sentence punctuation (。！？.!?) — always break here.
+      2. Soft punctuation (，、；,;:) — break when current sub already
+         exceeded _MAX_SEGMENT_SECONDS, so we don't fragment short
+         sentences but do shorten long ones at the next comma.
+      3. Hard escape — if a sub runs over _HARD_SPLIT_SECONDS with no
+         punctuation in sight, force-break at the current word boundary.
+
+    All timestamps in `timestamps` are CHUNK-RELATIVE (ms). Output sub
+    segments carry ABSOLUTE seconds (chunk_start_ms + relative).
+
+    Falls back to a single segment using fallback_text when the model
+    returned no per-word timestamps (rare — happens on empty alignment).
+    """
+    if not words or not timestamps or len(words) != len(timestamps):
+        if fallback_text:
+            return [{
+                "start": chunk_start_ms / 1000.0,
+                "end":   fallback_end_ms / 1000.0,
+                "text":  fallback_text,
+                "words": [],
+            }]
+        return []
+
+    subs = []
+    # Sliding buffer of un-flushed (word, (start_ms, end_ms)). We track
+    # the index of the most recent soft-punctuation entry so we can do
+    # retroactive backsplits when the buffer overruns the soft cap.
+    buf: list = []                # list of (word, (start_ms, end_ms))
+    last_soft_idx = -1
+
+    def flush_indices(upto_inclusive: int):
+        """Emit a sub-segment from buf[0..upto_inclusive] (inclusive),
+        return the new buf (everything after that index)."""
+        nonlocal buf, last_soft_idx
+        if upto_inclusive < 0 or upto_inclusive >= len(buf):
+            return
+        out_words = [item[0] for item in buf[: upto_inclusive + 1]]
+        out_ts    = [item[1] for item in buf[: upto_inclusive + 1]]
+        first_start = out_ts[0][0]
+        last_end    = out_ts[-1][1]
+        subs.append({
+            "start": (chunk_start_ms + first_start) / 1000.0,
+            "end":   (chunk_start_ms + last_end) / 1000.0,
+            "text":  "".join(out_words),
+            "words": [
+                {
+                    "start": (chunk_start_ms + s) / 1000.0,
+                    "end":   (chunk_start_ms + e) / 1000.0,
+                    "word":  w,
+                }
+                for w, (s, e) in zip(out_words, out_ts)
+            ],
+        })
+        # Recompute last_soft_idx for the remaining buffer
+        buf = buf[upto_inclusive + 1:]
+        last_soft_idx = -1
+        for i, (w, _) in enumerate(buf):
+            if w in _SOFT_PUNCT:
+                last_soft_idx = i
+
+    def cur_duration_ms() -> int:
+        if not buf:
+            return 0
+        return buf[-1][1][1] - buf[0][1][0]
+
+    for w, ts in zip(words, timestamps):
+        try:
+            ts_start = int(ts[0])
+            ts_end   = int(ts[1])
+        except (TypeError, IndexError, ValueError):
+            continue
+        buf.append((w, (ts_start, ts_end)))
+
+        if w in _SOFT_PUNCT:
+            last_soft_idx = len(buf) - 1
+
+        # Strong split — flush the entire buffer at this sentence boundary.
+        if w in _STRONG_PUNCT:
+            flush_indices(len(buf) - 1)
+            continue
+
+        # Soft cap — when buffer duration exceeds the cap, do a retroactive
+        # backsplit at the latest soft-punctuation boundary if we have one.
+        # Avoids the failure mode where the only "，" in a 9s sentence
+        # came at second 3 and is too far in the past to use later.
+        if cur_duration_ms() >= _MAX_SEGMENT_SECONDS * 1000:
+            if last_soft_idx >= 0:
+                flush_indices(last_soft_idx)
+                continue
+            # No soft punct seen yet — only flush if we've blown past the
+            # hard cap, otherwise hold and wait for the next punct.
+            if cur_duration_ms() >= _HARD_SPLIT_SECONDS * 1000:
+                flush_indices(len(buf) - 1)
+
+    # Flush any remaining buffer as the final sub-segment.
+    if buf:
+        flush_indices(len(buf) - 1)
+    return subs
