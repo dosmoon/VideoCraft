@@ -470,6 +470,16 @@ class AIRouter:
             self._providers[provider]["enabled"] = enabled
             self._persist()
 
+    def set_asr_provider_enabled(self, provider: str, enabled: bool) -> None:
+        if provider in self._asr_providers:
+            self._asr_providers[provider]["enabled"] = enabled
+            self._persist()
+
+    def set_tts_provider_enabled(self, provider: str, enabled: bool) -> None:
+        if provider in self._tts_providers:
+            self._tts_providers[provider]["enabled"] = enabled
+            self._persist()
+
     def update_provider(self, provider: str, **kwargs) -> None:
         """Update arbitrary fields on an LLM provider entry. Allows new fields."""
         provider = _cfg.canonicalize_provider_name(provider)

@@ -297,10 +297,28 @@ class AIConsoleApp(ToolBase):
                  font=("", 9)).grid(row=row, column=1, sticky="w",
                                     padx=4, pady=2)
 
+        # Enable toggle — `enabled` only affects auto-fallback candidate
+        # pools (LLM tier dispatch); explicit task_routing picks bypass
+        # it. Surface it here so users can hide unused providers from
+        # the LLM auto-fallback flow without deleting their config.
+        enabled_var = tk.BooleanVar(value=cfg.get("enabled", True))
+        def _on_toggle_enabled(n=name, cat=category, var=enabled_var):
+            new_val = bool(var.get())
+            if cat == "llm":
+                router.set_provider_enabled(n, new_val)
+            elif cat == "asr":
+                router.set_asr_provider_enabled(n, new_val)
+            elif cat == "tts":
+                router.set_tts_provider_enabled(n, new_val)
+        ttk.Checkbutton(parent, text=tr("tool.router.btn_enable"),
+                        variable=enabled_var,
+                        command=_on_toggle_enabled).grid(
+            row=row, column=2, padx=4, sticky="w")
+
         tk.Button(parent, text=tr("tool.router.btn_edit"), width=5,
                   command=lambda n=name, c=cfg, cat=category:
                           self._open_edit_dialog(n, c, cat)
-                  ).grid(row=row, column=2, padx=2)
+                  ).grid(row=row, column=3, padx=2)
 
         test_btn = tk.Button(
             parent, text=tr("tool.router.btn_test"), width=5,
@@ -309,7 +327,7 @@ class AIConsoleApp(ToolBase):
         )
         if category != "llm" or not is_available:
             test_btn.configure(state="disabled")
-        test_btn.grid(row=row, column=3, padx=2)
+        test_btn.grid(row=row, column=4, padx=2)
         self._test_buttons[name] = test_btn
         return row + 1
 

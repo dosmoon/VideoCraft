@@ -301,6 +301,20 @@ class Speech2TextApp(ToolBase):
                 """Translate provider events to i18n log lines + button-text updates."""
                 if event_type == "request_summary":
                     post_log(tr("tool.speech.log.request_summary", **kwargs))
+                elif event_type == "request_summary_local":
+                    post_log(tr("tool.speech.log.request_summary_local", **kwargs))
+                elif event_type == "model_loading":
+                    post_btn(tr("tool.speech.btn_loading_model"))
+                    post_log(tr("tool.speech.log.model_loading", **kwargs))
+                elif event_type == "model_loaded":
+                    post_log(tr("tool.speech.log.model_loaded", **kwargs))
+                elif event_type == "state_processing":
+                    seg = kwargs.get("segment_count", 0)
+                    el  = kwargs.get("elapsed", 0)
+                    post_btn(tr("tool.speech.btn_processing_local", segment_count=seg, elapsed=el))
+                    post_log(tr("tool.speech.log.state_processing", **kwargs))
+                elif event_type == "state_done":
+                    post_log(tr("tool.speech.log.state_done", **kwargs))
                 elif event_type == "mime_fallback":
                     post_log(tr("tool.speech.warning.mime_fallback", **kwargs))
                 elif event_type == "state_uploading":

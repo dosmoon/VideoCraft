@@ -168,23 +168,18 @@ def transcribe(
     resolved_compute = _resolve_compute_type(compute_type, resolved_device)
     resolved_language = _resolve_language(language)
 
-    # Reuse LemonFox's request_summary keys so Speech2Text's existing
-    # i18n format string substitutes cleanly. The fields that don't
-    # apply to a local provider (url, mime, speaker, timeout) are filled
-    # with sensible placeholders rather than omitted.
+    # Use a dedicated event type so the UI can render a local-mode log
+    # line without LemonFox's url/mime/timeout fields (avoids the
+    # "n/as" cosmetic glitch that came from re-using the cloud
+    # i18n template).
     emit(
-        "request_summary",
-        url=f"local://faster-whisper/{model_name}",
+        "request_summary_local",
         filename=os.path.basename(audio_path),
-        mime="audio/local",
-        language=resolved_language or "auto",
-        translate=str(translate).lower(),
-        speaker="false",
-        timeout="n/a",
-        # Local-only extras — UI may surface them in future log lines.
         model=model_name,
         device=resolved_device,
         compute_type=resolved_compute,
+        language=resolved_language or "auto",
+        translate=str(translate).lower(),
     )
 
     if cancel_token is not None and cancel_token.cancelled:
