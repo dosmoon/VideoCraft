@@ -288,8 +288,10 @@ class AIRouter:
         cfg = self._asr_providers.get(provider)
         if cfg is None:
             raise RuntimeError(f"Unknown ASR provider: {provider!r}")
-        if not cfg.get("enabled", True):
-            raise RuntimeError(f"ASR provider {provider!r} is disabled")
+        # `enabled` is intentionally NOT enforced here: ASR has no
+        # auto-fallback candidate pool (unlike LLM tier dispatch), so an
+        # explicit task_routing pick is itself the user's act of enabling.
+        # Matches LLM's _complete_explicit semantics.
 
         is_local = cfg.get("auth_required") is False
         api_key = None
@@ -403,8 +405,7 @@ class AIRouter:
         cfg = self._tts_providers.get(provider)
         if cfg is None:
             raise RuntimeError(f"Unknown TTS provider: {provider!r}")
-        if not cfg.get("enabled", True):
-            raise RuntimeError(f"TTS provider {provider!r} is disabled")
+        # `enabled` not enforced — see ASR for the rationale.
         api_key = _cfg.read_key(cfg)
         if api_key is None:
             raise RuntimeError(
