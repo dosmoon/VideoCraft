@@ -25,7 +25,7 @@ services:
       - "--dtype"
       - "bfloat16"
       - "--gpu-memory-utilization"
-      - "0.45"   # 4060 Laptop has 8GB; desktop already uses ~5GB → leave headroom
+      - "0.80"   # production-safe with desktop GPU users closed (8GB total, ~440MB baseline)
       - "--max-model-len"
       - "4096"
     deploy:
