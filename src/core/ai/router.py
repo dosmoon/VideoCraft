@@ -19,6 +19,7 @@ from core.ai.providers import openai_compat as _openai_compat
 from core.ai.providers import claude_code as _claude_code
 from core.ai.providers import lemonfox as _lemonfox
 from core.ai.providers import fish_audio as _fish_audio
+from core.ai.providers import aistack as _aistack
 from core.ai.errors import AIError, Kind
 from core.ai.stats import Stats
 
@@ -419,34 +420,11 @@ class AIRouter:
                     on_event=on_event,
                     cancel_token=cancel_token,
                 )
-            elif provider == "faster_whisper":
-                from core.ai.providers import faster_whisper_local as _fw
-                result = _fw.transcribe(
+            elif provider == "aistack":
+                result = _aistack.transcribe(
                     audio_path,
-                    model_name=cfg.get("model", "small"),
-                    device=cfg.get("device", "auto"),
-                    compute_type=cfg.get("compute_type", "auto"),
-                    beam_size=cfg.get("beam_size", 5),
-                    language=language,
-                    translate=translate,
-                    on_event=on_event,
-                    cancel_token=cancel_token,
-                )
-            elif provider == "parakeet":
-                from core.ai.providers import parakeet_local as _pk
-                result = _pk.transcribe(
-                    audio_path,
-                    model_name=cfg.get("model", "nvidia/parakeet-tdt-0.6b-v3"),
-                    language=language,
-                    translate=translate,
-                    on_event=on_event,
-                    cancel_token=cancel_token,
-                )
-            elif provider == "sensevoice":
-                from core.ai.providers import sensevoice_local as _sv
-                result = _sv.transcribe(
-                    audio_path,
-                    model_name=cfg.get("model", "iic/SenseVoiceSmall"),
+                    base_url=cfg.get("base_url") or _aistack.DEFAULT_BASE_URL,
+                    model_name=cfg.get("model", "whisper-small"),
                     language=language,
                     translate=translate,
                     on_event=on_event,
@@ -524,12 +502,15 @@ class AIRouter:
         if cfg is None:
             raise RuntimeError(f"Unknown TTS provider: {provider!r}")
         # `enabled` not enforced — see ASR for the rationale.
-        api_key = _cfg.read_key(cfg)
-        if api_key is None:
-            raise RuntimeError(
-                f"TTS API key not configured for {provider!r} — "
-                f"set it in AI Router manager"
-            )
+        is_local = cfg.get("auth_required") is False
+        api_key = None
+        if not is_local:
+            api_key = _cfg.read_key(cfg)
+            if api_key is None:
+                raise RuntimeError(
+                    f"TTS API key not configured for {provider!r} — "
+                    f"set it in AI Router manager"
+                )
 
         try:
             if provider == "fish_audio":
@@ -538,6 +519,19 @@ class AIRouter:
                     api_key=api_key,
                     voice_id=voice_id,
                     audio_format=audio_format,
+                    should_cancel=should_cancel,
+                    on_chunk=on_chunk,
+                    cancel_token=cancel_token,
+                )
+            elif provider == "aistack":
+                _aistack.synthesize(
+                    text, output_path,
+                    base_url=cfg.get("base_url") or _aistack.DEFAULT_BASE_URL,
+                    model_name=cfg.get("model", "qwen3-tts-12hz-0.6b-customvoice"),
+                    voice_id=voice_id or cfg.get("voice", "vivian"),
+                    audio_format=audio_format,
+                    language=cfg.get("language", "English"),
+                    task_type=cfg.get("task_type", "CustomVoice"),
                     should_cancel=should_cancel,
                     on_chunk=on_chunk,
                     cancel_token=cancel_token,

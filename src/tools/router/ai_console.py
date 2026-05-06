@@ -531,29 +531,23 @@ class AIConsoleApp(ToolBase):
                   command=dlg.destroy).pack(side="right")
 
     def _language_routing_options(self) -> list[str]:
-        """ISO codes shown in the language column dropdown. Pulls the
-        union of (1) Parakeet's supported European languages,
-        (2) SenseVoice's supported Asian languages + English, and
-        (3) a small extra set so users can target Whisper-only langs.
+        """ISO codes shown in the language column dropdown.
+
+        Local ASR is now served by aistack, which does its own backend
+        selection per `model` field. The historical union (Parakeet
+        European langs + SenseVoice CJK + Whisper extras) is kept here
+        as a static list so users still get the same dropdown choices.
         """
-        try:
-            from core.ai.providers.parakeet_local import SUPPORTED_LANGUAGES as _PK_LANGS
-        except Exception:
-            _PK_LANGS = ()
-        try:
-            from core.ai.providers.sensevoice_local import SUPPORTED_LANGUAGES as _SV_LANGS
-        except Exception:
-            _SV_LANGS = ()
-        # Whisper-only fallback targets for users who want to keep certain
-        # languages on faster-whisper.
-        extras = ("ar", "hi", "tr", "vi", "th", "id")
-        seen: list[str] = []
-        for code in tuple(_PK_LANGS) + tuple(_SV_LANGS) + extras:
-            if code in ("auto",):
-                continue
-            if code not in seen:
-                seen.append(code)
-        return seen
+        return [
+            # Parakeet TDT v3 supported European languages
+            "en", "bg", "hr", "cs", "da", "nl", "et", "fi", "fr", "de",
+            "el", "hu", "it", "lv", "lt", "mt", "pl", "pt", "ro", "sk",
+            "sl", "es", "sv", "ru", "uk",
+            # SenseVoice supported Asian + extra
+            "zh", "yue", "ja", "ko",
+            # Whisper-only fallback targets
+            "ar", "hi", "tr", "vi", "th", "id",
+        ]
 
     # ── Bottom section: provider management list ───────────────────────────
 

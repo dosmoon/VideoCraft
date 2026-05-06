@@ -124,35 +124,14 @@ _DEFAULT_ASR_PROVIDERS = {
         "read_timeout_sec": 120,
         "max_retries": 1,
     },
-    "faster_whisper": {
-        "name":          "Faster-Whisper (本地)",
-        "enabled":       False,         # User opts in via AI Console
-        "key_file":      "",            # Local — no API key
-        "base_url":      "",            # Not applicable
-        "auth_required": False,         # Skip key check at dispatch time
-        "description":   "本地 Whisper 推理 (CPU/GPU,首次加载会下载模型)",
-        "model":         "small",       # tiny / base / small / medium / large-v3 / large-v3-turbo
-        "device":        "auto",        # auto / cpu / cuda
-        "compute_type":  "auto",        # auto / int8 / int8_float16 / float16 / float32
-        "beam_size":     5,
-    },
-    "parakeet": {
-        "name":          "Parakeet TDT v3 (本地,欧语)",
-        "enabled":       False,         # User opts in via AI Console
-        "key_file":      "",            # Local — no API key
-        "base_url":      "",            # Not applicable
+    "aistack": {
+        "name":          "aistack (本地)",
+        "enabled":       True,
+        "key_file":      "",            # Local service — no API key
+        "base_url":      "http://127.0.0.1:11500",
         "auth_required": False,
-        "description":   "NVIDIA NeMo Parakeet TDT 0.6B v3,25 种欧洲语言;首次加载下载约 1.2GB",
-        "model":         "nvidia/parakeet-tdt-0.6b-v3",
-    },
-    "sensevoice": {
-        "name":          "SenseVoice (本地,中日韩英)",
-        "enabled":       False,
-        "key_file":      "",
-        "base_url":      "",
-        "auth_required": False,
-        "description":   "Alibaba FunASR + SenseVoiceSmall,中文/粤语/日韩英;首次加载约 900MB",
-        "model":         "iic/SenseVoiceSmall",
+        "description":   "本地 AI 服务 (github.com/dosmoon/aistack);model 字段决定后端: whisper-{tiny,base,small,medium,large-v3,large-v3-turbo} / parakeet / sensevoice",
+        "model":         "whisper-small",
     },
 }
 
@@ -165,6 +144,18 @@ _DEFAULT_TTS_PROVIDERS = {
         "enabled":     True,
         "key_file":    "FishAudio.key",
         "description": "Fish Audio TTS — 支持音色克隆与多角色合成",
+    },
+    "aistack": {
+        "name":          "aistack (本地 Qwen3-TTS)",
+        "enabled":       True,
+        "key_file":      "",            # Local service — no API key
+        "base_url":      "http://127.0.0.1:11500",
+        "auth_required": False,
+        "description":   "本地 TTS via aistack — Qwen3-TTS-0.6B over vLLM-Omni docker sidecar",
+        "model":         "qwen3-tts-12hz-0.6b-customvoice",
+        "voice":         "vivian",
+        "language":      "English",
+        "task_type":     "CustomVoice",
     },
 }
 

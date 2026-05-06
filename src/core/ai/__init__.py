@@ -90,7 +90,7 @@ def asr(audio_path: str, *,
     task_routing[task] (configurable in AI Console). Pass an explicit
     provider name to override routing. `on_event` receives structured
     state events — see core.ai.providers.lemonfox.transcribe() and
-    core.ai.providers.faster_whisper_local.transcribe() for event types.
+    core.ai.providers.aistack.transcribe() for event types.
     """
     return router.asr(
         audio_path,
