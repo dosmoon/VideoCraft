@@ -12,11 +12,11 @@ from ui.ai_error_dialog import show_ai_error
 # Per architecture principle 1, the UI does not import core.ai directly;
 # the actual AI call happens inside core.translate. Routing (which model
 # to use for translation) is configured in the AI Console matrix.
-from core.translate import (
-    SUPPORTED_LANGUAGES,
-    get_language_options,
-    get_lang_code,
-    translate_srt_file,
+from core.translate import translate_srt_file
+from core.lang_names import (
+    WHISPER_LANG_CHOICES,
+    WHISPER_DISPLAY_TO_ISO,
+    WHISPER_ISO_TO_DISPLAY,
 )
 
 # 尝试导入pydub，如果不可用则设置为None
@@ -95,18 +95,18 @@ class TranslateApp(ToolBase):
         # error). Tri-state button reads this to decide what to do on click.
         self._cancel_token: CancellationToken | None = None
 
-        language_options = get_language_options()
+        language_options = [disp for _, disp in WHISPER_LANG_CHOICES]
 
         # ── Row 0: 源语言 ──────────────────────────────────────────────────────
         tk.Label(master, text=tr("tool.translate.source_lang")).grid(row=0, column=0, padx=10, pady=5, sticky="e")
-        self.source_lang_var = tk.StringVar(value="English (英语)")
+        self.source_lang_var = tk.StringVar(value=WHISPER_ISO_TO_DISPLAY["en"])
         self.source_combo = ttk.Combobox(master, textvariable=self.source_lang_var,
                                          values=language_options, state="readonly", width=30)
         self.source_combo.grid(row=0, column=1, columnspan=2, sticky="w", padx=(0, 10))
 
         # ── Row 1: 目标语言 ────────────────────────────────────────────────────
         tk.Label(master, text=tr("tool.translate.target_lang")).grid(row=1, column=0, padx=10, pady=5, sticky="e")
-        self.target_lang_var = tk.StringVar(value="Chinese (中文)")
+        self.target_lang_var = tk.StringVar(value=WHISPER_ISO_TO_DISPLAY["zh"])
         self.target_combo = ttk.Combobox(master, textvariable=self.target_lang_var,
                                          values=language_options, state="readonly", width=30)
         self.target_combo.grid(row=1, column=1, columnspan=2, sticky="w", padx=(0, 10))
@@ -221,8 +221,9 @@ class TranslateApp(ToolBase):
 
     def _start_translation(self):
         srt_path    = self.srt_path_var.get()
-        source_lang = get_lang_code(self.source_lang_var.get())
-        target_lang = get_lang_code(self.target_lang_var.get())
+        # Direct dict lookup; fallback to "en" for unrecognized labels.
+        source_lang = WHISPER_DISPLAY_TO_ISO.get(self.source_lang_var.get(), "en")
+        target_lang = WHISPER_DISPLAY_TO_ISO.get(self.target_lang_var.get(), "en")
         batch_size  = int(self.batch_size_var.get())
 
         if not srt_path or not os.path.exists(srt_path):

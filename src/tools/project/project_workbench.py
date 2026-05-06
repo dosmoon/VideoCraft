@@ -27,7 +27,7 @@ from tools.base import ToolBase
 from i18n import tr
 from project import Project
 from core.asr import transcribe_audio
-from core.translate import SUPPORTED_LANGUAGES, translate_srt_file
+from core.translate import translate_srt_file
 from core.lang_names import (
     WHISPER_LANG_CHOICES as _LANG_CHOICES,
     WHISPER_DISPLAY_TO_ISO as _LANG_DISPLAY_TO_ISO,

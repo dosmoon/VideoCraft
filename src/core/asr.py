@@ -12,7 +12,7 @@ import re
 from typing import Callable
 
 from core import ai
-from core.translate import SUPPORTED_LANGUAGES
+from core.lang_names import WHISPER_LANGUAGES
 
 
 def transcribe_audio(
@@ -131,7 +131,7 @@ def _iso_from_english(english_name: str) -> str | None:
     if not english_name:
         return None
     target = english_name.lower()
-    for code, (eng, _chn) in SUPPORTED_LANGUAGES.items():
+    for code, (eng, _chn) in WHISPER_LANGUAGES.items():
         if eng.lower() == target:
             return code
     # Fallback: first 2 chars (historical behavior from speech2text.py)

@@ -39,13 +39,11 @@ def _normalize_lang_iso(language: str | None) -> str | None:
     if 2 <= len(s) <= 3 and s.isalpha():
         return s.lower()
     try:
-        from core.translate import SUPPORTED_LANGUAGES
+        from core.lang_names import WHISPER_LANGUAGES
     except Exception:
         return None
     sl = s.lower()
-    for iso, (english, chinese) in SUPPORTED_LANGUAGES.items():
-        if iso == "auto":
-            continue
+    for iso, (english, chinese) in WHISPER_LANGUAGES.items():
         if english.lower() == sl or chinese == s:
             return iso
     return None
