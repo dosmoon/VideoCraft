@@ -171,6 +171,7 @@ class AIConsoleApp(ToolBase):
         # Track widgets that need rebuilding/refresh after edits
         self._test_buttons: dict[str, tk.Button] = {}
         self._task_provider_vars: dict[str, tk.StringVar] = {}
+        self._task_provider_combos: dict[str, ttk.Combobox] = {}
         self._task_model_vars: dict[str, tk.StringVar] = {}
         self._task_model_combos: dict[str, ttk.Combobox] = {}
 
@@ -209,6 +210,12 @@ class AIConsoleApp(ToolBase):
         self._gateway_url_var = tk.StringVar(value=gw["base_url"])
         tk.Entry(parent, textvariable=self._gateway_url_var, width=42).grid(
             row=0, column=1, sticky="w", padx=4, pady=4)
+        # When the URL diverges from what the gateway was last tested at,
+        # the cached model list no longer corresponds to a known-good URL.
+        # Drop it eagerly so the routing dropdowns can't expose stale models
+        # belonging to the previous URL.
+        self._gateway_url_var.trace_add(
+            "write", lambda *_: self._on_gateway_url_changed())
         tk.Button(parent, text=tr("tool.router.gateway_test_btn"),
                   command=self._on_gateway_test,
                   ).grid(row=0, column=2, sticky="w", padx=8, pady=4)
@@ -237,10 +244,6 @@ class AIConsoleApp(ToolBase):
                 text=tr("tool.router.gateway_url_empty"), fg="#a32")
             return
 
-        # Persist the URL alongside the enable flag — saves the user a
-        # second click if they typed a new URL and just want to verify it.
-        router.set_aistack_gateway(url, self._gateway_enabled_var.get())
-
         # Strip any /v1 suffix the user typed; the helper appends it.
         bare = url.rstrip("/")
         if bare.endswith("/v1"):
@@ -254,6 +257,9 @@ class AIConsoleApp(ToolBase):
                 from core.ai.providers import aistack as _aistack
                 pairs = _aistack.list_models_with_capabilities(bare)
             except Exception as e:
+                # Reachability failed — do NOT persist the URL or touch the
+                # cache. A typo here used to silently overwrite the prior
+                # known-good URL and leave the user pointing at nothing.
                 msg = str(e)
                 self.master.after(
                     0, lambda m=msg: self._gateway_status.configure(
@@ -265,9 +271,12 @@ class AIConsoleApp(ToolBase):
                 for cap in caps:
                     if cap in buckets:
                         buckets[cap].append(mid)
-            router.set_aistack_models_cache(buckets)
 
             def _ok():
+                # Persist URL + enabled and the freshly-fetched model cache
+                # only on success — keeps router state and UI in lockstep.
+                router.set_aistack_gateway(url, self._gateway_enabled_var.get())
+                router.set_aistack_models_cache(buckets)
                 self._gateway_status.configure(
                     text=tr(
                         "tool.router.gateway_status_online",
@@ -278,8 +287,7 @@ class AIConsoleApp(ToolBase):
                     ),
                     fg="#2a7a3a",
                 )
-                # Refresh any aistack-bound row's model dropdown so the
-                # user sees the new list without reopening the console.
+                self._refresh_routing_provider_choices()
                 self._refresh_aistack_model_dropdowns()
             self.master.after(0, _ok)
 
@@ -288,6 +296,63 @@ class AIConsoleApp(ToolBase):
     def _on_gateway_enable_toggle(self):
         url = self._gateway_url_var.get().strip()
         router.set_aistack_gateway(url, self._gateway_enabled_var.get())
+        # Toggling enable changes whether aistack appears in the routing
+        # table's provider dropdowns; without this refresh the change only
+        # takes effect on the next Console open.
+        self._refresh_routing_provider_choices()
+        self._refresh_aistack_model_dropdowns()
+
+    def _on_gateway_url_changed(self):
+        """Drop the model cache when the typed URL diverges from the one
+        the gateway was last tested against. Routing dropdowns lose their
+        aistack model lists until the user clicks Test & Refresh again —
+        better an empty dropdown than one full of models that don't exist
+        on the new URL.
+        """
+        typed = self._gateway_url_var.get().strip().rstrip("/")
+        if typed.endswith("/v1"):
+            typed = typed[:-3]
+        stored = router.get_aistack_gateway()["base_url"].rstrip("/")
+        if stored.endswith("/v1"):
+            stored = stored[:-3]
+        if typed == stored:
+            return
+        cache = router.get_aistack_models_cache()
+        if not any(cache.get(k) for k in ("llm", "asr", "tts")):
+            return
+        router.set_aistack_models_cache({"llm": [], "asr": [], "tts": []})
+        self._refresh_aistack_model_dropdowns()
+        if hasattr(self, "_gateway_status"):
+            self._gateway_status.configure(text="", fg="#666")
+
+    def _refresh_routing_provider_choices(self) -> None:
+        """Re-populate the routing table's provider dropdowns after an
+        aistack gateway state change (enable toggled / connectivity verified).
+        If a row's current pick disappears from the new choice list (e.g.
+        aistack just got disabled while a row was routed to it), reset that
+        row to the category default and persist the cleared routing.
+        """
+        for tid, prov_var in self._task_provider_vars.items():
+            cb = self._task_provider_combos.get(tid)
+            if cb is None:
+                continue
+            cat = _ai_cfg.task_category(tid)
+            choices = self._provider_choices_for(cat)
+            cb.configure(values=choices)
+            if prov_var.get() in choices:
+                continue
+            # Current pick is no longer offered — fall back to Auto for LLM
+            # rows or the first available provider for ASR/TTS.
+            if cat == "llm":
+                fallback_display = _auto_label()
+            else:
+                fallback_display = choices[0] if choices else ""
+            prov_var.set(fallback_display)
+            self._task_model_vars[tid].set("")
+            self._sync_model_dropdown(
+                tid, cat, _stored_provider(fallback_display))
+            router.set_task_routing(
+                tid, _stored_provider(fallback_display), "")
 
     def _refresh_aistack_model_dropdowns(self) -> None:
         """Re-populate the routing table's model dropdowns for any task
@@ -361,6 +426,7 @@ class AIConsoleApp(ToolBase):
                 state="readonly", width=22,
             )
             prov_cb.grid(row=i, column=2, sticky="w", padx=4, pady=4)
+            self._task_provider_combos[tid] = prov_cb
             prov_cb.bind("<<ComboboxSelected>>",
                          lambda _e, t=tid: self._on_routing_provider_changed(t))
 
@@ -457,11 +523,6 @@ class AIConsoleApp(ToolBase):
         self._task_model_vars[task_id].set("")
         self._sync_model_dropdown(task_id, cat, prov)
         router.set_task_routing(task_id, prov, "")
-
-    def _on_routing_model_changed(self, task_id: str):
-        prov = _stored_provider(self._task_provider_vars[task_id].get())
-        model = self._task_model_vars[task_id].get().strip()
-        router.set_task_routing(task_id, prov, model)
 
     def _on_routing_model_changed(self, task_id: str):
         prov = _stored_provider(self._task_provider_vars[task_id].get())
