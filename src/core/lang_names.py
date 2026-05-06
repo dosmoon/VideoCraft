@@ -141,3 +141,135 @@ def matches_search(code: str, query: str, locale: str = "zh") -> bool:
         return False
     zh, en = entry
     return q in zh.casefold() or q in en.casefold()
+
+
+# ── Whisper/faster-whisper language catalog ─────────────────────────────────
+# Migrated 2026-05-06 from tools/speech/speech2text.py so multiple tools
+# (Speech2Text, Project Workbench) share the same picker data and the
+# same display-name -> ISO conversion. The shape is `(english_name,
+# chinese_name)` to match core.translate.SUPPORTED_LANGUAGES, even though
+# this file's older _NAMES dict above uses the opposite order — the two
+# coexist because they cover different code domains (BCP47 for YouTube
+# subs vs. ISO 639 for Whisper) and have different consumers.
+
+WHISPER_LANGUAGES: dict[str, tuple[str, str]] = {
+    "ar":  ("Arabic",         "阿拉伯语"),
+    "zh":  ("Chinese",        "中文"),
+    "en":  ("English",        "英语"),
+    "fr":  ("French",         "法语"),
+    "ru":  ("Russian",        "俄语"),
+    "es":  ("Spanish",        "西班牙语"),
+    "af":  ("Afrikaans",      "南非荷兰语"),
+    "am":  ("Amharic",        "阿姆哈拉语"),
+    "as":  ("Assamese",       "阿萨姆语"),
+    "az":  ("Azerbaijani",    "阿塞拜疆语"),
+    "ba":  ("Bashkir",        "巴什基尔语"),
+    "be":  ("Belarusian",     "白俄罗斯语"),
+    "bg":  ("Bulgarian",      "保加利亚语"),
+    "bn":  ("Bengali",        "孟加拉语"),
+    "bo":  ("Tibetan",        "藏语"),
+    "br":  ("Breton",         "布列塔尼语"),
+    "bs":  ("Bosnian",        "波斯尼亚语"),
+    "ca":  ("Catalan",        "加泰罗尼亚语"),
+    "cs":  ("Czech",          "捷克语"),
+    "cy":  ("Welsh",          "威尔士语"),
+    "da":  ("Danish",         "丹麦语"),
+    "de":  ("German",         "德语"),
+    "el":  ("Greek",          "希腊语"),
+    "et":  ("Estonian",       "爱沙尼亚语"),
+    "eu":  ("Basque",         "巴斯克语"),
+    "fa":  ("Persian",        "波斯语"),
+    "fi":  ("Finnish",        "芬兰语"),
+    "fo":  ("Faroese",        "法罗语"),
+    "gl":  ("Galician",       "加利西亚语"),
+    "gu":  ("Gujarati",       "古吉拉特语"),
+    "ha":  ("Hausa",          "豪萨语"),
+    "haw": ("Hawaiian",       "夏威夷语"),
+    "he":  ("Hebrew",         "希伯来语"),
+    "hi":  ("Hindi",          "印地语"),
+    "hr":  ("Croatian",       "克罗地亚语"),
+    "ht":  ("Haitian Creole", "海地克里奥尔语"),
+    "hu":  ("Hungarian",      "匈牙利语"),
+    "hy":  ("Armenian",       "亚美尼亚语"),
+    "id":  ("Indonesian",     "印度尼西亚语"),
+    "is":  ("Icelandic",      "冰岛语"),
+    "it":  ("Italian",        "意大利语"),
+    "ja":  ("Japanese",       "日语"),
+    "jw":  ("Javanese",       "爪哇语"),
+    "ka":  ("Georgian",       "格鲁吉亚语"),
+    "kk":  ("Kazakh",         "哈萨克语"),
+    "km":  ("Khmer",          "高棉语"),
+    "kn":  ("Kannada",        "卡纳达语"),
+    "ko":  ("Korean",         "韩语"),
+    "la":  ("Latin",          "拉丁语"),
+    "lb":  ("Luxembourgish",  "卢森堡语"),
+    "lo":  ("Lao",            "老挝语"),
+    "lt":  ("Lithuanian",     "立陶宛语"),
+    "lv":  ("Latvian",        "拉脱维亚语"),
+    "mg":  ("Malagasy",       "马达加斯加语"),
+    "mi":  ("Maori",          "毛利语"),
+    "mk":  ("Macedonian",     "马其顿语"),
+    "ml":  ("Malayalam",      "马拉雅拉姆语"),
+    "mn":  ("Mongolian",      "蒙古语"),
+    "mr":  ("Marathi",        "马拉地语"),
+    "ms":  ("Malay",          "马来语"),
+    "mt":  ("Maltese",        "马耳他语"),
+    "my":  ("Myanmar",        "缅甸语"),
+    "ne":  ("Nepali",         "尼泊尔语"),
+    "nl":  ("Dutch",          "荷兰语"),
+    "nn":  ("Nynorsk",        "挪威尼诺斯克语"),
+    "no":  ("Norwegian",      "挪威语"),
+    "oc":  ("Occitan",        "奥克语"),
+    "pa":  ("Punjabi",        "旁遮普语"),
+    "pl":  ("Polish",         "波兰语"),
+    "ps":  ("Pashto",         "普什图语"),
+    "pt":  ("Portuguese",     "葡萄牙语"),
+    "ro":  ("Romanian",       "罗马尼亚语"),
+    "sa":  ("Sanskrit",       "梵语"),
+    "sd":  ("Sindhi",         "信德语"),
+    "si":  ("Sinhala",        "僧伽罗语"),
+    "sk":  ("Slovak",         "斯洛伐克语"),
+    "sl":  ("Slovenian",      "斯洛文尼亚语"),
+    "sn":  ("Shona",          "绍纳语"),
+    "so":  ("Somali",         "索马里语"),
+    "sq":  ("Albanian",       "阿尔巴尼亚语"),
+    "sr":  ("Serbian",        "塞尔维亚语"),
+    "su":  ("Sundanese",      "巽他语"),
+    "sv":  ("Swedish",        "瑞典语"),
+    "sw":  ("Swahili",        "斯瓦希里语"),
+    "ta":  ("Tamil",          "泰米尔语"),
+    "te":  ("Telugu",         "泰卢固语"),
+    "tg":  ("Tajik",          "塔吉克语"),
+    "th":  ("Thai",           "泰语"),
+    "tk":  ("Turkmen",        "土库曼语"),
+    "tl":  ("Filipino",       "菲律宾语"),
+    "tr":  ("Turkish",        "土耳其语"),
+    "tt":  ("Tatar",          "鞑靼语"),
+    "uk":  ("Ukrainian",      "乌克兰语"),
+    "ur":  ("Urdu",           "乌尔都语"),
+    "uz":  ("Uzbek",          "乌兹别克语"),
+    "vi":  ("Vietnamese",     "越南语"),
+    "yi":  ("Yiddish",        "意第绪语"),
+    "yo":  ("Yoruba",         "约鲁巴语"),
+    "yue": ("Cantonese",      "粤语"),
+}
+
+
+def _build_whisper_picker():
+    """UN-6 first then alphabetical, label format `iso — English (中文)`."""
+    un_six = ("ar", "zh", "en", "fr", "ru", "es")
+    rest = sorted(c for c in WHISPER_LANGUAGES if c not in un_six)
+    ordered = list(un_six) + rest
+    choices: list[tuple[str, str]] = []
+    for iso in ordered:
+        en, zh = WHISPER_LANGUAGES[iso]
+        choices.append((iso, f"{iso} — {en} ({zh})"))
+    return choices
+
+
+# Picker triple: list of (iso, display) + bidirectional dicts.
+# `display` is locale-agnostic — `iso — English (中文)` works for both
+# zh and en UI users without needing to rebuild on locale switch.
+WHISPER_LANG_CHOICES: list[tuple[str, str]] = _build_whisper_picker()
+WHISPER_DISPLAY_TO_ISO: dict[str, str] = {disp: iso for iso, disp in WHISPER_LANG_CHOICES}
+WHISPER_ISO_TO_DISPLAY: dict[str, str] = {iso: disp for iso, disp in WHISPER_LANG_CHOICES}

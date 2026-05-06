@@ -1,6 +1,5 @@
 from tools.base import ToolBase
 from i18n import tr
-import i18n
 import os
 import sys
 import tkinter as tk
@@ -9,127 +8,20 @@ import threading
 from hub_logger import logger
 
 from core import asr as core_asr
+from core.lang_names import (
+    WHISPER_LANGUAGES,
+    WHISPER_LANG_CHOICES,
+    WHISPER_DISPLAY_TO_ISO,
+    WHISPER_ISO_TO_DISPLAY,
+)
 
-# Whisper-supported languages: ISO code -> (english_name, chinese_name).
-# UN-6 first, then alphabetical. Kept local to the UI for combobox display;
-# the canonical catalog used by core feature layer is in core/translate.py.
-language_dict = {
-    "ar": ("Arabic", "阿拉伯语"),
-    "zh": ("Chinese", "中文"),
-    "en": ("English", "英语"),
-    "fr": ("French", "法语"),
-    "ru": ("Russian", "俄语"),
-    "es": ("Spanish", "西班牙语"),
-    "af": ("Afrikaans", "南非荷兰语"),
-    "am": ("Amharic", "阿姆哈拉语"),
-    "as": ("Assamese", "阿萨姆语"),
-    "az": ("Azerbaijani", "阿塞拜疆语"),
-    "ba": ("Bashkir", "巴什基尔语"),
-    "be": ("Belarusian", "白俄罗斯语"),
-    "bg": ("Bulgarian", "保加利亚语"),
-    "bn": ("Bengali", "孟加拉语"),
-    "bo": ("Tibetan", "藏语"),
-    "br": ("Breton", "布列塔尼语"),
-    "bs": ("Bosnian", "波斯尼亚语"),
-    "ca": ("Catalan", "加泰罗尼亚语"),
-    "cs": ("Czech", "捷克语"),
-    "cy": ("Welsh", "威尔士语"),
-    "da": ("Danish", "丹麦语"),
-    "de": ("German", "德语"),
-    "el": ("Greek", "希腊语"),
-    "et": ("Estonian", "爱沙尼亚语"),
-    "eu": ("Basque", "巴斯克语"),
-    "fa": ("Persian", "波斯语"),
-    "fi": ("Finnish", "芬兰语"),
-    "fo": ("Faroese", "法罗语"),
-    "gl": ("Galician", "加利西亚语"),
-    "gu": ("Gujarati", "古吉拉特语"),
-    "ha": ("Hausa", "豪萨语"),
-    "haw": ("Hawaiian", "夏威夷语"),
-    "he": ("Hebrew", "希伯来语"),
-    "hi": ("Hindi", "印地语"),
-    "hr": ("Croatian", "克罗地亚语"),
-    "ht": ("Haitian Creole", "海地克里奥尔语"),
-    "hu": ("Hungarian", "匈牙利语"),
-    "hy": ("Armenian", "亚美尼亚语"),
-    "id": ("Indonesian", "印度尼西亚语"),
-    "is": ("Icelandic", "冰岛语"),
-    "it": ("Italian", "意大利语"),
-    "ja": ("Japanese", "日语"),
-    "jw": ("Javanese", "爪哇语"),
-    "ka": ("Georgian", "格鲁吉亚语"),
-    "kk": ("Kazakh", "哈萨克语"),
-    "km": ("Khmer", "高棉语"),
-    "kn": ("Kannada", "卡纳达语"),
-    "ko": ("Korean", "韩语"),
-    "la": ("Latin", "拉丁语"),
-    "lb": ("Luxembourgish", "卢森堡语"),
-    "lo": ("Lao", "老挝语"),
-    "lt": ("Lithuanian", "立陶宛语"),
-    "lv": ("Latvian", "拉脱维亚语"),
-    "mg": ("Malagasy", "马达加斯加语"),
-    "mi": ("Maori", "毛利语"),
-    "mk": ("Macedonian", "马其顿语"),
-    "ml": ("Malayalam", "马拉雅拉姆语"),
-    "mn": ("Mongolian", "蒙古语"),
-    "mr": ("Marathi", "马拉地语"),
-    "ms": ("Malay", "马来语"),
-    "mt": ("Maltese", "马耳他语"),
-    "my": ("Myanmar", "缅甸语"),
-    "ne": ("Nepali", "尼泊尔语"),
-    "nl": ("Dutch", "荷兰语"),
-    "nn": ("Nynorsk", "挪威尼诺斯克语"),
-    "no": ("Norwegian", "挪威语"),
-    "oc": ("Occitan", "奥克语"),
-    "pa": ("Punjabi", "旁遮普语"),
-    "pl": ("Polish", "波兰语"),
-    "ps": ("Pashto", "普什图语"),
-    "pt": ("Portuguese", "葡萄牙语"),
-    "ro": ("Romanian", "罗马尼亚语"),
-    "sa": ("Sanskrit", "梵语"),
-    "sd": ("Sindhi", "信德语"),
-    "si": ("Sinhala", "僧伽罗语"),
-    "sk": ("Slovak", "斯洛伐克语"),
-    "sl": ("Slovenian", "斯洛文尼亚语"),
-    "sn": ("Shona", "绍纳语"),
-    "so": ("Somali", "索马里语"),
-    "sq": ("Albanian", "阿尔巴尼亚语"),
-    "sr": ("Serbian", "塞尔维亚语"),
-    "su": ("Sundanese", "巽他语"),
-    "sv": ("Swedish", "瑞典语"),
-    "sw": ("Swahili", "斯瓦希里语"),
-    "ta": ("Tamil", "泰米尔语"),
-    "te": ("Telugu", "泰卢固语"),
-    "tg": ("Tajik", "塔吉克语"),
-    "th": ("Thai", "泰语"),
-    "tk": ("Turkmen", "土库曼语"),
-    "tl": ("Filipino", "菲律宾语"),
-    "tr": ("Turkish", "土耳其语"),
-    "tt": ("Tatar", "鞑靼语"),
-    "uk": ("Ukrainian", "乌克兰语"),
-    "ur": ("Urdu", "乌尔都语"),
-    "uz": ("Uzbek", "乌兹别克语"),
-    "vi": ("Vietnamese", "越南语"),
-    "yi": ("Yiddish", "意第绪语"),
-    "yo": ("Yoruba", "约鲁巴语"),
-    "yue": ("Cantonese", "粤语")
-}
+def build_language_options() -> list[str]:
+    """Combobox display strings: '<auto-detect>' first, then `iso — English (中文)`.
 
-
-def build_language_options() -> list:
-    """Build the combobox option list based on current UI locale.
-    In zh mode shows bilingual "English (英语)" form; in en mode shows
-    plain English names so the list isn't cluttered with Chinese text."""
-    un_languages = ["ar", "zh", "en", "fr", "ru", "es"]
-    other_languages = sorted([code for code in language_dict if code not in un_languages])
-    ordered = un_languages + other_languages
-
-    auto = tr("tool.speech.auto_detect")
-    if i18n.get_current_lang() == "zh":
-        return [auto] + [
-            f"{language_dict[code][0]} ({language_dict[code][1]})" for code in ordered
-        ]
-    return [auto] + [language_dict[code][0] for code in ordered]
+    Locale-agnostic — the bilingual form serves both zh and en users
+    without rebuilding on locale switch.
+    """
+    return [tr("tool.speech.auto_detect")] + [disp for _, disp in WHISPER_LANG_CHOICES]
 
 
 class Speech2TextApp(ToolBase):
@@ -207,14 +99,10 @@ class Speech2TextApp(ToolBase):
             return
         base = os.path.splitext(src)[0]
         lang = self.combo_language.get()
-        if lang.startswith("Auto Detect") or lang.startswith(tr("tool.speech.auto_detect")):
+        if self._is_auto_selection(lang):
             suffix = "auto"
         else:
-            eng_name = lang.split(" (")[0]
-            suffix = next(
-                (code for code, (e, _) in language_dict.items() if e == eng_name),
-                eng_name.lower()[:2]
-            )
+            suffix = WHISPER_DISPLAY_TO_ISO.get(lang, "auto")
         out = f"{base}_{suffix}.srt"
         self.entry_srt_path.delete(0, tk.END)
         self.entry_srt_path.insert(0, out)
@@ -249,8 +137,9 @@ class Speech2TextApp(ToolBase):
         self.log_text.see(tk.END)
 
     def _is_auto_selection(self, selected_language: str) -> bool:
-        return (selected_language.startswith("Auto Detect")
-                or selected_language.startswith(tr("tool.speech.auto_detect")))
+        # Auto-detect entry is locale-rendered ("Auto Detect" in en,
+        # "自动检测" in zh) and is not a key in WHISPER_DISPLAY_TO_ISO.
+        return selected_language not in WHISPER_DISPLAY_TO_ISO
 
     def _transcribe_audio(self):
         """Validate inputs on the main thread, then launch a background thread for the
@@ -267,17 +156,15 @@ class Speech2TextApp(ToolBase):
             self._log(tr("tool.speech.warning.no_output"))
             return
 
-        # Resolve selected language -> (api_lang display name, expected ISO)
+        # ASR layer expects ISO codes ("zh" / "en" / ...). The selected
+        # display string is `iso — English (中文)`; map back to bare ISO
+        # via the shared dict, or None for auto-detect.
         if self._is_auto_selection(selected_language):
             api_lang = None
             expected_iso = None
         else:
-            eng_name = selected_language.split(" (")[0]
-            api_lang = eng_name.lower()
-            expected_iso = next(
-                (code for code, (e, _) in language_dict.items() if e == eng_name),
-                eng_name.lower()[:2]
-            )
+            api_lang = WHISPER_DISPLAY_TO_ISO[selected_language]
+            expected_iso = api_lang
 
         translate = self.translate_var.get()
         speaker   = self.speaker_var.get()

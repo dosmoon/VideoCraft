@@ -28,6 +28,11 @@ from i18n import tr
 from project import Project
 from core.asr import transcribe_audio
 from core.translate import SUPPORTED_LANGUAGES, translate_srt_file
+from core.lang_names import (
+    WHISPER_LANG_CHOICES as _LANG_CHOICES,
+    WHISPER_DISPLAY_TO_ISO as _LANG_DISPLAY_TO_ISO,
+    WHISPER_ISO_TO_DISPLAY as _LANG_ISO_TO_DISPLAY,
+)
 from core.video_ops import extract_clip
 from core.burn_subs import burn_subtitles
 from core.srt_ops import generate_subtitle_pack, write_subtitle_pack
@@ -399,11 +404,7 @@ def _parse_hms(s: str) -> tuple[int, int, int]:
     return 0, 0, 0
 
 
-_LANG_CHOICES: list[tuple[str, str]] = [
-    (iso, f"{iso} — {names[0]}") for iso, names in SUPPORTED_LANGUAGES.items()
-]
-_LANG_DISPLAY_TO_ISO = {disp: iso for iso, disp in _LANG_CHOICES}
-_LANG_ISO_TO_DISPLAY = {iso: disp for iso, disp in _LANG_CHOICES}
+# Picker data lives in core/lang_names.py — see imports at top.
 
 
 class ProjectWorkbenchApp(ToolBase):
@@ -2053,10 +2054,10 @@ class ProjectWorkbenchApp(ToolBase):
         os.makedirs(subs_dir, exist_ok=True)
         output_srt = os.path.join(subs_dir, f"{basename}_{suffix}.srt")
 
-        language_hint: str | None = None
-        if lang_iso and lang_iso in SUPPORTED_LANGUAGES and lang_iso != "auto":
-            language_hint = SUPPORTED_LANGUAGES[lang_iso][0]
-        expected_iso = lang_iso if lang_iso != "auto" else None
+        # ASR layer (aistack / lemonfox) expects ISO codes directly.
+        # Auto-detect when lang_iso is empty/missing/"auto".
+        language_hint = lang_iso if lang_iso and lang_iso != "auto" else None
+        expected_iso = language_hint
 
         self._begin_busy("step2_asr", basename, f"ASR running: {basename}")
         threading.Thread(
