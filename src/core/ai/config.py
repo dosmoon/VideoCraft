@@ -288,7 +288,11 @@ def load_config() -> dict:
         providers, tier_routing
     )
     providers, normalized = _normalize_providers(providers)
+    asr_providers, task_routing, asr_migrated = _migrate_removed_asr_providers(
+        asr_providers, task_routing
+    )
     asr_providers = _normalize_asr_providers(asr_providers)
+    tts_providers, tts_normalized = _normalize_tts_providers(tts_providers)
     task_routing, task_routing_dirty = _migrate_task_routing(task_routing, tier_routing)
 
     result = {
@@ -300,7 +304,8 @@ def load_config() -> dict:
         "models_dir":    models_dir,
     }
 
-    if wrote_on_first_run or migrated or normalized or task_routing_dirty or models_dir_dirty:
+    if (wrote_on_first_run or migrated or asr_migrated or normalized
+            or tts_normalized or task_routing_dirty or models_dir_dirty):
         save_config(result)
 
     return result
@@ -370,6 +375,75 @@ def _normalize_asr_providers(asr_providers: dict) -> dict:
         for key, value in default_cfg.items():
             current.setdefault(key, value)
     return asr_providers
+
+
+def _normalize_tts_providers(tts_providers: dict) -> tuple[dict, bool]:
+    """Backfill missing TTS providers (e.g. the aistack entry added 2026-05-06)
+    and missing fields on existing entries.
+    """
+    dirty = False
+    for name, default_cfg in _DEFAULT_TTS_PROVIDERS.items():
+        if name not in tts_providers:
+            tts_providers[name] = copy.deepcopy(default_cfg)
+            dirty = True
+        else:
+            current = tts_providers[name]
+            for key, value in default_cfg.items():
+                if key not in current:
+                    current[key] = value
+                    dirty = True
+    return tts_providers, dirty
+
+
+def _migrate_removed_asr_providers(
+    asr_providers: dict, task_routing: dict | None
+) -> tuple[dict, dict | None, bool]:
+    """Drop ASR providers removed in newer versions and redirect references.
+
+    On 2026-05-06 the in-process providers (faster_whisper, parakeet,
+    sensevoice) were extracted into the sibling aistack service
+    (github.com/dosmoon/aistack). User configs carrying those entries
+    are cleaned here; task_routing and language_routing slots that
+    pointed at them are redirected to 'aistack', and language-routing
+    entries that no longer add any routing (target == default provider)
+    are pruned so the UI does not show meaningless rules.
+    """
+    removed = {"faster_whisper", "parakeet", "sensevoice"}
+    redirect_to = "aistack"
+    dirty = False
+
+    for name in list(asr_providers.keys()):
+        if name in removed:
+            asr_providers.pop(name, None)
+            dirty = True
+
+    if task_routing:
+        for cell in task_routing.values():
+            if not isinstance(cell, dict):
+                continue
+            if cell.get("provider") in removed:
+                cell["provider"] = redirect_to
+                cell["model"] = ""
+                dirty = True
+            lr = cell.get("language_routing")
+            if isinstance(lr, dict):
+                for lpick in lr.values():
+                    if isinstance(lpick, dict) and lpick.get("provider") in removed:
+                        lpick["provider"] = redirect_to
+                        lpick["model"] = ""
+                        dirty = True
+                # Prune entries that no longer change the dispatch:
+                # provider matches parent cell and model is unset.
+                default_provider = cell.get("provider")
+                for lang_iso in list(lr.keys()):
+                    lpick = lr[lang_iso]
+                    if (isinstance(lpick, dict)
+                            and lpick.get("provider") == default_provider
+                            and not lpick.get("model")):
+                        lr.pop(lang_iso, None)
+                        dirty = True
+
+    return asr_providers, task_routing, dirty
 
 
 def _migrate_task_routing(task_routing: dict | None, tier_routing: dict) -> tuple[dict, bool]:
