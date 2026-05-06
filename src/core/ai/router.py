@@ -166,6 +166,68 @@ class AIRouter:
         self._task_routing[task] = {"provider": provider, "model": model}
         self._persist()
 
+    # ── aistack gateway (single conceptual entry across LLM/ASR/TTS) ────────
+
+    def get_aistack_gateway(self) -> dict:
+        """Read the canonical aistack gateway state (URL + enabled).
+
+        Internally, aistack is registered three times — once in each of
+        the LLM/ASR/TTS provider registries — because each capability
+        category has its own historical config schema. The Console
+        presents these as a single gateway, so this helper reads from
+        the LLM entry as the canonical source (set_aistack_gateway
+        keeps the three in sync). Returns sensible defaults if any
+        entry is missing.
+        """
+        llm = self._providers.get("aistack", {})
+        return {
+            "base_url": llm.get("base_url", "http://127.0.0.1:11500/v1"),
+            "enabled":  bool(llm.get("enabled", True)),
+        }
+
+    def set_aistack_gateway(self, base_url: str, enabled: bool) -> None:
+        """Write URL + enabled to all three aistack registry entries.
+
+        The LLM entry uses an OpenAI-style /v1 suffix; ASR and TTS use
+        the bare host root (no /v1) because aistack's own client modules
+        append the path. We translate accordingly so the user only sees
+        one URL field.
+        """
+        bare = base_url.rstrip("/")
+        if bare.endswith("/v1"):
+            bare = bare[:-3]
+        llm_url = bare + "/v1"
+
+        if "aistack" in self._providers:
+            self._providers["aistack"]["base_url"] = llm_url
+            self._providers["aistack"]["enabled"] = bool(enabled)
+        if "aistack" in self._asr_providers:
+            self._asr_providers["aistack"]["base_url"] = bare
+            self._asr_providers["aistack"]["enabled"] = bool(enabled)
+        if "aistack" in self._tts_providers:
+            self._tts_providers["aistack"]["base_url"] = bare
+            self._tts_providers["aistack"]["enabled"] = bool(enabled)
+        self._persist()
+
+    def get_aistack_models_cache(self) -> dict[str, list[str]]:
+        """In-memory cache of aistack /v1/models grouped by capability.
+
+        Populated by set_aistack_models_cache after the Console's "Test &
+        Refresh" button hits the gateway. Not persisted across launches —
+        the cache rebuilds on first refresh of each session.
+        """
+        if not hasattr(self, "_aistack_models"):
+            self._aistack_models = {"llm": [], "asr": [], "tts": []}
+        import copy
+        return copy.deepcopy(self._aistack_models)
+
+    def set_aistack_models_cache(self, by_capability: dict[str, list[str]]) -> None:
+        self._aistack_models = {
+            "llm": list(by_capability.get("llm", [])),
+            "asr": list(by_capability.get("asr", [])),
+            "tts": list(by_capability.get("tts", [])),
+        }
+
     def get_provider_names(self) -> list:
         return list(self._providers.keys())
 
@@ -271,12 +333,15 @@ class AIRouter:
             RuntimeError: provider unknown, key missing, or all HTTP
                           attempts failed.
         """
+        # Per-task model override from task_routing[task].model. When
+        # the user picks a specific aistack model in the AI Console
+        # routing table (e.g. "parakeet" for English ASR), it lands in
+        # this field. Empty / "auto" means defer to the provider's own
+        # default — for aistack that triggers gateway-side language
+        # routing (see aistack/api/asr.py: _select_for_auto).
+        routed = (self._task_routing or {}).get(task) or {}
+        task_model = (routed.get("model") or "").strip()
         if provider is None:
-            routed = (self._task_routing or {}).get(task) or {}
-            # ASR auto-routing by language hint is now owned by aistack
-            # (see aistack/api/asr.py: _select_for_auto). VideoCraft just
-            # picks the configured provider for the task and forwards the
-            # `language` parameter; the gateway handles model selection.
             provider = routed.get("provider") or "lemonfox"
 
         cfg = self._asr_providers.get(provider)
@@ -316,10 +381,17 @@ class AIRouter:
                     cancel_token=cancel_token,
                 )
             elif provider == "aistack":
+                # Resolve model: per-task pick wins; "auto" / empty falls
+                # through as "auto" so aistack's gateway picks by language.
+                resolved_model = (
+                    task_model
+                    if task_model and task_model != "auto"
+                    else "auto"
+                )
                 result = _aistack.transcribe(
                     audio_path,
                     base_url=cfg.get("base_url") or _aistack.DEFAULT_BASE_URL,
-                    model_name=cfg.get("model", "whisper-small"),
+                    model_name=resolved_model,
                     language=language,
                     translate=translate,
                     on_event=on_event,
@@ -367,6 +439,7 @@ class AIRouter:
     # ── TTS API ──────────────────────────────────────────────────────────────
 
     def tts(self, text: str, output_path: str, *,
+            task: str = "tts.synthesize",
             provider: str = "fish_audio",
             voice_id: str,
             audio_format: str = "mp3",
@@ -396,6 +469,12 @@ class AIRouter:
         cfg = self._tts_providers.get(provider)
         if cfg is None:
             raise RuntimeError(f"Unknown TTS provider: {provider!r}")
+
+        # Per-task model override (mirrors the ASR path). Empty / "auto"
+        # falls back to the provider's configured default model.
+        routed = (self._task_routing or {}).get(task) or {}
+        task_model = (routed.get("model") or "").strip()
+
         # `enabled` not enforced — see ASR for the rationale.
         is_local = cfg.get("auth_required") is False
         api_key = None
@@ -419,10 +498,15 @@ class AIRouter:
                     cancel_token=cancel_token,
                 )
             elif provider == "aistack":
+                resolved_model = (
+                    task_model
+                    if task_model and task_model != "auto"
+                    else cfg.get("model", "qwen3-tts-12hz-0.6b-customvoice")
+                )
                 _aistack.synthesize(
                     text, output_path,
                     base_url=cfg.get("base_url") or _aistack.DEFAULT_BASE_URL,
-                    model_name=cfg.get("model", "qwen3-tts-12hz-0.6b-customvoice"),
+                    model_name=resolved_model,
                     voice_id=voice_id or cfg.get("voice", "vivian"),
                     audio_format=audio_format,
                     language=cfg.get("language", "English"),

@@ -119,9 +119,9 @@ def tts(text: str, output_path: str, *,
     `cancel_token` is the canonical CancellationToken integration. Either
     or both work; both signals stop the stream.
     """
-    _ = task
     return router.tts(
         text, output_path,
+        task=task,
         provider=provider,
         voice_id=voice_id,
         audio_format=audio_format,

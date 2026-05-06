@@ -51,6 +51,13 @@ def _stored_provider(displayed: str) -> str:
     return "" if displayed == _auto_label() else displayed
 
 
+# Sentinel shown in ASR/TTS model dropdowns when no specific model is picked.
+# For aistack: "auto" tells the gateway to pick a backend internally (by
+# language hint for ASR, only model for TTS today). Stored value is the
+# literal string "auto" so dispatch can pass it straight through.
+_AUTO_MODEL_LABEL = "auto"
+
+
 def _human_bytes(n: int) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if n < 1024 or unit == "TB":
@@ -167,15 +174,7 @@ class AIConsoleApp(ToolBase):
         self._task_model_vars: dict[str, tk.StringVar] = {}
         self._task_model_combos: dict[str, ttk.Combobox] = {}
 
-        # ── Top: local model cache ──
-        cache_frame = tk.LabelFrame(
-            body, text=tr("tool.router.section_cache_title"),
-            padx=10, pady=8, font=("", 10, "bold"),
-        )
-        cache_frame.pack(fill="x", pady=(0, 12), anchor="w")
-        self._build_cache_section(cache_frame)
-
-        # ── Middle: task routing ──
+        # ── Top: task routing ──
         routing_frame = tk.LabelFrame(
             body, text=tr("tool.router.section_routing_title"),
             padx=10, pady=8, font=("", 10, "bold"),
@@ -183,7 +182,15 @@ class AIConsoleApp(ToolBase):
         routing_frame.pack(fill="x", pady=(0, 12), anchor="w")
         self._build_routing_section(routing_frame)
 
-        # ── Bottom: providers ──
+        # ── Middle: aistack local gateway (single conceptual entry) ──
+        gateway_frame = tk.LabelFrame(
+            body, text=tr("tool.router.section_gateway_title"),
+            padx=10, pady=8, font=("", 10, "bold"),
+        )
+        gateway_frame.pack(fill="x", pady=(0, 12), anchor="w")
+        self._build_aistack_gateway_section(gateway_frame)
+
+        # ── Bottom: cloud providers grouped by capability ──
         providers_frame = tk.LabelFrame(
             body, text=tr("tool.router.section_providers_title"),
             padx=10, pady=8, font=("", 10, "bold"),
@@ -191,117 +198,155 @@ class AIConsoleApp(ToolBase):
         providers_frame.pack(fill="x", anchor="w")
         self._build_providers_section(providers_frame)
 
-    # ── Cache section: models_dir + legacy banner ──────────────────────────
+    # ── aistack gateway pane: URL + enable + test/refresh ──────────────────
 
-    def _build_cache_section(self, parent):
-        # Row 0: directory entry + buttons
-        tk.Label(parent, text=tr("tool.router.cache_dir_label"),
-                 anchor="w").grid(row=0, column=0, sticky="w", padx=4, pady=2)
+    def _build_aistack_gateway_section(self, parent):
+        gw = router.get_aistack_gateway()
 
-        default_path = os.path.join(
-            os.path.dirname(os.path.abspath(_paths.__file__)),
-            "..", "..", "user_data", "models",
-        )
-        default_path = os.path.normpath(default_path)
-        current = router.get_models_dir()
+        # Row 0: URL entry + Test/Refresh button
+        tk.Label(parent, text=tr("tool.router.gateway_url_label"),
+                 anchor="w").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        self._gateway_url_var = tk.StringVar(value=gw["base_url"])
+        tk.Entry(parent, textvariable=self._gateway_url_var, width=42).grid(
+            row=0, column=1, sticky="w", padx=4, pady=4)
+        tk.Button(parent, text=tr("tool.router.gateway_test_btn"),
+                  command=self._on_gateway_test,
+                  ).grid(row=0, column=2, sticky="w", padx=8, pady=4)
+        self._gateway_status = tk.Label(parent, text="", anchor="w",
+                                        wraplength=560, justify="left")
+        self._gateway_status.grid(row=0, column=3, sticky="w", padx=8)
 
-        self._cache_dir_var = tk.StringVar(
-            value=current or default_path
-        )
-        self._cache_dir_is_default = not current
-        entry = tk.Entry(parent, textvariable=self._cache_dir_var, width=68)
-        entry.grid(row=0, column=1, sticky="ew", padx=4, pady=2, columnspan=4)
-        if self._cache_dir_is_default:
-            entry.configure(fg="#888")  # hint that it's the default
+        # Row 1: Enable checkbox
+        self._gateway_enabled_var = tk.BooleanVar(value=gw["enabled"])
+        ttk.Checkbutton(
+            parent, text=tr("tool.router.gateway_enable_label"),
+            variable=self._gateway_enabled_var,
+            command=self._on_gateway_enable_toggle,
+        ).grid(row=1, column=1, columnspan=3, sticky="w", padx=4, pady=(0, 4))
 
-        tk.Button(parent, text=tr("tool.router.cache_dir_browse"),
-                  command=self._on_cache_dir_browse,
-                  ).grid(row=1, column=1, sticky="w", padx=4, pady=(2, 4))
-        tk.Button(parent, text=tr("tool.router.cache_dir_reset"),
-                  command=self._on_cache_dir_reset,
-                  ).grid(row=1, column=2, sticky="w", padx=4, pady=(2, 4))
-        tk.Button(parent, text=tr("tool.router.cache_dir_apply"),
-                  command=self._on_cache_dir_apply,
-                  ).grid(row=1, column=3, sticky="w", padx=4, pady=(2, 4))
-        self._cache_dir_status = tk.Label(parent, text="", fg="#2a7", anchor="w")
-        self._cache_dir_status.grid(row=1, column=4, sticky="w", padx=8)
-
-        tk.Label(parent, text=tr("tool.router.cache_dir_help"),
+        # Row 2: help text
+        tk.Label(parent, text=tr("tool.router.gateway_help"),
                  fg="#777", anchor="w", wraplength=900, justify="left",
-                 ).grid(row=2, column=0, columnspan=5, sticky="w",
-                        padx=4, pady=(0, 6))
+                 ).grid(row=2, column=0, columnspan=4, sticky="w",
+                        padx=4, pady=(2, 0))
 
-        parent.columnconfigure(1, weight=1)
+    def _on_gateway_test(self):
+        url = self._gateway_url_var.get().strip()
+        if not url:
+            self._gateway_status.configure(
+                text=tr("tool.router.gateway_url_empty"), fg="#a32")
+            return
 
-        # Row 3: legacy cache banner (only if found)
-        legacy = _paths.detect_legacy_hf_cache()
-        if legacy is not None:
-            legacy_path, legacy_size = legacy
-            warn_text = tr(
-                "tool.router.cache_legacy_warn",
-                path=legacy_path, size=_human_bytes(legacy_size),
-            )
-            tk.Label(parent, text=warn_text, fg="#b85", anchor="w",
-                     wraplength=820, justify="left",
-                     ).grid(row=3, column=0, columnspan=4, sticky="w",
-                            padx=4, pady=(2, 2))
-            tk.Button(
-                parent, text=tr("tool.router.cache_legacy_copy_cmd"),
-                command=lambda p=legacy_path: self._copy_cleanup_cmd(p),
-            ).grid(row=3, column=4, sticky="w", padx=8)
+        # Persist the URL alongside the enable flag — saves the user a
+        # second click if they typed a new URL and just want to verify it.
+        router.set_aistack_gateway(url, self._gateway_enabled_var.get())
 
-    def _on_cache_dir_browse(self):
-        from tkinter import filedialog
-        initial = self._cache_dir_var.get() or os.path.expanduser("~")
-        chosen = filedialog.askdirectory(
-            initialdir=initial if os.path.isdir(initial) else os.path.expanduser("~"),
-        )
-        if chosen:
-            self._cache_dir_var.set(os.path.normpath(chosen))
+        # Strip any /v1 suffix the user typed; the helper appends it.
+        bare = url.rstrip("/")
+        if bare.endswith("/v1"):
+            bare = bare[:-3]
 
-    def _on_cache_dir_reset(self):
-        self._cache_dir_var.set("")
-        router.set_models_dir("")
-        self._cache_dir_status.configure(text=tr("tool.router.cache_dir_saved"))
+        self._gateway_status.configure(
+            text=tr("tool.router.gateway_status_busy"), fg="#666")
 
-    def _on_cache_dir_apply(self):
-        path = self._cache_dir_var.get().strip()
-        # Treat the auto-shown default path as "no override" when the user
-        # hasn't actually changed it — keeps providers.json clean.
-        router.set_models_dir(path)
-        self._cache_dir_status.configure(text=tr("tool.router.cache_dir_saved"))
+        def _do_fetch():
+            try:
+                from core.ai.providers import aistack as _aistack
+                pairs = _aistack.list_models_with_capabilities(bare)
+            except Exception as e:
+                msg = str(e)
+                self.master.after(
+                    0, lambda m=msg: self._gateway_status.configure(
+                        text=tr("tool.router.gateway_status_offline", err=m[:140]),
+                        fg="#a32"))
+                return
+            buckets = {"llm": [], "asr": [], "tts": []}
+            for mid, caps in pairs:
+                for cap in caps:
+                    if cap in buckets:
+                        buckets[cap].append(mid)
+            router.set_aistack_models_cache(buckets)
 
-    def _copy_cleanup_cmd(self, legacy_path: str):
-        # Cross-shell command — Windows users usually run cmd or PowerShell.
-        cmd = f'rmdir /S /Q "{legacy_path}"'
-        try:
-            self.master.clipboard_clear()
-            self.master.clipboard_append(cmd)
-            self.master.update()  # required for clipboard to persist after window close
-        except tk.TclError:
-            pass
-        self._cache_dir_status.configure(
-            text=tr("tool.router.cache_legacy_cmd_copied"))
+            def _ok():
+                self._gateway_status.configure(
+                    text=tr(
+                        "tool.router.gateway_status_online",
+                        total=sum(len(v) for v in buckets.values()),
+                        llm=len(buckets["llm"]),
+                        asr=len(buckets["asr"]),
+                        tts=len(buckets["tts"]),
+                    ),
+                    fg="#2a7a3a",
+                )
+                # Refresh any aistack-bound row's model dropdown so the
+                # user sees the new list without reopening the console.
+                self._refresh_aistack_model_dropdowns()
+            self.master.after(0, _ok)
+
+        threading.Thread(target=_do_fetch, daemon=True).start()
+
+    def _on_gateway_enable_toggle(self):
+        url = self._gateway_url_var.get().strip()
+        router.set_aistack_gateway(url, self._gateway_enabled_var.get())
+
+    def _refresh_aistack_model_dropdowns(self) -> None:
+        """Re-populate the routing table's model dropdowns for any task
+        currently routed to aistack, after a gateway model-list refresh.
+        """
+        for tid, prov_var in self._task_provider_vars.items():
+            if _stored_provider(prov_var.get()) != "aistack":
+                continue
+            cb = self._task_model_combos.get(tid)
+            if cb is None:
+                continue
+            cat = _ai_cfg.task_category(tid)
+            cb.configure(values=self._aistack_model_choices(cat))
+
+    def _aistack_model_choices(self, category: str) -> list[str]:
+        """Cached aistack models filtered by capability, with 'auto' first
+        for ASR/TTS rows (LLM rows have no inherent fallback model)."""
+        cache = router.get_aistack_models_cache()
+        models = cache.get(category, [])
+        if category in ("asr", "tts"):
+            return [_AUTO_MODEL_LABEL, *models]
+        return list(models)
 
     # ── Top section: 4-row task routing table ──────────────────────────────
+
+    # Capability pill label rendered before each task name. Mirrors the
+    # color treatment in the HTML mockup so users instantly see which
+    # ability owns each row.
+    _PILL_STYLE = {
+        "llm": {"bg": "#e9eaf6", "fg": "#445", "text": "LLM"},
+        "asr": {"bg": "#e8f3ec", "fg": "#2c5e3a", "text": "ASR"},
+        "tts": {"bg": "#fbeede", "fg": "#7a4b1c", "text": "TTS"},
+    }
 
     def _build_routing_section(self, parent):
         current_routing = router.get_task_routing()
 
         # Header row
         tk.Label(parent, text=tr("tool.router.col_task"),
-                 font=("", 9, "bold"), anchor="w", width=22,
-                 ).grid(row=0, column=0, sticky="w", padx=4, pady=(0, 4))
+                 font=("", 9, "bold"), anchor="w", width=28,
+                 ).grid(row=0, column=0, columnspan=2, sticky="w",
+                        padx=4, pady=(0, 4))
         tk.Label(parent, text=tr("tool.router.col_provider"),
                  font=("", 9, "bold"), anchor="w", width=18,
-                 ).grid(row=0, column=1, sticky="w", padx=4, pady=(0, 4))
+                 ).grid(row=0, column=2, sticky="w", padx=4, pady=(0, 4))
         tk.Label(parent, text=tr("tool.router.col_model"),
                  font=("", 9, "bold"), anchor="w", width=28,
-                 ).grid(row=0, column=2, sticky="w", padx=4, pady=(0, 4))
+                 ).grid(row=0, column=3, sticky="w", padx=4, pady=(0, 4))
 
         for i, (tid, cat, label) in enumerate(_ai_cfg.TASKS, start=1):
+            # Capability pill (column 0) + task label (column 1)
+            pill = self._PILL_STYLE.get(cat, {})
+            tk.Label(
+                parent, text=" " + pill.get("text", "?") + " ",
+                bg=pill.get("bg", "#eee"), fg=pill.get("fg", "#333"),
+                font=("", 8, "bold"), padx=4, pady=1,
+            ).grid(row=i, column=0, sticky="w", padx=(4, 6), pady=4)
             tk.Label(parent, text=label, anchor="w").grid(
-                row=i, column=0, sticky="w", padx=4, pady=4)
+                row=i, column=1, sticky="w", padx=0, pady=4)
 
             cell = current_routing.get(tid, {})
             stored_prov = cell.get("provider", "")
@@ -315,108 +360,149 @@ class AIConsoleApp(ToolBase):
                 parent, textvariable=prov_var, values=prov_choices,
                 state="readonly", width=22,
             )
-            prov_cb.grid(row=i, column=1, sticky="w", padx=4, pady=4)
+            prov_cb.grid(row=i, column=2, sticky="w", padx=4, pady=4)
             prov_cb.bind("<<ComboboxSelected>>",
                          lambda _e, t=tid: self._on_routing_provider_changed(t))
 
-            if cat == "llm":
-                model_choices = self._models_for(prov_var.get())
-                model_cb = ttk.Combobox(
-                    parent, textvariable=model_var, values=model_choices,
-                    state="normal", width=30,
-                )
-                model_cb.grid(row=i, column=2, sticky="w", padx=4, pady=4)
-                self._task_model_combos[tid] = model_cb
-                model_cb.bind("<<ComboboxSelected>>",
-                              lambda _e, t=tid: self._on_routing_model_changed(t))
-                # Persist manually-typed model on focus-out / Return
-                model_cb.bind("<FocusOut>",
-                              lambda _e, t=tid: self._on_routing_model_changed(t))
-                model_cb.bind("<Return>",
-                              lambda _e, t=tid: self._on_routing_model_changed(t))
-            else:
-                # ASR/TTS rows: model column is owned by the provider
-                # (asr_providers/tts_providers configure their own model
-                # field). aistack picks the actual backend per request
-                # via the language hint — no per-task override needed.
-                tk.Label(parent, text="—", fg="#999", anchor="w",
-                         ).grid(row=i, column=2, sticky="w", padx=4, pady=4)
+            # Model dropdown — shape depends on row category and current
+            # provider pick. LLM rows always have an editable combobox;
+            # ASR/TTS rows have one only when the picked provider is aistack
+            # (other ASR/TTS providers carry an implicit single model).
+            model_cb = ttk.Combobox(
+                parent, textvariable=model_var, state="normal", width=30,
+            )
+            model_cb.grid(row=i, column=3, sticky="w", padx=4, pady=4)
+            self._task_model_combos[tid] = model_cb
+            model_cb.bind("<<ComboboxSelected>>",
+                          lambda _e, t=tid: self._on_routing_model_changed(t))
+            model_cb.bind("<FocusOut>",
+                          lambda _e, t=tid: self._on_routing_model_changed(t))
+            model_cb.bind("<Return>",
+                          lambda _e, t=tid: self._on_routing_model_changed(t))
+            self._sync_model_dropdown(tid, cat, _stored_provider(prov_var.get()))
 
     def _provider_choices_for(self, category: str) -> list[str]:
         """Return a list of provider names available for this category.
 
-        Includes providers that lack auth — the user can still pick them,
-        but the call will fail until they configure a key (visible in the
-        Providers section below). LLM rows prepend an "Auto" sentinel
-        whose stored value is "" — at dispatch time the router exercises
-        its candidate-pool fallback (try providers in priority order).
+        LLM rows prepend an "Auto" sentinel whose stored value is "" — at
+        dispatch time the router exercises its candidate-pool fallback
+        (try providers in priority order). aistack is filtered out of the
+        ASR/TTS lists when the gateway is disabled, so users do not pick
+        a route that will silently 503.
         """
-        src: dict
+        gw_enabled = router.get_aistack_gateway()["enabled"]
         if category == "llm":
-            return [_auto_label(), *router._providers.keys()]
+            names = [n for n in router._providers.keys()
+                     if n != "aistack" or gw_enabled]
+            return [_auto_label(), *names]
         elif category == "asr":
-            src = router._asr_providers
+            return [n for n in router._asr_providers.keys()
+                    if n != "aistack" or gw_enabled]
         elif category == "tts":
-            src = router._tts_providers
+            return [n for n in router._tts_providers.keys()
+                    if n != "aistack" or gw_enabled]
         else:
             return []
-        return list(src.keys())
 
     def _models_for(self, provider: str) -> list[str]:
+        """Return the configured models list for an LLM provider (other
+        than aistack — that one is fed by the gateway model cache)."""
         cfg = router._providers.get(provider, {})
         return list(cfg.get("models", []))
+
+    def _sync_model_dropdown(self, task_id: str, category: str,
+                             stored_prov: str) -> None:
+        """Configure the model combobox to match (category, provider).
+
+        Behavior matrix:
+          (LLM, "")            empty list — Auto sentinel selected, no model
+          (LLM, aistack)       aistack-cached LLM models
+          (LLM, other)         provider's configured models list
+          (ASR/TTS, aistack)   ['auto', ...aistack-cached models for cat]
+          (ASR/TTS, other)     empty list (provider's single configured
+                               model used at dispatch — not user-pickable)
+        """
+        cb = self._task_model_combos.get(task_id)
+        if cb is None:
+            return
+        if category == "llm":
+            if not stored_prov:
+                cb.configure(values=[], state="disabled")
+                return
+            cb.configure(state="normal")
+            if stored_prov == "aistack":
+                cb.configure(values=self._aistack_model_choices("llm"))
+            else:
+                cb.configure(values=self._models_for(stored_prov))
+        else:  # asr / tts
+            if stored_prov == "aistack":
+                cb.configure(values=self._aistack_model_choices(category),
+                             state="readonly")
+            else:
+                cb.configure(values=[], state="disabled")
 
     def _on_routing_provider_changed(self, task_id: str):
         prov = _stored_provider(self._task_provider_vars[task_id].get())
         cat = _ai_cfg.task_category(task_id)
-        if cat == "llm":
-            # Auto sentinel clears the model column too — the candidate-pool
-            # fallback owns model selection per provider it tries.
-            if not prov:
-                self._task_model_vars[task_id].set("")
-                cb = self._task_model_combos.get(task_id)
-                if cb is not None:
-                    cb.configure(values=[])
-                router.set_task_routing(task_id, "", "")
-                return
-            models = self._models_for(prov)
-            cb = self._task_model_combos.get(task_id)
-            if cb is not None:
-                cb.configure(values=models)
-            cur = self._task_model_vars[task_id].get()
-            if cur not in models:
-                self._task_model_vars[task_id].set(models[0] if models else "")
-            router.set_task_routing(
-                task_id, prov, self._task_model_vars[task_id].get())
-        else:
-            router.set_task_routing(task_id, prov, "")
+
+        if cat == "llm" and not prov:
+            # Auto sentinel — clear model and persist as empty pick.
+            self._task_model_vars[task_id].set("")
+            self._sync_model_dropdown(task_id, cat, "")
+            router.set_task_routing(task_id, "", "")
+            return
+
+        # Reset model when provider changes; the previous pick may be
+        # nonsensical under the new provider's catalog.
+        self._task_model_vars[task_id].set("")
+        self._sync_model_dropdown(task_id, cat, prov)
+        router.set_task_routing(task_id, prov, "")
 
     def _on_routing_model_changed(self, task_id: str):
         prov = _stored_provider(self._task_provider_vars[task_id].get())
         model = self._task_model_vars[task_id].get().strip()
         router.set_task_routing(task_id, prov, model)
 
-    # ── Bottom section: provider management list ───────────────────────────
+    def _on_routing_model_changed(self, task_id: str):
+        prov = _stored_provider(self._task_provider_vars[task_id].get())
+        model = self._task_model_vars[task_id].get().strip()
+        router.set_task_routing(task_id, prov, model)
+
+    # ── Bottom section: cloud providers, grouped by capability ─────────────
 
     def _build_providers_section(self, parent):
-        # Header
-        tk.Label(parent, text=tr("tool.router.col_provider_model"),
-                 font=("", 9, "bold"), anchor="w", width=22,
-                 ).grid(row=0, column=0, sticky="w", padx=4, pady=(0, 4))
-        tk.Label(parent, text=tr("tool.router.col_key_status"),
-                 font=("", 9, "bold"), anchor="w", width=22,
-                 ).grid(row=0, column=1, sticky="w", padx=4, pady=(0, 4))
-
-        ttk.Separator(parent, orient="horizontal").grid(
-            row=1, column=0, columnspan=4, sticky="ew", pady=2)
-
-        row_idx = 2
-        for category, src in (
-            ("llm", router._providers),
-            ("asr", router._asr_providers),
-            ("tts", router._tts_providers),
+        """Render LLM / ASR / TTS sub-blocks. aistack is excluded (lives in
+        its own gateway pane above); only cloud / external providers
+        appear here. Each sub-block has its own header + table.
+        """
+        row_idx = 0
+        for category, src, header_key in (
+            ("llm", router._providers,     "tool.router.subhead_llm"),
+            ("asr", router._asr_providers, "tool.router.subhead_asr"),
+            ("tts", router._tts_providers, "tool.router.subhead_tts"),
         ):
-            for name, cfg in src.items():
+            # Filter out aistack — it has a dedicated gateway pane.
+            entries = [(n, c) for n, c in src.items() if n != "aistack"]
+            if not entries:
+                continue
+
+            # Capability sub-header with the same colored pill used in
+            # the routing table for visual cross-referencing.
+            pill_style = self._PILL_STYLE.get(category, {})
+            head_frame = tk.Frame(parent, bg="#f6f7fa")
+            head_frame.grid(row=row_idx, column=0, columnspan=5,
+                            sticky="ew", padx=2, pady=(8, 2))
+            tk.Label(head_frame, text=" " + pill_style.get("text", "?") + " ",
+                     bg=pill_style.get("bg", "#eee"),
+                     fg=pill_style.get("fg", "#333"),
+                     font=("", 8, "bold"), padx=4, pady=1,
+                     ).pack(side="left", padx=(2, 6))
+            tk.Label(head_frame, text=tr(header_key),
+                     font=("", 9, "bold"), bg="#f6f7fa", fg="#334",
+                     ).pack(side="left", pady=2)
+            row_idx += 1
+
+            for name, cfg in entries:
                 row_idx = self._build_provider_row(
                     parent, row_idx, name, cfg, category)
 
