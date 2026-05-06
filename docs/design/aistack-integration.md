@@ -61,69 +61,71 @@ curl http://127.0.0.1:11500/v1/models
 如果 `/health` 返回 connection refused，说明 aistack 没启动；VideoCraft 调用时
 会收到 `network` kind 的 503 envelope，文案里直接告诉用户怎么启动。
 
-## 4. VideoCraft 端配置
+## 4. VideoCraft 端配置（2026-05-07 AI Console 改版后）
 
-### 4.1 Provider 选项
+打开 **AI Console → Provider & 路由** tab，看到三块（顺序从上到下）：
 
-打开 **AI Console → Providers** tab，看到的 LLM/ASR/TTS provider 列表里
-**aistack** 应当作为本地能力的**唯一入口**：
-
-| 类别 | 选项 |
-|---|---|
-| LLM | Gemini / DeepSeek / Claude / Custom / **aistack** |
-| ASR | LemonFox（云）/ **aistack** |
-| TTS | Fish Audio（云）/ **aistack** |
+```
+┌─ 功能路由 ──────────────────────────────────────────────────┐
+│ 每行带 LLM/ASR/TTS 胶囊标签 + provider 下拉 + 模型下拉      │
+└─────────────────────────────────────────────────────────────┘
+┌─ 本地模型代理 (aistack) ────────────────────────────────────┐
+│ URL + 启用 + 「测试连通 / 刷新模型」按钮 + 状态行            │
+└─────────────────────────────────────────────────────────────┘
+┌─ 服务商管理 (云端) ─────────────────────────────────────────┐
+│ 按 LLM / ASR / TTS 分块；aistack 不在这里                    │
+└─────────────────────────────────────────────────────────────┘
+```
 
 > 历史上 LLM 列表有 "Ollama" 选项，base_url 指 `localhost:11434/v1`。
 > D6 之后该选项被 aistack 取代——aistack 内部代理 Ollama，VideoCraft 不再
 > 直连 Ollama。**升级时 providers.json 自动迁移**，无需手动改。
 
-### 4.2 配置 aistack provider
+### 4.1 配置 aistack 网关（一处，全局生效）
 
-**唯一必填字段：base_url**
+**网关块只管「怎么连」，不管「用什么模型」**：
 
 | 字段 | 默认 | 说明 |
 |---|---|---|
-| `base_url` | `http://127.0.0.1:11500` | aistack 服务地址。本机用默认即可；用局域网/云上 aistack 改这里 |
-| `auth_required` | `False` | aistack 默认不带鉴权（仅 localhost） |
-| `key_file` | `""` | 不需要 API key |
+| URL | `http://127.0.0.1:11500/v1` | aistack 服务地址。本机用默认；局域网/云上 aistack 改这里 |
+| 启用 | ✓ | 取消勾选后功能路由表的 provider 下拉里隐藏 aistack |
 
-UI 上点 aistack provider 行的"编辑"按钮，调一行 base_url 即可。
-**不要分别为 LLM/ASR/TTS 各填一遍 URL**——一个 aistack 服务覆盖三类。
+**操作**：
+1. 改完 URL → 点「测试连通 / 刷新模型」
+2. 状态行显示 `✓ 在线 · 共 N 个模型 (LLM x / ASR y / TTS z)`
+3. 测试动作顺手把 `/v1/models` 拉到的列表按 capabilities 切三组缓存到内存
+4. 上方功能路由表里 provider 切到 aistack 时，对应类别的 model 下拉自动用
+   这份缓存
 
-### 4.3 模型选择（task_routing 矩阵）
+**注意**：内部仍在 `providers / asr_providers / tts_providers` 三个 registry
+里各自登记 aistack 一份（数据模型遗留），但 UI 上**只暴露一个 URL 输入框**，
+保存时三处 base_url 同步写入。`/v1` 后缀只在 LLM 那条加，ASR/TTS 那两条
+不加（client 模块自己拼路径）。
 
-打开 **AI Console → Routing** tab，每个 task 选 (provider, model)：
+### 4.2 模型选择（功能路由表）
 
-```
-Task                Provider    Model
-────────────────────────────────────────────
-translate           aistack     qwen3:4b           ← LLM 必须显式选
-subtitle.post       aistack     qwen3:4b           ← LLM 必须显式选
-asr.transcribe      aistack     自动               ← 留空让 aistack 按语种路由
-                                whisper-small      ← 或显式选某个 Whisper size
-                                parakeet           ← 或欧语强制走 Parakeet
-                                sensevoice         ← 或 CJK 强制走 SenseVoice
-tts.synthesize      aistack     自动               ← 当前只有 Qwen3-TTS，留"自动"即可
-```
+每行结构：`[胶囊] 任务名 | Provider 下拉 | 模型下拉`。
 
-**配置要点**：
+| 任务 | Provider 下拉行为 | 模型下拉行为 |
+|---|---|---|
+| `LLM` 翻译 / 字幕后处理 | 列出所有 LLM provider；首项 "自动 (候选池兜底)" → 存空字符串，dispatch 时走 priority fallback | provider 选 aistack 时列 capabilities=llm 的 model；选其他 LLM provider 时列该 provider 配置的 models 列表；选"自动"时下拉禁用 |
+| `ASR` 语音转字幕 | 列出所有 ASR provider | provider 选 aistack 时列 `auto + capabilities=asr` 的 model（whisper-small / parakeet / sensevoice / ...）；选其他 ASR provider 时下拉禁用（Lemonfox 单模型） |
+| `TTS` 文本转语音 | 列出所有 TTS provider | 同 ASR：选 aistack 时列 `auto + capabilities=tts`；其他禁用 |
 
-- **LLM 不能"自动"**——不同 LLM 的能力/速度/成本差太大，VideoCraft 不替你选
-- **ASR 可"自动"**——aistack 按 `language=` 字段路由（zh→sensevoice, en→parakeet, 其他→whisper）
-- **TTS 可"自动"**——aistack 选当前可用的 TTS 后端
+**aistack 模型选 "auto" 的语义**：
+- ASR：发送 `model=auto` 给 `/v1/audio/transcriptions`，aistack 按 `language=`
+  字段做内部路由（zh→sensevoice, en→parakeet, 其他→whisper）
+- TTS：当前只有一个 TTS 模型，留 auto 即可
+- LLM：**没有 auto** —— 不同 LLM 能力/速度/成本差太大，必须显式选
 
-### 4.4 Pick Models 按钮
+### 4.3 dispatch 链路
 
-点 task_routing 单元里的 **"Pick Models"** 按钮：
+VideoCraft 端的 `task_routing[task].model` 字段会透传到 aistack：
 
-1. VideoCraft 调 `GET aistack:11500/v1/models`
-2. 按当前 task 的 capability 过滤（translate → 只看 capabilities=["llm"]）
-3. 把可选 model id 显示在下拉里
-
-如果 aistack 没启动，按钮报"无法连接"，按提示先启动 aistack。
-如果 aistack 启动了但缺某个能力（比如没装 Parakeet），那个 model 不在
-列表里——`/v1/models` 只列**当前可服务**的模型。
+- ASR：`router.asr()` 读 `task_routing.model` → 转发到 `_aistack.transcribe(model_name=...)`
+  → aistack `_select_provider` 里的 `auto` 走语言路由，具体 model id 走对应 backend
+- TTS：同理，但 `auto`/空时回落到 `tts_providers["aistack"].model` 配置默认
+- LLM：openai-compat 标准协议，model id 直接是 OpenAI request body 的 `model` 字段
 
 ## 5. 调用流程（开发者视角）
 
