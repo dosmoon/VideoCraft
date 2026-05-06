@@ -349,7 +349,7 @@ class VideoCraftHub:
         # Translate
         tr_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label=tr("menu.translate"), menu=tr_menu)
-        tr_menu.add_command(label=tr("menu.translate.gemini"),
+        tr_menu.add_command(label=tr("menu.translate.srt"),
                             command=lambda: self.open_tool("translate"))
 
         # Video
