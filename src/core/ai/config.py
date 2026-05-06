@@ -84,12 +84,12 @@ _DEFAULT_PROVIDERS = {
             TIER_ECONOMY:  "haiku",
         },
     },
-    "Ollama": {
+    "aistack": {
         "type":          "openai_compatible",
-        "base_url":      "http://localhost:11434/v1",
-        "key_file":      "",            # Local service — no API key
+        "base_url":      "http://127.0.0.1:11500/v1",
+        "key_file":      "",            # Local gateway — no API key
         "auth_required": False,         # Skip key check at dispatch time
-        "enabled":       False,         # User opts in via AI Console
+        "enabled":       True,          # Default-on; same posture as ASR/TTS aistack entries
         "priority":      5,             # After Custom(4)
         "models":        [],            # Populated via "Pick Models" → /v1/models
         "tiers": {
@@ -328,10 +328,13 @@ def _migrate_removed_providers(providers: dict):
     """Drop providers that were removed in newer versions.
 
     Groq was removed because its Llama/gpt-oss/qwen models did not meet
-    VideoCraft's NLP quality bar. Old providers.json files still carrying
-    it are cleaned up here.
+    VideoCraft's NLP quality bar. Ollama was removed 2026-05-06 when the
+    aistack gateway took over local-LLM dispatch — its base_url moved
+    from 11434 to 11500/v1, and the user's old `models` list does not
+    transfer (aistack publishes its own inventory via /v1/models, which
+    the user re-picks via the Pick Models button).
     """
-    removed = ["Groq"]
+    removed = ["Groq", "Ollama"]
     dirty = False
     for name in removed:
         if name in providers:
@@ -390,10 +393,8 @@ def _migrate_removed_asr_providers(
     On 2026-05-06 the in-process providers (faster_whisper, parakeet,
     sensevoice) were extracted into the sibling aistack service
     (github.com/dosmoon/aistack). User configs carrying those entries
-    are cleaned here; task_routing and language_routing slots that
-    pointed at them are redirected to 'aistack', and language-routing
-    entries that no longer add any routing (target == default provider)
-    are pruned so the UI does not show meaningless rules.
+    are cleaned here; task_routing slots that pointed at them are
+    redirected to 'aistack'.
     """
     removed = {"faster_whisper", "parakeet", "sensevoice"}
     redirect_to = "aistack"
@@ -412,23 +413,6 @@ def _migrate_removed_asr_providers(
                 cell["provider"] = redirect_to
                 cell["model"] = ""
                 dirty = True
-            lr = cell.get("language_routing")
-            if isinstance(lr, dict):
-                for lpick in lr.values():
-                    if isinstance(lpick, dict) and lpick.get("provider") in removed:
-                        lpick["provider"] = redirect_to
-                        lpick["model"] = ""
-                        dirty = True
-                # Prune entries that no longer change the dispatch:
-                # provider matches parent cell and model is unset.
-                default_provider = cell.get("provider")
-                for lang_iso in list(lr.keys()):
-                    lpick = lr[lang_iso]
-                    if (isinstance(lpick, dict)
-                            and lpick.get("provider") == default_provider
-                            and not lpick.get("model")):
-                        lr.pop(lang_iso, None)
-                        dirty = True
 
     return asr_providers, task_routing, dirty
 
@@ -495,12 +479,22 @@ def _migrate_task_routing(task_routing: dict | None) -> tuple[dict, bool]:
             if "model" not in cell:
                 cell["model"] = defaults[tid]["model"]
                 dirty = True
-            # If a task carries a language_routing map but is missing the
-            # master switch, default it to False — safer than silently
-            # honoring legacy overrides after the user changed default
-            # provider. User must explicitly flip the switch on.
-            if "language_routing" in cell and "language_routing_enabled" not in cell:
-                cell["language_routing_enabled"] = False
+            # 2026-05-06 Phase 2b: language_routing mechanism retired.
+            # aistack now owns ASR auto-routing by language hint, so the
+            # per-task language_routing map and its master switch are
+            # stripped from any legacy cell that still carries them.
+            for legacy_key in ("language_routing", "language_routing_enabled"):
+                if legacy_key in cell:
+                    cell.pop(legacy_key, None)
+                    dirty = True
+            # 2026-05-06 Phase 2b: legacy Ollama LLM provider entries get
+            # redirected to the aistack gateway (which now proxies Ollama
+            # via /v1/chat/completions). The model field is cleared because
+            # the user's old Ollama model list does not transfer; they
+            # re-pick from aistack's /v1/models inventory.
+            if cell.get("provider") == "Ollama":
+                cell["provider"] = "aistack"
+                cell["model"] = ""
                 dirty = True
 
     return flattened, dirty

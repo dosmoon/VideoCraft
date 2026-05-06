@@ -24,29 +24,6 @@ from core.ai.errors import AIError, Kind
 from core.ai.stats import Stats
 
 
-# ── Language hint normalization (for ASR language_routing lookup) ────────────
-
-def _normalize_lang_iso(language: str | None) -> str | None:
-    """Return a lowercase ISO code (en/zh/...) for a user-supplied language
-    hint. Display names like 'English' / '英语' are mapped via core.translate
-    if available. Returns None for empty / 'auto' / unknown values — callers
-    should fall back to the task's default provider."""
-    if not language:
-        return None
-    s = language.strip()
-    if not s or s.lower() in ("auto", "auto detect"):
-        return None
-    if 2 <= len(s) <= 3 and s.isalpha():
-        return s.lower()
-    try:
-        from core.lang_names import WHISPER_LANGUAGES
-    except Exception:
-        return None
-    sl = s.lower()
-    for iso, (english, chinese) in WHISPER_LANGUAGES.items():
-        if english.lower() == sl or chinese == s:
-            return iso
-    return None
 from core.ai.tiers import (
     TIER_PREMIUM,
     TIER_STANDARD,
@@ -185,64 +162,8 @@ class AIRouter:
         return copy.deepcopy(self._task_routing)
 
     def set_task_routing(self, task: str, provider: str, model: str) -> None:
-        """Set the single routing entry for a task and persist.
-
-        Preserves any existing `language_routing` map on the task — only the
-        default (provider, model) cell is rewritten. Use
-        set_task_language_routing() to update the per-language overrides.
-        """
-        existing = self._task_routing.get(task, {})
-        cell = {"provider": provider, "model": model}
-        lr = existing.get("language_routing")
-        if lr:
-            cell["language_routing"] = lr
-        self._task_routing[task] = cell
-        self._persist()
-
-    def get_task_language_routing(self, task: str) -> dict:
-        """Deep-copy of {iso_code: {'provider': str}} for a task.
-        Returns empty dict if the task has no per-language overrides."""
-        import copy
-        cell = self._task_routing.get(task, {})
-        return copy.deepcopy(cell.get("language_routing") or {})
-
-    def get_task_language_routing_enabled(self, task: str) -> bool:
-        """Master switch — when False, the language_routing map is ignored
-        at dispatch time even if it has entries. User must flip this on
-        explicitly (no auto-toggle on add/remove)."""
-        return bool(self._task_routing.get(task, {})
-                                       .get("language_routing_enabled"))
-
-    def set_task_language_routing_enabled(self, task: str, enabled: bool) -> None:
-        cell = self._task_routing.setdefault(
-            task, {"provider": "", "model": ""})
-        cell["language_routing_enabled"] = bool(enabled)
-        self._persist()
-
-    def set_task_language_routing(self, task: str, mapping: dict) -> None:
-        """Replace the full language_routing map for a task and persist.
-
-        `mapping` is {iso_code: {'provider': str}} (model deliberately
-        omitted — local providers carry their own model in asr_providers
-        config; this layer only routes to a provider). Empty mapping
-        removes the field entirely.
-        """
-        if not isinstance(mapping, dict):
-            raise ValueError("mapping must be dict")
-        cell = self._task_routing.get(task, {"provider": "", "model": ""})
-        clean = {}
-        for iso, sub in mapping.items():
-            if not isinstance(sub, dict):
-                continue
-            prov = (sub.get("provider") or "").strip()
-            if not iso or not prov:
-                continue
-            clean[iso.strip().lower()] = {"provider": prov}
-        if clean:
-            cell["language_routing"] = clean
-        else:
-            cell.pop("language_routing", None)
-        self._task_routing[task] = cell
+        """Set the single routing entry for a task and persist."""
+        self._task_routing[task] = {"provider": provider, "model": model}
         self._persist()
 
     def get_provider_names(self) -> list:
@@ -352,21 +273,11 @@ class AIRouter:
         """
         if provider is None:
             routed = (self._task_routing or {}).get(task) or {}
-            # Language-aware routing: applied ONLY when the per-task master
-            # switch `language_routing_enabled` is True. Without that flag,
-            # the language_routing map is treated as inert config — so a
-            # user can switch the default provider back to a cloud service
-            # without their old per-language overrides silently hijacking
-            # the call. Without an explicit lang_iso we can't pre-route
-            # anyway (we'd need the audio analyzed first) — fall through.
-            lang_iso = _normalize_lang_iso(language)
-            lang_routing = routed.get("language_routing") or {}
-            lr_enabled = bool(routed.get("language_routing_enabled"))
-            lang_pick = lang_routing.get(lang_iso) if (lr_enabled and lang_iso) else None
-            if lang_pick and lang_pick.get("provider"):
-                provider = lang_pick["provider"]
-            else:
-                provider = routed.get("provider") or "lemonfox"
+            # ASR auto-routing by language hint is now owned by aistack
+            # (see aistack/api/asr.py: _select_for_auto). VideoCraft just
+            # picks the configured provider for the task and forwards the
+            # `language` parameter; the gateway handles model selection.
+            provider = routed.get("provider") or "lemonfox"
 
         cfg = self._asr_providers.get(provider)
         if cfg is None:
@@ -728,9 +639,9 @@ class AIRouter:
         api_key = None
         if ptype != "claude_code":
             if cfg.get("auth_required") is False:
-                # Local provider (e.g. Ollama). OpenAI SDK requires a non-empty
+                # Local gateway (e.g. aistack). OpenAI SDK requires a non-empty
                 # api_key string, but the local server ignores its content.
-                api_key = "ollama"
+                api_key = "local"
             else:
                 api_key = _cfg.read_key(cfg)
                 if api_key is None:
@@ -762,7 +673,7 @@ class AIRouter:
         api_key = None
         if ptype != "claude_code":
             if cfg.get("auth_required") is False:
-                api_key = "ollama"
+                api_key = "local"
             else:
                 api_key = _cfg.read_key(cfg)
                 if api_key is None:

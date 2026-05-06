@@ -43,6 +43,35 @@ _TTS_CONNECT_TIMEOUT = 5
 _TTS_READ_TIMEOUT = 600
 
 
+def list_models_with_capabilities(
+    base_url: str = DEFAULT_BASE_URL,
+) -> list[tuple[str, list[str]]]:
+    """Hit aistack's GET /v1/models and return [(id, capabilities), ...].
+
+    aistack publishes each entry with a `capabilities` array (asr / tts / llm)
+    so the AI Console picker can filter by task category. The OpenAI Python
+    SDK's `.models.list()` strips unknown fields, so the picker calls this
+    helper directly when talking to a local gateway with auth_required=False.
+    """
+    url = base_url.rstrip("/") + "/v1/models"
+    try:
+        resp = requests.get(url, timeout=(5, 30))
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as exc:
+        raise _service_unreachable_error("aistack", exc) from exc
+
+    out: list[tuple[str, list[str]]] = []
+    for entry in (data.get("data") or []):
+        if not isinstance(entry, dict):
+            continue
+        mid = entry.get("id")
+        caps = entry.get("capabilities") or []
+        if mid:
+            out.append((str(mid), [str(c) for c in caps]))
+    return out
+
+
 def _service_unreachable_error(provider_label: str, exc: Exception) -> AIError:
     return AIError(
         Kind.NETWORK, provider_label,

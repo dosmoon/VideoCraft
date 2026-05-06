@@ -32,6 +32,25 @@ from core.ai.config import keys_dir as _keys_dir
 from core import paths as _paths
 
 
+# Sentinel shown in the LLM provider dropdown when no explicit pick is set.
+# Stored value remains an empty string; the router uses the candidate-pool
+# auto-fallback (try providers in priority order until one succeeds).
+def _auto_label() -> str:
+    return tr("tool.router.routing_auto_label")
+
+
+def _display_provider(stored: str, category: str) -> str:
+    """Map stored provider value → label shown in the Combobox."""
+    if category == "llm" and not stored:
+        return _auto_label()
+    return stored
+
+
+def _stored_provider(displayed: str) -> str:
+    """Map Combobox label → stored value (Auto sentinel becomes empty)."""
+    return "" if displayed == _auto_label() else displayed
+
+
 def _human_bytes(n: int) -> str:
     for unit in ("B", "KB", "MB", "GB", "TB"):
         if n < 1024 or unit == "TB":
@@ -172,7 +191,7 @@ class AIConsoleApp(ToolBase):
         providers_frame.pack(fill="x", anchor="w")
         self._build_providers_section(providers_frame)
 
-    # ── Cache section: models_dir + legacy banner + Ollama hint ────────────
+    # ── Cache section: models_dir + legacy banner ──────────────────────────
 
     def _build_cache_section(self, parent):
         # Row 0: directory entry + buttons
@@ -231,15 +250,6 @@ class AIConsoleApp(ToolBase):
                 command=lambda p=legacy_path: self._copy_cleanup_cmd(p),
             ).grid(row=3, column=4, sticky="w", padx=8)
 
-        # Row 4: Ollama guidance
-        tk.Label(parent, text=tr("tool.router.cache_ollama_hint"),
-                 fg="#557", anchor="w", wraplength=820, justify="left",
-                 ).grid(row=4, column=0, columnspan=4, sticky="w",
-                        padx=4, pady=(4, 2))
-        tk.Button(parent, text=tr("tool.router.cache_ollama_open_envvars"),
-                  command=self._open_env_vars_panel,
-                  ).grid(row=4, column=4, sticky="w", padx=8)
-
     def _on_cache_dir_browse(self):
         from tkinter import filedialog
         initial = self._cache_dir_var.get() or os.path.expanduser("~")
@@ -273,18 +283,6 @@ class AIConsoleApp(ToolBase):
         self._cache_dir_status.configure(
             text=tr("tool.router.cache_legacy_cmd_copied"))
 
-    def _open_env_vars_panel(self):
-        # rundll32 sysdm.cpl,EditEnvironmentVariables — opens the Windows
-        # "Environment Variables" dialog directly (Win 10+).
-        import subprocess
-        try:
-            subprocess.Popen(
-                ["rundll32.exe", "sysdm.cpl,EditEnvironmentVariables"],
-                shell=False,
-            )
-        except OSError:
-            pass
-
     # ── Top section: 4-row task routing table ──────────────────────────────
 
     def _build_routing_section(self, parent):
@@ -306,7 +304,8 @@ class AIConsoleApp(ToolBase):
                 row=i, column=0, sticky="w", padx=4, pady=4)
 
             cell = current_routing.get(tid, {})
-            prov_var = tk.StringVar(value=cell.get("provider", ""))
+            stored_prov = cell.get("provider", "")
+            prov_var = tk.StringVar(value=_display_provider(stored_prov, cat))
             model_var = tk.StringVar(value=cell.get("model", ""))
             self._task_provider_vars[tid] = prov_var
             self._task_model_vars[tid] = model_var
@@ -335,48 +334,11 @@ class AIConsoleApp(ToolBase):
                               lambda _e, t=tid: self._on_routing_model_changed(t))
                 model_cb.bind("<Return>",
                               lambda _e, t=tid: self._on_routing_model_changed(t))
-            elif cat == "asr":
-                # Replace the empty model cell with a small frame holding
-                # the master enable switch + the language-routing entry
-                # button. Count in button reflects how many per-language
-                # overrides are currently configured. The Enable switch
-                # is the master gate — when off, lang_routing entries are
-                # ignored at dispatch (so the user can swap default
-                # provider freely without surprise hijacking).
-                lr_frame = tk.Frame(parent)
-                lr_frame.grid(row=i, column=2, sticky="w", padx=4, pady=4)
-
-                lr_enabled = router.get_task_language_routing_enabled(tid)
-                lr = router.get_task_language_routing(tid)
-
-                self._task_lang_enable_vars = getattr(
-                    self, "_task_lang_enable_vars", {})
-                en_var = tk.BooleanVar(value=lr_enabled)
-                self._task_lang_enable_vars[tid] = en_var
-
-                btn_text = tr("tool.router.lang_routing_btn", n=len(lr))
-                btn = tk.Button(
-                    lr_frame, text=btn_text, anchor="w", width=18,
-                    command=lambda t=tid: self._open_language_routing_dialog(t),
-                )
-
-                def _on_toggle_lr(t=tid, var=en_var, b=btn):
-                    new_val = bool(var.get())
-                    router.set_task_language_routing_enabled(t, new_val)
-                    self._refresh_lang_button_state(t)
-
-                ttk.Checkbutton(
-                    lr_frame, text=tr("tool.router.btn_enable"),
-                    variable=en_var, command=_on_toggle_lr,
-                ).pack(side="left")
-                btn.pack(side="left", padx=(4, 0))
-
-                # Store references so the dialog refresh path can update
-                # both the button label and its disabled state.
-                self._task_lang_buttons = getattr(self, "_task_lang_buttons", {})
-                self._task_lang_buttons[tid] = btn
-                self._refresh_lang_button_state(tid)
             else:
+                # ASR/TTS rows: model column is owned by the provider
+                # (asr_providers/tts_providers configure their own model
+                # field). aistack picks the actual backend per request
+                # via the language hint — no per-task override needed.
                 tk.Label(parent, text="—", fg="#999", anchor="w",
                          ).grid(row=i, column=2, sticky="w", padx=4, pady=4)
 
@@ -385,11 +347,13 @@ class AIConsoleApp(ToolBase):
 
         Includes providers that lack auth — the user can still pick them,
         but the call will fail until they configure a key (visible in the
-        Providers section below).
+        Providers section below). LLM rows prepend an "Auto" sentinel
+        whose stored value is "" — at dispatch time the router exercises
+        its candidate-pool fallback (try providers in priority order).
         """
         src: dict
         if category == "llm":
-            src = router._providers
+            return [_auto_label(), *router._providers.keys()]
         elif category == "asr":
             src = router._asr_providers
         elif category == "tts":
@@ -403,9 +367,18 @@ class AIConsoleApp(ToolBase):
         return list(cfg.get("models", []))
 
     def _on_routing_provider_changed(self, task_id: str):
-        prov = self._task_provider_vars[task_id].get()
+        prov = _stored_provider(self._task_provider_vars[task_id].get())
         cat = _ai_cfg.task_category(task_id)
         if cat == "llm":
+            # Auto sentinel clears the model column too — the candidate-pool
+            # fallback owns model selection per provider it tries.
+            if not prov:
+                self._task_model_vars[task_id].set("")
+                cb = self._task_model_combos.get(task_id)
+                if cb is not None:
+                    cb.configure(values=[])
+                router.set_task_routing(task_id, "", "")
+                return
             models = self._models_for(prov)
             cb = self._task_model_combos.get(task_id)
             if cb is not None:
@@ -419,135 +392,9 @@ class AIConsoleApp(ToolBase):
             router.set_task_routing(task_id, prov, "")
 
     def _on_routing_model_changed(self, task_id: str):
-        prov = self._task_provider_vars[task_id].get()
+        prov = _stored_provider(self._task_provider_vars[task_id].get())
         model = self._task_model_vars[task_id].get().strip()
         router.set_task_routing(task_id, prov, model)
-
-    # ── Language routing dialog (ASR per-language provider override) ───────
-
-    def _refresh_lang_button_state(self, task_id: str) -> None:
-        """Sync the 🌐 button's text + visual disabled state with the
-        current enable flag and override count. Called after toggling the
-        master switch and after the dialog persists changes."""
-        btn = getattr(self, "_task_lang_buttons", {}).get(task_id)
-        if btn is None:
-            return
-        lr = router.get_task_language_routing(task_id)
-        enabled = router.get_task_language_routing_enabled(task_id)
-        btn.configure(text=tr("tool.router.lang_routing_btn", n=len(lr)))
-        # Keep button clickable either way — user may want to view/edit
-        # overrides while the master switch is off. Visual cue only:
-        # gray foreground when inactive so the row clearly shows the
-        # current dispatch behavior.
-        btn.configure(fg=("#000" if enabled else "#999"))
-
-    def _open_language_routing_dialog(self, task_id: str):
-        dlg = tk.Toplevel(self.master)
-        dlg.title(tr("tool.router.lang_routing_title", task=task_id))
-        dlg.transient(self.master)
-        dlg.grab_set()
-
-        default_prov = (router.get_task_routing()
-                          .get(task_id, {})
-                          .get("provider")
-                          or tr("tool.router.lang_routing_no_default"))
-
-        tk.Label(
-            dlg,
-            text=tr("tool.router.lang_routing_help", default=default_prov),
-            wraplength=520, justify="left", fg="#555",
-        ).pack(anchor="w", padx=12, pady=(10, 8))
-
-        # Header row
-        header = tk.Frame(dlg)
-        header.pack(fill="x", padx=12)
-        tk.Label(header, text=tr("tool.router.lang_routing_lang_col"),
-                 font=("", 9, "bold"), width=20, anchor="w").pack(side="left")
-        tk.Label(header, text=tr("tool.router.lang_routing_provider_col"),
-                 font=("", 9, "bold"), width=22, anchor="w").pack(side="left")
-
-        # Dynamic body — one row per (iso, provider) pair
-        rows_frame = tk.Frame(dlg)
-        rows_frame.pack(fill="both", expand=True, padx=12, pady=(4, 4))
-
-        asr_provider_names = list(router._asr_providers.keys())
-        lang_options = self._language_routing_options()
-
-        # Each row: (iso_var, provider_var, frame_widget)
-        row_widgets: list[dict] = []
-
-        def persist():
-            mapping = {}
-            for r in row_widgets:
-                iso = r["iso_var"].get().strip().lower()
-                prov = r["prov_var"].get().strip()
-                if iso and prov:
-                    mapping[iso] = {"provider": prov}
-            router.set_task_language_routing(task_id, mapping)
-            self._refresh_lang_button_state(task_id)
-
-        def add_row(iso: str = "", prov: str = ""):
-            row = tk.Frame(rows_frame)
-            row.pack(fill="x", pady=2)
-            iso_var = tk.StringVar(value=iso)
-            prov_var = tk.StringVar(value=prov)
-
-            iso_cb = ttk.Combobox(
-                row, textvariable=iso_var, values=lang_options,
-                state="normal", width=18,
-            )
-            iso_cb.pack(side="left")
-            iso_cb.bind("<<ComboboxSelected>>", lambda _e: persist())
-            iso_cb.bind("<FocusOut>", lambda _e: persist())
-
-            prov_cb = ttk.Combobox(
-                row, textvariable=prov_var, values=asr_provider_names,
-                state="readonly", width=20,
-            )
-            prov_cb.pack(side="left", padx=(4, 4))
-            prov_cb.bind("<<ComboboxSelected>>", lambda _e: persist())
-
-            entry = {"iso_var": iso_var, "prov_var": prov_var, "frame": row}
-
-            def remove():
-                row.destroy()
-                row_widgets.remove(entry)
-                persist()
-
-            tk.Button(row, text="×", width=2, command=remove,
-                      ).pack(side="left", padx=4)
-            row_widgets.append(entry)
-
-        # Seed with existing entries
-        for iso, sub in router.get_task_language_routing(task_id).items():
-            add_row(iso, sub.get("provider", ""))
-
-        # Footer
-        footer = tk.Frame(dlg)
-        footer.pack(fill="x", padx=12, pady=(4, 12))
-        tk.Button(footer, text=tr("tool.router.lang_routing_add"),
-                  command=lambda: add_row()).pack(side="left")
-        tk.Button(footer, text=tr("tool.router.lang_routing_close"),
-                  command=dlg.destroy).pack(side="right")
-
-    def _language_routing_options(self) -> list[str]:
-        """ISO codes shown in the language column dropdown.
-
-        Local ASR is now served by aistack, which does its own backend
-        selection per `model` field. The historical union (Parakeet
-        European langs + SenseVoice CJK + Whisper extras) is kept here
-        as a static list so users still get the same dropdown choices.
-        """
-        return [
-            # Parakeet TDT v3 supported European languages
-            "en", "bg", "hr", "cs", "da", "nl", "et", "fi", "fr", "de",
-            "el", "hu", "it", "lv", "lt", "mt", "pl", "pt", "ro", "sk",
-            "sl", "es", "sv", "ru", "uk",
-            # SenseVoice supported Asian + extra
-            "zh", "yue", "ja", "ko",
-            # Whisper-only fallback targets
-            "ar", "hi", "tr", "vi", "th", "id",
-        ]
 
     # ── Bottom section: provider management list ───────────────────────────
 
@@ -649,7 +496,7 @@ class AIConsoleApp(ToolBase):
         dlg = tk.Toplevel(self.master)
         dlg.title(tr("tool.router.edit_dialog_title", name=name))
 
-        # Local providers (e.g. Ollama) use auth_required=False — they have no
+        # Local gateways (e.g. aistack) use auth_required=False — they have no
         # API key, so we hide the key row entirely and seed key_var with a
         # placeholder so the model-picker's fetch path still works.
         is_local = cfg.get("auth_required") is False
@@ -670,7 +517,7 @@ class AIConsoleApp(ToolBase):
                      fg="#666", anchor="w", justify="left",
                      wraplength=680).grid(
                 row=r, column=0, columnspan=4, padx=12, pady=(12, 6), sticky="w")
-            key_var = tk.StringVar(value="ollama")
+            key_var = tk.StringVar(value="local")
             r += 1
         else:
             tk.Label(dlg, text=tr("tool.router.label_api_key"),
@@ -755,7 +602,7 @@ class AIConsoleApp(ToolBase):
                     return
                 try:
                     from core.ai.providers import openai_compat as _oc
-                    models = _oc.list_models("ollama", base)
+                    models = _oc.list_models("local", base)
                     messagebox.showinfo(
                         tr("tool.router.saved_title"),
                         tr("tool.router.health_ok", n=len(models)),
@@ -964,8 +811,24 @@ class AIConsoleApp(ToolBase):
                 elif ptype == "openai_compatible":
                     if not new_url:
                         raise RuntimeError(tr("tool.router.error_no_base_url"))
-                    from core.ai.providers import openai_compat as _oc
-                    models = _oc.list_models(new_key, new_url)
+                    if is_local_pick:
+                        # Local gateway (aistack) publishes per-entry
+                        # `capabilities` so the LLM picker can filter out
+                        # asr/tts entries that would otherwise pollute the list.
+                        from core.ai.providers import aistack as _aistack
+                        # Strip the OpenAI-style "/v1" suffix from base_url so
+                        # the helper can issue GET {base}/v1/models cleanly.
+                        gateway_base = new_url.rstrip("/")
+                        if gateway_base.endswith("/v1"):
+                            gateway_base = gateway_base[:-3]
+                        models = [
+                            mid for mid, caps in
+                            _aistack.list_models_with_capabilities(gateway_base)
+                            if "llm" in caps
+                        ]
+                    else:
+                        from core.ai.providers import openai_compat as _oc
+                        models = _oc.list_models(new_key, new_url)
                 else:
                     raise RuntimeError(tr("tool.router.refresh_unsupported"))
                 dlg.after(0, lambda m=models: _on_loaded(m))
