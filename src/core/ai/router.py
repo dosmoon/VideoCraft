@@ -66,7 +66,6 @@ class AIRouter:
         self._providers:     dict = {}
         self._asr_providers: dict = {}
         self._tts_providers: dict = {}
-        self._tier_routing:  dict = {}
         self._task_routing:  dict = {}
         self._models_dir:    str  = ""
         self._stats = Stats()
@@ -156,11 +155,12 @@ class AIRouter:
             latency_p50_ms:            int, 0 = unknown
             provider / model:          str, resolved target
         """
-        # Resolve the provider that would be used for (task, tier) today.
-        # Task is ignored in Phase 1 (no task->provider mapping yet); future
-        # versions will route by (task, tier) tuple.
-        _ = task  # suppress unused warning until Phase 7
-        routing = self._tier_routing.get(tier, {})
+        # Provider/model resolution happens via task_routing (preferred) or
+        # candidate-pool fallback at call time. describe() reports the
+        # task-level routing; the legacy `tier` param is retained for
+        # signature compat but no longer drives selection.
+        _ = tier  # legacy parameter — see _resolve_task_tier
+        routing = self._task_routing.get(task, {}) if task else {}
         return {
             "max_input_tokens":        0,          # unknown in Phase 1
             "supports_json":           True,       # all current providers do
@@ -176,20 +176,6 @@ class AIRouter:
     def get_stats(self) -> dict:
         """Snapshot of per-provider call counters (deep-copied, thread-safe)."""
         return self._stats.snapshot()
-
-    def get_tier_routing(self) -> dict:
-        """Deep-copy of current tier routing config.
-        Structure: {"premium": {"provider": "Gemini", "model": "..."}, ...}
-        """
-        import copy
-        return copy.deepcopy(self._tier_routing)
-
-    def set_tier_routing(self, tier: str, provider: str, model: str) -> None:
-        """Update (provider, model) for a tier and persist."""
-        if tier not in TIERS:
-            raise ValueError(f"tier must be one of {TIERS}")
-        self._tier_routing[tier] = {"provider": provider, "model": model}
-        self._persist()
 
     def get_task_routing(self) -> dict:
         """Deep-copy of the task routing map.
@@ -624,20 +610,16 @@ class AIRouter:
         feature/UI callers that still pass tier= don't break. Routing is
         flat per-task now (see config._task_routing schema).
 
-        Priority:
-          1. task_routing[task]            (exact match)
-          2. tier_routing[tier]            (legacy fallback when task unknown)
-        Returns ("", "") if nothing resolves — caller should auto-fallback.
-
-        `model_override` wins over whatever the routing tables contain.
+        Returns ("", "") when task_routing has no entry for `task`; the
+        caller then exercises the candidate-pool auto-fallback.
+        `model_override` wins over the routing table.
         """
         _ = tier  # legacy parameter, no longer used for routing
         if task:
             cell = self._task_routing.get(task, {})
             if cell.get("provider"):
                 return cell["provider"], model_override or cell.get("model", "")
-        legacy = self._tier_routing.get(TIER_STANDARD, {})
-        return legacy.get("provider", ""), model_override or legacy.get("model", "")
+        return "", model_override or ""
 
     def _complete_by_tier(self, task: str, tier: str,
                           model: str | None, prompt: str) -> str:
@@ -818,7 +800,6 @@ class AIRouter:
         self._providers     = data["providers"]
         self._asr_providers = data["asr_providers"]
         self._tts_providers = data["tts_providers"]
-        self._tier_routing  = data["tier_routing"]
         self._task_routing  = data["task_routing"]
         self._models_dir    = data.get("models_dir", "")
         self._stats.init_providers(list(self._providers.keys()))
@@ -828,7 +809,6 @@ class AIRouter:
             "providers":     self._providers,
             "asr_providers": self._asr_providers,
             "tts_providers": self._tts_providers,
-            "tier_routing":  self._tier_routing,
             "task_routing":  self._task_routing,
             "models_dir":    self._models_dir,
         })

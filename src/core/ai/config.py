@@ -100,15 +100,11 @@ _DEFAULT_PROVIDERS = {
     },
 }
 
-# ── Default tier routing ─────────────────────────────────────────────────────
-# User explicitly picks (provider, model) per tier in Router UI.
-# Unconfigured tier falls back to priority-based auto-selection at call time.
-
-_DEFAULT_TIER_ROUTING = {
-    TIER_PREMIUM:  {"provider": "Gemini", "model": "gemini-2.5-pro"},
-    TIER_STANDARD: {"provider": "Gemini", "model": "gemini-2.5-flash"},
-    TIER_ECONOMY:  {"provider": "Gemini", "model": "gemini-2.5-flash-lite"},
-}
+# Tier-based routing was retired 2026-05-06: users now pick (provider, model)
+# per task in the AI Console matrix (task_routing). The TIER_* constants in
+# core.ai.tiers are still used internally by feature-layer callers that pass
+# `tier=` for backward compatibility, but no default tier_routing dict is
+# seeded into config any more.
 
 # ── Default ASR providers ────────────────────────────────────────────────────
 # Kept separate from LLM providers to avoid mixing tier-routing logic.
@@ -186,13 +182,13 @@ def task_category(task_id: str) -> str | None:
 
 # ── Default task routing ─────────────────────────────────────────────────────
 # Flat schema: {task_id: {"provider": str, "model": str}}.
-# (Earlier versions had a 3-tier nested layer; tier was redundant once the UI
-# let users pick a specific model per task — see commit migrating M6→single
-# selection.) For LLM tasks we seed using the standard tier of the legacy
-# tier_routing; ASR/TTS use their single available provider.
+# Earlier versions had a 3-tier nested layer (premium/standard/economy); the
+# layer was retired once the UI let users pick a specific model per task. LLM
+# tasks default to an empty cell so the candidate-pool auto-fallback kicks
+# in until the user explicitly configures a preference in the AI Console.
 
 def _build_default_task_routing() -> dict:
-    llm_seed = _DEFAULT_TIER_ROUTING.get(TIER_STANDARD, {"provider": "Gemini", "model": ""})
+    llm_seed = {"provider": "", "model": ""}
     asr_seed = {"provider": "lemonfox",  "model": ""}
     tts_seed = {"provider": "fish_audio", "model": ""}
     out = {}
@@ -259,7 +255,8 @@ def load_config() -> dict:
     first run or when schema migration triggered a fix.
 
     Returns dict with keys: providers / asr_providers / tts_providers /
-    tier_routing / task_routing / models_dir.
+    task_routing / models_dir. The legacy `tier_routing` field is dropped
+    on load if the on-disk file still has it.
     """
     cfg_path = os.path.join(keys_dir(), "providers.json")
     if os.path.exists(cfg_path):
@@ -268,44 +265,44 @@ def load_config() -> dict:
         providers     = data.get("providers",     {})
         asr_providers = data.get("asr_providers", copy.deepcopy(_DEFAULT_ASR_PROVIDERS))
         tts_providers = data.get("tts_providers", copy.deepcopy(_DEFAULT_TTS_PROVIDERS))
-        tier_routing  = data.get("tier_routing",  copy.deepcopy(_DEFAULT_TIER_ROUTING))
         task_routing  = data.get("task_routing")
         models_dir    = data.get("models_dir", "")
         models_dir_dirty = "models_dir" not in data
+        # Drop the retired tier_routing field; flag dirty so the cleanup
+        # is persisted on first load after upgrade.
+        tier_routing_dropped = "tier_routing" in data
         wrote_on_first_run = False
     else:
         providers     = copy.deepcopy(_DEFAULT_PROVIDERS)
         asr_providers = copy.deepcopy(_DEFAULT_ASR_PROVIDERS)
         tts_providers = copy.deepcopy(_DEFAULT_TTS_PROVIDERS)
-        tier_routing  = copy.deepcopy(_DEFAULT_TIER_ROUTING)
         task_routing  = None
         models_dir    = ""
         models_dir_dirty = False
+        tier_routing_dropped = False
         wrote_on_first_run = True
         # First-run write happens below after migrations run
 
-    providers, tier_routing, migrated = _migrate_removed_providers(
-        providers, tier_routing
-    )
+    providers, migrated = _migrate_removed_providers(providers)
     providers, normalized = _normalize_providers(providers)
     asr_providers, task_routing, asr_migrated = _migrate_removed_asr_providers(
         asr_providers, task_routing
     )
     asr_providers = _normalize_asr_providers(asr_providers)
     tts_providers, tts_normalized = _normalize_tts_providers(tts_providers)
-    task_routing, task_routing_dirty = _migrate_task_routing(task_routing, tier_routing)
+    task_routing, task_routing_dirty = _migrate_task_routing(task_routing)
 
     result = {
         "providers":     providers,
         "asr_providers": asr_providers,
         "tts_providers": tts_providers,
-        "tier_routing":  tier_routing,
         "task_routing":  task_routing,
         "models_dir":    models_dir,
     }
 
     if (wrote_on_first_run or migrated or asr_migrated or normalized
-            or tts_normalized or task_routing_dirty or models_dir_dirty):
+            or tts_normalized or task_routing_dirty or models_dir_dirty
+            or tier_routing_dropped):
         save_config(result)
 
     return result
@@ -318,7 +315,6 @@ def save_config(data: dict) -> None:
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump({
             "models_dir":    data.get("models_dir", ""),
-            "tier_routing":  data["tier_routing"],
             "task_routing":  data.get("task_routing", {}),
             "providers":     data["providers"],
             "asr_providers": data["asr_providers"],
@@ -328,13 +324,12 @@ def save_config(data: dict) -> None:
 
 # ── Schema migrations ────────────────────────────────────────────────────────
 
-def _migrate_removed_providers(providers: dict, tier_routing: dict):
+def _migrate_removed_providers(providers: dict):
     """Drop providers that were removed in newer versions.
 
     Groq was removed because its Llama/gpt-oss/qwen models did not meet
     VideoCraft's NLP quality bar. Old providers.json files still carrying
-    it are cleaned up here; tier_routing pointing at Groq reverts to
-    the default (Gemini).
+    it are cleaned up here.
     """
     removed = ["Groq"]
     dirty = False
@@ -342,15 +337,7 @@ def _migrate_removed_providers(providers: dict, tier_routing: dict):
         if name in providers:
             providers.pop(name, None)
             dirty = True
-
-    for tier, routing in list(tier_routing.items()):
-        if routing.get("provider") in removed:
-            tier_routing[tier] = copy.deepcopy(
-                _DEFAULT_TIER_ROUTING.get(tier, {"provider": "Gemini", "model": ""})
-            )
-            dirty = True
-
-    return providers, tier_routing, dirty
+    return providers, dirty
 
 
 def _normalize_providers(providers: dict):
@@ -446,12 +433,11 @@ def _migrate_removed_asr_providers(
     return asr_providers, task_routing, dirty
 
 
-def _migrate_task_routing(task_routing: dict | None, tier_routing: dict) -> tuple[dict, bool]:
+def _migrate_task_routing(task_routing: dict | None) -> tuple[dict, bool]:
     """Build / backfill / collapse task_routing.
 
     Three cases handled:
-    1. task_routing is None (very first load): seed via defaults overlaid
-       with the user's saved tier_routing's standard tier for LLM tasks.
+    1. task_routing is None (very first load): seed via defaults.
     2. Old 3-tier nested structure detected (M6 era):
        collapse {task: {tier: {p, m}}} → {task: {p, m}} taking standard
        (or premium / economy as fallback).
@@ -462,14 +448,7 @@ def _migrate_task_routing(task_routing: dict | None, tier_routing: dict) -> tupl
     dirty = False
 
     if task_routing is None:
-        task_routing = _build_default_task_routing()
-        # Overlay the user's saved tier_routing onto LLM tasks
-        std_cell = tier_routing.get(TIER_STANDARD)
-        if std_cell:
-            for tid, cat, _label in TASKS:
-                if cat == "llm":
-                    task_routing[tid] = copy.deepcopy(std_cell)
-        return task_routing, True
+        return _build_default_task_routing(), True
 
     # Collapse the legacy three subtitle.* entries into the consolidated
     # `subtitle.post` task. If the user already customized any of them, the
