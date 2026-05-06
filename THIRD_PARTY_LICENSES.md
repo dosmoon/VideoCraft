@@ -46,7 +46,6 @@ VideoCraft 自身代码以 [MIT License](LICENSE) 发布。本项目的 portable
 | 组件 | 协议 | 用途 |
 |---|---|---|
 | openai | Apache 2.0 | OpenAI API SDK |
-| deepl | MIT | DeepL 翻译 SDK |
 | jiter | MIT | 高速 JSON 解析（OpenAI SDK 依赖） |
 | tenacity | Apache 2.0 | 重试 |
 | distro | Apache 2.0 | OS 信息探测 |

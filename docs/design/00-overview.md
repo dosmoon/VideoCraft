@@ -47,7 +47,6 @@ Menu + Sidebar + Tab 嵌入式工具架构；底部可拖拽日志面板；5 色
 ```
 src/
 ├── VideoCraftHub.py              # 主入口（Menu + Sidebar + Tab + 底部日志 + 双 tab 侧栏）
-├── VideoCraft.py                 # legacy 单窗启动入口（已并入 Hub，保留兼容）
 ├── project.py                    # Project 模型，文件夹 + .videocraft/project.json
 ├── hub_layout.py                 # Hub 布局持久化（geometry/sash/zoom/sidebar_tab）
 ├── hub_logger.py                 # 线程安全全局 logger（底部日志面板消费者）
