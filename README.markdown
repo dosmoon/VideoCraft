@@ -2,9 +2,9 @@
 
 > 视频创作者的全套工具箱 —— 下载、转录、翻译、烧录字幕，一站搞定。
 
-[![最新版本](https://img.shields.io/github/v/release/OldApeTalk/VideoCraft?include_prereleases&label=下载最新版本)](https://github.com/OldApeTalk/VideoCraft/releases/latest)
+[![最新版本](https://img.shields.io/github/v/release/dosmoon/VideoCraft?include_prereleases&label=下载最新版本)](https://github.com/dosmoon/VideoCraft/releases/latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)](https://github.com/OldApeTalk/VideoCraft/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11-lightgrey)](https://github.com/dosmoon/VideoCraft/releases/latest)
 
 ---
 
@@ -72,7 +72,7 @@ AI 功能需要用户自行提供对应服务的 API Key（按用量向第三方
 
 ### 第一步：下载 VideoCraft
 
-前往 **[Releases 页面](https://github.com/OldApeTalk/VideoCraft/releases/latest)**，下载最新版本的 `VideoCraft-portable-vX.X.X.zip`。
+前往 **[Releases 页面](https://github.com/dosmoon/VideoCraft/releases/latest)**，下载最新版本的 `VideoCraft-portable-vX.X.X.zip`。
 
 ### 第二步：解压
 
