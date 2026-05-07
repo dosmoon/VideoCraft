@@ -145,6 +145,45 @@ VideoCraft 端**不需要**：
 
 aistack 自己负责本地资源调度——VideoCraft 只发请求收响应。
 
+## 5.1 ASR 时间戳契约（重要）
+
+每个 ASR 请求返回的 verbose_json 必须**同时**包含两层时间戳，缺一不可：
+
+| 层级 | 字段 | 用途 |
+|---|---|---|
+| 句子级 | `segments[]` | 喂给 `translate_srt.py`，每行 SRT = 一次 LLM 调用，LLM 看到完整句子（时态、指代、从句结构都在），翻译质量靠这个 |
+| 单词级 | `words[]` | 留给烧录模块（`core/burn_subs.py` 未来扩展）做按视频画幅的智能字幕分行 |
+
+**`segment_granularity` 不传，让 aistack 走默认 `sentence`**。aistack `docs/api/asr.md` §"Why default to sentence" 明确写了：subtitle 模式给 LLM 翻译会产生破碎语境（half-clauses lose tense and referent），翻译质量会塌——这是不能接受的。
+
+### 为什么客户端**绝不能**做"工业级 SRT 切分"
+
+直觉容易踩坑：看到 50 分钟一行 SRT 不可读，第一反应是切碎。这是错的——`translate_srt.py` 的工作方式是 row-by-row 喂 LLM，**SRT 切多碎，翻译就被破坏多严重**。一旦客户端在 ASR 层 cue-size，下游翻译永远拿不到完整句子。
+
+正确的层级分工是：
+
+```
+ASR (aistack)         →  segments[] (句子级) + words[] (单词级)
+                         ↓
+translate_srt.py       →  按 segments[] 节奏 row-by-row 翻译
+                         ↓
+burn_subs.py (未来)    →  根据视频画幅 + segments[] + words[] 做工业级分行
+                         ↓
+ffmpeg burn            →  最终烧录
+```
+
+每一层只做一件事，绝不组合。烧录层才知道"这视频是 9:16 还是 16:9"、"字号多大"、"安全区多宽"——也只有这一层做出的分行才工业级。当前 `core/asr.py` 的 SRT writer 是有意"一段一行"，靠 aistack 默认 sentence 切分输出可读性已经够；将来烧录层会用上 `words[]` 做画幅自适应分行。
+
+### 为什么需要单词级时间戳
+
+`words[]` 不是浪费，是给将来的烧录层留的原料：
+- 竖屏视频（9:16）字幕条窄，长句要多行折，每行几个词需要按 word 边界对齐
+- 卡拉 OK 风格逐字高亮（已有 `tools/subtitle/word_subtitle.py` 在用）
+- 强制换行时不能切到词中间，需要 word boundary 对齐
+- 现有的 `_verbose_json_to_srt` 切分算法非常粗糙——所有这些缺陷都留给 burn 层用 words[] 解决
+
+当前所有 ASR provider（aistack / Lemonfox）的 `transcribe()` 都满足这个契约——返回 `{language, duration, text, segments[], words[]}` 完整 5 字段。
+
 ## 6. 错误处理
 
 aistack 错误用统一信封返回（详见 aistack `docs/api/errors.md`）：

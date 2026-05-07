@@ -11,6 +11,26 @@ Key parity points with subtitle_tool.py:
     uses the simpler -vf path
   - Watermark + date sizes scale with video height (relative to 1080)
   - bufsize/maxrate ladder by resolution
+
+── Future: aspect-ratio-aware industrial cue-sizer ─────────────────────
+This module is the proper home for sophisticated SRT cue-sizing — NOT
+the ASR layer. Reasoning (see core/asr.py module docstring for the full
+contract):
+
+  - ASR returns sentence-level segments[] for translation quality, and
+    word-level words[] as raw timing material.
+  - translate_srt.py keeps that sentence granularity through translation.
+  - At burn time we know the target video's aspect ratio, font size, and
+    safe-area constraints — only here can we cue-size correctly:
+      portrait (9:16): narrower lines, more rows per cue
+      landscape (16:9): wider lines, fewer rows
+      karaoke / word-highlight: needs per-word timing from words[]
+      multi-line wrap: align breaks at word boundaries
+
+  Today this file does single-row-per-cue rendering; sophisticated cue-
+  sizing is intentional future work. The contract upstream (sentence
+  segments + word timestamps preserved through ASR → translate → burn)
+  is the foundation it will build on.
 """
 
 from __future__ import annotations

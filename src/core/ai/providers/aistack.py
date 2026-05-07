@@ -165,6 +165,32 @@ def transcribe(
     Returns:
         verbose_json dict (Whisper-family shape — same as Lemonfox provider):
             {language, duration, text, segments[], words[]}
+
+        ── Why we need BOTH segments[] AND words[] ──────────────────────
+        VideoCraft's pipeline depends on receiving both layers of
+        timestamps from every ASR call:
+
+        - segments[] are SENTENCE-LEVEL semantic units. They drive
+          translate_srt.py: each SRT row → one LLM translation call,
+          so the LLM sees a complete sentence with full context (tense,
+          referent, clause structure). Sub-sentence fragments here
+          would silently degrade translation quality.
+        - words[] are WORD/CHARACTER-LEVEL timestamps. They are the raw
+          material reserved for the burn-subtitles module, which needs
+          to do aspect-ratio-aware cue-sizing AFTER translation
+          (portrait video wants narrower cues than landscape; a karaoke
+          word-highlight overlay needs per-word timing). The current
+          SRT writer is intentionally a passthrough; the future cue-
+          sizer in the burn pipeline will be the sophisticated one.
+
+        Do NOT cue-size SRT here from words[] — that would feed
+        sub-sentence fragments into translation. Keep the contract
+        clean: provider returns both layers, downstream picks the
+        layer it needs.
+
+        We do NOT pass `segment_granularity` to aistack — defaulting
+        to "sentence" is what we want. See aistack docs/api/asr.md
+        §"Segment granularity" for the upstream rationale.
     """
     def emit(event_type: str, **kwargs):
         if on_event is None:

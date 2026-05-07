@@ -4,6 +4,30 @@ UI calls transcribe_audio() with an `on_event` callback; this module owns
 AI dispatch (via core.ai.asr), SRT rendering, JSON persistence, and output
 path resolution (with automatic language-suffix correction when the
 detected language differs from what the user selected).
+
+── Timestamp contract: BOTH sentence-level AND word-level required ─────────
+Every ASR provider VideoCraft uses must return verbose_json containing
+TWO independent timestamp layers:
+
+  segments[]  sentence-level semantic units (one complete sentence each).
+              Drives translate_srt.py — each SRT row becomes one LLM call
+              with full sentence context. Cue length is unbounded; do NOT
+              client-side split sentences here, or LLM translation quality
+              collapses (clauses lose tense / referent / topic).
+
+  words[]     word-level (or character-level for CJK) timestamps. NOT
+              consumed by translation. Reserved for the burn-subtitles
+              module's future aspect-ratio-aware cue-sizer: portrait video
+              needs narrower cues than landscape, karaoke overlays need
+              per-word timing, multi-line wrap needs to align with word
+              boundaries. The current SRT writer below is deliberately a
+              one-segment-one-row passthrough — the sophisticated cue-
+              sizing belongs in burn_subs.py and runs AFTER translation,
+              on the translated sentence text.
+
+So: ASR → sentence segments + word timestamps; translate at sentence
+granularity; cue-size at burn time using both layers + video aspect
+ratio. Three stages, each does its one job — never compose them.
 """
 
 import json
@@ -151,8 +175,16 @@ def _apply_lang_suffix(srt_path: str, iso: str) -> str:
 # ── SRT rendering ────────────────────────────────────────────────────────────
 
 def _verbose_json_to_srt(data: dict) -> str:
-    """Render verbose_json `segments[]` to SRT text.
-    Segments with a `speaker` field get a [SPEAKER_xx] prefix."""
+    """Render verbose_json `segments[]` to SRT text — one row per segment.
+
+    Intentionally a passthrough: each sentence-level segment becomes one
+    SRT row. See module docstring for the full contract — short version:
+    translate_srt.py is row-by-row, so cue-splitting here would break LLM
+    translation; broadcast-style cue-sizing belongs in burn_subs.py and
+    runs AFTER translation using both segments[] and words[].
+
+    Segments with a `speaker` field get a [SPEAKER_xx] prefix.
+    """
     lines = []
     for i, seg in enumerate(data.get("segments", []), 1):
         start   = _format_timestamp(seg["start"])

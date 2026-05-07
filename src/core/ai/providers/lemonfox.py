@@ -5,6 +5,12 @@ upload progress reporting, wait-status ticks, and connection retries. The
 caller passes an `on_event` callback so the UI layer can translate status
 events (e.g. "state_uploading" with attempt/percent kwargs) via i18n.
 
+Returns verbose_json with BOTH sentence-level segments[] AND word-level
+words[] — required by VideoCraft's downstream pipeline (sentence segments
+feed translate_srt.py row-by-row; words[] feed the future aspect-ratio-
+aware burn-subs cue-sizer). See core/asr.py module docstring for the
+full contract.
+
 Phase 1: extracted from tools/speech/speech2text.py. Phase 7 will map
 requests exceptions to AIError with the appropriate Kind so feature/UI
 layers can branch on structured errors.
