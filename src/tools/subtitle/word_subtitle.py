@@ -1,7 +1,7 @@
 """
 WordSubtitleTool.py — 逐字字幕烧录工具
 
-读取 LemonFox verbose_json（含 words[] 逐字时间戳），生成 ASS 卡拉OK字幕
+读取 ASR 输出的 verbose_json（含 words[] 逐字时间戳），生成 ASS 卡拉OK字幕
 并通过 ffmpeg 烧录到视频中。
 
 ASS 卡拉OK原理：

@@ -8,7 +8,7 @@ a localhost FastAPI service (default 127.0.0.1:11500).
 This module provides two functions matching the existing provider
 contracts so router.py can dispatch to it just like any other provider:
 
-  transcribe(audio_path, ...) -> dict   (Lemonfox-shape verbose_json)
+  transcribe(audio_path, ...) -> dict   (verbose_json — Whisper-family shape)
   synthesize(text, output_path, ...) -> None
 
 aistack runs unauthenticated by default (auth_required=False in config).
@@ -18,7 +18,9 @@ with an actionable message pointing at how to start it.
 
 from __future__ import annotations
 
+import json
 import os
+import time
 from typing import Callable
 
 import requests
@@ -30,17 +32,61 @@ EventCallback = Callable[..., None]
 
 DEFAULT_BASE_URL = "http://127.0.0.1:11500"
 
-# Cold-start ASR includes model load (faster-whisper small ~1s warm,
-# 5-10s cold). Long enough to absorb the worst case without making
-# legitimate hangs invisible.
 _ASR_CONNECT_TIMEOUT = 5
-_ASR_READ_TIMEOUT = 600
+# In streaming mode the read timeout becomes an idle timeout — it fires
+# only when no SSE event arrives for this many seconds. Streaming-capable
+# backends emit one delta per decoded segment (every few seconds), so
+# 120s is far above worst-case idle. Parakeet downgrade-path (single
+# delta with full text) is bounded by audio length; raise if you expect
+# to transcribe >2h on Parakeet.
+_ASR_IDLE_TIMEOUT = 120
+# Slot-busy retry budget. Server-side Retry-After is honored, but capped
+# to keep the UI responsive even under pathological values.
+_ASR_RETRY_MAX_ATTEMPTS = 3
+_ASR_RETRY_CAP_SEC = 30
 
-# TTS first call after a vLLM-Omni container restart triggers
-# torch.compile + CUDA Graph capture (~2-3 min observed). Steady-state
-# requests are sub-second.
 _TTS_CONNECT_TIMEOUT = 5
 _TTS_READ_TIMEOUT = 600
+
+
+# Map aistack error envelope `kind` strings (per integration.md §8) to
+# the local AIError taxonomy. The two taxonomies overlap but are not
+# identical — aistack has no AUTH/QUOTA/RATE_LIMIT/REFUSED because it
+# is a localhost gateway.
+_ENVELOPE_KIND_MAP = {
+    "network":   Kind.NETWORK,
+    "malformed": Kind.MALFORMED,
+    "overflow":  Kind.OVERFLOW,
+    "cancelled": Kind.CANCELLED,
+    "unknown":   Kind.UNKNOWN,
+}
+
+
+def _envelope_kind(kind_str: str | None) -> Kind:
+    if not kind_str:
+        return Kind.UNKNOWN
+    return _ENVELOPE_KIND_MAP.get(kind_str.lower(), Kind.UNKNOWN)
+
+
+def _parse_error_response(resp: requests.Response) -> tuple[str, str]:
+    """Extract (provider, message) from a non-2xx response.
+
+    Tries the aistack envelope first, falls back to FastAPI stock detail
+    or raw body. Per integration.md §8 every non-2xx — including the
+    slot-busy 503 — should carry the envelope, but we keep the fallback
+    so a misbehaving upstream still produces a readable error.
+    """
+    try:
+        body = resp.json()
+        envelope = body.get("error") if isinstance(body, dict) else None
+        if isinstance(envelope, dict):
+            return (str(envelope.get("provider") or "aistack"),
+                    str(envelope.get("message") or resp.text[:300]))
+        if isinstance(body, dict) and "detail" in body:
+            return ("aistack", str(body["detail"])[:300])
+    except (ValueError, AttributeError):
+        pass
+    return ("aistack", (resp.text or f"HTTP {resp.status_code}")[:300])
 
 
 def list_models_with_capabilities(
@@ -94,25 +140,30 @@ def transcribe(
 ) -> dict:
     """Transcribe audio via aistack's OpenAI-compatible /v1/audio/transcriptions.
 
+    Always uses SSE streaming (`stream=true`) per aistack integration.md §4.
+    Backends that don't natively stream (e.g. Parakeet) send a `warning`
+    event up front, then a single delta with the full text — handled by
+    the same accumulation loop, surfaced to the UI via `stream_warning`.
+
+    The verbose_json-shape dict returned matches the previous blocking
+    contract so router.py and downstream callers don't need to change.
+
     Args:
-        audio_path:  Local audio/video file (any ffmpeg-readable format).
-        base_url:    aistack service base URL (no trailing /v1/...).
-        model_name:  aistack model id. Examples:
-                       whisper-small, whisper-medium, whisper-large-v3
-                       parakeet, sensevoice
-                     The aistack server picks the right backend.
-        language:    ISO 639-1 code (e.g. "zh", "en") or None for auto.
-        translate:   Whisper-family only — emit English instead of source.
-        on_event:    Status callback. We emit the "request_summary_local"
-                     and "state_done" events to match the in-process
-                     providers' contract; finer-grained progress is not
-                     surfaced over HTTP.
-        cancel_token: Cooperatively checked before sending and after
-                     receipt; we cannot interrupt aistack mid-inference
-                     over a single HTTP request.
+        audio_path:  Local audio/video file.
+        base_url:    aistack service base URL.
+        model_name:  aistack model id (whisper-small, parakeet, sensevoice,
+                     auto, ...). Server picks the backend.
+        language:    ISO 639-1 hint, or None for auto.
+        translate:   Whisper-family only — output English instead of source.
+        on_event:    Status callback. Emits request_summary_local on entry,
+                     state_processing per delta, stream_warning when a
+                     non-streaming backend downgrades, state_done at end.
+        cancel_token: Polled per SSE event. Triggering it closes the HTTP
+                     response, propagating a TCP RST upstream so aistack
+                     releases the GPU slot (per integration.md §4 cancel).
 
     Returns:
-        Lemonfox-shape verbose_json dict:
+        verbose_json dict (Whisper-family shape — same as Lemonfox provider):
             {language, duration, text, segments[], words[]}
     """
     def emit(event_type: str, **kwargs):
@@ -141,57 +192,201 @@ def transcribe(
     )
 
     url = base_url.rstrip("/") + "/v1/audio/transcriptions"
-    data = {
+    form = {
         "model": model_name,
         "response_format": "verbose_json",
         "translate": str(translate).lower(),
+        "stream": "true",
     }
     if language:
-        data["language"] = language
+        form["language"] = language
 
-    try:
-        with open(audio_path, "rb") as fh:
-            files = {"file": (os.path.basename(audio_path), fh, "application/octet-stream")}
-            resp = requests.post(
-                url, data=data, files=files,
-                timeout=(_ASR_CONNECT_TIMEOUT, _ASR_READ_TIMEOUT),
-            )
-    except requests.exceptions.ConnectionError as e:
-        raise _service_unreachable_error("aistack", e) from e
-    except requests.exceptions.Timeout as e:
-        raise AIError(Kind.NETWORK, "aistack",
-                      f"Request timed out after {_ASR_READ_TIMEOUT}s", raw=e) from e
+    # Slot-busy 503 retry loop wraps the POST open. The file is reopened
+    # each attempt because requests has already consumed the stream by
+    # the time the response status is known.
+    last_retry_after = 0.0
+    for attempt in range(1, _ASR_RETRY_MAX_ATTEMPTS + 1):
+        if cancel_token is not None and cancel_token.cancelled:
+            raise AIError(Kind.CANCELLED, "aistack", "Cancelled by user")
 
-    if resp.status_code != 200:
-        # aistack errors come back as {"error": {"kind","provider","message"}}.
-        # Surface the embedded provider/message so the user sees which
-        # backend actually failed (e.g. "Faster-Whisper: Audio file not found").
         try:
-            envelope = resp.json().get("error", {})
-            inner_provider = envelope.get("provider", "aistack")
-            inner_message = envelope.get("message", resp.text[:300])
-        except (ValueError, AttributeError):
-            inner_provider = "aistack"
-            inner_message = resp.text[:300] or f"HTTP {resp.status_code}"
-        raise AIError(
-            map_http_status_to_kind(resp.status_code, resp.text),
-            inner_provider, inner_message,
-        )
+            fh = open(audio_path, "rb")
+        except OSError as e:
+            raise AIError(Kind.MALFORMED, "aistack",
+                          f"Cannot open audio file: {e}", raw=e) from e
 
-    if cancel_token is not None and cancel_token.cancelled:
-        raise AIError(Kind.CANCELLED, "aistack", "Cancelled by user")
+        try:
+            files = {"file": (os.path.basename(audio_path), fh,
+                              "application/octet-stream")}
+            resp = requests.post(
+                url, data=form, files=files,
+                stream=True,
+                timeout=(_ASR_CONNECT_TIMEOUT, _ASR_IDLE_TIMEOUT),
+            )
+        except requests.exceptions.ConnectionError as e:
+            fh.close()
+            raise _service_unreachable_error("aistack", e) from e
+        except requests.exceptions.Timeout as e:
+            fh.close()
+            raise AIError(Kind.NETWORK, "aistack",
+                          f"Connection timed out after {_ASR_CONNECT_TIMEOUT}s",
+                          raw=e) from e
 
-    try:
-        result = resp.json()
-    except ValueError as e:
-        raise AIError(Kind.MALFORMED, "aistack",
-                      f"Non-JSON response from aistack: {resp.text[:200]}",
-                      raw=e) from e
+        if resp.status_code == 503:
+            # Slot busy — back off and retry. Retry-After is in seconds.
+            try:
+                retry_after = float(resp.headers.get("Retry-After", "5"))
+            except (TypeError, ValueError):
+                retry_after = 5.0
+            retry_after = min(max(retry_after, 0.5), _ASR_RETRY_CAP_SEC)
+            last_retry_after = retry_after
+            resp.close()
+            fh.close()
+            if attempt >= _ASR_RETRY_MAX_ATTEMPTS:
+                raise AIError(
+                    Kind.NETWORK, "aistack",
+                    f"GPU slot busy after {attempt} attempts "
+                    f"(Retry-After={last_retry_after}s). aistack is processing "
+                    "another request; try again in a moment.",
+                )
+            emit("retry_slot_busy", attempt=attempt,
+                 max_attempts=_ASR_RETRY_MAX_ATTEMPTS, wait=int(retry_after))
+            # Cooperative cancel during back-off — wake every 0.5s.
+            slept = 0.0
+            while slept < retry_after:
+                if cancel_token is not None and cancel_token.cancelled:
+                    raise AIError(Kind.CANCELLED, "aistack", "Cancelled by user")
+                step = min(0.5, retry_after - slept)
+                time.sleep(step)
+                slept += step
+            continue
+
+        if resp.status_code != 200:
+            inner_provider, inner_message = _parse_error_response(resp)
+            kind = map_http_status_to_kind(resp.status_code, resp.text)
+            resp.close()
+            fh.close()
+            raise AIError(kind, inner_provider, inner_message)
+
+        # 200 — consume SSE. fh is closed by `with resp` once the body
+        # is drained; we hold it open inside _consume_sse.
+        try:
+            return _consume_sse_transcription(resp, emit, cancel_token)
+        finally:
+            try:
+                resp.close()
+            finally:
+                fh.close()
+
+    # Unreachable — the loop either returns, retries, or raises.
+    raise AIError(Kind.UNKNOWN, "aistack", "transcribe() retry loop exited unexpectedly")
+
+
+def _consume_sse_transcription(
+    resp: requests.Response,
+    emit: Callable[..., None],
+    cancel_token,
+) -> dict:
+    """Drain an `text/event-stream` ASR response into a verbose_json dict.
+
+    Event types per integration.md §4:
+      transcript.text.delta — incremental segment (text + start/end + words)
+      transcript.text.done  — terminal event with detected language + duration
+      warning               — non-streaming backend; one full-text delta follows
+      error                 — mid-stream failure; envelope shape under "error"
+    """
+    text_parts: list[str] = []
+    segments: list[dict] = []
+    words: list[dict] = []
+    language: str = ""
+    duration: float = 0.0
+    seg_idx = 0
+    saw_done = False
+    started_at = time.monotonic()
+
+    for raw in resp.iter_lines(decode_unicode=True):
+        if cancel_token is not None and cancel_token.cancelled:
+            # Closing the response (the caller's finally) propagates a
+            # TCP RST so aistack drops the GPU slot.
+            raise AIError(Kind.CANCELLED, "aistack", "Cancelled by user")
+
+        if raw is None or not raw:
+            continue
+        if not raw.startswith("data:"):
+            # SSE comments / `event:` lines / heartbeats — ignore.
+            continue
+        payload = raw[5:].lstrip()
+        if not payload:
+            continue
+
+        try:
+            evt = json.loads(payload)
+        except ValueError:
+            continue
+
+        etype = evt.get("type")
+        if etype == "transcript.text.delta":
+            seg = evt.get("segment") or {}
+            delta = evt.get("delta")
+            if delta is None:
+                delta = seg.get("text", "")
+            text_parts.append(delta)
+            segments.append({
+                "id": seg_idx,
+                "start": seg.get("start"),
+                "end": seg.get("end"),
+                "text": delta,
+            })
+            for w in (seg.get("words") or []):
+                words.append({
+                    "start": w.get("start"),
+                    "end": w.get("end"),
+                    "word": w.get("word"),
+                })
+            seg_idx += 1
+            emit("state_processing",
+                 segment_count=seg_idx,
+                 elapsed=int(time.monotonic() - started_at))
+        elif etype == "transcript.text.done":
+            language = evt.get("language") or language
+            d = evt.get("duration")
+            if isinstance(d, (int, float)):
+                duration = float(d)
+            saw_done = True
+            break
+        elif etype == "warning":
+            emit("stream_warning",
+                 code=evt.get("code", ""),
+                 model=evt.get("model", ""),
+                 message=evt.get("message", ""))
+        elif etype == "error":
+            err = evt.get("error") or {}
+            raise AIError(
+                _envelope_kind(err.get("kind")),
+                str(err.get("provider") or "aistack"),
+                str(err.get("message") or "Stream error"),
+            )
+        # else: unknown event type — forward-compatible no-op.
+
+    if not saw_done:
+        # Stream closed without a done event. If we got nothing at all,
+        # surface as a network-level failure; otherwise return what we
+        # have so the caller can salvage a partial transcript.
+        if not text_parts:
+            raise AIError(Kind.NETWORK, "aistack",
+                          "Stream ended before any transcription event")
 
     emit("state_done",
-         segment_count=len(result.get("segments") or []),
-         elapsed=int(resp.elapsed.total_seconds()) if resp.elapsed else 0)
-    return result
+         segment_count=len(segments),
+         elapsed=int(time.monotonic() - started_at))
+
+    return {
+        "language": language,
+        "duration": duration,
+        "text": "".join(text_parts),
+        "segments": segments,
+        "words": words,
+    }
 
 
 def synthesize(
@@ -261,14 +456,7 @@ def synthesize(
             stream=True,
         ) as resp:
             if resp.status_code != 200:
-                try:
-                    envelope = resp.json().get("error", {})
-                    inner_provider = envelope.get("provider", "aistack")
-                    inner_message = envelope.get("message", resp.text[:300])
-                except (ValueError, AttributeError):
-                    inner_provider = "aistack"
-                    inner_message = (resp.text[:300] if resp.text
-                                     else f"HTTP {resp.status_code}")
+                inner_provider, inner_message = _parse_error_response(resp)
                 raise AIError(
                     map_http_status_to_kind(resp.status_code, resp.text or ""),
                     inner_provider, inner_message,

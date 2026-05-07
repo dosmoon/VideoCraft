@@ -116,7 +116,9 @@ def _burn_to_preset(burn: dict) -> dict:
     return out
 
 
-# Lemonfox upload limit (and a generally safe ASR upload size).
+# ASR upload ceiling — sized for Lemonfox's 100MB cloud limit; aistack
+# (local) doesn't enforce this but we keep the same prep ladder for
+# predictable behavior across providers.
 _ASR_MAX_BYTES = 100 * 1024 * 1024
 # Bitrate ladder used when the prepared mp3 is still over the size limit.
 _AUDIO_BITRATE_LADDER = ["128k", "64k", "32k", "16k"]
@@ -2072,9 +2074,11 @@ class ProjectWorkbenchApp(ToolBase):
                     cancel_token=None) -> None:
         try:
             assert self.project is not None
-            # Always normalize through ffmpeg → mp3 ≤100MB. Lemonfox's upload
-            # cap is 100MB; even when the source is already an mp3, we don't
-            # know its bitrate, so we re-encode for predictability.
+            # Always normalize through ffmpeg → mp3 ≤100MB to stay under
+            # Lemonfox's cloud upload cap (aistack has no hard cap but we
+            # apply the same ladder for consistency). Even when the source
+            # is already an mp3 we don't know its bitrate, so re-encoding
+            # gives predictable output size.
             prep_path = os.path.join(self.project.unit_dir(basename),
                                      f"{basename}.mp3")
             on_status = lambda msg: self.master.after(

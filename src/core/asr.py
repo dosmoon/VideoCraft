@@ -78,9 +78,9 @@ def transcribe_audio(
     )
 
     # Resolve detected language and decide on output suffix rewrite.
-    # Note: Lemonfox/Whisper treats the `language` parameter as "output in
-    # THIS language" (auto-translating if needed), NOT "the audio IS in
-    # this language". So when a hint is provided, `result["language"]`
+    # Note: Whisper-family backends treat the `language` parameter as
+    # "output in THIS language" (auto-translating if needed), NOT "the
+    # audio IS in this language". So when a hint is provided, `result["language"]`
     # simply echoes the hint and lang_mismatch is effectively a no-op.
     # Mismatch detection only produces meaningful results when the user
     # runs in Auto Detect mode; the UI nudges toward that by defaulting

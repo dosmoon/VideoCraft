@@ -25,7 +25,11 @@ def build_language_options() -> list[str]:
 
 
 class Speech2TextApp(ToolBase):
-    """语音转字幕工具（LemonFox API）— Toplevel 内嵌版。"""
+    """Speech-to-text tool — Toplevel embedded.
+
+    The actual ASR provider is chosen by the AI Router (Lemonfox cloud
+    or aistack local gateway); this UI is provider-neutral.
+    """
 
     def __init__(self, master, initial_file=None):
         self.master = master
@@ -61,10 +65,11 @@ class Speech2TextApp(ToolBase):
         # Recognition language
         tk.Label(f, text=tr("tool.speech.language_label")).pack(pady=(8, 2))
         options = build_language_options()
-        # Default to Auto Detect. Specifying a language makes Lemonfox/Whisper
-        # treat it as "output in THIS language" (auto-translating when needed)
-        # rather than "input audio is in this language", so Auto Detect is the
-        # safer default unless the user explicitly wants translation.
+        # Default to Auto Detect. Specifying a language makes Whisper-family
+        # backends treat it as "output in THIS language" (auto-translating
+        # when needed) rather than "input audio is in this language", so
+        # Auto Detect is the safer default unless the user explicitly wants
+        # translation.
         default_value = options[0]
         self.combo_language = tk.StringVar(value=default_value)
         self.combo_language.trace_add("write", lambda *_: self._auto_fill_output())
@@ -204,6 +209,12 @@ class Speech2TextApp(ToolBase):
                     post_log(tr("tool.speech.log.state_done", **kwargs))
                 elif event_type == "mime_fallback":
                     post_log(tr("tool.speech.warning.mime_fallback", **kwargs))
+                elif event_type == "stream_warning":
+                    # aistack tells us the chosen backend doesn't stream;
+                    # transcription still completes but as a single delta.
+                    post_log(tr("tool.speech.warning.stream_unsupported",
+                                model=kwargs.get("model", ""),
+                                message=kwargs.get("message", "")))
                 elif event_type == "state_uploading":
                     attempt = kwargs.get("attempt")
                     max_att = kwargs.get("max_attempts")
