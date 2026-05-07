@@ -33,13 +33,30 @@ EventCallback = Callable[..., None]
 DEFAULT_BASE_URL = "http://127.0.0.1:11500"
 
 _ASR_CONNECT_TIMEOUT = 5
-# In streaming mode the read timeout becomes an idle timeout — it fires
-# only when no SSE event arrives for this many seconds. Streaming-capable
-# backends emit one delta per decoded segment (every few seconds), so
-# 120s is far above worst-case idle. Parakeet downgrade-path (single
-# delta with full text) is bounded by audio length; raise if you expect
-# to transcribe >2h on Parakeet.
-_ASR_IDLE_TIMEOUT = 120
+# Sized for the Parakeet single-delta path, NOT for streaming idleness.
+#
+# In streaming mode the read timeout acts as a per-event idle timeout —
+# it fires when no bytes arrive on the socket for this many seconds.
+# Streaming-capable backends (whisper-small, sensevoice) emit one delta
+# per decoded VAD segment every few seconds, so any reasonable value
+# would do for them.
+#
+# Parakeet (and any future non-streaming backend) is the constraint:
+# after the `warning` event flushes immediately, the server decodes the
+# entire audio file before sending the single full-text delta. That gap
+# IS legitimate idle. Sizing for ~4h Parakeet audio at worst-case RTF
+# plus cold-start gives ~25 min; 30 min is a safe ceiling.
+#
+# Trade-off: a streaming backend that truly hangs (server alive but
+# emitting nothing) takes 30 min to detect. In practice this almost
+# never happens — streaming backends either tick deltas or the socket
+# breaks (immediately surfaced as ConnectionError, not idle timeout).
+#
+# TODO: when speech2text gets a cancel button, add a watchdog thread
+# that polls cancel_token during long silences and closes the response
+# to interrupt iter_lines() — without it cancel can't propagate during
+# Parakeet's single-delta gap (no events in between to check at).
+_ASR_IDLE_TIMEOUT = 1800
 # Slot-busy retry budget. Server-side Retry-After is honored, but capped
 # to keep the UI responsive even under pathological values.
 _ASR_RETRY_MAX_ATTEMPTS = 3
@@ -255,9 +272,16 @@ def transcribe(
             raise _service_unreachable_error("aistack", e) from e
         except requests.exceptions.Timeout as e:
             fh.close()
-            raise AIError(Kind.NETWORK, "aistack",
-                          f"Connection timed out after {_ASR_CONNECT_TIMEOUT}s",
-                          raw=e) from e
+            # The exception covers both connect-phase and idle-during-stream
+            # timeouts; we can't easily tell which from the exception alone,
+            # so report both ceilings.
+            raise AIError(
+                Kind.NETWORK, "aistack",
+                f"Request timed out (connect={_ASR_CONNECT_TIMEOUT}s / "
+                f"idle={_ASR_IDLE_TIMEOUT}s). For very long audio on "
+                "non-streaming backends (Parakeet), increase _ASR_IDLE_TIMEOUT.",
+                raw=e,
+            ) from e
 
         if resp.status_code == 503:
             # Slot busy — back off and retry. Retry-After is in seconds.
@@ -350,6 +374,14 @@ def _consume_sse_transcription(
     saw_done = False
     started_at = time.monotonic()
 
+    # Progress emit is throttled — streaming-capable backends (whisper /
+    # sensevoice) can fire dozens of deltas per second; emitting on each
+    # would flood the Tk event queue (observed: 798 emits in 5s = 160/s).
+    # Cap to ~4/s; the UI shows the latest segment_count + elapsed, so
+    # dropping intermediate ticks loses no information.
+    _PROGRESS_EMIT_INTERVAL_SEC = 0.25
+    last_progress_emit = 0.0
+
     for raw in resp.iter_lines(decode_unicode=True):
         if cancel_token is not None and cancel_token.cancelled:
             # Closing the response (the caller's finally) propagates a
@@ -390,9 +422,15 @@ def _consume_sse_transcription(
                     "word": w.get("word"),
                 })
             seg_idx += 1
-            emit("state_processing",
-                 segment_count=seg_idx,
-                 elapsed=int(time.monotonic() - started_at))
+            now = time.monotonic()
+            # Always emit the first segment so the user sees progress
+            # start; throttle the rest. state_done at end carries the
+            # final segment_count regardless of throttling.
+            if seg_idx == 1 or (now - last_progress_emit) >= _PROGRESS_EMIT_INTERVAL_SEC:
+                emit("state_processing",
+                     segment_count=seg_idx,
+                     elapsed=int(now - started_at))
+                last_progress_emit = now
         elif etype == "transcript.text.done":
             language = evt.get("language") or language
             d = evt.get("duration")
