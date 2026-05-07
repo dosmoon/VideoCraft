@@ -209,6 +209,11 @@ class Speech2TextApp(ToolBase):
                     post_log(tr("tool.speech.log.state_done", **kwargs))
                 elif event_type == "mime_fallback":
                     post_log(tr("tool.speech.warning.mime_fallback", **kwargs))
+                elif event_type == "aistack_request_id":
+                    # Cross-reference handle into aistack's access log /
+                    # payload capture dir (per observability.md).
+                    post_log(tr("tool.speech.log.aistack_request_id",
+                                request_id=kwargs.get("request_id", "")))
                 elif event_type == "stream_warning":
                     # aistack tells us the chosen backend doesn't stream;
                     # transcription still completes but as a single delta.

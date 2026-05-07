@@ -239,6 +239,7 @@
   "tool.speech.log.state_done": "转写完成,共 {segment_count} 段 (用时 {elapsed}s)\n",
   "tool.speech.btn_loading_model": "加载模型中…",
   "tool.speech.btn_processing_local": "转写中 {segment_count}段 / {elapsed}s",
+  "tool.speech.log.aistack_request_id": "🔖 aistack request_id: {request_id}（可在 aistack access log / captures 目录中查询）\n",
   "tool.speech.log.retry_http": "服务暂时不可用（HTTP {code}），第 {attempt}/{max} 次重试，{wait} 秒后继续...\n",
   "tool.speech.log.retry_connect_timeout": "连接超时，第 {attempt}/{max} 次重试，{wait} 秒后继续...\n",
   "tool.speech.log.retry_read_timeout": "读取超时，第 {attempt}/{max} 次重试，{wait} 秒后继续...\n",

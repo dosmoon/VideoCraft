@@ -239,6 +239,7 @@
   "tool.speech.log.state_done": "Transcription complete, {segment_count} segments ({elapsed}s)\n",
   "tool.speech.btn_loading_model": "Loading model…",
   "tool.speech.btn_processing_local": "Transcribing {segment_count} segs / {elapsed}s",
+  "tool.speech.log.aistack_request_id": "🔖 aistack request_id: {request_id} (look up in aistack's access log / captures dir)\n",
   "tool.speech.log.retry_http": "Service temporarily unavailable (HTTP {code}), retry {attempt}/{max} in {wait}s...\n",
   "tool.speech.log.retry_connect_timeout": "Connection timed out, retry {attempt}/{max} in {wait}s...\n",
   "tool.speech.log.retry_read_timeout": "Read timed out, retry {attempt}/{max} in {wait}s...\n",

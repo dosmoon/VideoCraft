@@ -205,6 +205,7 @@ def transcribe(
     # each attempt because requests has already consumed the stream by
     # the time the response status is known.
     last_retry_after = 0.0
+    last_busy_rid: str | None = None
     for attempt in range(1, _ASR_RETRY_MAX_ATTEMPTS + 1):
         if cancel_token is not None and cancel_token.cancelled:
             raise AIError(Kind.CANCELLED, "aistack", "Cancelled by user")
@@ -240,15 +241,22 @@ def transcribe(
                 retry_after = 5.0
             retry_after = min(max(retry_after, 0.5), _ASR_RETRY_CAP_SEC)
             last_retry_after = retry_after
+            # Each rejected attempt carries its own request id; keep the
+            # last one so the final exhaustion error can point at *our*
+            # rejected request (the contended request that won the slot
+            # has a different rid we never see).
+            last_busy_rid = (resp.headers.get("X-Request-ID")
+                             or resp.headers.get("x-request-id")
+                             or last_busy_rid)
             resp.close()
             fh.close()
             if attempt >= _ASR_RETRY_MAX_ATTEMPTS:
-                raise AIError(
-                    Kind.NETWORK, "aistack",
-                    f"GPU slot busy after {attempt} attempts "
-                    f"(Retry-After={last_retry_after}s). aistack is processing "
-                    "another request; try again in a moment.",
-                )
+                msg = (f"GPU slot busy after {attempt} attempts "
+                       f"(Retry-After={last_retry_after}s). aistack is processing "
+                       "another request; try again in a moment.")
+                if last_busy_rid:
+                    msg = f"{msg} [aistack request_id={last_busy_rid}]"
+                raise AIError(Kind.NETWORK, "aistack", msg)
             emit("retry_slot_busy", attempt=attempt,
                  max_attempts=_ASR_RETRY_MAX_ATTEMPTS, wait=int(retry_after))
             # Cooperative cancel during back-off — wake every 0.5s.
@@ -261,11 +269,23 @@ def transcribe(
                 slept += step
             continue
 
+        # Surface aistack's request id (per observability.md) so the user
+        # can cross-reference VideoCraft's log line with aistack's
+        # access-YYYY-MM-DD.jsonl entry and payload capture dir.
+        rid = resp.headers.get("X-Request-ID") or resp.headers.get("x-request-id")
+        if rid:
+            emit("aistack_request_id", request_id=rid, capability="asr")
+
         if resp.status_code != 200:
             inner_provider, inner_message = _parse_error_response(resp)
             kind = map_http_status_to_kind(resp.status_code, resp.text)
             resp.close()
             fh.close()
+            # Suffix rid into the message — error paths often skip the
+            # event log, so embedding it ensures it survives in stack
+            # traces and AIError displays.
+            if rid:
+                inner_message = f"{inner_message} [aistack request_id={rid}]"
             raise AIError(kind, inner_provider, inner_message)
 
         # 200 — consume SSE. fh is closed by `with resp` once the body
@@ -457,6 +477,13 @@ def synthesize(
         ) as resp:
             if resp.status_code != 200:
                 inner_provider, inner_message = _parse_error_response(resp)
+                # Embed aistack's request id (per observability.md) into
+                # the error message so failures can be cross-referenced
+                # with the access log / payload capture.
+                rid = (resp.headers.get("X-Request-ID")
+                       or resp.headers.get("x-request-id"))
+                if rid:
+                    inner_message = f"{inner_message} [aistack request_id={rid}]"
                 raise AIError(
                     map_http_status_to_kind(resp.status_code, resp.text or ""),
                     inner_provider, inner_message,
