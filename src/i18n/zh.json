@@ -238,6 +238,7 @@
   "tool.speech.log.model_loaded": "模型已就绪,开始转写\n",
   "tool.speech.log.state_processing": "已处理 {segment_count} 段 (用时 {elapsed}s)\n",
   "tool.speech.log.state_done": "转写完成,共 {segment_count} 段 (用时 {elapsed}s)\n",
+  "tool.speech.log.state_perf_breakdown": "性能: 切片 {vad_elapsed}s + 解码 {decode_elapsed}s, 解码 RTF={rtf_decode}x, provider={provider}\n",
   "tool.speech.btn_loading_model": "加载模型中…",
   "tool.speech.btn_processing_local": "转写中 {segment_count}段 / {elapsed}s",
   "tool.speech.log.aistack_request_id": "🔖 aistack request_id: {request_id}（可在 aistack access log / captures 目录中查询）\n",

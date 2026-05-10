@@ -207,6 +207,8 @@ class Speech2TextApp(ToolBase):
                     post_log(tr("tool.speech.log.state_processing", **kwargs))
                 elif event_type == "state_done":
                     post_log(tr("tool.speech.log.state_done", **kwargs))
+                elif event_type == "state_perf_breakdown":
+                    post_log(tr("tool.speech.log.state_perf_breakdown", **kwargs))
                 elif event_type == "mime_fallback":
                     post_log(tr("tool.speech.warning.mime_fallback", **kwargs))
                 elif event_type == "aistack_request_id":

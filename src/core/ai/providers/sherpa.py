@@ -361,12 +361,14 @@ def transcribe(
     # Fall back to fixed 28 s windows when the VAD model isn't installed —
     # downloadable from Model Manager but never required.
     vad = _try_load_vad()
+    vad_started = time.monotonic()
     if vad is not None:
         chunk_iter = list(_vad_segment_samples(vad, samples))
         chunk_strategy = "vad"
     else:
         chunk_iter = list(_fixed_window_chunks(samples))
         chunk_strategy = "fixed"
+    vad_elapsed = time.monotonic() - vad_started
 
     # Edge case: VAD found no speech (silent / pure-noise input). Fall
     # back to fixed-window chunking on the raw waveform so the user gets
@@ -376,20 +378,28 @@ def transcribe(
         chunk_strategy = "fixed"
 
     total_chunks = max(1, len(chunk_iter))
+    emit("state_processing",
+         chunk=0, total_chunks=total_chunks,
+         segment_count=0, elapsed=int(vad_elapsed),
+         strategy=chunk_strategy,
+         note=f"chunking done in {vad_elapsed:.1f}s ({total_chunks} chunks)")
 
     started = time.monotonic()
     all_segments: list[dict] = []
     all_text_parts: list[str] = []
     detected_lang: str | None = None
 
+    decode_total = 0.0
     try:
         for chunk_idx, (offset_sec, chunk_samples) in enumerate(chunk_iter):
             if cancel_token is not None and cancel_token.cancelled:
                 raise AIError(Kind.CANCELLED, "sherpa", "Cancelled by user")
 
+            decode_t0 = time.monotonic()
             stream = rec.create_stream()
             stream.accept_waveform(_SAMPLE_RATE, chunk_samples)
             rec.decode_stream(stream)
+            decode_total += time.monotonic() - decode_t0
             r = stream.result
 
             chunk_text = getattr(r, "text", "") or ""
@@ -434,7 +444,18 @@ def transcribe(
         seg["id"] = i
 
     elapsed = time.monotonic() - started
+    audio_sec = duration if duration > 0 else 1.0
+    rtf_decode = audio_sec / max(decode_total, 1e-3)
 
+    # Perf breakdown emitted as a SEPARATE event so the shared
+    # state_done template stays portable across all ASR providers
+    # (lemonfox / aistack don't have these fields). UI handler shows
+    # both lines back-to-back.
+    emit("state_perf_breakdown",
+         vad_elapsed=round(vad_elapsed, 2),
+         decode_elapsed=round(decode_total, 2),
+         rtf_decode=round(rtf_decode, 1),
+         provider=resolved_provider)
     emit("state_done",
          segment_count=len(all_segments),
          elapsed=int(elapsed))

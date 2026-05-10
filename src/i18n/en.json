@@ -238,6 +238,7 @@
   "tool.speech.log.model_loaded": "Model ready, starting transcription\n",
   "tool.speech.log.state_processing": "Processed {segment_count} segments ({elapsed}s elapsed)\n",
   "tool.speech.log.state_done": "Transcription complete, {segment_count} segments ({elapsed}s)\n",
+  "tool.speech.log.state_perf_breakdown": "Perf: chunking {vad_elapsed}s + decode {decode_elapsed}s, decode RTF={rtf_decode}x, provider={provider}\n",
   "tool.speech.btn_loading_model": "Loading model…",
   "tool.speech.btn_processing_local": "Transcribing {segment_count} segs / {elapsed}s",
   "tool.speech.log.aistack_request_id": "🔖 aistack request_id: {request_id} (look up in aistack's access log / captures dir)\n",
