@@ -46,6 +46,11 @@ class ModelSpec:
     revision: str              # usually "main"
     filenames: tuple[str, ...] # basenames inside the repo to install
     notes: str = ""
+    # Hardware target. UI surfaces this as a badge so the user picks the
+    # right variant for their machine. Two specs may share target_subdir
+    # (their on-disk filenames don't collide) — provider auto-selects at
+    # load time. Values: "cpu" | "gpu" | "both".
+    recommended_for: str = "both"
 
     def target_dir(self) -> str:
         return os.path.join(models_dir(), *self.target_subdir.split("/"))
@@ -59,16 +64,22 @@ class ModelSpec:
 
 CATALOG: dict[str, ModelSpec] = {
     # ── ASR ──────────────────────────────────────────────────────────────────
-    "sherpa-whisper-small": ModelSpec(
-        id="sherpa-whisper-small",
-        display_name="Whisper small (sherpa-onnx int8)",
+    # Each Whisper size ships in two variants in the same upstream repo:
+    #   int8 — quantized, ~3× smaller, fast on CPU. ONNX Runtime CUDA EP
+    #          has only partial int8 op coverage so GPU users see most ops
+    #          fall back to CPU silently → don't pick this for GPU.
+    #   fp32 — full precision. Bigger download, but full GPU acceleration.
+    # Both variants share target_subdir; their filenames don't collide so
+    # both can sit on disk and the sherpa provider auto-picks at load time.
+    "sherpa-whisper-small-int8": ModelSpec(
+        id="sherpa-whisper-small-int8",
+        display_name="Whisper small — int8 (CPU)",
         capability=CAP_ASR,
         tier=TIER_FIRST,
         target_subdir="sherpa/whisper-small",
         description=(
-            "Multilingual ASR for the first-launch tier. ~360 MB total. "
-            "Sentence-level timestamps; words[] empty (stock int8 export "
-            "lacks cross-attention)."
+            "Multilingual ASR for first launch. ~360 MB. Quantized int8 "
+            "for CPU inference; sentence-level timestamps; words[] empty."
         ),
         repo="csukuangfj/sherpa-onnx-whisper-small",
         revision="main",
@@ -77,17 +88,39 @@ CATALOG: dict[str, ModelSpec] = {
             "small-decoder.int8.onnx",
             "small-tokens.txt",
         ),
+        recommended_for="cpu",
     ),
 
-    "sherpa-whisper-turbo": ModelSpec(
-        id="sherpa-whisper-turbo",
-        display_name="Whisper turbo (sherpa-onnx int8)",
+    "sherpa-whisper-small-fp32": ModelSpec(
+        id="sherpa-whisper-small-fp32",
+        display_name="Whisper small — fp32 (GPU)",
+        capability=CAP_ASR,
+        tier=TIER_FIRST,
+        target_subdir="sherpa/whisper-small",
+        description=(
+            "Same model, full precision. ~970 MB. Required for real GPU "
+            "speed-up — the int8 variant runs ~half on CPU even with "
+            "CUDA EP loaded due to partial op coverage."
+        ),
+        repo="csukuangfj/sherpa-onnx-whisper-small",
+        revision="main",
+        filenames=(
+            "small-encoder.onnx",
+            "small-decoder.onnx",
+            "small-tokens.txt",
+        ),
+        recommended_for="gpu",
+    ),
+
+    "sherpa-whisper-turbo-int8": ModelSpec(
+        id="sherpa-whisper-turbo-int8",
+        display_name="Whisper turbo — int8 (CPU)",
         capability=CAP_ASR,
         tier=TIER_RECOMMENDED,
         target_subdir="sherpa/whisper-turbo",
         description=(
-            "Recommended-tier ASR. ~1.0 GB. Whisper large-v3-turbo distilled; "
-            "near-real-time on 4060, quality close to large-v3."
+            "Whisper large-v3-turbo distilled, int8 quantized. ~1.0 GB. "
+            "Near-real-time on CPU; choose fp32 variant if you have GPU."
         ),
         repo="csukuangfj/sherpa-onnx-whisper-turbo",
         revision="main",
@@ -96,6 +129,27 @@ CATALOG: dict[str, ModelSpec] = {
             "turbo-decoder.int8.onnx",
             "turbo-tokens.txt",
         ),
+        recommended_for="cpu",
+    ),
+
+    "sherpa-whisper-turbo-fp32": ModelSpec(
+        id="sherpa-whisper-turbo-fp32",
+        display_name="Whisper turbo — fp32 (GPU)",
+        capability=CAP_ASR,
+        tier=TIER_RECOMMENDED,
+        target_subdir="sherpa/whisper-turbo",
+        description=(
+            "Whisper large-v3-turbo distilled, full precision. ~3 GB. "
+            "Real GPU speedup; quality close to large-v3."
+        ),
+        repo="csukuangfj/sherpa-onnx-whisper-turbo",
+        revision="main",
+        filenames=(
+            "turbo-encoder.onnx",
+            "turbo-decoder.onnx",
+            "turbo-tokens.txt",
+        ),
+        recommended_for="gpu",
     ),
 
     # ── LLM (translation) ────────────────────────────────────────────────────

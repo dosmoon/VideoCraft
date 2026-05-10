@@ -70,11 +70,52 @@ def _model_dir(name: str = DEFAULT_MODEL_NAME) -> str:
     return os.path.join(cache_subdir("sherpa"), name)
 
 
-def _model_files(model_dir: str, size: str = "small") -> tuple[str, str, str]:
+def _model_files(model_dir: str, *,
+                 prefer_fp32: bool = False) -> tuple[str, str, str, str]:
+    """Discover (encoder, decoder, tokens, variant) under model_dir.
+
+    Both int8 and fp32 sherpa Whisper exports may sit side-by-side:
+      <size>-encoder.int8.onnx   <size>-decoder.int8.onnx   (int8, CPU)
+      <size>-encoder.onnx        <size>-decoder.onnx        (fp32, GPU)
+      <size>-tokens.txt                                     (shared)
+
+    `prefer_fp32` flips which variant we pick when both are present —
+    GPU users want fp32 (CUDA EP has partial int8 op coverage and
+    silently falls back to CPU on missing ops). The fourth return
+    value is "fp32" or "int8" so callers can log the actual choice.
+    """
+    import glob
+    encs = sorted(glob.glob(os.path.join(model_dir, "*-encoder*.onnx")))
+    fp32_encs = [e for e in encs if ".int8." not in os.path.basename(e)]
+    int8_encs = [e for e in encs if ".int8." in os.path.basename(e)]
+
+    def _pair_for(enc: str) -> tuple[str, str]:
+        base = os.path.basename(enc)
+        if ".int8." in base:
+            dec_base = base.replace("-encoder.int8.onnx", "-decoder.int8.onnx")
+        else:
+            dec_base = base.replace("-encoder.onnx", "-decoder.onnx")
+        return enc, os.path.join(model_dir, dec_base)
+
+    tok_candidates = sorted(glob.glob(os.path.join(model_dir, "*-tokens.txt")))
+    tok = tok_candidates[0] if tok_candidates else os.path.join(model_dir, "tokens.txt")
+
+    if prefer_fp32 and fp32_encs:
+        enc, dec = _pair_for(fp32_encs[0])
+        return enc, dec, tok, "fp32"
+    if int8_encs:
+        enc, dec = _pair_for(int8_encs[0])
+        return enc, dec, tok, "int8"
+    if fp32_encs:
+        enc, dec = _pair_for(fp32_encs[0])
+        return enc, dec, tok, "fp32"
+    # Nothing found — return canonical int8 paths derived from the dir
+    # name so the missing-file error message is helpful. Falls into
+    # `_load_recognizer`'s missing-files branch below.
+    size = os.path.basename(model_dir.rstrip(os.sep)).split("-")[-1] or "small"
     enc = os.path.join(model_dir, f"{size}-encoder.int8.onnx")
     dec = os.path.join(model_dir, f"{size}-decoder.int8.onnx")
-    tok = os.path.join(model_dir, f"{size}-tokens.txt")
-    return enc, dec, tok
+    return enc, dec, tok, "int8"
 
 
 def _load_recognizer(model_dir: str, language: str | None, *,
@@ -91,12 +132,20 @@ def _load_recognizer(model_dir: str, language: str | None, *,
     if provider == "auto":
         provider = "cuda" if _gpu.cuda_available() else "cpu"
 
-    key = (model_dir, language or "en", provider)
+    # Pick model variant: GPU prefers fp32 (CUDA EP has gaps in int8 op
+    # coverage), CPU prefers int8 (smaller + faster on CPU SIMD).
+    enc, dec, tok, variant = _model_files(
+        model_dir, prefer_fp32=(provider == "cuda"),
+    )
+
+    # Cache key includes the variant so flipping CPU/GPU at runtime
+    # picks up the right pre-loaded recognizer instead of reusing a
+    # mismatched one.
+    key = (model_dir, language or "en", provider, variant)
     cached = _RECOGNIZER_CACHE.get(key)
     if cached is not None:
         return cached
 
-    enc, dec, tok = _model_files(model_dir)
     missing = [p for p in (enc, dec, tok) if not os.path.exists(p)]
     if missing:
         raise AIError(
@@ -105,6 +154,7 @@ def _load_recognizer(model_dir: str, language: str | None, *,
             + "\n  ".join(missing)
             + f"\nDownload from HuggingFace 'csukuangfj/sherpa-onnx-{DEFAULT_MODEL_NAME}' "
               f"into:\n  {model_dir}"
+              "\nIn Model Manager, pick the int8 variant for CPU or fp32 for GPU."
         )
 
     rec = so.OfflineRecognizer.from_whisper(
@@ -121,6 +171,8 @@ def _load_recognizer(model_dir: str, language: str | None, *,
         enable_token_timestamps=False,
         enable_segment_timestamps=True,
     )
+    # Stash variant so callers can log which one actually loaded.
+    rec._vc_variant = variant  # type: ignore[attr-defined]
     _RECOGNIZER_CACHE[key] = rec
     return rec
 
@@ -451,11 +503,12 @@ def transcribe(
     # state_done template stays portable across all ASR providers
     # (lemonfox / aistack don't have these fields). UI handler shows
     # both lines back-to-back.
+    rec_variant = getattr(rec, "_vc_variant", "?")
     emit("state_perf_breakdown",
          vad_elapsed=round(vad_elapsed, 2),
          decode_elapsed=round(decode_total, 2),
          rtf_decode=round(rtf_decode, 1),
-         provider=resolved_provider)
+         provider=f"{resolved_provider}/{rec_variant}")
     emit("state_done",
          segment_count=len(all_segments),
          elapsed=int(elapsed))
