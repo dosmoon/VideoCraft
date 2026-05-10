@@ -59,6 +59,17 @@ _WHISPER_CHUNK_SEC = 28.0
 _VAD_MAX_SPEECH_SEC = 20.0
 _VAD_WINDOW_SAMPLES = 512  # silero's native window size at 16 kHz
 
+# After VAD finds speech regions, we pack adjacent regions back into
+# ≤_WHISPER_CHUNK_SEC slices of the ORIGINAL audio (real silences kept
+# in place). Reason: Whisper's encoder always processes a fixed 30 s
+# mel spectrogram regardless of input duration, so 67 short chunks pay
+# 67 × full-encoder cost. Packing into ~14 super-chunks cuts encoder
+# passes proportionally.
+#
+# Internal-gap cap: don't pack across silences longer than this — long
+# silence inside one Whisper input encourages hallucinated timestamps.
+_VAD_PACK_MAX_GAP_SEC = 2.5
+
 # Lazy cache keyed by (model_dir, language). Loading int8 takes ~1.2s on
 # a 4060 laptop; amortize across calls so the AI Console feels snappy.
 _RECOGNIZER_CACHE: dict[tuple[str, str], object] = {}
@@ -215,6 +226,49 @@ def _try_load_vad():
         # Corrupt model / API mismatch — silently fall back. The user
         # still gets transcription via fixed-window chunking.
         return None
+
+
+def _pack_vad_segments(vad_segments, original_samples: np.ndarray,
+                       *, max_pack_sec: float = _WHISPER_CHUNK_SEC,
+                       max_gap_sec: float = _VAD_PACK_MAX_GAP_SEC):
+    """Coalesce adjacent VAD speech regions into ≤max_pack_sec super-chunks.
+
+    Each yielded chunk is a CONTINUOUS slice of `original_samples` (real
+    silences preserved between speech regions), so any timestamp Whisper
+    emits inside the chunk maps to absolute audio time as
+    `chunk_offset_sec + chunk_relative_time` — no gap bookkeeping needed.
+
+    A new bucket starts when:
+      - Adding the next speech region would push duration past max_pack_sec.
+      - The silence gap to the next region exceeds max_gap_sec
+        (long internal silence confuses Whisper's timestamps).
+
+    `vad_segments` is the iterable yielded by `_vad_segment_samples`:
+    (offset_sec, samples_for_speech_region) tuples.
+    """
+    spans: list[tuple[float, float]] = []  # (start_sec, end_sec) in original time
+    cur_start: float | None = None
+    cur_end: float | None = None
+
+    for offset_sec, region in vad_segments:
+        seg_end = offset_sec + len(region) / float(_SAMPLE_RATE)
+        if cur_start is None:
+            cur_start, cur_end = offset_sec, seg_end
+            continue
+        gap = offset_sec - cur_end
+        prospective_dur = seg_end - cur_start
+        if gap > max_gap_sec or prospective_dur > max_pack_sec:
+            spans.append((cur_start, cur_end))
+            cur_start, cur_end = offset_sec, seg_end
+        else:
+            cur_end = seg_end
+    if cur_start is not None:
+        spans.append((cur_start, cur_end))
+
+    for start_sec, end_sec in spans:
+        i0 = int(start_sec * _SAMPLE_RATE)
+        i1 = int(end_sec * _SAMPLE_RATE)
+        yield start_sec, original_samples[i0:i1]
 
 
 def _vad_segment_samples(vad, samples: np.ndarray):
@@ -415,8 +469,13 @@ def transcribe(
     vad = _try_load_vad()
     vad_started = time.monotonic()
     if vad is not None:
-        chunk_iter = list(_vad_segment_samples(vad, samples))
-        chunk_strategy = "vad"
+        raw_segments = list(_vad_segment_samples(vad, samples))
+        # Pack adjacent speech regions back into ~28 s slices of the
+        # original audio so Whisper's encoder isn't burned on dozens of
+        # short chunks (each forward pass costs the same regardless of
+        # actual content length).
+        chunk_iter = list(_pack_vad_segments(raw_segments, samples))
+        chunk_strategy = f"vad+pack({len(raw_segments)}→{len(chunk_iter)})"
     else:
         chunk_iter = list(_fixed_window_chunks(samples))
         chunk_strategy = "fixed"
@@ -425,7 +484,7 @@ def transcribe(
     # Edge case: VAD found no speech (silent / pure-noise input). Fall
     # back to fixed-window chunking on the raw waveform so the user gets
     # *something* (Whisper may still hallucinate but at least we tried).
-    if chunk_strategy == "vad" and not chunk_iter:
+    if chunk_strategy.startswith("vad") and not chunk_iter:
         chunk_iter = list(_fixed_window_chunks(samples))
         chunk_strategy = "fixed"
 
@@ -466,7 +525,7 @@ def transcribe(
                     seg["start"] += offset_sec
                     seg["end"] += offset_sec
                     all_segments.append(seg)
-            elif chunk_text and chunk_strategy == "vad":
+            elif chunk_text and chunk_strategy.startswith("vad"):
                 # VAD chunk produced text but no segment timestamps
                 # (short clip — Whisper sometimes returns empty
                 # segment_timestamps for sub-second utterances). Synthesize
