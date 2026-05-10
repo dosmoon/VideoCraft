@@ -152,11 +152,14 @@ _DEFAULT_ASR_PROVIDERS = {
         "enabled":       True,
         "key_file":      "",            # In-process — no API key
         "auth_required": False,
-        "description":   "内嵌 sherpa-onnx Whisper int8;CPU 或 CUDA 自动选;模型: <models>/sherpa/<model_name>/",
+        "description":   "内嵌 sherpa-onnx Whisper;CPU/CUDA 自动选;int8/fp32 按盘上文件自动挑;模型: <models>/sherpa/<model_name>/",
         "model":         "whisper-small",
-        # "auto" = use CUDA wheel when available, CPU otherwise. Override
-        # to "cpu" / "cuda" to force one or the other.
+        # "auto" = use CUDA wheel when available, CPU otherwise.
         "provider":      "auto",
+        # 0 = auto (4 on CUDA, 1 on CPU). Bump to 8 on 8 GB VRAM with
+        # whisper-small; keep ≤4 with turbo. Higher = better GPU util,
+        # more VRAM. Lower = safer if you OOM.
+        "batch_size":    0,
     },
 }
 

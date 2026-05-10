@@ -419,6 +419,7 @@ class AIRouter:
                     language=language,
                     translate=translate,
                     provider=cfg.get("provider", "auto"),
+                    batch_size=int(cfg.get("batch_size", 0)),
                     on_event=on_event,
                     cancel_token=cancel_token,
                 )

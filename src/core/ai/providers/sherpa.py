@@ -375,6 +375,7 @@ def transcribe(
     translate: bool = False,
     num_threads: int = 4,
     provider: str = "auto",
+    batch_size: int = 0,
     on_event: EventCallback | None = None,
     cancel_token=None,
 ) -> dict:
@@ -500,50 +501,66 @@ def transcribe(
     all_text_parts: list[str] = []
     detected_lang: str | None = None
 
+    # Resolve effective batch size: 0 = auto (4 on CUDA, 1 on CPU).
+    # Batched decoding amortizes GPU launch overhead; on CPU the gain is
+    # marginal so we stay sequential to keep memory low.
+    eff_batch = batch_size if batch_size > 0 else (4 if resolved_provider == "cuda" else 1)
+
     decode_total = 0.0
     try:
-        for chunk_idx, (offset_sec, chunk_samples) in enumerate(chunk_iter):
+        for batch_start in range(0, total_chunks, eff_batch):
             if cancel_token is not None and cancel_token.cancelled:
                 raise AIError(Kind.CANCELLED, "sherpa", "Cancelled by user")
 
+            batch = chunk_iter[batch_start:batch_start + eff_batch]
+
+            # Build streams for this batch
+            streams = []
+            for _offset_sec, chunk_samples in batch:
+                s = rec.create_stream()
+                s.accept_waveform(_SAMPLE_RATE, chunk_samples)
+                streams.append(s)
+
+            # Single GPU launch for the whole batch — this is the win.
             decode_t0 = time.monotonic()
-            stream = rec.create_stream()
-            stream.accept_waveform(_SAMPLE_RATE, chunk_samples)
-            rec.decode_stream(stream)
+            rec.decode_streams(streams)
             decode_total += time.monotonic() - decode_t0
-            r = stream.result
 
-            chunk_text = getattr(r, "text", "") or ""
-            if chunk_text:
-                all_text_parts.append(chunk_text)
-            if detected_lang is None:
-                detected_lang = getattr(r, "lang", None) or None
+            # Walk results, preserving original chunk order so timestamps
+            # line up with their offset_sec.
+            for s, (offset_sec, chunk_samples) in zip(streams, batch):
+                r = s.result
 
-            chunk_segs = _segments_from_result(r)
-            if chunk_segs:
-                for seg in chunk_segs:
-                    seg["start"] += offset_sec
-                    seg["end"] += offset_sec
-                    all_segments.append(seg)
-            elif chunk_text and chunk_strategy.startswith("vad"):
-                # VAD chunk produced text but no segment timestamps
-                # (short clip — Whisper sometimes returns empty
-                # segment_timestamps for sub-second utterances). Synthesize
-                # one segment spanning the VAD slice so the cue isn't lost.
-                dur = len(chunk_samples) / float(_SAMPLE_RATE)
-                all_segments.append({
-                    "id": -1,
-                    "start": offset_sec,
-                    "end": offset_sec + dur,
-                    "text": chunk_text,
-                })
+                chunk_text = getattr(r, "text", "") or ""
+                if chunk_text:
+                    all_text_parts.append(chunk_text)
+                if detected_lang is None:
+                    detected_lang = getattr(r, "lang", None) or None
+
+                chunk_segs = _segments_from_result(r)
+                if chunk_segs:
+                    for seg in chunk_segs:
+                        seg["start"] += offset_sec
+                        seg["end"] += offset_sec
+                        all_segments.append(seg)
+                elif chunk_text and chunk_strategy.startswith("vad"):
+                    # Short VAD chunk: Whisper sometimes returns empty
+                    # segment_timestamps for sub-second utterances. Synth
+                    # one segment spanning the slice so the cue isn't lost.
+                    dur = len(chunk_samples) / float(_SAMPLE_RATE)
+                    all_segments.append({
+                        "id": -1,
+                        "start": offset_sec,
+                        "end": offset_sec + dur,
+                        "text": chunk_text,
+                    })
 
             emit("state_processing",
                  segment_count=len(all_segments),
                  elapsed=int(time.monotonic() - started),
-                 chunk=chunk_idx + 1,
+                 chunk=min(batch_start + eff_batch, total_chunks),
                  total_chunks=total_chunks,
-                 strategy=chunk_strategy)
+                 strategy=f"{chunk_strategy} batch={eff_batch}")
     except AIError:
         raise
     except Exception as e:
