@@ -28,6 +28,22 @@
 
 ---
 
+## 🧠 内嵌 AI（Embedded AI Tier）
+
+> 让 VideoCraft 自身进程内置 ASR / TTS / 翻译，普通用户点开 exe 不配置任何外部服务即可端到端跑通。
+> aistack 网关、云 API 是另外两条平行产品线。详细设计：[docs/draft/tech-selection-embedded-ai.md](docs/draft/tech-selection-embedded-ai.md)
+
+| 优先级 | 状态 | 子任务 | 说明 |
+|--------|------|------|------|
+| 🔴 P1 | [x] | sherpa-onnx Whisper ASR provider（CPU） | 2026-05-10 落地 (d455f9c) — `core/ai/providers/sherpa.py` in-process Whisper int8；segments[] 句子级时间戳；首启档 ASR 通路就绪 |
+| 🔴 P1 | [ ] | sherpa-onnx Kokoro TTS（synthesize 加进 sherpa.py） | 多语言版默认；目标解锁"零依赖配音" |
+| 🔴 P1 | [ ] | llama-cpp-python Qwen3 翻译 provider | `providers/llama_cpp.py`，首启档 Qwen3-1.7B Q4_K_M；推荐档 Qwen3-8B；解锁离线翻译 |
+| 🟡 P2 | [ ] | GPU 加速升级（sherpa-onnx-cuda + onnxruntime-gpu） | 4060 Laptop 基线下 large-v3-turbo + Qwen3-8B 才能流畅。先 CPU 跑通契约（已完成）再换 GPU |
+| 🔴 P1 | [ ] | 模型分发系统 | 下载向导、ModelScope/hf-mirror/HF fallback、断点续传、SHA256、磁盘空间预检、版本元数据、占用统计、一键清理；§9.3 工程清单（约 1~2 周单独排期） |
+| 🟡 P2 | [ ] | 首启 / 升档 UI | 首启可跳过下载向导（强引导非强制）；推荐档升档对话框；设置 → 模型管理 |
+
+---
+
 ## 📺 节目生成（Program Generation）
 
 > 从源视频生成"节目稿子" + 据稿子合成视频。本期只立**稿子层**，视频层另立。
