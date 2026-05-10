@@ -39,7 +39,7 @@
 | 🔴 P1 | [ ] | sherpa-onnx Kokoro TTS（synthesize 加进 sherpa.py） | 多语言版默认；目标解锁"零依赖配音" |
 | 🔴 P1 | [x] | llama-cpp-python Qwen3 翻译 provider | 2026-05-10 落地 — `core/ai/providers/llama_cpp.py` (call/call_json/list_models)；新 ptype `llama_cpp` 接进 router；模型放 `<models>/llama/*.gguf` 用户自取；CPU 默认（n_gpu_layers 在 cfg 可调）。pip install 必须用 abetlen 预编译索引（见 requirements.txt 注释） |
 | 🟡 P2 | [ ] | GPU 加速升级（sherpa-onnx-cuda + onnxruntime-gpu） | 4060 Laptop 基线下 large-v3-turbo + Qwen3-8B 才能流畅。先 CPU 跑通契约（已完成）再换 GPU |
-| 🔴 P1 | [ ] | 模型分发系统 | 下载向导、ModelScope/hf-mirror/HF fallback、断点续传、SHA256、磁盘空间预检、版本元数据、占用统计、一键清理；§9.3 工程清单（约 1~2 周单独排期） |
+| 🔴 P1 | [x] | 模型分发系统 | 2026-05-10 落地 — `core/models/{catalog,downloader,registry,manager}.py` + `tools/models/manager_window.py`（菜单 AI → 模型管理）。Range 续传 + 多源 fallback (ModelScope/hf-mirror/HF) + sha256（可选）+ 磁盘预检 + 队列 UI + 删除 + reveal in explorer + 改 models_dir。catalog 内置 5 项（whisper-small/turbo + qwen3-1.7b/8b + silero-vad）。**未做**：sha256 hash 实际填充（先 size 校验）/ 版本归档 / 并发下载 / aria2c 多连接 |
 | 🟡 P2 | [ ] | 首启 / 升档 UI | 首启可跳过下载向导（强引导非强制）；推荐档升档对话框；设置 → 模型管理 |
 
 ---
