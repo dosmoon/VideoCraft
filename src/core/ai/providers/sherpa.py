@@ -11,6 +11,12 @@ unchanged:
 
     {language, duration, text, segments[], words[]}
 
+Chunking: Whisper's encoder consumes a fixed 30 s mel spectrogram, so
+long audio MUST be split or only the first 30 s gets transcribed. We
+chunk into 28 s windows and offset each chunk's segment timestamps by
+its start time. Words right at a chunk boundary may be clipped — VAD-
+aligned chunking (silero) is the planned next step.
+
 `words[]` is ALWAYS empty for the standard int8 export — the
 cross-attention outputs needed for word-level timestamps are not in the
 published model. Sentence-level `segments[]` works. See
@@ -34,6 +40,14 @@ EventCallback = Callable[..., None]
 
 DEFAULT_MODEL_NAME = "whisper-small"
 _SAMPLE_RATE = 16000
+
+# Whisper's encoder consumes a fixed 30-second mel spectrogram (3000
+# frames). Longer audio MUST be chunked or only the first 30 s gets
+# transcribed silently. We use 28 s windows so the model sees a hint of
+# trailing silence on each chunk; words right at a 28 s boundary may be
+# clipped, but that's far better than losing everything past the first
+# 30 s. VAD-aligned chunking (silero) is a future improvement.
+_WHISPER_CHUNK_SEC = 28.0
 
 # Lazy cache keyed by (model_dir, language). Loading int8 takes ~1.2s on
 # a 4060 laptop; amortize across calls so the AI Console feels snappy.
@@ -234,29 +248,65 @@ def transcribe(
     rec = _load_recognizer(md, iso_lang, num_threads=num_threads)
 
     started = time.monotonic()
+    chunk_len_samples = int(_WHISPER_CHUNK_SEC * _SAMPLE_RATE)
+    total_chunks = max(1, (len(samples) + chunk_len_samples - 1) // chunk_len_samples)
+
+    all_segments: list[dict] = []
+    all_text_parts: list[str] = []
+    detected_lang: str | None = None
+
     try:
-        stream = rec.create_stream()
-        stream.accept_waveform(_SAMPLE_RATE, samples)
-        rec.decode_stream(stream)
+        for chunk_idx in range(total_chunks):
+            if cancel_token is not None and cancel_token.cancelled:
+                raise AIError(Kind.CANCELLED, "sherpa", "Cancelled by user")
+
+            start_sample = chunk_idx * chunk_len_samples
+            end_sample = min(start_sample + chunk_len_samples, len(samples))
+            chunk_samples = samples[start_sample:end_sample]
+            offset_sec = start_sample / float(_SAMPLE_RATE)
+
+            stream = rec.create_stream()
+            stream.accept_waveform(_SAMPLE_RATE, chunk_samples)
+            rec.decode_stream(stream)
+            r = stream.result
+
+            chunk_text = getattr(r, "text", "") or ""
+            if chunk_text:
+                all_text_parts.append(chunk_text)
+            if detected_lang is None:
+                detected_lang = getattr(r, "lang", None) or None
+
+            for seg in _segments_from_result(r):
+                seg["start"] += offset_sec
+                seg["end"] += offset_sec
+                all_segments.append(seg)
+
+            # Emit per-chunk progress so long files don't look frozen.
+            emit("state_processing",
+                 segment_count=len(all_segments),
+                 elapsed=int(time.monotonic() - started),
+                 chunk=chunk_idx + 1,
+                 total_chunks=total_chunks)
+    except AIError:
+        raise
     except Exception as e:
         raise AIError(Kind.UNKNOWN, "sherpa",
                       f"sherpa-onnx decode failed: {e}", raw=e) from e
 
-    if cancel_token is not None and cancel_token.cancelled:
-        raise AIError(Kind.CANCELLED, "sherpa", "Cancelled by user")
+    # Reindex segment ids after concat so consumers see contiguous IDs.
+    for i, seg in enumerate(all_segments):
+        seg["id"] = i
 
     elapsed = time.monotonic() - started
-    r = stream.result
-    segments = _segments_from_result(r)
 
     emit("state_done",
-         segment_count=len(segments),
+         segment_count=len(all_segments),
          elapsed=int(elapsed))
 
     return {
-        "language": getattr(r, "lang", None) or iso_lang,
+        "language": detected_lang or iso_lang,
         "duration": duration,
-        "text": getattr(r, "text", "") or "",
-        "segments": segments,
+        "text": " ".join(all_text_parts).strip(),
+        "segments": all_segments,
         "words": [],
     }
