@@ -161,6 +161,23 @@ _DEFAULT_ASR_PROVIDERS = {
         # more VRAM. Lower = safer if you OOM.
         "batch_size":    0,
     },
+    "faster_whisper": {
+        "name":            "faster-whisper (内嵌, CTranslate2)",
+        "enabled":         True,
+        "key_file":        "",            # In-process — no API key
+        "auth_required":   False,
+        "description":     "内嵌 faster-whisper (CTranslate2);batched GPU decode;built-in silero VAD;模型: <models>/faster-whisper/<model_name>/",
+        "model":           "faster-whisper-small",
+        # device: "auto" → cuda when GPU detected, else cpu.
+        "provider":        "auto",
+        # compute_type: "auto" → float16 on cuda (fast + low VRAM),
+        # int8 on cpu (smallest + best CPU perf). Override with any
+        # CT2-supported type: float32 / float16 / int8_float16 / int8.
+        "compute_type":    "auto",
+        # word_timestamps: True → adds words[] to output (~10-20% slower).
+        # words[] empty when False (sentence-level segments[] still works).
+        "word_timestamps": False,
+    },
 }
 
 # ── Default TTS providers ────────────────────────────────────────────────────

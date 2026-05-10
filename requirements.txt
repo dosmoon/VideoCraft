@@ -31,6 +31,8 @@ openai==2.30.0
 # CPU profile (default):
 sherpa-onnx==1.13.1
 llama-cpp-python==0.3.22  # see CPU wheel install note below
+faster-whisper==1.2.1     # CTranslate2-backed Whisper; works on CPU and CUDA
+                           # without a separate wheel (CT2 picks at runtime).
 #
 # llama-cpp-python wheels are published outside PyPI — building from source
 # on Windows breaks (vendored llama.cpp paths exceed MAX_PATH). Install via:

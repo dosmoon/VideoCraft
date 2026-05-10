@@ -132,6 +132,46 @@ CATALOG: dict[str, ModelSpec] = {
         recommended_for="cpu",
     ),
 
+    # ── faster-whisper (CTranslate2) — preferred for GPU users ───────────────
+    # 30-40× RTF on a 4060 vs sherpa-onnx Whisper's ~10× ceiling. Each
+    # entry is a directory of (config.json, model.bin, tokenizer.json,
+    # vocabulary.{txt,json}). The provider auto-picks float16 on CUDA
+    # and int8 on CPU at runtime, so one model covers both devices.
+    "faster-whisper-small": ModelSpec(
+        id="faster-whisper-small",
+        display_name="faster-whisper small (CT2, GPU+CPU)",
+        capability=CAP_ASR,
+        tier=TIER_FIRST,
+        target_subdir="faster-whisper/faster-whisper-small",
+        description=(
+            "Fast multilingual ASR. ~480 MB. CTranslate2 backend with "
+            "batched GPU decode — real 30× RTF on 4060 fp16. CPU users "
+            "get int8 quantization at runtime, ~10× RTF."
+        ),
+        repo="Systran/faster-whisper-small",
+        revision="main",
+        filenames=("config.json", "model.bin", "tokenizer.json",
+                   "vocabulary.txt"),
+        recommended_for="both",
+    ),
+
+    "faster-whisper-large-v3-turbo": ModelSpec(
+        id="faster-whisper-large-v3-turbo",
+        display_name="faster-whisper large-v3-turbo (CT2)",
+        capability=CAP_ASR,
+        tier=TIER_RECOMMENDED,
+        target_subdir="faster-whisper/faster-whisper-large-v3-turbo",
+        description=(
+            "Whisper large-v3-turbo distilled, CT2-converted by deepdml. "
+            "~1.6 GB. Real-time on 4060 fp16; quality close to large-v3."
+        ),
+        repo="deepdml/faster-whisper-large-v3-turbo-ct2",
+        revision="main",
+        filenames=("config.json", "model.bin", "preprocessor_config.json",
+                   "tokenizer.json", "vocabulary.json"),
+        recommended_for="both",
+    ),
+
     "sherpa-whisper-turbo-fp32": ModelSpec(
         id="sherpa-whisper-turbo-fp32",
         display_name="Whisper turbo — fp32 (GPU)",

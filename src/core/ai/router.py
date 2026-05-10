@@ -21,6 +21,7 @@ from core.ai.providers import lemonfox as _lemonfox
 from core.ai.providers import fish_audio as _fish_audio
 from core.ai.providers import aistack as _aistack
 from core.ai.providers import sherpa as _sherpa
+from core.ai.providers import faster_whisper as _faster_whisper
 from core.ai.providers import llama_cpp as _llama_cpp
 from core.ai.errors import AIError, Kind
 from core.ai.stats import Stats
@@ -400,6 +401,26 @@ class AIRouter:
                     model_name=resolved_model,
                     language=language,
                     translate=translate,
+                    on_event=on_event,
+                    cancel_token=cancel_token,
+                )
+            elif provider == "faster_whisper":
+                # CTranslate2-backed Whisper. Built-in silero VAD;
+                # batched decode → real GPU throughput. compute_type
+                # auto-picks float16 on CUDA, int8 on CPU.
+                resolved_model = (
+                    task_model
+                    if task_model and task_model != "auto"
+                    else (cfg.get("model") or _faster_whisper.DEFAULT_MODEL_NAME)
+                )
+                result = _faster_whisper.transcribe(
+                    audio_path,
+                    model_name=resolved_model,
+                    language=language,
+                    translate=translate,
+                    provider=cfg.get("provider", "auto"),
+                    compute_type=cfg.get("compute_type", "auto"),
+                    word_timestamps=bool(cfg.get("word_timestamps", False)),
                     on_event=on_event,
                     cancel_token=cancel_token,
                 )
