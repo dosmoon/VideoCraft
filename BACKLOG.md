@@ -35,12 +35,14 @@
 
 | 优先级 | 状态 | 子任务 | 说明 |
 |--------|------|------|------|
-| 🔴 P1 | [x] | sherpa-onnx Whisper ASR provider（CPU） | 2026-05-10 落地 (d455f9c) — `core/ai/providers/sherpa.py` in-process Whisper int8；segments[] 句子级时间戳；首启档 ASR 通路就绪 |
+| 🔴 P1 | [x] | sherpa-onnx Whisper ASR provider（CPU） | 2026-05-10 落地 — `core/ai/providers/sherpa.py` in-process Whisper int8/fp32；VAD 切片 + 打包 + 批处理；CPU/CUDA 自动选。**实测瓶颈**：sherpa-onnx Whisper backend 串行 decode，4060 GPU 上 RTF 上限 ~10x。保留作 fallback / VAD 用，ASR 主路改用 faster-whisper |
+| 🔴 P1 | [x] | faster-whisper ASR provider（CTranslate2） | 2026-05-10 加（commit 99ef873）。`core/ai/providers/faster_whisper.py`。CT2 真批处理 GPU kernel，4060 fp16 实测 **RTF 35.8x**（whisper-small）。built-in silero VAD。catalog 加 small (480MB) + large-v3-turbo (1.6GB) 两档 |
 | 🔴 P1 | [ ] | sherpa-onnx Kokoro TTS（synthesize 加进 sherpa.py） | 多语言版默认；目标解锁"零依赖配音" |
-| 🔴 P1 | [x] | llama-cpp-python Qwen3 翻译 provider | 2026-05-10 落地 — `core/ai/providers/llama_cpp.py` (call/call_json/list_models)；新 ptype `llama_cpp` 接进 router；模型放 `<models>/llama/*.gguf` 用户自取；CPU 默认（n_gpu_layers 在 cfg 可调）。pip install 必须用 abetlen 预编译索引（见 requirements.txt 注释） |
-| 🟡 P2 | [ ] | GPU 加速升级（sherpa-onnx-cuda + onnxruntime-gpu） | 4060 Laptop 基线下 large-v3-turbo + Qwen3-8B 才能流畅。先 CPU 跑通契约（已完成）再换 GPU |
-| 🔴 P1 | [x] | 模型分发系统 | 2026-05-10 落地 — `core/models/{catalog,downloader,registry,manager}.py` + `tools/models/manager_window.py`（菜单 AI → 模型管理）。Range 续传 + 多源 fallback (ModelScope/hf-mirror/HF) + sha256（可选）+ 磁盘预检 + 队列 UI + 删除 + reveal in explorer + 改 models_dir。catalog 内置 5 项（whisper-small/turbo + qwen3-1.7b/8b + silero-vad）。**未做**：sha256 hash 实际填充（先 size 校验）/ 版本归档 / 并发下载 / aria2c 多连接 |
+| 🔴 P1 | [x] | llama-cpp-python Qwen3 翻译 provider | 2026-05-10 落地 — `core/ai/providers/llama_cpp.py` (call/call_json/list_models)；新 ptype `llama_cpp` 接进 router；模型放 `<models>/llama/*.gguf` 用户自取；GPU auto (n_gpu_layers=-2 sentinel)；4060 实测 **70 tok/s** (Qwen3-1.7B Q4_K_M)。pip install 必须用 abetlen 预编译索引（见 requirements.txt 注释） |
+| 🟡 P2 | [x] | GPU 加速升级 | 2026-05-10 落地 commit `3f1f4a8`。`core/gpu.py` 自动 PATH 设置 + cuda_available() 元数据探测。**绝对禁止装 torch 到此 venv**（会触发 cudnn DLL 冲突，详见 requirements.txt 注释） |
+| 🔴 P1 | [x] | 模型分发系统 | 2026-05-10 落地 — `core/models/{catalog,downloader,registry,manager,hf_api}.py` + `tools/models/manager_window.py`（菜单 AI → 模型管理）。Range 续传 + 多源 fallback (hf-mirror/HF) + sha256 (HF lfs.oid 自动获取) + 磁盘预检 + 队列 UI。catalog 内置 8 项 (sherpa whisper int8/fp32 各 2 + faster-whisper 2 + qwen3 2 + silero-vad)。性能优化：scan 跳过 sha256 重哈希（每 5s 冻 UI 10s 的 bug，b39ae4d 修） |
 | 🟡 P2 | [ ] | 首启 / 升档 UI | 首启可跳过下载向导（强引导非强制）；推荐档升档对话框；设置 → 模型管理 |
+| 🟡 P2 | [ ] | AI Console 加 GPU 状态 pane | 显示 cuda_status() 输出（device_name / VRAM / wheel）让用户清楚走的 CPU 还是 GPU |
 
 ---
 

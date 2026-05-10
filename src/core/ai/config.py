@@ -238,7 +238,13 @@ def task_category(task_id: str) -> str | None:
 
 def _build_default_task_routing() -> dict:
     llm_seed = {"provider": "", "model": ""}
-    asr_seed = {"provider": "lemonfox",  "model": ""}
+    # faster-whisper is the embedded ASR default — CTranslate2 backend
+    # delivers RTF 35× on a 4060 fp16 vs sherpa's ~10× ceiling, and works
+    # on CPU too via int8 quant. Fresh installs see the right provider
+    # the moment they download the model. Existing users with a custom
+    # routing in providers.json keep their pick — this seed only fills
+    # missing entries.
+    asr_seed = {"provider": "faster_whisper",  "model": "faster-whisper-small"}
     tts_seed = {"provider": "fish_audio", "model": ""}
     out = {}
     for tid, cat, _label in TASKS:
