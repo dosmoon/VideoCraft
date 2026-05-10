@@ -21,6 +21,7 @@ from core.ai.providers import lemonfox as _lemonfox
 from core.ai.providers import fish_audio as _fish_audio
 from core.ai.providers import aistack as _aistack
 from core.ai.providers import sherpa as _sherpa
+from core.ai.providers import llama_cpp as _llama_cpp
 from core.ai.errors import AIError, Kind
 from core.ai.stats import Stats
 
@@ -267,6 +268,10 @@ class AIRouter:
                 "ClaudeCode runs locally via the `claude` CLI; model list "
                 "is fixed (sonnet / opus / haiku). No remote refresh."
             )
+        if ptype == "llama_cpp":
+            # In-process embedded LLM — "models" is whatever .gguf files
+            # the user has on disk. No network call.
+            return _llama_cpp.list_models()
         raise RuntimeError(f"Unsupported provider type for list_models: {ptype!r}")
 
     def get_available_providers(self, tier: str | None = None) -> list:
@@ -760,6 +765,13 @@ class AIRouter:
                 result = _openai_compat.call(api_key, base_url, model_id, prompt)
             elif ptype == "claude_code":
                 result = _claude_code.call(cfg, model_id, prompt)
+            elif ptype == "llama_cpp":
+                result = _llama_cpp.call(
+                    model_id, prompt,
+                    n_ctx=int(cfg.get("n_ctx", 8192)),
+                    n_gpu_layers=int(cfg.get("n_gpu_layers", 0)),
+                    n_threads=int(cfg.get("n_threads", 4)),
+                )
             else:
                 raise RuntimeError(f"Unsupported provider type: {ptype!r}")
 
@@ -796,6 +808,14 @@ class AIRouter:
             elif ptype == "claude_code":
                 result = _claude_code.call_json(cfg, model_id, prompt, schema,
                                                   cancel_token=cancel_token)
+            elif ptype == "llama_cpp":
+                result = _llama_cpp.call_json(
+                    model_id, prompt, schema,
+                    n_ctx=int(cfg.get("n_ctx", 8192)),
+                    n_gpu_layers=int(cfg.get("n_gpu_layers", 0)),
+                    n_threads=int(cfg.get("n_threads", 4)),
+                    cancel_token=cancel_token,
+                )
             else:
                 raise RuntimeError(f"Unsupported JSON provider type: {ptype!r}")
 

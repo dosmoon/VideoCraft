@@ -22,8 +22,18 @@ openai==2.30.0
 
 # Embedded AI (in-process, no Docker) — see
 # docs/draft/tech-selection-embedded-ai.md. CPU build for the first
-# launch tier; GPU build (onnxruntime-gpu) tracked separately.
+# launch tier; GPU build (onnxruntime-gpu / llama-cpp-python CUDA wheel)
+# tracked separately.
 sherpa-onnx==1.13.1
+
+# llama-cpp-python: prebuilt CPU wheels are published outside PyPI.
+# Building from source on Windows breaks (vendored llama.cpp paths exceed
+# MAX_PATH). Install via:
+#   pip install llama-cpp-python==0.3.22 \
+#     --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
+#     --only-binary=:all:
+# GPU users: swap /cpu for /cu121 / /cu122 / /cu123 depending on toolkit.
+llama-cpp-python==0.3.22  # see install note above; do NOT plain `pip install`
 
 # Media
 Pillow==12.0.0

@@ -98,6 +98,22 @@ _DEFAULT_PROVIDERS = {
             TIER_ECONOMY:  "",
         },
     },
+    "LlamaCpp": {
+        "type":          "llama_cpp",
+        "key_file":      "",            # In-process — no API key
+        "auth_required": False,
+        "enabled":       True,          # Available as soon as user drops a .gguf in
+        "priority":      6,             # Last in tier-fallback order; aistack/cloud win when configured
+        "n_ctx":         8192,
+        "n_gpu_layers":  0,             # CPU default; user opts into GPU build separately
+        "n_threads":     4,
+        "models":        [],            # Populated by "Refresh Models" → providers/llama_cpp.list_models()
+        "tiers": {
+            TIER_PREMIUM:  "",
+            TIER_STANDARD: "",
+            TIER_ECONOMY:  "",
+        },
+    },
 }
 
 # Tier-based routing was retired 2026-05-06: users now pick (provider, model)
