@@ -237,13 +237,15 @@ def download_file(
             pass
 
     # Verify size + sha256 against expectations before committing.
+    # expected_size now comes from the HF tree API (exact byte count), so
+    # the check is tight: anything off by more than 1% means the download
+    # was truncated or the upstream file changed under us.
     if expected_size is not None and expected_size > 0:
         actual = os.path.getsize(part_path)
-        # Allow up to 5% drift on `expected_size` (catalog uses approximations).
-        if actual < int(expected_size * 0.5):
+        if abs(actual - expected_size) > max(1024, int(expected_size * 0.01)):
             raise DownloadError(
                 "size",
-                f"Downloaded size {actual} far below expected {expected_size}",
+                f"Downloaded size {actual} differs from expected {expected_size}",
                 url=url,
             )
 
@@ -288,18 +290,26 @@ def verify_file(path: str, expected_sha256: str | None = None,
 
 def _file_matches(path: str, expected_size: int | None,
                   expected_sha256: str | None) -> bool:
+    """Is `path` a complete, intact copy of the expected file?
+
+    sha256 is the strong check; size is a fast sanity rail. With both
+    known we trust sha256 — if it matches we're done regardless of size.
+    With only size known we require exact match (within 1%) since HF
+    sizes are exact.
+    """
     if not os.path.exists(path):
         return False
-    if expected_size is not None and expected_size > 0:
+    try:
         actual = os.path.getsize(path)
-        # Loose size check: catalog sizes are approximations.
-        if actual < int(expected_size * 0.5):
-            return False
+    except OSError:
+        return False
     if expected_sha256:
         try:
             return _sha256_file(path).lower() == expected_sha256.lower()
         except OSError:
             return False
+    if expected_size is not None and expected_size > 0:
+        return abs(actual - expected_size) <= max(1024, int(expected_size * 0.01))
     return True
 
 

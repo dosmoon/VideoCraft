@@ -25,7 +25,8 @@ from core.ai.router import router as _ai_router
 from core.models import (
     CATALOG, get as cat_get, by_capability,
     scan, status_for, remove as registry_remove, reveal_in_explorer,
-    manager,
+    manager, invalidate_all as invalidate_metadata, cache_age_sec,
+    ResolveError,
 )
 from core.models.manager import (
     JOB_QUEUED, JOB_RUNNING, JOB_DONE, JOB_FAILED, JOB_CANCELLED,
@@ -71,6 +72,8 @@ def _tier_label(tier: str) -> str:
 
 
 def _status_label(st) -> str:
+    if not st.resolved:
+        return tr("tool.models.status.unresolved")
     if st.complete:
         return tr("tool.models.status.installed")
     if st.partial:
@@ -135,6 +138,8 @@ class ModelManagerApp(ToolBase):
                   ).pack(side="left", padx=2)
         tk.Button(btns, text=tr("tool.models.btn_change_dir"),
                   command=self._on_change_dir).pack(side="left", padx=2)
+        tk.Button(btns, text=tr("tool.models.btn_refresh_metadata"),
+                  command=self._refresh_metadata).pack(side="left", padx=2)
         tk.Button(btns, text=tr("tool.models.btn_refresh"),
                   command=self._refresh_catalog).pack(side="left", padx=2)
 
@@ -210,9 +215,10 @@ class ModelManagerApp(ToolBase):
         self.tree.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
 
-        self.tree.tag_configure("installed", foreground="#1a7f1a")
-        self.tree.tag_configure("partial",   foreground="#b07a00")
-        self.tree.tag_configure("missing",   foreground="#666666")
+        self.tree.tag_configure("installed",  foreground="#1a7f1a")
+        self.tree.tag_configure("partial",    foreground="#b07a00")
+        self.tree.tag_configure("missing",    foreground="#666666")
+        self.tree.tag_configure("unresolved", foreground="#a02020")
 
     def _refresh_catalog(self):
         # Wipe and rebuild — small enough that incremental update isn't worth
@@ -225,8 +231,9 @@ class ModelManagerApp(ToolBase):
         self._cat_rows.clear()
         self._row_ids.clear()
 
+        # Cached scan — fast even with 5+ specs. Force-refresh comes from
+        # the explicit "Refresh Metadata" button.
         statuses = scan()
-        # Group by capability so users see the structure at a glance.
         for cap in ("asr", "tts", "llm", "vad"):
             specs = by_capability(cap)
             if not specs:
@@ -237,14 +244,22 @@ class ModelManagerApp(ToolBase):
                              values=("", "", "", ""))
             for spec in specs:
                 st = statuses[spec.id]
-                tag = "installed" if st.complete else \
-                      ("partial" if st.partial else "missing")
+                if not st.resolved:
+                    tag = "unresolved"
+                elif st.complete:
+                    tag = "installed"
+                elif st.partial:
+                    tag = "partial"
+                else:
+                    tag = "missing"
                 iid = f"m-{spec.id}"
+                size_label = (_fmt_bytes(st.total_bytes) if st.resolved
+                              else "—")
                 self.tree.insert(
                     group_iid, "end", iid=iid,
                     text=spec.display_name,
                     values=(
-                        _fmt_bytes(spec.total_bytes),
+                        size_label,
                         _status_label(st),
                         _tier_label(spec.tier),
                         _fmt_bytes(st.bytes_on_disk) if st.bytes_on_disk else "",
@@ -254,12 +269,46 @@ class ModelManagerApp(ToolBase):
                 self._cat_rows[spec.id] = iid
                 self._row_ids[iid] = spec.id
 
-        # Restore selection.
         restore = [self._cat_rows[mid] for mid in selected_ids
                    if mid in self._cat_rows]
         if restore:
             self.tree.selection_set(restore)
         self._update_disk_readout()
+
+    def _refresh_metadata(self):
+        """Force re-fetch HF metadata for every catalog repo (background).
+
+        Cheap when the cache is fresh (no-op until TTL expires); useful
+        after upstream re-uploads or when the user just installed network.
+        """
+        def worker():
+            try:
+                # invalidate ensures the next scan force-refreshes from HF.
+                invalidate_metadata()
+                scan(force_refresh=True)
+                err = None
+            except ResolveError as e:
+                err = str(e)
+            except Exception as e:  # noqa: BLE001
+                err = repr(e)
+            try:
+                self.master.after(0, lambda: self._after_refresh_metadata(err))
+            except Exception:
+                pass
+
+        self.set_busy(tr("tool.models.toast_refreshing_metadata"))
+        threading.Thread(target=worker, name="ModelMetaRefresh",
+                         daemon=True).start()
+
+    def _after_refresh_metadata(self, err: str | None):
+        if err:
+            messagebox.showwarning(
+                tr("tool.models.title"),
+                tr("tool.models.warn_refresh_failed").format(err=err),
+            )
+        else:
+            self.set_done(tr("tool.models.toast_metadata_refreshed"))
+        self._refresh_catalog()
 
     def _selected_model_ids(self) -> list[str]:
         return [self._row_ids[i] for i in self.tree.selection()

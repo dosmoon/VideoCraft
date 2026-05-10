@@ -1,23 +1,22 @@
 """Declarative catalog of embedded-AI models.
 
-Each ModelSpec is a single user-installable bundle (one or more files
-that together make a usable model). Sources are ranked by preference:
-ModelScope first (China-friendly), then hf-mirror, then HuggingFace
-official. The downloader walks the list on failure.
+Each ModelSpec is a thin pointer: (HF repo, revision, list of basenames).
+**No sizes or hashes here** — those come from the HF tree API at runtime
+via `core.models.hf_api.resolve_files`, cached on disk so offline use
+keeps working. This is the discipline lesson from 2026-05-10: hardcoded
+sizes / made-up filenames rot fast and are never right.
 
-Adding a new model: append to CATALOG below. No JSON, no schema —
-strong typing keeps consumers honest. See tech-selection-embedded-ai.md
-§6 for tier rationale.
+Adding a model: pick the real HF repo, list the actual basenames you
+want copied locally, declare which capability/tier it serves. Done.
 
-sha256 is optional per file. When present the downloader verifies
-streaming and re-downloads on mismatch. When None, size-only check is
-the integrity bar (acceptable for v1; tightening later just means
-filling in hashes).
+If you don't know the basenames, either look at the HF page or run:
+    curl -s https://huggingface.co/api/models/<repo>/tree/main \\
+      | python -c "import json,sys; [print(f['path']) for f in json.load(sys.stdin) if f['type']=='file']"
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import os
 
 from core.paths import models_dir
@@ -30,67 +29,33 @@ CAP_TTS = "tts"
 CAP_LLM = "llm"
 CAP_VAD = "vad"
 
-TIER_FIRST       = "first"        # First-launch — minimum to demo end-to-end
-TIER_RECOMMENDED = "recommended"  # 4060 Laptop baseline
-TIER_PREMIUM     = "premium"      # User opts in for top quality
-
-
-@dataclass(frozen=True)
-class ModelFile:
-    """One file inside a model bundle."""
-    relpath: str               # path relative to spec.target_subdir
-    size_bytes: int            # approximate; used for progress + disk preflight
-    sources: tuple[str, ...]   # full URLs in preference order
-    sha256: str | None = None  # optional integrity check
+TIER_FIRST       = "first"
+TIER_RECOMMENDED = "recommended"
+TIER_PREMIUM     = "premium"
 
 
 @dataclass(frozen=True)
 class ModelSpec:
     id: str
     display_name: str
-    capability: str            # CAP_*
-    tier: str                  # TIER_*
+    capability: str
+    tier: str
     target_subdir: str         # under models_dir(), e.g. "sherpa/whisper-small"
     description: str
-    files: tuple[ModelFile, ...]
-    notes: str = ""            # shown in UI tooltip
-
-    @property
-    def total_bytes(self) -> int:
-        return sum(f.size_bytes for f in self.files)
+    repo: str                  # HF repo, e.g. "csukuangfj/sherpa-onnx-whisper-small"
+    revision: str              # usually "main"
+    filenames: tuple[str, ...] # basenames inside the repo to install
+    notes: str = ""
 
     def target_dir(self) -> str:
         return os.path.join(models_dir(), *self.target_subdir.split("/"))
 
-    def file_path(self, relpath: str) -> str:
-        return os.path.join(self.target_dir(), relpath)
-
-
-# ── URL helpers ──────────────────────────────────────────────────────────────
-
-def _hf(repo: str, file: str, *, revision: str = "main") -> tuple[str, str, str]:
-    """Return (HF, hf-mirror, ModelScope-best-effort) URL trio.
-
-    HF official is the source of truth. hf-mirror.com is a same-scheme
-    drop-in (just hostname swap). ModelScope mirrors many but not all HF
-    repos; when the slug matches we point there too — failure just falls
-    through to HF.
-    """
-    # HF official
-    hf = f"https://huggingface.co/{repo}/resolve/{revision}/{file}"
-    # hf-mirror — identical path
-    mirror = f"https://hf-mirror.com/{repo}/resolve/{revision}/{file}"
-    # ModelScope best-effort (same org/repo slug; will 404 if not mirrored)
-    ms_rev = "master" if revision == "main" else revision
-    ms = (f"https://modelscope.cn/api/v1/models/{repo}/repo"
-          f"?Revision={ms_rev}&FilePath={file}")
-    # ModelScope first (faster in CN), mirror, HF official last.
-    return (ms, mirror, hf)
+    def file_path(self, basename: str) -> str:
+        return os.path.join(self.target_dir(), basename)
 
 
 # ── Catalog ──────────────────────────────────────────────────────────────────
-# Sizes are approximate (rounded MB); used only for progress display + disk
-# preflight buffer. Slight drift vs actual file size is fine.
+# Repos verified to exist 2026-05-10 via HF API. Update if upstream renames.
 
 CATALOG: dict[str, ModelSpec] = {
     # ── ASR ──────────────────────────────────────────────────────────────────
@@ -101,81 +66,55 @@ CATALOG: dict[str, ModelSpec] = {
         tier=TIER_FIRST,
         target_subdir="sherpa/whisper-small",
         description=(
-            "Multilingual ASR for the first-launch tier. ~480 MB total. "
+            "Multilingual ASR for the first-launch tier. ~360 MB total. "
             "Sentence-level timestamps; words[] empty (stock int8 export "
             "lacks cross-attention)."
         ),
-        files=(
-            # Sizes match the int8 export under csukuangfj's HF repo as of
-            # 2026-05; update if upstream re-quantizes. Loose 50%-of-expected
-            # check tolerates minor drift without forcing a refetch.
-            ModelFile(
-                "small-encoder.int8.onnx", 112_000_000,
-                _hf("csukuangfj/sherpa-onnx-whisper-small",
-                    "small-encoder.int8.onnx"),
-            ),
-            ModelFile(
-                "small-decoder.int8.onnx", 262_000_000,
-                _hf("csukuangfj/sherpa-onnx-whisper-small",
-                    "small-decoder.int8.onnx"),
-            ),
-            ModelFile(
-                "small-tokens.txt", 800_000,
-                _hf("csukuangfj/sherpa-onnx-whisper-small",
-                    "small-tokens.txt"),
-            ),
+        repo="csukuangfj/sherpa-onnx-whisper-small",
+        revision="main",
+        filenames=(
+            "small-encoder.int8.onnx",
+            "small-decoder.int8.onnx",
+            "small-tokens.txt",
         ),
     ),
 
-    "sherpa-whisper-large-v3-turbo": ModelSpec(
-        id="sherpa-whisper-large-v3-turbo",
-        display_name="Whisper large-v3-turbo (sherpa-onnx int8)",
+    "sherpa-whisper-turbo": ModelSpec(
+        id="sherpa-whisper-turbo",
+        display_name="Whisper turbo (sherpa-onnx int8)",
         capability=CAP_ASR,
         tier=TIER_RECOMMENDED,
-        target_subdir="sherpa/whisper-large-v3-turbo",
+        target_subdir="sherpa/whisper-turbo",
         description=(
-            "Recommended-tier ASR. ~1.6 GB. Near-real-time on 4060; quality "
-            "close to large-v3 with much smaller compute footprint."
+            "Recommended-tier ASR. ~1.0 GB. Whisper large-v3-turbo distilled; "
+            "near-real-time on 4060, quality close to large-v3."
         ),
-        files=(
-            ModelFile(
-                "large-v3-turbo-encoder.int8.onnx", 1_100_000_000,
-                _hf("csukuangfj/sherpa-onnx-whisper-large-v3-turbo",
-                    "large-v3-turbo-encoder.int8.onnx"),
-            ),
-            ModelFile(
-                "large-v3-turbo-decoder.int8.onnx", 480_000_000,
-                _hf("csukuangfj/sherpa-onnx-whisper-large-v3-turbo",
-                    "large-v3-turbo-decoder.int8.onnx"),
-            ),
-            ModelFile(
-                "large-v3-turbo-tokens.txt", 800_000,
-                _hf("csukuangfj/sherpa-onnx-whisper-large-v3-turbo",
-                    "large-v3-turbo-tokens.txt"),
-            ),
+        repo="csukuangfj/sherpa-onnx-whisper-turbo",
+        revision="main",
+        filenames=(
+            "turbo-encoder.int8.onnx",
+            "turbo-decoder.int8.onnx",
+            "turbo-tokens.txt",
         ),
     ),
 
     # ── LLM (translation) ────────────────────────────────────────────────────
+    # No official Qwen org GGUF for Qwen3; community ports are the source.
+    # Unsloth's quants are widely used and tested.
     "qwen3-1.7b-q4_k_m": ModelSpec(
         id="qwen3-1.7b-q4_k_m",
-        display_name="Qwen3 1.7B Instruct (Q4_K_M GGUF)",
+        display_name="Qwen3 1.7B (Q4_K_M GGUF, unsloth)",
         capability=CAP_LLM,
         tier=TIER_FIRST,
         target_subdir="llama",
         description=(
-            "First-launch translation LLM. ~1.2 GB. Quality good enough "
+            "First-launch translation LLM. ~1.1 GB. Quality good enough "
             "for everyday subtitle translation; ~30+ tok/s on CPU."
         ),
-        files=(
-            ModelFile(
-                "Qwen3-1.7B-Q4_K_M.gguf", 1_200_000_000,
-                _hf("Qwen/Qwen3-1.7B-Instruct-GGUF",
-                    "qwen3-1.7b-instruct-q4_k_m.gguf"),
-            ),
-        ),
+        repo="unsloth/Qwen3-1.7B-GGUF",
+        revision="main",
+        filenames=("Qwen3-1.7B-Q4_K_M.gguf",),
         notes=(
-            "If the upstream filename changes, edit the URL in catalog.py. "
             "After download, in AI Console pick LlamaCpp → Refresh Models "
             "and select Qwen3-1.7B-Q4_K_M.gguf."
         ),
@@ -183,25 +122,21 @@ CATALOG: dict[str, ModelSpec] = {
 
     "qwen3-8b-q4_k_m": ModelSpec(
         id="qwen3-8b-q4_k_m",
-        display_name="Qwen3 8B Instruct (Q4_K_M GGUF)",
+        display_name="Qwen3 8B (Q4_K_M GGUF, unsloth)",
         capability=CAP_LLM,
         tier=TIER_RECOMMENDED,
         target_subdir="llama",
         description=(
             "Recommended-tier translation LLM. ~5 GB. Markedly better "
-            "translation quality; needs ~6 GB VRAM with GPU layers, runs "
-            "on CPU at ~5 tok/s."
+            "quality; needs ~6 GB VRAM with GPU offload, ~5 tok/s on CPU."
         ),
-        files=(
-            ModelFile(
-                "Qwen3-8B-Q4_K_M.gguf", 4_900_000_000,
-                _hf("Qwen/Qwen3-8B-Instruct-GGUF",
-                    "qwen3-8b-instruct-q4_k_m.gguf"),
-            ),
-        ),
+        repo="unsloth/Qwen3-8B-GGUF",
+        revision="main",
+        filenames=("Qwen3-8B-Q4_K_M.gguf",),
     ),
 
     # ── VAD ──────────────────────────────────────────────────────────────────
+    # snakers4/silero-vad on HF is gated — use deepghs's mirror of the .onnx.
     "silero-vad": ModelSpec(
         id="silero-vad",
         display_name="Silero VAD",
@@ -209,16 +144,12 @@ CATALOG: dict[str, ModelSpec] = {
         tier=TIER_FIRST,
         target_subdir="sherpa/silero-vad",
         description=(
-            "Voice-activity detection. ~2 MB. Used to trim silence and "
-            "suppress Whisper hallucinations on long inputs."
+            "Voice-activity detection. ~2 MB. Trims silence and suppresses "
+            "Whisper hallucinations on long inputs."
         ),
-        files=(
-            ModelFile(
-                "silero_vad.onnx", 2_300_000,
-                _hf("snakers4/silero-vad",
-                    "src/silero_vad/data/silero_vad.onnx"),
-            ),
-        ),
+        repo="deepghs/silero-vad-onnx",
+        revision="main",
+        filenames=("silero_vad.onnx",),
     ),
 }
 
@@ -226,13 +157,10 @@ CATALOG: dict[str, ModelSpec] = {
 # ── Lookup helpers ───────────────────────────────────────────────────────────
 
 def get(model_id: str) -> ModelSpec:
-    """Look up a spec by id. Raises KeyError on miss (intentional — UI
-    code asking for an unknown id is a bug, not a runtime condition)."""
     return CATALOG[model_id]
 
 
 def by_capability(cap: str) -> list[ModelSpec]:
-    """All specs for a given capability (CAP_*), sorted: first → recommended → premium."""
     order = {TIER_FIRST: 0, TIER_RECOMMENDED: 1, TIER_PREMIUM: 2}
     items = [s for s in CATALOG.values() if s.capability == cap]
     items.sort(key=lambda s: (order.get(s.tier, 99), s.display_name))
@@ -240,7 +168,6 @@ def by_capability(cap: str) -> list[ModelSpec]:
 
 
 def by_tier(tier: str) -> list[ModelSpec]:
-    """All specs for a given tier (TIER_*), sorted by capability then name."""
     cap_order = {CAP_VAD: 0, CAP_ASR: 1, CAP_TTS: 2, CAP_LLM: 3}
     items = [s for s in CATALOG.values() if s.tier == tier]
     items.sort(key=lambda s: (cap_order.get(s.capability, 99), s.display_name))

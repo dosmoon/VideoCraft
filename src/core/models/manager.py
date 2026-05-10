@@ -1,23 +1,17 @@
 """Background download manager: queue + source fallback + disk preflight.
 
-Single worker thread processes a FIFO queue of DownloadJob. Each job
-walks its file list; for each file it tries `sources` in order, calling
-the resumable downloader. A job's progress is the sum across files.
+Single worker thread processes a FIFO queue. Each job's spec is resolved
+against HF API at enqueue (so size/sha256/URLs are known truth, not
+guesses). Resolution failure short-circuits the job to FAILED with the
+HF error attached.
 
 UI consumers subscribe via `on_event(callback)` and receive snapshots
-of all jobs whenever state changes (queued / running / done / failed /
-cancelled) or when progress ticks. The callback runs on the worker
-thread — UI code MUST marshal to the Tk main thread itself
-(typical pattern: `tk_widget.after(0, lambda: ...)`).
-
-There is exactly one manager instance per process — `core.models.manager`
-exposes it as `manager`. Multiple windows can subscribe; jobs persist for
-the process lifetime so a window reopened mid-download sees state intact.
+of all jobs. The callback runs on the worker thread — UI code must
+marshal to the Tk main thread itself (`master.after(0, lambda: ...)`).
 """
 
 from __future__ import annotations
 
-import os
 import threading
 import time
 from dataclasses import dataclass, field
@@ -27,10 +21,12 @@ from core.models.catalog import CATALOG, ModelSpec, get
 from core.models.downloader import (
     DownloadProgress, CancelToken, DownloadError, download_file, verify_file,
 )
+from core.models.hf_api import (
+    ResolvedFile, resolve_files, ResolveError,
+)
 from core.models.registry import disk_free_bytes
 
 
-# Job states
 JOB_QUEUED    = "queued"
 JOB_RUNNING   = "running"
 JOB_DONE      = "done"
@@ -50,13 +46,14 @@ class DownloadJob:
     bytes_total: int = 0
     bytes_per_sec: float = 0.0
     eta_sec: float | None = None
-    current_file: str = ""        # relpath of file in flight
-    current_url: str = ""         # source url currently attempted
+    current_file: str = ""
+    current_url: str = ""
     error: str = ""
     started_at: float = 0.0
     finished_at: float = 0.0
 
     cancel_token: CancelToken = field(default_factory=CancelToken)
+    resolved_files: list[ResolvedFile] = field(default_factory=list)
 
     @property
     def fraction(self) -> float:
@@ -84,9 +81,11 @@ class DownloadManager:
     def enqueue(self, model_id: str) -> str:
         """Add a download to the queue. Returns the job_id.
 
-        If a non-finished job for the same model already exists, returns its
-        id instead (no duplicates in flight). Existing files that already
-        verify are not re-downloaded — the job lands in JOB_DONE immediately.
+        Resolution against HF happens at enqueue time so we know real
+        bytes_total before the job starts. If HF is unreachable AND we
+        have no cached metadata, the job is created in FAILED state with
+        the error attached — the user sees something in the queue rather
+        than a silent no-op.
         """
         if model_id not in CATALOG:
             raise KeyError(f"Unknown model_id: {model_id!r}")
@@ -99,12 +98,26 @@ class DownloadManager:
                 job_id=f"job-{self._next_id}",
                 model_id=model_id,
                 spec=spec,
-                bytes_total=spec.total_bytes,
             )
             self._next_id += 1
             self._jobs.append(job)
+
+        # Resolve outside the lock — HF API call may block on network.
+        try:
+            resolved = resolve_files(
+                spec.repo, spec.revision, list(spec.filenames),
+            )
+            with self._lock:
+                job.resolved_files = resolved
+                job.bytes_total = sum(rf.size for rf in resolved)
             self._ensure_worker()
-        self._wake.set()
+            self._wake.set()
+        except ResolveError as e:
+            with self._lock:
+                job.state = JOB_FAILED
+                job.error = f"Could not fetch HF metadata: {e}"
+                job.finished_at = time.time()
+
         self._notify()
         return job.job_id
 
@@ -132,7 +145,6 @@ class DownloadManager:
         self._notify()
 
     def clear_finished(self) -> None:
-        """Drop done/failed/cancelled jobs from the visible queue."""
         with self._lock:
             self._jobs = [j for j in self._jobs
                           if j.state in (JOB_QUEUED, JOB_RUNNING)]
@@ -143,7 +155,6 @@ class DownloadManager:
             return list(self._jobs)
 
     def on_event(self, callback: EventCallback) -> Callable[[], None]:
-        """Subscribe to state-change snapshots. Returns an unsubscribe fn."""
         with self._lock:
             self._subscribers.append(callback)
         def _unsub() -> None:
@@ -154,15 +165,23 @@ class DownloadManager:
 
     @staticmethod
     def preflight_disk(model_ids: list[str]) -> tuple[bool, int, int, str]:
-        """Check whether the target volume has room.
+        """(ok, needed_bytes, free_bytes, target_dir).
 
-        Returns (ok, needed_bytes, free_bytes, target_dir). `ok` is True when
-        free >= 1.2 × sum(spec.total_bytes), giving a headroom buffer. UI
-        layer warns the user when False; doesn't refuse the enqueue, since a
-        user might be deleting files in parallel.
+        Resolves each spec to compute exact needed bytes. Resolve failure
+        contributes 0 — preflight is best-effort, not a gate.
         """
         from core.paths import models_dir
-        needed = sum(get(mid).total_bytes for mid in model_ids if mid in CATALOG)
+        needed = 0
+        for mid in model_ids:
+            if mid not in CATALOG:
+                continue
+            spec = get(mid)
+            try:
+                files = resolve_files(spec.repo, spec.revision,
+                                       list(spec.filenames))
+                needed += sum(rf.size for rf in files)
+            except ResolveError:
+                pass
         target = models_dir()
         free = disk_free_bytes(target)
         ok = free >= int(needed * 1.2)
@@ -189,12 +208,8 @@ class DownloadManager:
         while True:
             job = self._next_job()
             if job is None:
-                # Idle — sleep until enqueue() pokes us, then re-check.
                 self._wake.clear()
-                # Cap idle wait so a forgotten event doesn't deadlock.
                 self._wake.wait(timeout=30.0)
-                # If still nothing after a long idle, exit and let the next
-                # enqueue spin up a fresh worker.
                 if self._next_job() is None:
                     with self._lock:
                         self._worker = None
@@ -209,27 +224,27 @@ class DownloadManager:
         self._notify()
 
         try:
-            for f in job.spec.files:
+            for rf in job.resolved_files:
                 if job.cancel_token.cancelled:
                     raise DownloadError("cancelled", "Cancelled by user")
-                target = job.spec.file_path(f.relpath)
+                target = job.spec.file_path(rf.path)
 
                 # Skip files already complete (re-enqueue idempotency).
-                if verify_file(target, expected_sha256=f.sha256,
-                               expected_size=f.size_bytes):
+                if verify_file(target, expected_sha256=rf.sha256,
+                               expected_size=rf.size):
                     with self._lock:
-                        job.bytes_done += f.size_bytes
-                        job.current_file = f.relpath
+                        job.bytes_done += rf.size
+                        job.current_file = rf.path
                     self._notify()
                     continue
 
                 with self._lock:
-                    job.current_file = f.relpath
-                file_started_done = job.bytes_done
+                    job.current_file = rf.path
+                file_baseline = job.bytes_done
 
                 last_err: DownloadError | None = None
                 file_complete = False
-                for url in f.sources:
+                for url in rf.urls:
                     if job.cancel_token.cancelled:
                         raise DownloadError("cancelled", "Cancelled by user")
                     with self._lock:
@@ -237,23 +252,20 @@ class DownloadManager:
                     try:
                         download_file(
                             url, target,
-                            expected_size=f.size_bytes,
-                            expected_sha256=f.sha256,
-                            on_progress=lambda p, fs=file_started_done, j=job:
-                                self._on_file_progress(j, fs, p),
+                            expected_size=rf.size,
+                            expected_sha256=rf.sha256,
+                            on_progress=lambda p, fb=file_baseline, j=job:
+                                self._on_file_progress(j, fb, p),
                             cancel_token=job.cancel_token,
                         )
                         file_complete = True
                         with self._lock:
-                            # Reconcile to expected size: file is complete now.
-                            job.bytes_done = fs_total = file_started_done + f.size_bytes
-                            _ = fs_total
-                        break  # next file
+                            job.bytes_done = file_baseline + rf.size
+                        break
                     except DownloadError as e:
                         last_err = e
                         if e.kind == "cancelled":
                             raise
-                        # Otherwise try the next source.
                         continue
 
                 if not file_complete:
@@ -261,7 +273,7 @@ class DownloadManager:
                            else "all sources failed")
                     raise DownloadError(
                         last_err.kind if last_err else "network",
-                        f"{f.relpath}: {msg}",
+                        f"{rf.path}: {msg}",
                     )
 
             with self._lock:
@@ -279,7 +291,7 @@ class DownloadManager:
                     job.state = JOB_FAILED
                     job.error = str(e)
                 job.finished_at = time.time()
-        except Exception as e:  # noqa: BLE001 — last-ditch safety net for the worker thread
+        except Exception as e:  # noqa: BLE001
             with self._lock:
                 job.state = JOB_FAILED
                 job.error = f"Unexpected: {e!r}"
@@ -289,20 +301,14 @@ class DownloadManager:
 
     def _on_file_progress(self, job: DownloadJob, file_baseline: int,
                           p: DownloadProgress) -> None:
-        """Translate per-file progress into job-level totals."""
         with self._lock:
-            # bytes_done = sum of fully-completed prior files + this file's
-            # current bytes. Reset to file_baseline + p.bytes_done.
             job.bytes_done = file_baseline + p.bytes_done
             job.bytes_per_sec = p.bytes_per_sec
-            # ETA across remaining job bytes:
             remaining = max(0, job.bytes_total - job.bytes_done)
             job.eta_sec = (remaining / p.bytes_per_sec) if p.bytes_per_sec > 0 else None
         self._notify()
 
     def _notify(self) -> None:
-        # Snapshot subscribers under lock; invoke outside to avoid holding
-        # the lock during user code (which may take the Tk main-loop lock).
         with self._lock:
             subs = list(self._subscribers)
             jobs = list(self._jobs)
@@ -310,9 +316,7 @@ class DownloadManager:
             try:
                 cb(jobs)
             except Exception:
-                # Subscribers must not crash the worker thread. Swallow.
                 pass
 
 
-# Process-wide singleton.
 manager = DownloadManager()
