@@ -34,7 +34,12 @@ from typing import Callable
 import numpy as np
 
 from core.ai.errors import AIError, Kind
+from core import gpu as _gpu
 from core.paths import cache_subdir
+
+# Set up NVIDIA DLL search path before sherpa_onnx's C++ side tries to load
+# CUDAExecutionProvider. No-op when CUDA wheels aren't installed.
+_gpu.ensure_cuda_dlls()
 
 
 EventCallback = Callable[..., None]
@@ -72,10 +77,21 @@ def _model_files(model_dir: str, size: str = "small") -> tuple[str, str, str]:
     return enc, dec, tok
 
 
-def _load_recognizer(model_dir: str, language: str | None, *, num_threads: int):
+def _load_recognizer(model_dir: str, language: str | None, *,
+                     num_threads: int, provider: str = "auto"):
+    """Build (or reuse) a sherpa OfflineRecognizer.
+
+    `provider` is one of "auto" | "cpu" | "cuda". "auto" picks "cuda" when
+    `core.gpu.cuda_available()` reports a working CUDA wheel + driver,
+    otherwise "cpu". Cache is keyed on (model_dir, language, provider) so
+    the user can flip GPU on/off without restarting Python.
+    """
     import sherpa_onnx as so
 
-    key = (model_dir, language or "en")
+    if provider == "auto":
+        provider = "cuda" if _gpu.cuda_available() else "cpu"
+
+    key = (model_dir, language or "en", provider)
     cached = _RECOGNIZER_CACHE.get(key)
     if cached is not None:
         return cached
@@ -99,7 +115,7 @@ def _load_recognizer(model_dir: str, language: str | None, *, num_threads: int):
         task="transcribe",
         num_threads=num_threads,
         decoding_method="greedy_search",
-        provider="cpu",
+        provider=provider,
         # Stock int8 export lacks cross-attention; token timestamps cannot
         # be produced. Segment-level timestamps DO work.
         enable_token_timestamps=False,
@@ -252,6 +268,7 @@ def transcribe(
     language: str | None = None,
     translate: bool = False,
     num_threads: int = 4,
+    provider: str = "auto",
     on_event: EventCallback | None = None,
     cancel_token=None,
 ) -> dict:
@@ -316,11 +333,16 @@ def transcribe(
     # convert display names to ISO before reaching this layer.
     iso_lang = language or "en"
 
+    # Resolve "auto" up-front so the device label in the log is accurate.
+    resolved_provider = provider
+    if resolved_provider == "auto":
+        resolved_provider = "cuda" if _gpu.cuda_available() else "cpu"
+
     emit(
         "request_summary_local",
         filename=os.path.basename(audio_path),
         model=model_name,
-        device="sherpa-cpu",
+        device=f"sherpa-{resolved_provider}",
         compute_type="int8",
         language=iso_lang,
         translate="false",
@@ -332,7 +354,8 @@ def transcribe(
     if cancel_token is not None and cancel_token.cancelled:
         raise AIError(Kind.CANCELLED, "sherpa", "Cancelled by user")
 
-    rec = _load_recognizer(md, iso_lang, num_threads=num_threads)
+    rec = _load_recognizer(md, iso_lang,
+                           num_threads=num_threads, provider=provider)
 
     # Prefer silero-VAD chunking (cuts at silence, no mid-word loss).
     # Fall back to fixed 28 s windows when the VAD model isn't installed —

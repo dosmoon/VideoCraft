@@ -418,6 +418,7 @@ class AIRouter:
                     model_name=resolved_model,
                     language=language,
                     translate=translate,
+                    provider=cfg.get("provider", "auto"),
                     on_event=on_event,
                     cancel_token=cancel_token,
                 )

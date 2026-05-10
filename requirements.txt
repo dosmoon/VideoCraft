@@ -20,20 +20,42 @@ openai==2.30.0
 # pyarrow / pandas / datasets pins were removed at that time — they
 # now live in aistack's pyproject.toml as opt-in extras.
 
-# Embedded AI (in-process, no Docker) — see
-# docs/draft/tech-selection-embedded-ai.md. CPU build for the first
-# launch tier; GPU build (onnxruntime-gpu / llama-cpp-python CUDA wheel)
-# tracked separately.
+# ── Embedded AI (in-process, no Docker) ─────────────────────────────────────
+# See docs/draft/tech-selection-embedded-ai.md.
+#
+# Two install profiles:
+#   CPU only    — what `pip install -r requirements.txt` gets you below.
+#   CUDA 12 GPU — extra commands listed below; required for usable speed
+#                 on Whisper-turbo and Qwen3-8B.
+#
+# CPU profile (default):
 sherpa-onnx==1.13.1
-
-# llama-cpp-python: prebuilt CPU wheels are published outside PyPI.
-# Building from source on Windows breaks (vendored llama.cpp paths exceed
-# MAX_PATH). Install via:
+llama-cpp-python==0.3.22  # see CPU wheel install note below
+#
+# llama-cpp-python wheels are published outside PyPI — building from source
+# on Windows breaks (vendored llama.cpp paths exceed MAX_PATH). Install via:
 #   pip install llama-cpp-python==0.3.22 \
 #     --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu \
 #     --only-binary=:all:
-# GPU users: swap /cpu for /cu121 / /cu122 / /cu123 depending on toolkit.
-llama-cpp-python==0.3.22  # see install note above; do NOT plain `pip install`
+#
+# ── GPU profile (CUDA 12 / cuDNN 9) ────────────────────────────────────────
+# Replaces the CPU wheels above. ~700 MB extra disk; ~2-4× speedup on
+# embedded providers. Run AFTER the CPU install (or skip the CPU install
+# entirely):
+#
+#   pip install --force-reinstall --no-deps llama-cpp-python==0.3.22 \
+#     --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 \
+#     --only-binary=:all:
+#
+#   pip install --force-reinstall --no-deps \
+#     "https://huggingface.co/csukuangfj2/sherpa-onnx-wheels/resolve/main/cuda/1.13.0/sherpa_onnx-1.13.0+cuda12.cudnn9-cp312-cp312-win_amd64.whl"
+#
+#   pip install --no-deps \
+#     nvidia-cuda-runtime-cu12 nvidia-cublas-cu12 nvidia-cudnn-cu12 nvidia-cufft-cu12
+#
+# Activation is automatic: core/gpu.py prepends the nvidia/* DLL dirs to
+# PATH at provider import, and providers default n_gpu_layers / sherpa
+# provider to "auto" which picks GPU when these wheels are detected.
 
 # Media
 Pillow==12.0.0

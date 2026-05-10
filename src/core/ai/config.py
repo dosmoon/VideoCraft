@@ -105,7 +105,9 @@ _DEFAULT_PROVIDERS = {
         "enabled":       True,          # Available as soon as user drops a .gguf in
         "priority":      6,             # Last in tier-fallback order; aistack/cloud win when configured
         "n_ctx":         8192,
-        "n_gpu_layers":  0,             # CPU default; user opts into GPU build separately
+        # -2 = "auto": GPU when CUDA wheels + driver detected, CPU otherwise.
+        # -1 = force all-GPU, 0 = force CPU, N = offload N layers.
+        "n_gpu_layers":  -2,
         "n_threads":     4,
         "models":        [],            # Populated by "Refresh Models" → providers/llama_cpp.list_models()
         "tiers": {
@@ -150,8 +152,11 @@ _DEFAULT_ASR_PROVIDERS = {
         "enabled":       True,
         "key_file":      "",            # In-process — no API key
         "auth_required": False,
-        "description":   "内嵌 sherpa-onnx Whisper int8 (CPU);模型: <models>/sherpa/whisper-small/;无需 Docker 或云服务",
+        "description":   "内嵌 sherpa-onnx Whisper int8;CPU 或 CUDA 自动选;模型: <models>/sherpa/<model_name>/",
         "model":         "whisper-small",
+        # "auto" = use CUDA wheel when available, CPU otherwise. Override
+        # to "cpu" / "cuda" to force one or the other.
+        "provider":      "auto",
     },
 }
 

@@ -25,7 +25,26 @@ from typing import Any
 
 from core.ai.errors import AIError, Kind
 from core.ai.providers._json_utils import parse_json_response
+from core import gpu as _gpu
 from core.paths import cache_subdir
+
+# llama.dll's CUDA build links cudart / cublas etc. — make their pip-bundled
+# copies findable before any Llama() import call. No-op on CPU-only setups.
+_gpu.ensure_cuda_dlls()
+
+
+def _resolve_n_gpu_layers(requested: int) -> int:
+    """Translate the cfg field into the n_gpu_layers value llama.cpp wants.
+
+    -2 = "auto": all layers on GPU when CUDA wheel + driver detected,
+                 0 (CPU) otherwise. This is what fresh installs see.
+    -1 = "all":  all layers on GPU regardless (force, errors out if CUDA
+                 not available).
+    >=0:         exact layer count to offload.
+    """
+    if requested == -2:
+        return -1 if _gpu.cuda_available() else 0
+    return requested
 
 
 # Loading a 1.7B Q4_K_M takes ~1.5s on CPU; bigger models take longer and
@@ -64,6 +83,7 @@ def _resolve_model_path(model_id: str) -> str:
 def _load(model_path: str, *, n_ctx: int, n_gpu_layers: int, n_threads: int):
     from llama_cpp import Llama
 
+    n_gpu_layers = _resolve_n_gpu_layers(n_gpu_layers)
     key = f"{model_path}|ctx={n_ctx}|gpu={n_gpu_layers}|th={n_threads}"
     if _LOADED["key"] == key and _LOADED["llm"] is not None:
         return _LOADED["llm"]
