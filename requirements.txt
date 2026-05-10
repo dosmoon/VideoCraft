@@ -34,6 +34,11 @@ llama-cpp-python==0.3.22  # see CPU wheel install note below
 faster-whisper==1.2.1     # CTranslate2-backed Whisper; works on CPU and CUDA
                            # without a separate wheel (CT2 picks at runtime).
 #
+# DO NOT install `torch` into this venv. ctranslate2.converters.transformers
+# has `try: import torch`; if torch is present it eagerly loads its bundled
+# cudnn DLLs and clashes with our nvidia-cudnn-cu12 on PATH (Error 127).
+# faster-whisper itself doesn't need torch — converters are offline-only.
+#
 # llama-cpp-python wheels are published outside PyPI — building from source
 # on Windows breaks (vendored llama.cpp paths exceed MAX_PATH). Install via:
 #   pip install llama-cpp-python==0.3.22 \
