@@ -13,9 +13,10 @@ unchanged:
 
 Chunking: Whisper's encoder consumes a fixed 30 s mel spectrogram, so
 long audio MUST be split or only the first 30 s gets transcribed. We
-chunk into 28 s windows and offset each chunk's segment timestamps by
-its start time. Words right at a chunk boundary may be clipped — VAD-
-aligned chunking (silero) is the planned next step.
+prefer silero-VAD-aligned chunking (cuts at silence, no mid-word
+clipping) when `<models>/sherpa/silero-vad/silero_vad.onnx` is on disk;
+fall back to fixed 28 s windows otherwise. The VAD model is
+downloadable via the Model Manager but never required.
 
 `words[]` is ALWAYS empty for the standard int8 export — the
 cross-attention outputs needed for word-level timestamps are not in the
@@ -43,15 +44,21 @@ _SAMPLE_RATE = 16000
 
 # Whisper's encoder consumes a fixed 30-second mel spectrogram (3000
 # frames). Longer audio MUST be chunked or only the first 30 s gets
-# transcribed silently. We use 28 s windows so the model sees a hint of
-# trailing silence on each chunk; words right at a 28 s boundary may be
-# clipped, but that's far better than losing everything past the first
-# 30 s. VAD-aligned chunking (silero) is a future improvement.
+# transcribed silently. We prefer silero-VAD-aligned chunking (cuts at
+# silence, no mid-word clipping) and fall back to fixed-window chunks
+# only when the VAD model isn't installed.
 _WHISPER_CHUNK_SEC = 28.0
+# silero-vad model lives next to the Whisper bundle in <models>/sherpa/
+# (per the model-manager catalog). Capped at 20 s per segment so it
+# stays well under Whisper's 30 s ceiling even when speech is dense.
+_VAD_MAX_SPEECH_SEC = 20.0
+_VAD_WINDOW_SAMPLES = 512  # silero's native window size at 16 kHz
 
 # Lazy cache keyed by (model_dir, language). Loading int8 takes ~1.2s on
 # a 4060 laptop; amortize across calls so the AI Console feels snappy.
 _RECOGNIZER_CACHE: dict[tuple[str, str], object] = {}
+# Single-slot VAD cache. Path keys it so a model swap (rare) reloads.
+_VAD_CACHE: dict[str, object] = {}
 
 
 def _model_dir(name: str = DEFAULT_MODEL_NAME) -> str:
@@ -100,6 +107,86 @@ def _load_recognizer(model_dir: str, language: str | None, *, num_threads: int):
     )
     _RECOGNIZER_CACHE[key] = rec
     return rec
+
+
+def _vad_model_path() -> str:
+    """Canonical install path for silero-vad (matches catalog target_subdir)."""
+    return os.path.join(cache_subdir("sherpa"), "silero-vad", "silero_vad.onnx")
+
+
+def _try_load_vad():
+    """Return a cached VoiceActivityDetector, or None if model missing.
+
+    Returning None signals the caller to fall back to fixed-window chunks.
+    Any other load failure (corrupt onnx etc.) is treated the same way —
+    we never want VAD problems to block transcription, only to degrade it.
+    """
+    path = _vad_model_path()
+    if not os.path.exists(path):
+        return None
+    cached = _VAD_CACHE.get(path)
+    if cached is not None:
+        return cached
+    try:
+        import sherpa_onnx as so
+        cfg = so.VadModelConfig(
+            silero_vad=so.SileroVadModelConfig(
+                model=path,
+                threshold=0.5,
+                min_silence_duration=0.5,
+                min_speech_duration=0.25,
+                max_speech_duration=_VAD_MAX_SPEECH_SEC,
+            ),
+            sample_rate=_SAMPLE_RATE,
+            num_threads=1,
+        )
+        vad = so.VoiceActivityDetector(cfg, buffer_size_in_seconds=60)
+        _VAD_CACHE[path] = vad
+        return vad
+    except Exception:
+        # Corrupt model / API mismatch — silently fall back. The user
+        # still gets transcription via fixed-window chunking.
+        return None
+
+
+def _vad_segment_samples(vad, samples: np.ndarray):
+    """Yield (offset_sec, segment_samples) tuples for each speech region.
+
+    silero VAD operates on fixed 512-sample windows. We feed the entire
+    waveform window-by-window, draining detected segments as they finish.
+    `flush()` at the end forces any tail-end segment out.
+    """
+    vad.reset()
+    n = len(samples)
+    pos = 0
+    while pos < n:
+        end = min(pos + _VAD_WINDOW_SAMPLES, n)
+        vad.accept_waveform(samples[pos:end])
+        while not vad.empty():
+            seg = vad.front
+            yield seg.start / float(_SAMPLE_RATE), np.asarray(seg.samples, dtype=np.float32)
+            vad.pop()
+        pos = end
+    vad.flush()
+    while not vad.empty():
+        seg = vad.front
+        yield seg.start / float(_SAMPLE_RATE), np.asarray(seg.samples, dtype=np.float32)
+        vad.pop()
+
+
+def _fixed_window_chunks(samples: np.ndarray):
+    """Fallback chunker for when silero-vad isn't installed.
+
+    Yields the same (offset_sec, chunk_samples) shape as the VAD path so
+    the caller doesn't branch on which strategy is in use.
+    """
+    chunk_len = int(_WHISPER_CHUNK_SEC * _SAMPLE_RATE)
+    n = len(samples)
+    pos = 0
+    while pos < n:
+        end = min(pos + chunk_len, n)
+        yield pos / float(_SAMPLE_RATE), samples[pos:end]
+        pos = end
 
 
 def _decode_audio_to_pcm16k(audio_path: str) -> np.ndarray:
@@ -247,23 +334,35 @@ def transcribe(
 
     rec = _load_recognizer(md, iso_lang, num_threads=num_threads)
 
-    started = time.monotonic()
-    chunk_len_samples = int(_WHISPER_CHUNK_SEC * _SAMPLE_RATE)
-    total_chunks = max(1, (len(samples) + chunk_len_samples - 1) // chunk_len_samples)
+    # Prefer silero-VAD chunking (cuts at silence, no mid-word loss).
+    # Fall back to fixed 28 s windows when the VAD model isn't installed —
+    # downloadable from Model Manager but never required.
+    vad = _try_load_vad()
+    if vad is not None:
+        chunk_iter = list(_vad_segment_samples(vad, samples))
+        chunk_strategy = "vad"
+    else:
+        chunk_iter = list(_fixed_window_chunks(samples))
+        chunk_strategy = "fixed"
 
+    # Edge case: VAD found no speech (silent / pure-noise input). Fall
+    # back to fixed-window chunking on the raw waveform so the user gets
+    # *something* (Whisper may still hallucinate but at least we tried).
+    if chunk_strategy == "vad" and not chunk_iter:
+        chunk_iter = list(_fixed_window_chunks(samples))
+        chunk_strategy = "fixed"
+
+    total_chunks = max(1, len(chunk_iter))
+
+    started = time.monotonic()
     all_segments: list[dict] = []
     all_text_parts: list[str] = []
     detected_lang: str | None = None
 
     try:
-        for chunk_idx in range(total_chunks):
+        for chunk_idx, (offset_sec, chunk_samples) in enumerate(chunk_iter):
             if cancel_token is not None and cancel_token.cancelled:
                 raise AIError(Kind.CANCELLED, "sherpa", "Cancelled by user")
-
-            start_sample = chunk_idx * chunk_len_samples
-            end_sample = min(start_sample + chunk_len_samples, len(samples))
-            chunk_samples = samples[start_sample:end_sample]
-            offset_sec = start_sample / float(_SAMPLE_RATE)
 
             stream = rec.create_stream()
             stream.accept_waveform(_SAMPLE_RATE, chunk_samples)
@@ -276,17 +375,31 @@ def transcribe(
             if detected_lang is None:
                 detected_lang = getattr(r, "lang", None) or None
 
-            for seg in _segments_from_result(r):
-                seg["start"] += offset_sec
-                seg["end"] += offset_sec
-                all_segments.append(seg)
+            chunk_segs = _segments_from_result(r)
+            if chunk_segs:
+                for seg in chunk_segs:
+                    seg["start"] += offset_sec
+                    seg["end"] += offset_sec
+                    all_segments.append(seg)
+            elif chunk_text and chunk_strategy == "vad":
+                # VAD chunk produced text but no segment timestamps
+                # (short clip — Whisper sometimes returns empty
+                # segment_timestamps for sub-second utterances). Synthesize
+                # one segment spanning the VAD slice so the cue isn't lost.
+                dur = len(chunk_samples) / float(_SAMPLE_RATE)
+                all_segments.append({
+                    "id": -1,
+                    "start": offset_sec,
+                    "end": offset_sec + dur,
+                    "text": chunk_text,
+                })
 
-            # Emit per-chunk progress so long files don't look frozen.
             emit("state_processing",
                  segment_count=len(all_segments),
                  elapsed=int(time.monotonic() - started),
                  chunk=chunk_idx + 1,
-                 total_chunks=total_chunks)
+                 total_chunks=total_chunks,
+                 strategy=chunk_strategy)
     except AIError:
         raise
     except Exception as e:
