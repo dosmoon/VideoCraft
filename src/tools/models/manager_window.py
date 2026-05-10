@@ -109,7 +109,10 @@ class ModelManagerApp(ToolBase):
         # Subscribe AFTER initial paint so the worker can't race the build.
         self._unsubscribe = manager.on_event(self._on_jobs_event)
 
-        master.protocol("WM_DELETE_WINDOW", self._on_close)
+        # ToolFrame doesn't expose Toplevel.protocol — listen for the frame's
+        # own <Destroy> event so the manager subscription detaches when the
+        # Hub tab is closed.
+        master.bind("<Destroy>", self._on_destroy, add="+")
         # Periodic catalog re-scan in case files changed outside our control.
         self._schedule_periodic_rescan()
 
@@ -541,12 +544,14 @@ class ModelManagerApp(ToolBase):
         finally:
             self._schedule_periodic_rescan()
 
-    def _on_close(self):
+    def _on_destroy(self, event):
+        # <Destroy> bubbles up from every child widget too — only act when the
+        # frame itself is being destroyed (the tab is closing).
+        if event.widget is not self.master:
+            return
         try:
             if self._unsubscribe is not None:
                 self._unsubscribe()
-        finally:
-            try:
-                self.master.destroy()
-            except Exception:
-                pass
+                self._unsubscribe = None
+        except Exception:
+            pass
