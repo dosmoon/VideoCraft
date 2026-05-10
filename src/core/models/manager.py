@@ -90,17 +90,41 @@ class DownloadManager:
         if model_id not in CATALOG:
             raise KeyError(f"Unknown model_id: {model_id!r}")
         with self._lock:
+            recycled = None
             for j in self._jobs:
-                if j.model_id == model_id and j.state in (JOB_QUEUED, JOB_RUNNING):
+                if j.model_id != model_id:
+                    continue
+                if j.state in (JOB_QUEUED, JOB_RUNNING):
+                    # Already in flight — dedup.
                     return j.job_id
+                if j.state in (JOB_CANCELLED, JOB_FAILED, JOB_DONE):
+                    # Reuse the row so the UI doesn't sprout a duplicate.
+                    # `.part` on disk drives the actual byte-level resume;
+                    # the row recycle is purely cosmetic.
+                    recycled = j
+                    break
             spec = get(model_id)
-            job = DownloadJob(
-                job_id=f"job-{self._next_id}",
-                model_id=model_id,
-                spec=spec,
-            )
-            self._next_id += 1
-            self._jobs.append(job)
+            if recycled is not None:
+                recycled.state = JOB_QUEUED
+                recycled.bytes_done = 0
+                recycled.bytes_per_sec = 0.0
+                recycled.eta_sec = None
+                recycled.current_file = ""
+                recycled.current_url = ""
+                recycled.error = ""
+                recycled.started_at = 0.0
+                recycled.finished_at = 0.0
+                recycled.cancel_token = CancelToken()
+                recycled.resolved_files = []
+                job = recycled
+            else:
+                job = DownloadJob(
+                    job_id=f"job-{self._next_id}",
+                    model_id=model_id,
+                    spec=spec,
+                )
+                self._next_id += 1
+                self._jobs.append(job)
 
         # Resolve outside the lock — HF API call may block on network.
         try:
@@ -238,9 +262,22 @@ class DownloadManager:
                     self._notify()
                     continue
 
+                # Reflect any pre-existing .part bytes on the progress bar
+                # immediately, before the downloader's first emit. Otherwise
+                # a resumed multi-hundred-MB file looks like it restarts
+                # from 0 % for the brief moment until the first chunk lands.
+                import os as _os
+                part_existing = 0
+                if _os.path.exists(target + ".part"):
+                    try:
+                        part_existing = _os.path.getsize(target + ".part")
+                    except OSError:
+                        part_existing = 0
+
                 with self._lock:
                     job.current_file = rf.path
-                file_baseline = job.bytes_done
+                    job.bytes_done += part_existing
+                file_baseline = job.bytes_done - part_existing
 
                 last_err: DownloadError | None = None
                 file_complete = False
