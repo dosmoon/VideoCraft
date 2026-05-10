@@ -20,6 +20,7 @@ from core.ai.providers import claude_code as _claude_code
 from core.ai.providers import lemonfox as _lemonfox
 from core.ai.providers import fish_audio as _fish_audio
 from core.ai.providers import aistack as _aistack
+from core.ai.providers import sherpa as _sherpa
 from core.ai.errors import AIError, Kind
 from core.ai.stats import Stats
 
@@ -391,6 +392,24 @@ class AIRouter:
                 result = _aistack.transcribe(
                     audio_path,
                     base_url=cfg.get("base_url") or _aistack.DEFAULT_BASE_URL,
+                    model_name=resolved_model,
+                    language=language,
+                    translate=translate,
+                    on_event=on_event,
+                    cancel_token=cancel_token,
+                )
+            elif provider == "sherpa":
+                # In-process Whisper int8. Per-task model pick (e.g.
+                # "whisper-small") chooses the subdir under <models>/sherpa/.
+                # "auto" is meaningless here (no gateway-side routing); fall
+                # back to cfg default.
+                resolved_model = (
+                    task_model
+                    if task_model and task_model != "auto"
+                    else (cfg.get("model") or _sherpa.DEFAULT_MODEL_NAME)
+                )
+                result = _sherpa.transcribe(
+                    audio_path,
                     model_name=resolved_model,
                     language=language,
                     translate=translate,

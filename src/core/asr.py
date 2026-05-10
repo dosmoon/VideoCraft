@@ -5,29 +5,28 @@ AI dispatch (via core.ai.asr), SRT rendering, JSON persistence, and output
 path resolution (with automatic language-suffix correction when the
 detected language differs from what the user selected).
 
-── Timestamp contract: BOTH sentence-level AND word-level required ─────────
-Every ASR provider VideoCraft uses must return verbose_json containing
-TWO independent timestamp layers:
+── Timestamp contract ──────────────────────────────────────────────────────
+Every ASR provider returns verbose_json with these two timestamp layers:
 
-  segments[]  sentence-level semantic units (one complete sentence each).
-              Drives translate_srt.py — each SRT row becomes one LLM call
-              with full sentence context. Cue length is unbounded; do NOT
-              client-side split sentences here, or LLM translation quality
-              collapses (clauses lose tense / referent / topic).
+  segments[]  REQUIRED. Sentence-level semantic units (one complete
+              sentence each). Drives translate_srt.py — each SRT row
+              becomes one LLM call with full sentence context. Cue length
+              is unbounded; do NOT client-side split sentences here, or
+              LLM translation quality collapses (clauses lose tense /
+              referent / topic).
 
-  words[]     word-level (or character-level for CJK) timestamps. NOT
-              consumed by translation. Reserved for the burn-subtitles
-              module's future aspect-ratio-aware cue-sizer: portrait video
-              needs narrower cues than landscape, karaoke overlays need
-              per-word timing, multi-line wrap needs to align with word
-              boundaries. The current SRT writer below is deliberately a
-              one-segment-one-row passthrough — the sophisticated cue-
-              sizing belongs in burn_subs.py and runs AFTER translation,
-              on the translated sentence text.
+  words[]    OPTIONAL. Word-level (or character-level for CJK) timestamps.
+             Backend-dependent — some Whisper exports lack cross-attention
+             outputs and return [] here. Not consumed by translation;
+             reserved for the burn-subtitles module's future aspect-ratio-
+             aware cue-sizer (karaoke highlight, multi-line wrap aligned
+             with word boundaries). The current SRT writer below is a
+             one-segment-one-row passthrough — sophisticated cue-sizing
+             belongs in burn_subs.py and runs AFTER translation.
 
-So: ASR → sentence segments + word timestamps; translate at sentence
-granularity; cue-size at burn time using both layers + video aspect
-ratio. Three stages, each does its one job — never compose them.
+So: ASR → sentence segments (always) + word timestamps (when available);
+translate at sentence granularity; cue-size at burn time. Three stages,
+each does its one job — never compose them.
 """
 
 import json

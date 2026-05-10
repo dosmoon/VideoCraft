@@ -20,6 +20,11 @@ openai==2.30.0
 # pyarrow / pandas / datasets pins were removed at that time — they
 # now live in aistack's pyproject.toml as opt-in extras.
 
+# Embedded AI (in-process, no Docker) — see
+# docs/draft/tech-selection-embedded-ai.md. CPU build for the first
+# launch tier; GPU build (onnxruntime-gpu) tracked separately.
+sherpa-onnx==1.13.1
+
 # Media
 Pillow==12.0.0
 

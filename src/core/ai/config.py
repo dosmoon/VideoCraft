@@ -129,6 +129,14 @@ _DEFAULT_ASR_PROVIDERS = {
         "description":   "本地 AI 服务 (github.com/dosmoon/aistack);model 字段决定后端: whisper-{tiny,base,small,medium,large-v3,large-v3-turbo} / parakeet / sensevoice",
         "model":         "whisper-small",
     },
+    "sherpa": {
+        "name":          "sherpa-onnx (内嵌)",
+        "enabled":       True,
+        "key_file":      "",            # In-process — no API key
+        "auth_required": False,
+        "description":   "内嵌 sherpa-onnx Whisper int8 (CPU);模型: <models>/sherpa/whisper-small/;无需 Docker 或云服务",
+        "model":         "whisper-small",
+    },
 }
 
 # ── Default TTS providers ────────────────────────────────────────────────────
