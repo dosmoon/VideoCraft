@@ -60,8 +60,10 @@ def transcribe_audio(
         expected_lang_iso: ISO code the user selected, or None for "Auto
                            Detect". Used to decide whether to rewrite the
                            output suffix.
-        language:          Hint to pass to the provider (display name or
-                           None for auto-detect).
+        language:          ISO-639-1 code (e.g. "en", "zh") to pass to the
+                           provider, or None for auto-detect. UI layer is
+                           responsible for the display-name → ISO mapping
+                           (see WHISPER_DISPLAY_TO_ISO in lang_names.py).
         translate:         If True, output is translated to English.
         speaker_labels:    If True, SRT lines prefixed with [SPEAKER_xx].
         provider:          ASR provider override. None (default) resolves

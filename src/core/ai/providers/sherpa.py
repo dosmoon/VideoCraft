@@ -27,7 +27,6 @@ from typing import Callable
 import numpy as np
 
 from core.ai.errors import AIError, Kind
-from core.lang_names import WHISPER_LANGUAGES
 from core.paths import cache_subdir
 
 
@@ -43,28 +42,6 @@ _RECOGNIZER_CACHE: dict[tuple[str, str], object] = {}
 
 def _model_dir(name: str = DEFAULT_MODEL_NAME) -> str:
     return os.path.join(cache_subdir("sherpa"), name)
-
-
-def _normalize_language(lang: str | None) -> str:
-    """Coerce a language hint to an ISO-639-1 code that sherpa-onnx accepts.
-
-    Accepts either an ISO code ("en") or the WHISPER_LANGUAGES English
-    display name ("English"). Unknown / None defaults to "en".
-    """
-    if not lang:
-        return "en"
-    s = lang.strip().lower()
-    # Already an ISO code we know about
-    if s in WHISPER_LANGUAGES:
-        return s
-    # Display name lookup
-    for code, (eng, _chn) in WHISPER_LANGUAGES.items():
-        if eng.lower() == s:
-            return code
-    # Unknown — fall back to "en". Surfacing an error here would block
-    # users with non-ASCII display names that we just don't have a mapping
-    # for; defaulting is friendlier and Whisper auto-handles minor mismatch.
-    return "en"
 
 
 def _model_files(model_dir: str, size: str = "small") -> tuple[str, str, str]:
@@ -185,7 +162,7 @@ def transcribe(
                       `<models>/sherpa/<model_name>/`.
         model_name:   Subdir name under `<models>/sherpa/`. Default
                       "whisper-small" matches the first-launch tier.
-        language:     ISO-639-1 hint (e.g. "en", "zh"). None defaults to
+        language:     ISO-639-1 code (e.g. "en", "zh"). None defaults to
                       "en". Sherpa Whisper requires the language at
                       recognizer-load time; auto-detect is not supported
                       by this provider yet — use aistack for that.
@@ -233,7 +210,10 @@ def transcribe(
         )
 
     md = model_dir or _model_dir(model_name)
-    iso_lang = _normalize_language(language)
+    # Caller contract: `language` is an ISO-639-1 code (e.g. "en", "zh")
+    # or None. UI call sites (speech2text.py, project_workbench.py) both
+    # convert display names to ISO before reaching this layer.
+    iso_lang = language or "en"
 
     emit(
         "request_summary_local",
