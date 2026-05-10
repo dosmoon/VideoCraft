@@ -96,10 +96,16 @@ def status_for(model_id: str, *, force_refresh: bool = False) -> InstalledStatus
                 on_disk = os.path.getsize(target)
             except OSError:
                 on_disk = 0
+            # Scan-time check: size only, no sha256 hash. Hashing every
+            # GB-scale model file on every 5 s rescan froze the manager
+            # UI for ~10 s. The downloader still hashes on write (atomic
+            # rename gates on it) so anything that came through our own
+            # download path is already integrity-checked once.
             complete = verify_file(
                 target,
                 expected_sha256=rf.sha256,
                 expected_size=rf.size,
+                check_sha256=False,
             )
         elif os.path.exists(part):
             try:

@@ -280,22 +280,36 @@ def download_file(
 
 
 def verify_file(path: str, expected_sha256: str | None = None,
-                expected_size: int | None = None) -> bool:
-    """True if `path` exists and matches the expected size (loose) and
-    sha256 (when supplied). Used by registry to mark complete vs corrupt."""
-    return _file_matches(path, expected_size, expected_sha256)
+                expected_size: int | None = None,
+                *, check_sha256: bool = True) -> bool:
+    """True if `path` exists and matches the expected size (and sha256 when
+    supplied + enabled).
+
+    `check_sha256=False` skips the sha256 hash and relies on size match
+    only. Used by `registry.status_for()` for periodic scans, where
+    rehashing every model file every 5 s freezes the UI for ~10 s on a
+    multi-GB install. The downloader still hashes on write (atomic
+    .part → final rename gates on it), so a file that landed via our
+    download path is already integrity-checked once. Runtime corruption
+    is rare; UI can offer an explicit "Verify Integrity" button later
+    if needed.
+    """
+    return _file_matches(path, expected_size, expected_sha256,
+                         check_sha256=check_sha256)
 
 
 # ── Internals ────────────────────────────────────────────────────────────────
 
 def _file_matches(path: str, expected_size: int | None,
-                  expected_sha256: str | None) -> bool:
+                  expected_sha256: str | None,
+                  *, check_sha256: bool = True) -> bool:
     """Is `path` a complete, intact copy of the expected file?
 
-    sha256 is the strong check; size is a fast sanity rail. With both
-    known we trust sha256 — if it matches we're done regardless of size.
-    With only size known we require exact match (within 1%) since HF
-    sizes are exact.
+    sha256 is the strong check; size is a fast sanity rail. Default
+    behavior trusts sha256 when supplied (slow but authoritative). Pass
+    `check_sha256=False` for scan-time checks that need to stay snappy
+    — falls back to exact size match (HF gives exact byte counts so
+    this catches truncated downloads).
     """
     if not os.path.exists(path):
         return False
@@ -303,7 +317,7 @@ def _file_matches(path: str, expected_size: int | None,
         actual = os.path.getsize(path)
     except OSError:
         return False
-    if expected_sha256:
+    if expected_sha256 and check_sha256:
         try:
             return _sha256_file(path).lower() == expected_sha256.lower()
         except OSError:
