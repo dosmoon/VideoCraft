@@ -660,7 +660,15 @@ class AIConsoleApp(ToolBase):
 
         r = 0
         if is_local:
-            tk.Label(dlg, text=tr("tool.router.local_provider_hint"),
+            # Hint text varies per local provider type: aistack runs as a
+            # local HTTP gateway, llama_cpp runs in-process from local GGUF
+            # files. The legacy single-Ollama hint was misleading once we
+            # had two flavors.
+            if cfg.get("type") == "llama_cpp":
+                hint_key = "tool.router.local_provider_hint_llama_cpp"
+            else:
+                hint_key = "tool.router.local_provider_hint"
+            tk.Label(dlg, text=tr(hint_key),
                      fg="#666", anchor="w", justify="left",
                      wraplength=680).grid(
                 row=r, column=0, columnspan=4, padx=12, pady=(12, 6), sticky="w")
@@ -738,7 +746,17 @@ class AIConsoleApp(ToolBase):
                   width=18).pack(pady=2, fill="x")
         tk.Button(btn_col, text=tr("tool.router.btn_remove_model"),
                   command=_remove_selected, width=18).pack(pady=2, fill="x")
-        if is_local:
+        if is_local and cfg.get("type") == "llama_cpp":
+            # In-process provider — there's no HTTP service to health-check.
+            # The useful action here is "open the dir where I should drop
+            # GGUFs" since that's the entire setup flow.
+            def _open_models_dir():
+                from core.models.registry import reveal_in_explorer
+                from core.paths import cache_subdir
+                reveal_in_explorer(cache_subdir("llama"))
+            tk.Button(btn_col, text=tr("tool.router.btn_open_llama_dir"),
+                      command=_open_models_dir, width=18).pack(pady=2, fill="x")
+        elif is_local:
             def _health_check():
                 base = (url_var.get().strip() if url_var is not None
                         else cfg.get("base_url", ""))
@@ -955,6 +973,12 @@ class AIConsoleApp(ToolBase):
                 if ptype == "gemini":
                     from core.ai.providers import gemini as _g
                     models = _g.list_models(new_key)
+                elif ptype == "llama_cpp":
+                    # Embedded LLM — "models" are *.gguf files in
+                    # <models>/llama/. No network call; the model manager
+                    # window is responsible for downloads.
+                    from core.ai.providers import llama_cpp as _lc
+                    models = _lc.list_models()
                 elif ptype == "openai_compatible":
                     if not new_url:
                         raise RuntimeError(tr("tool.router.error_no_base_url"))
