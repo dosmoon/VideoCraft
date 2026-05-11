@@ -37,23 +37,53 @@ from core.ai.config import keys_dir as _keys_dir
 from core import paths as _paths
 
 
-# Sentinel shown in the LLM provider dropdown when no explicit pick is set.
-# Stored value remains an empty string; the router uses the candidate-pool
-# auto-fallback (try providers in priority order until one succeeds).
-def _auto_label() -> str:
-    return tr("tool.router.routing_auto_label")
+# ── Routing tier model ───────────────────────────────────────────────────────
+# Each task box in the Routing tab presents 3-4 fixed tier rows (radio
+# buttons), one of which is the active routing for that task. The set of
+# tiers and per-(category, tier) defaults are declared here so adding a
+# new tier (say a future OpenRouter gateway) means editing this block,
+# not the rendering code.
+_ROUTING_TIERS_LLM     = ("embedded", "cloud", "aistack", "auto")
+_ROUTING_TIERS_NON_LLM = ("embedded", "cloud", "aistack")
+
+_TIER_META: dict[str, tuple[str, str]] = {
+    # tier_id -> (emoji, i18n label key)
+    "embedded": ("🏠", "tool.router.tier_embedded"),
+    "cloud":    ("☁️", "tool.router.tier_cloud"),
+    "aistack":  ("🚀", "tool.router.tier_aistack"),
+    "auto":     ("⚡", "tool.router.tier_auto"),
+}
+
+# The provider that owns each (tier, category) cell. None entries mean
+# "the user picks among multiple providers" (cloud LLM is the only such
+# case today — Gemini / DeepSeek / Custom / ClaudeCode all coexist).
+_PROVIDER_FOR_TIER: dict[tuple[str, str], str | None] = {
+    ("embedded", "llm"): "LlamaCpp",
+    ("embedded", "asr"): "faster_whisper",
+    ("embedded", "tts"): "edge_tts",
+    ("cloud",    "llm"): None,             # multi-vendor pick
+    ("cloud",    "asr"): "lemonfox",
+    ("cloud",    "tts"): "fish_audio",
+    ("aistack",  "llm"): "aistack",
+    ("aistack",  "asr"): "aistack",
+    ("aistack",  "tts"): "aistack",
+}
+
+# Names of providers that belong to the "embedded" routing tier (covers
+# in-process providers + Microsoft Edge TTS — user requested they share
+# one tier). Anything not in here / aistack / Auto = cloud.
+_EMBEDDED_PROVIDER_NAMES = frozenset({"LlamaCpp", "faster_whisper", "edge_tts"})
 
 
-def _display_provider(stored: str, category: str) -> str:
-    """Map stored provider value → label shown in the Combobox."""
-    if category == "llm" and not stored:
-        return _auto_label()
-    return stored
-
-
-def _stored_provider(displayed: str) -> str:
-    """Map Combobox label → stored value (Auto sentinel becomes empty)."""
-    return "" if displayed == _auto_label() else displayed
+def _routing_tier_of(stored_provider: str) -> str:
+    """Reverse-map a stored routing provider string to its tier id."""
+    if not stored_provider:
+        return "auto"
+    if stored_provider == "aistack":
+        return "aistack"
+    if stored_provider in _EMBEDDED_PROVIDER_NAMES:
+        return "embedded"
+    return "cloud"
 
 
 # Sentinel shown in ASR/TTS model dropdowns when no specific model is picked.
@@ -120,30 +150,29 @@ class AIConsoleApp(ToolBase):
         if nb.index(nb.select()) == self._stats_tab_index:
             self._refresh_stats()
 
-    # ── Routing tab: just the per-task provider/model matrix ──────────────
+    # ── Routing tab: task-first per-task tier picker ──────────────────────
 
     def _build_routing_tab(self):
         tab = self.tab_routing
+        body = self._scrollable_body(tab)
 
-        tk.Label(tab,
+        tk.Label(body,
                  text=tr("tool.router.routing_prompt"),
                  font=("", 9), fg="#555", wraplength=1000, justify="left",
                  ).pack(anchor="w", pady=(0, 8))
 
-        # Track widgets that need rebuilding/refresh after edits in any
-        # of the provider tabs.
+        # Reset widget refs that survive across rebuild — used by Edit
+        # buttons in other tabs (which still need this list to find the
+        # per-provider Test button to re-enable).
         self._test_buttons: dict[str, tk.Button] = {}
-        self._task_provider_vars: dict[str, tk.StringVar] = {}
-        self._task_provider_combos: dict[str, ttk.Combobox] = {}
-        self._task_model_vars: dict[str, tk.StringVar] = {}
-        self._task_model_combos: dict[str, ttk.Combobox] = {}
 
-        routing_frame = tk.LabelFrame(
-            tab, text=tr("tool.router.section_routing_title"),
-            padx=10, pady=8, font=("", 10, "bold"),
-        )
-        routing_frame.pack(fill="x", anchor="w")
-        self._build_routing_section(routing_frame)
+        # Per-(task_id, tier) widget state. Keyed: [task_id][tier_id] = dict
+        # of var/combo refs. Used by event handlers to read/write current
+        # routing without re-walking the widget tree.
+        self._task_radio_vars: dict[str, tk.StringVar] = {}
+        self._task_tier_state: dict[str, dict[str, dict]] = {}
+
+        self._build_routing_section(body)
 
     # ── Embedded tab: 🏠 in-process + 🌐 free online ───────────────────────
 
@@ -339,8 +368,7 @@ class AIConsoleApp(ToolBase):
                     ),
                     fg="#2a7a3a",
                 )
-                self._refresh_routing_provider_choices()
-                self._refresh_aistack_model_dropdowns()
+                self._rebuild_routing_tab()
             self.master.after(0, _ok)
 
         threading.Thread(target=_do_fetch, daemon=True).start()
@@ -348,18 +376,17 @@ class AIConsoleApp(ToolBase):
     def _on_gateway_enable_toggle(self):
         url = self._gateway_url_var.get().strip()
         router.set_aistack_gateway(url, self._gateway_enabled_var.get())
-        # Toggling enable changes whether aistack appears in the routing
-        # table's provider dropdowns; without this refresh the change only
-        # takes effect on the next Console open.
-        self._refresh_routing_provider_choices()
-        self._refresh_aistack_model_dropdowns()
+        # Toggling enable flips the aistack rows in the routing tab between
+        # active model dropdowns and "(disabled)" hints — rebuild that tab
+        # only so the URL Entry on this aistack tab keeps its focus.
+        self._rebuild_routing_tab()
 
     def _on_gateway_url_changed(self):
         """Drop the model cache when the typed URL diverges from the one
-        the gateway was last tested against. Routing dropdowns lose their
-        aistack model lists until the user clicks Test & Refresh again —
-        better an empty dropdown than one full of models that don't exist
-        on the new URL.
+        the gateway was last tested against. Aistack rows in the routing
+        tab lose their model dropdowns until the user clicks Test & Refresh
+        again — better an empty dropdown than one full of models that don't
+        exist on the new URL.
         """
         typed = self._gateway_url_var.get().strip().rstrip("/")
         if typed.endswith("/v1"):
@@ -373,51 +400,9 @@ class AIConsoleApp(ToolBase):
         if not any(cache.get(k) for k in ("llm", "asr", "tts")):
             return
         router.set_aistack_models_cache({"llm": [], "asr": [], "tts": []})
-        self._refresh_aistack_model_dropdowns()
+        self._rebuild_routing_tab()
         if hasattr(self, "_gateway_status"):
             self._gateway_status.configure(text="", fg="#666")
-
-    def _refresh_routing_provider_choices(self) -> None:
-        """Re-populate the routing table's provider dropdowns after an
-        aistack gateway state change (enable toggled / connectivity verified).
-        If a row's current pick disappears from the new choice list (e.g.
-        aistack just got disabled while a row was routed to it), reset that
-        row to the category default and persist the cleared routing.
-        """
-        for tid, prov_var in self._task_provider_vars.items():
-            cb = self._task_provider_combos.get(tid)
-            if cb is None:
-                continue
-            cat = _ai_cfg.task_category(tid)
-            choices = self._provider_choices_for(cat)
-            cb.configure(values=choices)
-            if prov_var.get() in choices:
-                continue
-            # Current pick is no longer offered — fall back to Auto for LLM
-            # rows or the first available provider for ASR/TTS.
-            if cat == "llm":
-                fallback_display = _auto_label()
-            else:
-                fallback_display = choices[0] if choices else ""
-            prov_var.set(fallback_display)
-            self._task_model_vars[tid].set("")
-            self._sync_model_dropdown(
-                tid, cat, _stored_provider(fallback_display))
-            router.set_task_routing(
-                tid, _stored_provider(fallback_display), "")
-
-    def _refresh_aistack_model_dropdowns(self) -> None:
-        """Re-populate the routing table's model dropdowns for any task
-        currently routed to aistack, after a gateway model-list refresh.
-        """
-        for tid, prov_var in self._task_provider_vars.items():
-            if _stored_provider(prov_var.get()) != "aistack":
-                continue
-            cb = self._task_model_combos.get(tid)
-            if cb is None:
-                continue
-            cat = _ai_cfg.task_category(tid)
-            cb.configure(values=self._aistack_model_choices(cat))
 
     def _aistack_model_choices(self, category: str) -> list[str]:
         """Cached aistack models filtered by capability, with 'auto' first
@@ -440,146 +425,256 @@ class AIConsoleApp(ToolBase):
     }
 
     def _build_routing_section(self, parent):
+        """Task-first routing — one LabelFrame per task, each containing
+        radio rows for the available tiers (Embedded / Cloud / aistack /
+        Auto-for-LLM). The radio that's checked = current routing for
+        that task; the row's provider+model widgets show what that tier
+        would dispatch to.
+        """
         current_routing = router.get_task_routing()
+        for tid, cat, label in _ai_cfg.TASKS:
+            cell = current_routing.get(tid, {}) or {}
+            self._build_task_box(parent, tid, cat, label, cell)
 
-        # Header row
-        tk.Label(parent, text=tr("tool.router.col_task"),
-                 font=("", 9, "bold"), anchor="w", width=28,
-                 ).grid(row=0, column=0, columnspan=2, sticky="w",
-                        padx=4, pady=(0, 4))
-        tk.Label(parent, text=tr("tool.router.col_provider"),
-                 font=("", 9, "bold"), anchor="w", width=18,
-                 ).grid(row=0, column=2, sticky="w", padx=4, pady=(0, 4))
-        tk.Label(parent, text=tr("tool.router.col_model"),
-                 font=("", 9, "bold"), anchor="w", width=28,
-                 ).grid(row=0, column=3, sticky="w", padx=4, pady=(0, 4))
+    def _build_task_box(self, parent, task_id: str, category: str,
+                        label: str, current_cell: dict) -> None:
+        pill = self._PILL_STYLE.get(category, {})
+        title = f"  {pill.get('text', '?')}  ·  {label}  "
 
-        for i, (tid, cat, label) in enumerate(_ai_cfg.TASKS, start=1):
-            # Capability pill (column 0) + task label (column 1)
-            pill = self._PILL_STYLE.get(cat, {})
-            tk.Label(
-                parent, text=" " + pill.get("text", "?") + " ",
-                bg=pill.get("bg", "#eee"), fg=pill.get("fg", "#333"),
-                font=("", 8, "bold"), padx=4, pady=1,
-            ).grid(row=i, column=0, sticky="w", padx=(4, 6), pady=4)
-            tk.Label(parent, text=label, anchor="w").grid(
-                row=i, column=1, sticky="w", padx=0, pady=4)
+        box = tk.LabelFrame(parent, text=title, padx=10, pady=6,
+                            font=("", 10, "bold"))
+        box.pack(fill="x", pady=(0, 8), anchor="w")
 
-            cell = current_routing.get(tid, {})
-            stored_prov = cell.get("provider", "")
-            prov_var = tk.StringVar(value=_display_provider(stored_prov, cat))
-            model_var = tk.StringVar(value=cell.get("model", ""))
-            self._task_provider_vars[tid] = prov_var
-            self._task_model_vars[tid] = model_var
+        active_tier = _routing_tier_of(current_cell.get("provider", ""))
+        # Drop tasks pinned to a tier that's gone (e.g. aistack disabled
+        # but routing still points there) back to whatever tier the
+        # stored provider says — handler will re-persist on next radio
+        # interaction. Don't auto-fix here to avoid surprise writes.
+        radio_var = tk.StringVar(value=active_tier)
+        self._task_radio_vars[task_id] = radio_var
+        self._task_tier_state[task_id] = {}
 
-            prov_choices = self._provider_choices_for(cat)
-            prov_cb = ttk.Combobox(
-                parent, textvariable=prov_var, values=prov_choices,
-                state="readonly", width=22,
-            )
-            prov_cb.grid(row=i, column=2, sticky="w", padx=4, pady=4)
-            self._task_provider_combos[tid] = prov_cb
-            prov_cb.bind("<<ComboboxSelected>>",
-                         lambda _e, t=tid: self._on_routing_provider_changed(t))
+        tiers = _ROUTING_TIERS_LLM if category == "llm" else _ROUTING_TIERS_NON_LLM
+        for r, tier in enumerate(tiers):
+            self._build_tier_row(box, r, task_id, category, tier,
+                                 radio_var, active_tier, current_cell)
 
-            # Model dropdown — shape depends on row category and current
-            # provider pick. LLM rows always have an editable combobox;
-            # ASR/TTS rows have one only when the picked provider is aistack
-            # (other ASR/TTS providers carry an implicit single model).
-            model_cb = ttk.Combobox(
-                parent, textvariable=model_var, state="normal", width=30,
-            )
-            model_cb.grid(row=i, column=3, sticky="w", padx=4, pady=4)
-            self._task_model_combos[tid] = model_cb
-            model_cb.bind("<<ComboboxSelected>>",
-                          lambda _e, t=tid: self._on_routing_model_changed(t))
-            model_cb.bind("<FocusOut>",
-                          lambda _e, t=tid: self._on_routing_model_changed(t))
-            model_cb.bind("<Return>",
-                          lambda _e, t=tid: self._on_routing_model_changed(t))
-            self._sync_model_dropdown(tid, cat, _stored_provider(prov_var.get()))
-
-    def _provider_choices_for(self, category: str) -> list[str]:
-        """Return a list of provider names available for this category.
-
-        LLM rows prepend an "Auto" sentinel whose stored value is "" — at
-        dispatch time the router exercises its candidate-pool fallback
-        (try providers in priority order). aistack is filtered out of the
-        ASR/TTS lists when the gateway is disabled, so users do not pick
-        a route that will silently 503.
+    def _build_tier_row(self, parent, r: int, task_id: str, category: str,
+                        tier: str, radio_var: tk.StringVar,
+                        active_tier: str, current_cell: dict) -> None:
+        """Render one (radio, tier label, provider widget, model widget)
+        row inside a task box.
         """
-        gw_enabled = router.get_aistack_gateway()["enabled"]
-        if category == "llm":
-            names = [n for n in router._providers.keys()
-                     if n != "aistack" or gw_enabled]
-            return [_auto_label(), *names]
-        elif category == "asr":
-            return [n for n in router._asr_providers.keys()
-                    if n != "aistack" or gw_enabled]
-        elif category == "tts":
-            return [n for n in router._tts_providers.keys()
-                    if n != "aistack" or gw_enabled]
+        is_active = (active_tier == tier)
+        emoji, label_key = _TIER_META[tier]
+
+        ttk.Radiobutton(
+            parent, variable=radio_var, value=tier,
+            command=lambda: self._on_tier_radio_picked(task_id, category, tier),
+        ).grid(row=r, column=0, padx=(0, 4), pady=2, sticky="w")
+
+        tk.Label(parent, text=f"{emoji} {tr(label_key)}", anchor="w",
+                 width=12, font=("", 9),
+                 ).grid(row=r, column=1, padx=(0, 8), pady=2, sticky="w")
+
+        # ── Auto row: no provider/model widgets, just a hint ──
+        if tier == "auto":
+            tk.Label(parent, text=tr("tool.router.tier_auto_hint"),
+                     fg="#777", anchor="w", font=("", 9, "italic"),
+                     ).grid(row=r, column=2, columnspan=2, padx=4, pady=2,
+                            sticky="w")
+            self._task_tier_state[task_id][tier] = {"provider": "", "model": ""}
+            return
+
+        # ── aistack: implicit provider, model dropdown from gateway cache ──
+        if tier == "aistack":
+            self._render_aistack_row(parent, r, task_id, category, tier,
+                                     is_active, current_cell)
+            return
+
+        # ── embedded LLM: provider label + model dropdown from cfg.models ──
+        if tier == "embedded" and category == "llm":
+            self._render_embedded_llm_row(parent, r, task_id, tier,
+                                          is_active, current_cell)
+            return
+
+        # ── cloud LLM: provider dropdown + model dropdown ──
+        if tier == "cloud" and category == "llm":
+            self._render_cloud_llm_row(parent, r, task_id, tier,
+                                       is_active, current_cell)
+            return
+
+        # ── embedded/cloud ASR & TTS: provider label + static model label ──
+        self._render_simple_asr_tts_row(parent, r, task_id, category, tier)
+
+    # ── Per-tier-shape renderers ───────────────────────────────────────────
+
+    def _render_embedded_llm_row(self, parent, r, task_id, tier,
+                                 is_active, current_cell):
+        provider = "LlamaCpp"
+        models = list(router._providers.get(provider, {}).get("models", []))
+        init_model = current_cell.get("model", "") if is_active else ""
+        if not init_model or init_model not in models:
+            init_model = models[0] if models else ""
+
+        tk.Label(parent, text=provider, anchor="w", width=18, fg="#222",
+                 ).grid(row=r, column=2, padx=4, pady=2, sticky="w")
+
+        if models:
+            model_var = tk.StringVar(value=init_model)
+            cb = ttk.Combobox(parent, textvariable=model_var, values=models,
+                              state="readonly", width=28)
+            cb.grid(row=r, column=3, padx=4, pady=2, sticky="w")
+            cb.bind("<<ComboboxSelected>>",
+                    lambda _e: self._on_tier_model_picked(task_id, tier))
+            self._task_tier_state[task_id][tier] = {
+                "provider": provider, "model_var": model_var,
+            }
         else:
-            return []
+            tk.Label(parent, text=tr("tool.router.tier_no_model_installed"),
+                     fg="#a32", anchor="w",
+                     ).grid(row=r, column=3, padx=4, pady=2, sticky="w")
+            self._task_tier_state[task_id][tier] = {
+                "provider": provider, "model": "",
+            }
 
-    def _models_for(self, provider: str) -> list[str]:
-        """Return the configured models list for an LLM provider (other
-        than aistack — that one is fed by the gateway model cache)."""
-        cfg = router._providers.get(provider, {})
-        return list(cfg.get("models", []))
+    def _render_cloud_llm_row(self, parent, r, task_id, tier,
+                              is_active, current_cell):
+        providers = [n for n in router._providers.keys()
+                     if n != "aistack" and n != "LlamaCpp"]
+        # Pick a sensible default cloud provider: current routing if it's
+        # already cloud, else first provider with key, else first listed.
+        if is_active and current_cell.get("provider") in providers:
+            init_prov = current_cell["provider"]
+        else:
+            init_prov = next(
+                (p for p in providers
+                 if _ai_cfg.has_auth(router._providers.get(p, {}))),
+                providers[0] if providers else "",
+            )
 
-    def _sync_model_dropdown(self, task_id: str, category: str,
-                             stored_prov: str) -> None:
-        """Configure the model combobox to match (category, provider).
+        prov_var = tk.StringVar(value=init_prov)
+        prov_cb = ttk.Combobox(parent, textvariable=prov_var, values=providers,
+                               state="readonly", width=16)
+        prov_cb.grid(row=r, column=2, padx=4, pady=2, sticky="w")
+        prov_cb.bind("<<ComboboxSelected>>",
+                     lambda _e: self._on_cloud_llm_provider_picked(task_id, tier))
 
-        Behavior matrix:
-          (LLM, "")            empty list — Auto sentinel selected, no model
-          (LLM, aistack)       aistack-cached LLM models
-          (LLM, other)         provider's configured models list
-          (ASR/TTS, aistack)   ['auto', ...aistack-cached models for cat]
-          (ASR/TTS, other)     empty list (provider's single configured
-                               model used at dispatch — not user-pickable)
-        """
-        cb = self._task_model_combos.get(task_id)
-        if cb is None:
-            return
-        if category == "llm":
-            if not stored_prov:
-                cb.configure(values=[], state="disabled")
-                return
-            cb.configure(state="normal")
-            if stored_prov == "aistack":
-                cb.configure(values=self._aistack_model_choices("llm"))
-            else:
-                cb.configure(values=self._models_for(stored_prov))
-        else:  # asr / tts
-            if stored_prov == "aistack":
-                cb.configure(values=self._aistack_model_choices(category),
-                             state="readonly")
-            else:
-                cb.configure(values=[], state="disabled")
+        models = list(router._providers.get(init_prov, {}).get("models", []))
+        init_model = current_cell.get("model", "") if is_active else ""
+        if not init_model or init_model not in models:
+            init_model = models[0] if models else ""
+        model_var = tk.StringVar(value=init_model)
+        model_cb = ttk.Combobox(parent, textvariable=model_var, values=models,
+                                state="readonly", width=26)
+        model_cb.grid(row=r, column=3, padx=4, pady=2, sticky="w")
+        model_cb.bind("<<ComboboxSelected>>",
+                      lambda _e: self._on_tier_model_picked(task_id, tier))
 
-    def _on_routing_provider_changed(self, task_id: str):
-        prov = _stored_provider(self._task_provider_vars[task_id].get())
-        cat = _ai_cfg.task_category(task_id)
+        self._task_tier_state[task_id][tier] = {
+            "provider_var": prov_var, "provider_cb": prov_cb,
+            "model_var": model_var, "model_cb": model_cb,
+        }
 
-        if cat == "llm" and not prov:
-            # Auto sentinel — clear model and persist as empty pick.
-            self._task_model_vars[task_id].set("")
-            self._sync_model_dropdown(task_id, cat, "")
-            router.set_task_routing(task_id, "", "")
-            return
+    def _render_aistack_row(self, parent, r, task_id, category, tier,
+                            is_active, current_cell):
+        gw_enabled = router.get_aistack_gateway()["enabled"]
+        provider = "aistack"
 
-        # Reset model when provider changes; the previous pick may be
-        # nonsensical under the new provider's catalog.
-        self._task_model_vars[task_id].set("")
-        self._sync_model_dropdown(task_id, cat, prov)
-        router.set_task_routing(task_id, prov, "")
+        prov_color = "#222" if gw_enabled else "#a32"
+        prov_text = provider if gw_enabled else (
+            f"{provider}  ·  {tr('tool.router.tier_aistack_disabled')}")
+        tk.Label(parent, text=prov_text, anchor="w", width=22, fg=prov_color,
+                 ).grid(row=r, column=2, padx=4, pady=2, sticky="w")
 
-    def _on_routing_model_changed(self, task_id: str):
-        prov = _stored_provider(self._task_provider_vars[task_id].get())
-        model = self._task_model_vars[task_id].get().strip()
-        router.set_task_routing(task_id, prov, model)
+        choices = self._aistack_model_choices(category) if gw_enabled else []
+        init_model = current_cell.get("model", "") if is_active else ""
+        if not init_model or init_model not in choices:
+            init_model = choices[0] if choices else ""
+
+        if choices:
+            model_var = tk.StringVar(value=init_model)
+            cb = ttk.Combobox(parent, textvariable=model_var, values=choices,
+                              state="readonly", width=28)
+            cb.grid(row=r, column=3, padx=4, pady=2, sticky="w")
+            cb.bind("<<ComboboxSelected>>",
+                    lambda _e: self._on_tier_model_picked(task_id, tier))
+            self._task_tier_state[task_id][tier] = {
+                "provider": provider, "model_var": model_var,
+            }
+        else:
+            hint_key = ("tool.router.tier_aistack_no_model" if gw_enabled
+                        else "tool.router.tier_aistack_disabled_hint")
+            tk.Label(parent, text=tr(hint_key), fg="#888",
+                     font=("", 9, "italic"), anchor="w",
+                     ).grid(row=r, column=3, padx=4, pady=2, sticky="w")
+            # No choices: persist with empty model. The dispatch will 503
+            # at runtime (better than silently using a meaningless "auto"
+            # for LLM, which the gateway can't auto-pick).
+            self._task_tier_state[task_id][tier] = {
+                "provider": provider, "model": "",
+            }
+
+    def _render_simple_asr_tts_row(self, parent, r, task_id, category, tier):
+        """embedded/cloud ASR/TTS: implicit provider + cfg-driven model
+        (shown as static text — edit it via the [Edit] button in the
+        Embedded / Cloud tab)."""
+        provider = _PROVIDER_FOR_TIER[(tier, category)]
+        cfg_src = (router._asr_providers if category == "asr"
+                   else router._tts_providers)
+        cfg = cfg_src.get(provider, {}) or {}
+        # Use the most "model-like" field available per provider.
+        model_text = (cfg.get("model")
+                      or cfg.get("voice")
+                      or "—")
+        prov_color = "#222"
+
+        tk.Label(parent, text=provider, anchor="w", width=18, fg=prov_color,
+                 ).grid(row=r, column=2, padx=4, pady=2, sticky="w")
+        tk.Label(parent, text=model_text, anchor="w", fg="#222",
+                 ).grid(row=r, column=3, padx=4, pady=2, sticky="w")
+        self._task_tier_state[task_id][tier] = {
+            "provider": provider, "model": cfg.get("model", ""),
+        }
+
+    # ── Event handlers ────────────────────────────────────────────────────
+
+    def _on_tier_radio_picked(self, task_id: str, category: str, tier: str):
+        """Persist the row's effective (provider, model) as task routing."""
+        provider, model = self._effective_pick(task_id, tier)
+        router.set_task_routing(task_id, provider, model)
+
+    def _on_cloud_llm_provider_picked(self, task_id: str, tier: str):
+        """User changed the cloud-LLM vendor in this row. Refresh the
+        model dropdown to the new vendor's models, activate this tier."""
+        state = self._task_tier_state[task_id][tier]
+        new_prov = state["provider_var"].get()
+        models = list(router._providers.get(new_prov, {}).get("models", []))
+        state["model_cb"].configure(values=models)
+        state["model_var"].set(models[0] if models else "")
+        self._task_radio_vars[task_id].set(tier)
+        router.set_task_routing(task_id, new_prov, state["model_var"].get())
+
+    def _on_tier_model_picked(self, task_id: str, tier: str):
+        """User changed the model in this row. Activate the row's tier
+        and persist the new (provider, model)."""
+        self._task_radio_vars[task_id].set(tier)
+        provider, model = self._effective_pick(task_id, tier)
+        router.set_task_routing(task_id, provider, model)
+
+    def _effective_pick(self, task_id: str, tier: str) -> tuple[str, str]:
+        """Compute (provider, model) currently shown by a tier row."""
+        state = self._task_tier_state.get(task_id, {}).get(tier, {})
+        if tier == "auto":
+            return ("", "")
+        # Cloud LLM rows carry both provider_var and model_var
+        if "provider_var" in state:
+            return (state["provider_var"].get(),
+                    state.get("model_var").get() if "model_var" in state else "")
+        provider = state.get("provider", "")
+        if "model_var" in state:
+            return (provider, state["model_var"].get())
+        return (provider, state.get("model", ""))
 
     # ── Bottom section: cloud providers, grouped by capability ─────────────
 
@@ -757,10 +852,19 @@ class AIConsoleApp(ToolBase):
         self._test_buttons[name] = test_btn
         return row + 1
 
+    def _rebuild_routing_tab(self):
+        """Rebuild only the Routing tab. Used by aistack-pane handlers so
+        their URL Entry / Test button / status label keep their state and
+        focus while the routing rows pick up the new aistack model cache.
+        """
+        for w in self.tab_routing.winfo_children():
+            w.destroy()
+        self._build_routing_tab()
+
     def _rebuild_provider_tabs(self):
         """Rebuild Routing + Embedded + Cloud + aistack tabs in place. Used
-        after edit dialogs save / enable toggles / aistack URL changes,
-        any of which can change the routing matrix's available choices.
+        after edit dialogs save (provider's models / key / enable state may
+        all have changed and ripple into the routing matrix's options).
         """
         for tab, builder in (
             (self.tab_routing,  self._build_routing_tab),

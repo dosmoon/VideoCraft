@@ -214,8 +214,8 @@ _DEFAULT_TTS_PROVIDERS = {
 TASKS: list[tuple[str, str, str]] = [
     ("translate",         "llm", "翻译 / Translate"),
     ("subtitle.post",     "llm", "字幕后处理 / Subtitle post-process"),
-    ("asr.transcribe",    "asr", "语音转字幕 / ASR"),
-    ("tts.synthesize",    "tts", "文本转语音 / TTS"),
+    ("asr.transcribe",    "asr", "语音转写 / Speech-to-text"),
+    ("tts.synthesize",    "tts", "语音合成 / Text-to-speech"),
 ]
 
 
