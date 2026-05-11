@@ -4,11 +4,32 @@ project.py - VideoCraft Project 模型
 Project = 文件夹。打开任意文件夹即为打开工程，元数据写入隐藏子目录
 `.videocraft/project.json`（仿 VSCode 的 `.vscode/`，避免与素材文件混在一起）。
 旧版本的 `<folder>/videocraft.json` 在 open() 时自动迁入新位置并删除。
+
+2026-05-11 新模型(see docs/draft/project-restructure.md):
+  一个项目 = 一个源视频。新建项目走 Project.new(),目录结构:
+    <project>/
+      .videocraft/project.json   ← serialized ProjectMeta (see core/project_schema.py)
+      .videocraft/background.json
+      source/video.mp4
+      source/meta.json
+      subtitles/*.srt
+      derivatives/<type>/<instance>/...
+  老的 manifest_* 方法保留到 P6 清理,跟新方法共存。
 """
 
 import json
 import os
 from datetime import date
+
+from core.project_schema import ProjectMeta, Source, ClipRange, now_iso
+
+# Filename used for the source video inside source/.
+# Fixed name (not "<title>.mp4") so all downstream code can reference
+# a predictable path. Extension stays .mp4 even for non-mp4 originals;
+# yt-dlp / ffmpeg writes mp4-compatible by default.
+SOURCE_VIDEO_FILENAME = "video.mp4"
+SOURCE_META_FILENAME = "meta.json"
+BACKGROUND_FILENAME = "background.json"
 
 # ── 版本迁移 ──────────────────────────────────────────────────────────────────
 
@@ -78,6 +99,11 @@ class Project:
     # Pre-2026-04 layout: <folder>/videocraft.json. open() migrates if found.
     LEGACY_MARKER = "videocraft.json"
 
+    # New-model top-level directories (2026-05-11).
+    SOURCE_DIR_NAME = "source"
+    SUBTITLES_DIR_NAME = "subtitles"
+    DERIVATIVES_DIR_NAME = "derivatives"
+
     def __init__(self, folder: str, data: dict):
         self.folder = os.path.abspath(folder)
         self.data   = data
@@ -129,6 +155,132 @@ class Project:
         return {
             "version": CURRENT_VERSION,
             "created": date.today().isoformat(),
+        }
+
+    # -- New-model factory (2026-05-11) ----------------------------------------
+
+    @staticmethod
+    def new(parent_dir: str, name: str, source: Source) -> "Project":
+        """Create a fresh new-model project under parent_dir/name.
+
+        Builds the canonical directory skeleton and writes a ProjectMeta
+        to .videocraft/project.json. Caller is responsible for actually
+        acquiring source/video.mp4 afterwards (yt-dlp download / local
+        copy) — this factory only creates the empty structure.
+
+        Raises FileExistsError if parent_dir/name already exists.
+        Raises ValueError if name is empty or contains illegal chars.
+        Raises OSError if parent_dir is not writable.
+        """
+        if not name or any(c in name for c in r'\/:*?"<>|') or name != name.strip():
+            raise ValueError(f"Invalid project name: {name!r}")
+
+        folder = os.path.join(os.path.abspath(parent_dir), name)
+        if os.path.exists(folder):
+            raise FileExistsError(f"Project folder already exists: {folder}")
+
+        # Create skeleton dirs
+        os.makedirs(os.path.join(folder, Project.MARKER_DIR), exist_ok=True)
+        os.makedirs(os.path.join(folder, Project.SOURCE_DIR_NAME), exist_ok=True)
+        os.makedirs(os.path.join(folder, Project.SUBTITLES_DIR_NAME), exist_ok=True)
+        os.makedirs(os.path.join(folder, Project.DERIVATIVES_DIR_NAME), exist_ok=True)
+
+        meta = ProjectMeta(name=name, created_at=now_iso(), source=source)
+
+        # data dict keeps both old fields (for any legacy reader still around)
+        # and new schema. Old `version` field stays as-is; new schema lives
+        # under the dict produced by meta.to_dict() — we merge them so dict
+        # access from old paths keeps working without breaking new readers.
+        data = {**Project._default_data(), **meta.to_dict()}
+
+        project = Project(folder, data)
+        project.save()
+        return project
+
+    # -- New-model accessors ---------------------------------------------------
+
+    @property
+    def meta(self) -> ProjectMeta:
+        """Parsed ProjectMeta view of self.data. Read-only snapshot —
+        mutate via update_meta() so changes are persisted."""
+        return ProjectMeta.from_dict(self.data)
+
+    def update_meta(self, meta: ProjectMeta) -> None:
+        """Replace project metadata and persist."""
+        self.data = {**self.data, **meta.to_dict()}
+        self.save()
+
+    @property
+    def videocraft_dir(self) -> str:
+        return os.path.join(self.folder, Project.MARKER_DIR)
+
+    @property
+    def source_dir(self) -> str:
+        return os.path.join(self.folder, Project.SOURCE_DIR_NAME)
+
+    @property
+    def source_video_path(self) -> str:
+        return os.path.join(self.source_dir, SOURCE_VIDEO_FILENAME)
+
+    @property
+    def source_meta_path(self) -> str:
+        return os.path.join(self.source_dir, SOURCE_META_FILENAME)
+
+    @property
+    def subtitles_dir(self) -> str:
+        return os.path.join(self.folder, Project.SUBTITLES_DIR_NAME)
+
+    @property
+    def derivatives_dir(self) -> str:
+        return os.path.join(self.folder, Project.DERIVATIVES_DIR_NAME)
+
+    @property
+    def background_path(self) -> str:
+        return os.path.join(self.videocraft_dir, BACKGROUND_FILENAME)
+
+    def source_status(self) -> str:
+        """Returns "ready" if source/video.mp4 exists with non-zero size,
+        else "missing". Computed at call time (no persisted state)."""
+        path = self.source_video_path
+        try:
+            return "ready" if os.path.isfile(path) and os.path.getsize(path) > 0 else "missing"
+        except OSError:
+            return "missing"
+
+    def derivative_dir(self, type_name: str, instance_name: str) -> str:
+        """Returns <project>/derivatives/<type>/<instance>/, NOT created."""
+        return os.path.join(self.derivatives_dir, type_name, instance_name)
+
+    def list_derivative_types(self) -> list[str]:
+        """List type subdirectories under derivatives/ (e.g. ['ai_clip', 'bilingual_video'])."""
+        if not os.path.isdir(self.derivatives_dir):
+            return []
+        try:
+            return sorted(
+                n for n in os.listdir(self.derivatives_dir)
+                if os.path.isdir(os.path.join(self.derivatives_dir, n))
+            )
+        except OSError:
+            return []
+
+    def list_derivative_instances(self, type_name: str) -> list[str]:
+        """List instance subdirectories under derivatives/<type>/."""
+        type_dir = os.path.join(self.derivatives_dir, type_name)
+        if not os.path.isdir(type_dir):
+            return []
+        try:
+            return sorted(
+                n for n in os.listdir(type_dir)
+                if os.path.isdir(os.path.join(type_dir, n))
+            )
+        except OSError:
+            return []
+
+    def list_derivatives(self) -> dict[str, list[str]]:
+        """Returns {type_name: [instance_name, ...]} for all derivatives."""
+        return {
+            t: self.list_derivative_instances(t)
+            for t in self.list_derivative_types()
         }
 
     # -- 文件列表 ---------------------------------------------------------------

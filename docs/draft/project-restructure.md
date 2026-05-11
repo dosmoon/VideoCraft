@@ -32,7 +32,9 @@
 
 ```
 <project>/
-├── project.json                # 项目元数据(单文件,取代 manifests/ 目录)
+├── .videocraft/                # VideoCraft 内部元数据(用户不应手动改)
+│   ├── project.json            # 项目元数据(单文件,取代 manifests/ 目录)
+│   └── background.json         # 项目背景(host/audience/topic/notes…),所有派生 AI 共享
 ├── source/
 │   ├── video.mp4               # 源视频(下载或导入,文件名固定)
 │   └── meta.json               # URL / 时长 / 分辨率 / 下载时间 / yt-dlp info
@@ -42,11 +44,11 @@
 │   ├── zh.srt                  # 中文译文
 │   ├── en.srt                  # 英文译文
 │   └── bilingual.srt           # 双语合并
-├── background.json             # 项目背景(host/audience/topic/notes…),所有派生 AI 共享
 └── derivatives/                # 派生作品(每形态一子目录)
     ├── bilingual_video/
-    │   ├── config.json         # 烧录样式 / 字幕选择 / preset
-    │   └── output.mp4
+    │   └── <instance>/
+    │       ├── config.json     # 烧录样式 / 字幕选择 / preset
+    │       └── output.mp4
     └── ai_clip/
         ├── <cut-name-1>/
         │   ├── cut.json        # 章节排序 + 切片定义 + Hook/Outro
@@ -55,6 +57,12 @@
         │       └── clip-002.mp4
         └── <cut-name-2>/       # 同源不同方案(不同 style/角度)
 ```
+
+**层次原则**:
+- `.videocraft/` = 项目级内部控制信息(用户既看不到也不动)
+- `source/` / `subtitles/` / `derivatives/` = 用户内容与产物(用户可理解、可备份、可手动检查)
+- 派生内部的 `config.json` / `cut.json` 留在派生目录内(整个派生目录已经是 VideoCraft 生产空间,不再二次隔离)
+- `source/meta.json` 跟视频文件直接关联,留在 source/ 内更直观
 
 未来扩展形态各自占 `derivatives/<type>/` 子目录：
 - `derivatives/summary/`
@@ -98,7 +106,7 @@ YouTube 链接走 yt-dlp 下载到 `source/video.mp4`（结合 BACKLOG P1 一站
 
 ## 4. 概念契约（schema 草案）
 
-### 4.1 `project.json`
+### 4.1 `.videocraft/project.json`
 ```json
 {
   "schema_version": 1,
@@ -129,7 +137,7 @@ YouTube 链接走 yt-dlp 下载到 `source/video.mp4`（结合 BACKLOG P1 一站
 ### 4.2 `source/meta.json`
 yt-dlp `--write-info-json` 的完整输出（保留完整 metadata，包括 channel / upload_date / tags 等，供 AI prompt 注入用）。
 
-### 4.3 `background.json`
+### 4.3 `.videocraft/background.json`
 搬自现有 `ProjectBackground` dataclass，但从 cut 文件提升到项目级（所有派生 AI 共享同一项目背景）：
 ```json
 {
