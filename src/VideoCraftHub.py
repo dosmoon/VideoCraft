@@ -64,6 +64,7 @@ TOOL_MAP = {
     "youtube-publish":  {"file": "tools/publish/youtube_publish.py", "class": "YouTubePublishApp"},
     "preferences":      {"file": "tools/preferences/preferences.py", "class": "PreferencesApp"},
     "ai-console":       {"file": "tools/router/ai_console.py",       "class": "AIConsoleApp"},
+    "prompt-console":   {"file": "tools/router/prompt_console.py",   "class": "PromptConsoleApp"},
     "model-manager":    {"file": "tools/models/manager_window.py",   "class": "ModelManagerApp"},
     "project-workbench": {"file": "tools/project/project_workbench.py", "class": "ProjectWorkbenchApp"},
     "clip-script":       {"file": "tools/program/clip_workbench.py",     "class": "ClipWorkbenchApp"},
@@ -423,6 +424,8 @@ class VideoCraftHub:
         menubar.add_cascade(label=tr("menu.ai"), menu=ai_menu)
         ai_menu.add_command(label=tr("menu.ai.console"),
                             command=lambda: self.open_tool("ai-console"))
+        ai_menu.add_command(label=tr("menu.ai.prompt_console"),
+                            command=lambda: self.open_tool("prompt-console"))
         ai_menu.add_command(label=tr("menu.ai.model_manager"),
                             command=lambda: self.open_tool("model-manager"))
 
