@@ -18,12 +18,17 @@ window (= quit the app).
 """
 
 import os
+import shutil
 import sys
 import tkinter as tk
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from project import Project, get_recent_projects, add_recent_project
 from core.project_schema import Source, ORIGIN_LINK
+from core.source_acquire import AcquireError, ERR_CANCELLED
+from ui.new_project_dialog import show_new_project_dialog, NewProjectRequest
+from ui.disclaimer_dialog import show_if_needed as show_disclaimer_if_needed
+from ui.source_prepare_modal import SourcePrepareModal
 
 
 # ── Visual constants ──────────────────────────────────────────────────────────
@@ -130,31 +135,29 @@ class _LauncherWindow:
     # ── Event handlers ────────────────────────────────────────────────────────
 
     def _on_new_project(self) -> None:
-        """P1 placeholder: ask for name + parent dir, create empty skeleton.
+        """P2: full new-project flow.
 
-        The full new-project dialog (with source link / local file / time
-        range / disclaimer) comes in P2. This placeholder is enough to
-        verify the launcher → hub loop end-to-end."""
-        parent_dir = filedialog.askdirectory(
-            title="选择项目存放位置(将在其下创建新项目目录)",
-            parent=self.root,
-        )
-        if not parent_dir:
-            return
+          1. Dialog gathers source/name/parent (validated in-dialog)
+          2. First-time disclaimer for link mode (settings-tracked)
+          3. Project skeleton mkdir + .videocraft/project.json
+          4. Source-prepare modal: yt-dlp / ffmpeg with progress + cancel
+          5. Write final source meta back into project.json
 
-        name = simpledialog.askstring(
-            "新建项目", "项目名称:", parent=self.root,
-        )
-        if not name:
-            return
-        name = name.strip()
-        if not name:
-            return
+        On cancel at any post-step-3 stage, the half-built project
+        directory is rolled back so the user isn't left with junk.
+        """
+        req = show_new_project_dialog(self.root)
+        if req is None:
+            return  # user cancelled
 
+        # First-time disclaimer (link mode only). Cancel here = abort entirely.
+        if req.source.origin == ORIGIN_LINK:
+            if not show_disclaimer_if_needed(self.root):
+                return
+
+        # Create the project skeleton — empty source/, subtitles/, derivatives/
         try:
-            # P1 placeholder: empty Source (no acquisition).
-            # P2 will replace this with full source-acquisition flow.
-            project = Project.new(parent_dir, name, Source(origin=ORIGIN_LINK))
+            project = Project.new(req.parent_dir, req.name, req.source)
         except FileExistsError as e:
             messagebox.showerror("无法创建", str(e), parent=self.root)
             return
@@ -165,6 +168,43 @@ class _LauncherWindow:
             messagebox.showerror("无法创建", f"目录不可写或磁盘错误:\n{e}",
                                  parent=self.root)
             return
+
+        # Acquire the source video (blocking modal).
+        modal = SourcePrepareModal(
+            self.root, req.source,
+            dest_video_path=project.source_video_path,
+            dest_meta_path=project.source_meta_path,
+        )
+        try:
+            result = modal.run()
+        except AcquireError as e:
+            # Roll back the half-built project dir.
+            _rmtree_quiet(project.folder)
+            if e.category == ERR_CANCELLED:
+                # Silent rollback on user cancel — no error popup.
+                return
+            messagebox.showerror(
+                "源视频准备失败",
+                f"{e.message}\n\n{e.details[:400]}" if e.details else e.message,
+                parent=self.root,
+            )
+            return
+        except Exception as e:
+            _rmtree_quiet(project.folder)
+            messagebox.showerror("源视频准备失败", str(e), parent=self.root)
+            return
+
+        # Backfill the metadata we now know from the acquired source.
+        meta = project.meta
+        if result.title:
+            meta.source.title = result.title
+        if result.duration_sec is not None:
+            meta.source.duration_sec = result.duration_sec
+        if result.width is not None:
+            meta.source.width = result.width
+        if result.height is not None:
+            meta.source.height = result.height
+        project.update_meta(meta)
 
         add_recent_project(project.folder)
         self._selected_project = project
@@ -217,6 +257,15 @@ class _LauncherWindow:
     def run(self) -> Project | None:
         self.root.mainloop()
         return self._selected_project
+
+
+def _rmtree_quiet(path: str) -> None:
+    """Best-effort recursive delete; swallow errors so rollback never
+    masks the underlying acquisition error."""
+    try:
+        shutil.rmtree(path)
+    except OSError:
+        pass
 
 
 def run_launcher() -> Project | None:
