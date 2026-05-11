@@ -118,3 +118,72 @@ def synthesize(
             f"{msg} (voice_id={voice_id!r}, text_len={len(text)})",
             raw=e,
         ) from e
+
+
+def fetch_voice_catalog(api_key: str | None = None) -> list:
+    """Pull the user's fish.audio voice models, page by page.
+
+    Calls Session.list_models(self_only=True) — only the voices in the
+    caller's own account, not the public marketplace (which is enormous
+    and full of community uploads they don't actually use).
+
+    api_key is loaded by the catalog dispatcher from
+    keys/FishAudio.key. When missing, returns []; the picker UI shows
+    "no key configured" upstream rather than a stack trace.
+    """
+    from core.ai.tts_voice import TTSVoice
+    if not api_key:
+        return []
+
+    try:
+        from fish_audio_sdk import Session
+    except ImportError:
+        return []
+
+    try:
+        sess = Session(api_key)
+    except Exception:
+        return []
+
+    out: list[TTSVoice] = []
+    page = 1
+    page_size = 50
+    while True:
+        try:
+            resp = sess.list_models(
+                self_only=True, page_size=page_size, page_number=page,
+                sort_by="created_at",
+            )
+        except Exception:
+            # Network / auth error — return what we have so far so the
+            # picker still shows something on a flaky connection.
+            break
+
+        items = resp.items or []
+        for m in items:
+            # Type 'tts' only (Fish also has 'svc' / voice conversion
+            # entries that don't apply to standard text → audio).
+            if getattr(m, "type", "tts") != "tts":
+                continue
+            # State 'trained' = ready to use. 'training' / 'created' /
+            # 'failed' would 4xx on synth.
+            if getattr(m, "state", "") != "trained":
+                continue
+            out.append(TTSVoice(
+                provider="fish_audio",
+                voice_id=m.id,
+                display_name=m.title or m.id,
+                # Languages is a list of ISO codes per Fish docs;
+                # take the first as the primary tag.
+                language=(m.languages[0] if m.languages else ""),
+                gender="",     # Fish doesn't expose gender metadata
+                tags=tuple(m.tags or ()),
+                description=(m.description or "")[:280],
+            ))
+
+        total = getattr(resp, "total", len(out))
+        if page * page_size >= total or not items:
+            break
+        page += 1
+
+    return out

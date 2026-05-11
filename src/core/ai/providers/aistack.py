@@ -106,6 +106,22 @@ def _parse_error_response(resp: requests.Response) -> tuple[str, str]:
     return ("aistack", (resp.text or f"HTTP {resp.status_code}")[:300])
 
 
+def fetch_voice_catalog(base_url: str | None = None) -> list:
+    """Fetch the catalog of voices exposed by the aistack gateway.
+
+    Stub implementation as of 2026-05-11 — aistack upstream doesn't
+    publish a /v1/voices endpoint yet (only /v1/models, which lists
+    TTS engines, not their voice rosters). Returns [] so the picker
+    shows aistack as "empty catalog" and the user can fall back to
+    the manual-input field to type a voice token they already know
+    (e.g. "vivian" for Qwen3-TTS).
+
+    When upstream lands /v1/voices, swap this for a real implementation
+    that maps each voice entry to TTSVoice.
+    """
+    return []
+
+
 def list_models_with_capabilities(
     base_url: str = DEFAULT_BASE_URL,
 ) -> list[tuple[str, list[str]]]:

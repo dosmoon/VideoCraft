@@ -163,12 +163,28 @@ def _save_to_disk(path: str, voices: list[TTSVoice]) -> None:
 def _fetch(provider: str) -> list[TTSVoice] | None:
     """Dispatch to the named provider's catalog adapter. Returns None
     when the provider has no adapter yet OR when the fetch raised — in
-    both cases the caller falls back to disk."""
+    both cases the caller falls back to disk.
+
+    fish_audio needs an API key, loaded from keys/FishAudio.key via
+    core.ai.config.read_key(). Without a key the adapter returns []
+    (an empty catalog, not None — there's nothing to retry on disk).
+    """
     try:
         if provider == "edge_tts":
             from core.ai.providers import edge_tts as _edge
             return _edge.fetch_voice_catalog()
-        # P6 lands fish_audio + aistack adapters here.
+        if provider == "fish_audio":
+            from core.ai.providers import fish_audio as _fish
+            from core.ai import config as _cfg
+            from core.ai.router import router as _router
+            cfg = _router._tts_providers.get("fish_audio", {}) or {}
+            api_key = _cfg.read_key(cfg)
+            return _fish.fetch_voice_catalog(api_key=api_key)
+        if provider == "aistack":
+            from core.ai.providers import aistack as _aistack
+            from core.ai.router import router as _router
+            gw = _router.get_aistack_gateway()
+            return _aistack.fetch_voice_catalog(base_url=gw.get("base_url"))
         return None
     except Exception:
         return None
