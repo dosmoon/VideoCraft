@@ -89,33 +89,88 @@ def run_asr(
     ))
 
     def _on_event(event_type: str, **kwargs):
-        # Translate provider event types into ProgressInfo updates. We
-        # don't have a clean total-percent for ASR (transcription itself
-        # is server-side), so we mostly show phase + status text.
+        """Translate any provider event into a ProgressInfo update.
+
+        Different ASR providers emit different event names:
+          Lemonfox/OpenAI Whisper:  state_uploading, state_waiting_*
+          faster-whisper (local):   request_summary_local, state_processing,
+                                    state_perf_breakdown, state_done
+          aistack:                  request_summary, state_processing,
+                                    state_done, retry_slot_busy, stream_warning
+
+        We map the well-known ones to specific status text and fall back
+        to a generic "正在转写..." for everything else so the modal
+        always shows progress instead of getting stuck at "准备中".
+        """
+        # Cloud upload phase (Lemonfox / Whisper API)
         if event_type == "state_uploading":
             pct = float(kwargs.get("percent") or 0.0)
             _emit(progress_cb, ProgressInfo(
                 phase="transcribing", percent=pct,
                 status_text=f"正在上传音频 {pct:.0f}%",
             ))
-        elif event_type == "state_waiting_start":
+            return
+        # Cloud waiting on remote inference
+        if event_type == "state_waiting_start":
             _emit(progress_cb, ProgressInfo(
                 phase="transcribing", percent=None,
                 status_text="服务器正在处理...",
             ))
-        elif event_type == "state_waiting_tick":
+            return
+        if event_type == "state_waiting_tick":
             elapsed = kwargs.get("elapsed", 0)
             _emit(progress_cb, ProgressInfo(
                 phase="transcribing", percent=None,
                 status_text=f"服务器处理中 {int(elapsed)}s...",
             ))
-        elif event_type in ("retry_connect_timeout", "retry_read_timeout",
-                            "retry_connection_error"):
-            wait = kwargs.get("wait", 0)
+            return
+        # Local / aistack streaming progress
+        if event_type == "state_processing":
+            seg = kwargs.get("segment_count", 0)
+            elapsed = kwargs.get("elapsed", 0)
             _emit(progress_cb, ProgressInfo(
                 phase="transcribing", percent=None,
-                status_text=f"网络异常,{int(wait)}s 后重试...",
+                status_text=f"已转写 {seg} 段 · {int(elapsed)}s",
             ))
+            return
+        # Provider startup / request summary — show we're past "准备中"
+        if event_type in ("request_summary", "request_summary_local"):
+            provider_hint = (
+                kwargs.get("device")
+                or kwargs.get("provider")
+                or kwargs.get("backend")
+                or ""
+            )
+            txt = "正在调用 ASR"
+            if provider_hint:
+                txt += f" · {provider_hint}"
+            _emit(progress_cb, ProgressInfo(
+                phase="transcribing", percent=None,
+                status_text=txt,
+            ))
+            return
+        # Final tick
+        if event_type == "state_done":
+            _emit(progress_cb, ProgressInfo(
+                phase="transcribing", percent=100.0,
+                status_text="转写完成,正在写出 SRT...",
+            ))
+            return
+        # Retries (network or busy-server)
+        if event_type.startswith("retry_"):
+            wait = kwargs.get("wait", 0)
+            reason = event_type.removeprefix("retry_").replace("_", " ")
+            _emit(progress_cb, ProgressInfo(
+                phase="transcribing", percent=None,
+                status_text=f"重试中 ({reason}),{int(wait)}s 后再试...",
+            ))
+            return
+        # Fallback: anything we don't recognize still bumps the status
+        # so the user knows work is happening.
+        _emit(progress_cb, ProgressInfo(
+            phase="transcribing", percent=None,
+            status_text=f"ASR 进行中 ({event_type})...",
+        ))
 
     result = core_asr.transcribe_audio(
         project.source_video_path,
