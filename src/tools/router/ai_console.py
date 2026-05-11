@@ -129,15 +129,17 @@ class AIConsoleApp(ToolBase):
         self.tab_embedded = tk.Frame(nb, padx=8, pady=8)
         self.tab_cloud    = tk.Frame(nb, padx=8, pady=8)
         self.tab_aistack  = tk.Frame(nb, padx=8, pady=8)
+        self.tab_tts      = tk.Frame(nb, padx=8, pady=8)
         self.tab_stats    = tk.Frame(nb, padx=12, pady=10)
 
         nb.add(self.tab_routing,  text=tr("tool.router.tab_routing"))
         nb.add(self.tab_embedded, text=tr("tool.router.tab_embedded"))
         nb.add(self.tab_cloud,    text=tr("tool.router.tab_cloud"))
         nb.add(self.tab_aistack,  text=tr("tool.router.tab_aistack"))
+        nb.add(self.tab_tts,      text=tr("tool.router.tab_tts"))
         nb.add(self.tab_stats,    text=tr("tool.router.tab_stats"))
         self._routing_tab_index = 0
-        self._stats_tab_index   = 4
+        self._stats_tab_index   = 5
         self._notebook = nb
         nb.bind("<<NotebookTabChanged>>", self._on_tab_change)
 
@@ -145,6 +147,7 @@ class AIConsoleApp(ToolBase):
         self._build_embedded_tab()
         self._build_cloud_tab()
         self._build_aistack_tab()
+        self._build_tts_tab()
         self._build_stats_tab()
 
         # Pick up newly-installed local models / fresh aistack model
@@ -269,6 +272,162 @@ class AIConsoleApp(ToolBase):
         )
         gateway_frame.pack(fill="x", anchor="w")
         self._build_aistack_gateway_section(gateway_frame)
+
+    # ── TTS tab: unified provider cards ───────────────────────────────────
+    # All TTS providers (edge_tts / fish_audio / aistack-as-TTS) live here
+    # rather than scattered across the tier tabs. TTS doesn't route the
+    # same way LLM/ASR do — voice picks happen at use time via
+    # VoicePickerDialog — so this tab focuses on connection state,
+    # voice catalog freshness, and the "browse voices" entry point.
+
+    _TTS_PROVIDER_EMOJI: dict[str, str] = {
+        "edge_tts":   "🌐",     # free online
+        "fish_audio": "☁️",     # cloud
+        "aistack":    "🚀",     # gateway
+    }
+
+    def _build_tts_tab(self):
+        tab = self.tab_tts
+        body = self._scrollable_body(tab)
+
+        tk.Label(body, text=tr("tool.router.tts_intro"),
+                 font=("", 9), fg="#555", wraplength=900, justify="left",
+                 ).pack(anchor="w", padx=2, pady=(0, 8))
+
+        # Render in a fixed order so the layout doesn't shuffle when
+        # providers are added/removed (e.g. user disables fish_audio).
+        for provider_name in ("edge_tts", "fish_audio", "aistack"):
+            cfg = router._tts_providers.get(provider_name)
+            if cfg is None:
+                continue
+            self._render_tts_card(body, provider_name, cfg)
+
+    def _render_tts_card(self, parent, provider_name: str, cfg: dict):
+        from core.ai.tts_voice import get_catalog_meta
+
+        emoji = self._TTS_PROVIDER_EMOJI.get(provider_name, "·")
+        display_name = cfg.get("name", provider_name)
+        card = tk.LabelFrame(
+            parent, text=f"  {emoji}  {display_name}  ",
+            padx=10, pady=8, font=("", 10, "bold"),
+        )
+        card.pack(fill="x", pady=(0, 8), anchor="w")
+
+        # Status line: connection state + catalog freshness
+        status_text = self._tts_status_text(provider_name, cfg)
+        tk.Label(card, text=status_text, fg="#555", anchor="w",
+                 font=("", 9), wraplength=820, justify="left",
+                 ).pack(fill="x", pady=(0, 4))
+
+        meta = get_catalog_meta(provider_name)
+        catalog_text = self._tts_catalog_text(meta)
+        tk.Label(card, text=catalog_text, fg="#666", anchor="w",
+                 font=("", 9),
+                 ).pack(fill="x", pady=(0, 6))
+
+        # Buttons
+        btn_row = tk.Frame(card)
+        btn_row.pack(fill="x")
+        tk.Button(
+            btn_row, text=tr("tool.router.tts_btn_refresh"), width=14,
+            command=lambda p=provider_name: self._on_tts_refresh(p),
+        ).pack(side="left", padx=(0, 4))
+        tk.Button(
+            btn_row, text=tr("tool.router.tts_btn_browse"), width=14,
+            command=lambda p=provider_name: self._on_tts_browse(p),
+        ).pack(side="left", padx=4)
+        tk.Button(
+            btn_row, text=tr("tool.router.tts_btn_edit"), width=10,
+            command=lambda n=provider_name, c=cfg: self._open_edit_dialog(n, c, "tts"),
+        ).pack(side="left", padx=4)
+
+        # aistack gets a hint pointing at the gateway tab (connection
+        # state isn't editable here — it's owned by the aistack tab).
+        if provider_name == "aistack":
+            tk.Label(card, text=tr("tool.router.tts_aistack_hint"),
+                     fg="#888", font=("", 8, "italic"), anchor="w",
+                     ).pack(fill="x", pady=(6, 0))
+
+    def _tts_status_text(self, provider_name: str, cfg: dict) -> str:
+        """One-line connection status for the TTS card."""
+        if provider_name == "edge_tts":
+            # Free online — only signal is whether the SDK is importable.
+            try:
+                import edge_tts  # noqa: F401
+                return tr("tool.router.tts_status_ready")
+            except ImportError:
+                return tr("tool.router.tts_status_no_sdk", pkg="edge-tts")
+        if provider_name == "fish_audio":
+            key = _ai_cfg.read_key(cfg)
+            if not key:
+                return tr("tool.router.tts_status_no_key")
+            masked = f"{key[:4]}****{key[-4:]}" if len(key) >= 8 else "****"
+            return tr("tool.router.tts_status_keyed", masked=masked)
+        if provider_name == "aistack":
+            gw = router.get_aistack_gateway()
+            if not gw["enabled"]:
+                return tr("tool.router.tts_status_aistack_off")
+            return tr("tool.router.tts_status_aistack_url", url=gw["base_url"])
+        return ""
+
+    def _tts_catalog_text(self, meta: dict) -> str:
+        """One-line catalog freshness for the TTS card."""
+        if not meta["has_cache"]:
+            return tr("tool.router.tts_catalog_empty")
+        return tr("tool.router.tts_catalog_meta",
+                  count=meta["count"],
+                  age=self._format_age(meta["last_refresh_ts"]))
+
+    @staticmethod
+    def _format_age(ts: float) -> str:
+        """Human-readable elapsed time since `ts` (UNIX seconds).
+        Localized via tr() so the wording matches the active language."""
+        import time
+        if ts <= 0:
+            return tr("tool.router.age_never")
+        elapsed = time.time() - ts
+        if elapsed < 60:
+            return tr("tool.router.age_just_now")
+        if elapsed < 3600:
+            return tr("tool.router.age_minutes", n=int(elapsed // 60))
+        if elapsed < 86400:
+            return tr("tool.router.age_hours", n=int(elapsed // 3600))
+        return tr("tool.router.age_days", n=int(elapsed // 86400))
+
+    def _on_tts_refresh(self, provider_name: str):
+        """Force a network refresh of the provider's voice catalog,
+        then rebuild the TTS tab so the catalog meta updates."""
+        from core.ai.tts_voice import get_catalog
+        # Run synchronously — Edge takes ~1s; UI freeze is acceptable
+        # for an explicit user click. Worth threading later if other
+        # providers (fish_audio with N voices) get slow.
+        try:
+            get_catalog(provider_name, refresh=True)
+        except Exception as e:
+            messagebox.showerror(tr("dialog.common.error"),
+                                 tr("tool.router.tts_refresh_failed",
+                                    provider=provider_name, err=str(e)[:200]),
+                                 parent=self.master)
+            return
+        self._rebuild_tts_tab()
+
+    def _on_tts_browse(self, provider_name: str):
+        """Open the VoicePickerDialog scoped to one provider, in browse
+        mode (the user just hits Cancel when done — discarding any
+        selection). This is the "let me see what voices exist" affordance.
+        """
+        from tools.router.voice_picker import VoicePickerDialog
+        VoicePickerDialog.ask(
+            self.master,
+            initial_provider=provider_name,
+            allowed_providers=(provider_name,),
+            title=tr("tool.router.tts_browse_title", provider=provider_name),
+        )
+
+    def _rebuild_tts_tab(self):
+        for w in self.tab_tts.winfo_children():
+            w.destroy()
+        self._build_tts_tab()
 
     # ── Helpers ────────────────────────────────────────────────────────────
 
@@ -806,18 +965,22 @@ class AIConsoleApp(ToolBase):
         return "cloud"
 
     def _bucket_providers_by_tier(self) -> dict[str, dict[str, list]]:
-        """Walk LLM/ASR/TTS provider dicts and bucket each entry by tier.
-        aistack is dropped here — it has its own dedicated pane.
+        """Walk LLM/ASR provider dicts and bucket each entry by tier.
+
+        TTS is excluded entirely — TTS providers all live in the dedicated
+        TTS tab (introduced 2026-05-11) instead of being scattered across
+        the Embedded / Cloud sections by tier. aistack is also excluded
+        here — it owns the aistack tab.
+
         Returns {tier: {category: [(name, cfg), ...]}}.
         """
         buckets: dict[str, dict[str, list]] = {
-            "local":       {"llm": [], "asr": [], "tts": []},
-            "free_online": {"llm": [], "asr": [], "tts": []},
-            "cloud":       {"llm": [], "asr": [], "tts": []},
+            "local":       {"llm": [], "asr": []},
+            "free_online": {"llm": [], "asr": []},
+            "cloud":       {"llm": [], "asr": []},
         }
         for category, src in (("llm", router._providers),
-                              ("asr", router._asr_providers),
-                              ("tts", router._tts_providers)):
+                              ("asr", router._asr_providers)):
             for name, cfg in src.items():
                 tier = self._classify_provider_tier(name)
                 if tier == "aistack":
@@ -859,7 +1022,7 @@ class AIConsoleApp(ToolBase):
 
         # Empty-state line if no providers in this tier
         if (empty_key is not None
-                and not any(tier_buckets[c] for c in ("llm", "asr", "tts"))):
+                and not any(tier_buckets.get(c) for c in ("llm", "asr"))):
             tk.Label(parent, text=tr(empty_key), fg="#999",
                      font=("", 9, "italic"), anchor="w",
                      ).grid(row=row_idx, column=0, columnspan=5,
@@ -867,11 +1030,11 @@ class AIConsoleApp(ToolBase):
             row_idx += 1
             return row_idx
 
-        # Capability sub-blocks within the tier
+        # Capability sub-blocks within the tier. TTS is intentionally
+        # absent — TTS providers live in the dedicated TTS tab.
         for category, header_key in (("llm", "tool.router.subhead_llm"),
-                                     ("asr", "tool.router.subhead_asr"),
-                                     ("tts", "tool.router.subhead_tts")):
-            entries = tier_buckets[category]
+                                     ("asr", "tool.router.subhead_asr")):
+            entries = tier_buckets.get(category, [])
             if not entries:
                 continue
             pill_style = self._PILL_STYLE.get(category, {})
@@ -966,15 +1129,17 @@ class AIConsoleApp(ToolBase):
         self._build_routing_tab()
 
     def _rebuild_provider_tabs(self):
-        """Rebuild Routing + Embedded + Cloud + aistack tabs in place. Used
-        after edit dialogs save (provider's models / key / enable state may
-        all have changed and ripple into the routing matrix's options).
+        """Rebuild Routing + Embedded + Cloud + aistack + TTS tabs in
+        place. Used after edit dialogs save (provider's models / key /
+        enable state may all have changed and ripple into the routing
+        matrix's options or the TTS card status lines).
         """
         for tab, builder in (
             (self.tab_routing,  self._build_routing_tab),
             (self.tab_embedded, self._build_embedded_tab),
             (self.tab_cloud,    self._build_cloud_tab),
             (self.tab_aistack,  self._build_aistack_tab),
+            (self.tab_tts,      self._build_tts_tab),
         ):
             for w in tab.winfo_children():
                 w.destroy()

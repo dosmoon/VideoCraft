@@ -215,7 +215,12 @@ TASKS: list[tuple[str, str, str]] = [
     ("translate",         "llm", "翻译 / Translate"),
     ("subtitle.post",     "llm", "字幕后处理 / Subtitle post-process"),
     ("asr.transcribe",    "asr", "语音转写 / Speech-to-text"),
-    ("tts.synthesize",    "tts", "语音合成 / Text-to-speech"),
+    # tts.synthesize was removed 2026-05-11. Voice + engine selection
+    # happens at use time via VoicePickerDialog (tools/router/voice_picker.py)
+    # — no global "default TTS routing" because TTS picks are inherently
+    # context-specific (news anchor vs. dialogue role vs. notification).
+    # The old `task_routing["tts.synthesize"]` entry is dropped on next
+    # load by _migrate_task_routing.
 ]
 
 
@@ -351,6 +356,13 @@ def load_config() -> dict:
     asr_providers = _normalize_asr_providers(asr_providers)
     tts_providers, tts_normalized = _normalize_tts_providers(tts_providers)
     task_routing, task_routing_dirty = _migrate_task_routing(task_routing)
+
+    # 2026-05-11: tts.synthesize is no longer a routed task — drop any
+    # surviving per-tier picks so the field doesn't grow stale entries
+    # forever. Match the same drop done in _migrate_task_routing.
+    if isinstance(task_tier_prefs, dict) and "tts.synthesize" in task_tier_prefs:
+        task_tier_prefs.pop("tts.synthesize", None)
+        task_tier_prefs_dirty = True
 
     result = {
         "providers":       providers,
@@ -509,6 +521,14 @@ def _migrate_task_routing(task_routing: dict | None) -> tuple[dict, bool]:
 
     if task_routing is None:
         return _build_default_task_routing(), True
+
+    # 2026-05-11: tts.synthesize task removed (TTS no longer routes —
+    # voice + engine picked at use site). Drop the stale entry from any
+    # existing config so the routing tab and dispatch don't reference
+    # a task that's no longer in TASKS.
+    if "tts.synthesize" in task_routing:
+        task_routing.pop("tts.synthesize", None)
+        dirty = True
 
     # Collapse the legacy three subtitle.* entries into the consolidated
     # `subtitle.post` task. If the user already customized any of them, the
