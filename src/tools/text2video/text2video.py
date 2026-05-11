@@ -41,10 +41,34 @@ class TTSApp(ToolBase):
         tab.columnconfigure(1, weight=1)
 
         row = 0
-        tk.Label(tab, text="Fish Audio:").grid(row=row, column=0, padx=10, pady=8, sticky="e")
+        tk.Label(tab, text=tr("tool.tts.provider_label")).grid(
+            row=row, column=0, padx=10, pady=8, sticky="e")
+        # Provider dropdown sources from the AI router so any configured
+        # TTS provider (fish_audio cloud / sherpa_tts in-process /
+        # aistack gateway / future ones) shows up automatically. The
+        # status indicator updates whenever the user picks a different
+        # entry.
+        from core.ai.router import router as _router
+        self._tts_providers = _router.get_available_tts_providers()
+        provider_names = [p["name"] for p in self._tts_providers] or ["fish_audio"]
+        # Default = whatever task_routing currently points at, fall back
+        # to the first registered provider.
+        routing = _router.get_task_routing().get("tts.synthesize", {})
+        default_provider = routing.get("provider") or provider_names[0]
+        if default_provider not in provider_names:
+            default_provider = provider_names[0]
+        self.provider_var = tk.StringVar(value=default_provider)
+        provider_box = ttk.Combobox(tab, textvariable=self.provider_var,
+                                     values=provider_names, state="readonly",
+                                     width=22)
+        provider_box.grid(row=row, column=1, sticky="w", padx=(0, 8))
+        provider_box.bind("<<ComboboxSelected>>",
+                          lambda _e: self._refresh_api_status())
+
         self.api_status_var = tk.StringVar(value=tr("tool.tts.api_status_unknown"))
-        self.api_status_lbl = tk.Label(tab, textvariable=self.api_status_var, fg="red", anchor="w")
-        self.api_status_lbl.grid(row=row, column=1, columnspan=2, sticky="ew")
+        self.api_status_lbl = tk.Label(tab, textvariable=self.api_status_var,
+                                        fg="red", anchor="w")
+        self.api_status_lbl.grid(row=row, column=2, sticky="ew", padx=(0, 10))
 
         row += 1
         mode_frame = tk.LabelFrame(tab, text=tr("tool.tts.mode_frame"), padx=8, pady=6)
@@ -76,7 +100,7 @@ class TTSApp(ToolBase):
         hdr = tk.Frame(self.multi_frame)
         hdr.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 4))
         tk.Label(hdr, text=tr("tool.tts.role_name_hdr"), width=12, font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=4)
-        tk.Label(hdr, text=tr("tool.tts.voice_id_hdr") + " (fish.audio model ID)",
+        tk.Label(hdr, text=tr("tool.tts.voice_id_hdr"),
                  font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=4)
         self.roles = []
         self.roles_frame = tk.Frame(self.multi_frame)
@@ -171,21 +195,28 @@ class TTSApp(ToolBase):
             self.output_path_var.set(path)
 
     def _refresh_api_status(self):
-        st = core_tts.status("fish_audio")
+        provider = self.provider_var.get()
+        st = core_tts.status(provider)
+        # `detail` is the per-provider human-readable bit (masked key
+        # for cloud, model name for in-process, base_url for gateway).
         if st["configured"]:
-            self.api_status_var.set(tr("tool.tts.api_configured", masked=st["masked_key"]))
+            self.api_status_var.set(
+                tr("tool.tts.provider_status_ok", detail=st["detail"]))
             self.api_status_lbl.config(fg="green")
         else:
-            self.api_status_var.set(tr("tool.tts.api_not_configured"))
+            self.api_status_var.set(
+                tr("tool.tts.provider_status_bad", detail=st["detail"]))
             self.api_status_lbl.config(fg="red")
 
     def start_generation(self):
-        st = core_tts.status("fish_audio")
+        provider = self.provider_var.get()
+        st = core_tts.status(provider)
         if not st["available"]:
             self._show_error(tr("tool.tts.error_no_sdk"))
             return
         if not st["configured"]:
-            self._show_error(tr("tool.tts.error_no_apikey"))
+            self._show_error(tr("tool.tts.error_provider_not_ready",
+                                provider=provider, detail=st["detail"]))
             return
         self._stop_flag = False
         self.generate_btn.config(state="disabled")
@@ -234,6 +265,7 @@ class TTSApp(ToolBase):
                     text, output,
                     voice_id=voice_id,
                     audio_format=self.audio_format_var.get(),
+                    provider=self.provider_var.get(),
                     should_cancel=lambda: self._stop_flag,
                     on_progress=on_progress,
                 )
@@ -284,6 +316,7 @@ class TTSApp(ToolBase):
                 core_tts.synthesize_dialogue(
                     segments, role_map, output,
                     audio_format=self.audio_format_var.get(),
+                    provider=self.provider_var.get(),
                     should_cancel=lambda: self._stop_flag,
                     on_progress=on_progress,
                 )

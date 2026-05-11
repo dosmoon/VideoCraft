@@ -26,25 +26,65 @@ CancelPredicate  = Callable[[], bool]
 def status(provider: str = "fish_audio") -> dict:
     """UI-friendly provider status for the TTS app's header indicator.
 
+    Per-provider semantics for `configured`:
+      - fish_audio: API key file present.
+      - aistack:    base_url set (gateway must be reachable separately).
+      - sherpa_tts: model directory exists on disk (downloaded models).
+      - others:     fall back to api-key-style check.
+
     Returns:
         {
-            "available":  bool — SDK importable,
-            "configured": bool — API key present,
-            "masked_key": str  — 'ffff****1234' style or '' if no key,
+          "available":  bool — SDK / runtime importable,
+          "configured": bool — provider can actually run a synth,
+          "masked_key": str  — 'ffff****1234' or '' for non-key providers,
+          "detail":     str  — short human-readable line for the UI label,
         }
     """
     available = ai.is_tts_sdk_available(provider)
-    cfg = ai.router.get_tts_config(provider)  # safe: read-only, lives in router
-    key = None
-    if cfg:
-        key = _ai_config.read_key(cfg)
+    cfg = ai.router.get_tts_config(provider) or {}
     masked = ""
-    if key and len(key) > 10:
-        masked = f"{key[:6]}****{key[-4:]}"
+    detail = ""
+    configured = False
+
+    if provider == "fish_audio":
+        key = _ai_config.read_key(cfg)
+        configured = key is not None
+        if key and len(key) > 10:
+            masked = f"{key[:6]}****{key[-4:]}"
+        detail = masked if configured else "no API key"
+
+    elif provider == "aistack":
+        base = (cfg.get("base_url") or "").strip()
+        configured = bool(base)
+        detail = base or "no base_url"
+
+    elif provider == "sherpa_tts":
+        # Configured when the chosen model directory has the required
+        # files. We don't probe shape here (provider does that on load);
+        # just check the dir exists so the indicator means 'something
+        # to load'.
+        import os
+        from core.paths import cache_subdir
+        model_name = cfg.get("model", "")
+        model_dir = os.path.join(cache_subdir("sherpa-tts"), model_name) \
+            if model_name else ""
+        configured = bool(model_dir) and os.path.isdir(model_dir)
+        detail = (model_name + (" ✓" if configured else " (not downloaded)")
+                  if model_name else "no model selected")
+
+    else:
+        # Unknown provider — fall back to the legacy api-key check.
+        key = _ai_config.read_key(cfg) if cfg else None
+        configured = key is not None
+        if key and len(key) > 10:
+            masked = f"{key[:6]}****{key[-4:]}"
+        detail = masked or ("ready" if configured else "not configured")
+
     return {
         "available":  available,
-        "configured": key is not None,
+        "configured": configured,
         "masked_key": masked,
+        "detail":     detail,
     }
 
 
