@@ -31,24 +31,18 @@ class DerivativeType:
 
 
 # Order matters — used as the canonical display order in dialogs and sidebar.
+# AI Clip is intentionally NOT registered during the subtitle-video milestone
+# (P4); its workbench code is preserved untouched but unsurfaced. Re-register
+# when AI Clip undergoes its own simplification pass.
 REGISTRY: list[DerivativeType] = [
     DerivativeType(
         type_name="bilingual_video",
-        i18n_key="menu.create.bilingual_video",
-        tool_key="project-workbench",
+        i18n_key="derivative.subtitle_video",
+        tool_key="subtitle",
         default_basename="default",
         single_instance=True,
-        description_zh="把源视频做成带双语字幕的完整视频",
-        description_en="Render the source as a full video with bilingual subtitles",
-    ),
-    DerivativeType(
-        type_name="ai_clip",
-        i18n_key="menu.create.ai_clip",
-        tool_key="clip-script",
-        default_basename="cut",
-        single_instance=False,
-        description_zh="从源视频找峰段,导出 N 个短切片",
-        description_en="Auto-locate peaks and export N short clips",
+        description_zh="把源视频和字幕烧录成成片(单语或双语)",
+        description_en="Render the source video with burned-in subtitles",
     ),
 ]
 
@@ -111,9 +105,7 @@ if __name__ == "__main__":
     assert suggest_instance_name("bilingual_video", []) == "default"
     assert suggest_instance_name("bilingual_video", ["default"]) == "v1"
     assert suggest_instance_name("bilingual_video", ["default", "v1"]) == "v2"
-    assert suggest_instance_name("ai_clip", []) == "cut-1"
-    assert suggest_instance_name("ai_clip", ["cut-1"]) == "cut-2"
-    assert suggest_instance_name("ai_clip", ["cut-1", "cut-3"]) == "cut-2"
     assert get("bilingual_video") is not None
+    assert get("ai_clip") is None  # not registered during P4 milestone
     assert get("nonexistent") is None
     print("derivative_types smoke OK")

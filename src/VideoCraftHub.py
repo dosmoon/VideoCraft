@@ -175,6 +175,47 @@ class TabBar(tk.Frame):
         return None
 
 
+# ── Sidebar helpers ──────────────────────────────────────────────────────────
+
+def _sidebar_separator(parent: tk.Widget) -> None:
+    """Thin horizontal divider between sidebar sections."""
+    sep = tk.Frame(parent, bg="#d0d0d0", height=1)
+    sep.pack(fill="x", padx=4, pady=4)
+
+
+def _list_subtitle_srts(subtitles_dir: str) -> dict[str, str]:
+    """Return {lang_code: filename} for every <lang>.srt file in subtitles/.
+
+    Only files named like exactly `<lang>.srt` (no extra suffix) are
+    surfaced — they're the canonical per-language subtitle files. Other
+    files (e.g. raw ASR dumps, partials) are ignored for sidebar status.
+    """
+    if not os.path.isdir(subtitles_dir):
+        return {}
+    out: dict[str, str] = {}
+    try:
+        for name in os.listdir(subtitles_dir):
+            if not name.lower().endswith(".srt"):
+                continue
+            stem = name[:-4]
+            # Lang codes are 2-5 chars, alphabetic + optional dash (e.g. zh, en, zh-CN)
+            if 1 < len(stem) <= 8 and all(c.isalpha() or c == "-" for c in stem):
+                out[stem] = name
+    except OSError:
+        pass
+    return out
+
+
+def _fmt_duration(sec: float) -> str:
+    """HH:MM:SS or MM:SS for source-video meta display."""
+    sec = int(sec)
+    h, rem = divmod(sec, 3600)
+    m, s = divmod(rem, 60)
+    if h > 0:
+        return f"{h}:{m:02d}:{s:02d}"
+    return f"{m}:{s:02d}"
+
+
 # ── Hub 主类 ──────────────────────────────────────────────────────────────────
 
 class VideoCraftHub:
@@ -338,18 +379,8 @@ class VideoCraftHub:
         file_menu.add_command(label=tr("menu.file.exit"), command=self.root.quit)
         file_menu.configure(postcommand=self._rebuild_recent_menu)
 
-        # Create — bilingual subtitle video pipeline + AI clip workbench.
-        # Project is always loaded; pass its folder directly.
-        create_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label=tr("menu.create"), menu=create_menu)
-        create_menu.add_command(label=tr("menu.create.bilingual_video"),
-                                command=lambda: self.open_tool(
-                                    "project-workbench",
-                                    initial_file=self.project.folder))
-        create_menu.add_command(label=tr("menu.create.ai_clip"),
-                                command=lambda: self.open_tool(
-                                    "clip-script",
-                                    initial_file=self.project.folder))
+        # The 「创作」 menu was removed in P4.6 — derivative creation lives
+        # in the sidebar's Project tab (single entry point, less confusing).
 
         # Download
         dl_menu = tk.Menu(menubar, tearoff=0)
@@ -628,75 +659,287 @@ class VideoCraftHub:
     # ── Sidebar: Project tab (manifest list) ────────────────────────────────
 
     def _build_project_tab(self, parent: tk.Frame) -> None:
-        """Build the sidebar 'Project' tab: derivatives tree + toolbar.
+        """Build the sidebar 'Project' tab as a 3-section dashboard:
 
-        Tree structure: type group (folder icon) → instance leaves.
-        Double-clicking an instance opens its workbench. The [新建派生]
-        button shows the type-picker dialog. The trash button deletes
-        the currently selected instance (with confirmation).
+          [Source]      add / modify / status
+          [Subtitles]   add / modify / regenerate / status (per-lang rows)
+          [派生作品]    single [+ 添加] + dynamic type groups → instances
+
+        Source and Subtitles drive the prerequisites; the 派生 [+ 添加]
+        button is disabled until both are ready.
         """
-        from i18n import tr
-        from core import derivative_types
-        # Import here to avoid bootstrap import cycles with ui modules.
-        from ui.new_derivative_dialog import show_type_picker
+        # Vertically-stacked sections inside a scrollable canvas would be
+        # ideal but overkill for 3 fixed-height regions. Plain stacked frames
+        # are fine — content fits and Tk handles overflow with the parent
+        # PanedWindow's natural scrolling.
 
-        bar = tk.Frame(parent, bg="#e8e8e8")
-        bar.pack(fill="x")
-        self._project_new_btn = tk.Button(
-            bar, text="+ 新建派生",
-            command=self._on_new_derivative_hub, relief="flat", bg="#e8e8e8")
-        self._project_new_btn.pack(side="left", padx=2, pady=2)
-        self._project_delete_btn = tk.Button(
-            bar, text="删除",
-            command=self._on_delete_derivative_hub, relief="flat", bg="#e8e8e8",
-            state="disabled")
-        self._project_delete_btn.pack(side="left", padx=2, pady=2)
-        tk.Button(bar, text="⟳", width=3, relief="flat",
-                  command=self._refresh_project_tab,
-                  bg="#e8e8e8").pack(side="right", padx=4, pady=2)
+        # ── Section 1: Source ──
+        self._source_section = tk.Frame(parent, bg="#f5f5f5")
+        self._source_section.pack(fill="x", padx=4, pady=(4, 0))
+        self._build_source_section(self._source_section)
 
-        body = tk.Frame(parent, bg="#f5f5f5")
-        body.pack(fill="both", expand=True)
-        vsb = ttk.Scrollbar(body, orient="vertical")
-        self._project_tree = ttk.Treeview(body, show="tree",
+        _sidebar_separator(parent)
+
+        # ── Section 2: Subtitles ──
+        self._subtitles_section = tk.Frame(parent, bg="#f5f5f5")
+        self._subtitles_section.pack(fill="x", padx=4, pady=(0, 0))
+        self._build_subtitles_section(self._subtitles_section)
+
+        _sidebar_separator(parent)
+
+        # ── Section 3: 派生作品 ──
+        self._derivatives_section = tk.Frame(parent, bg="#f5f5f5")
+        self._derivatives_section.pack(fill="both", expand=True,
+                                       padx=4, pady=(0, 4))
+        self._build_derivatives_section(self._derivatives_section)
+
+    # ── Source section ────────────────────────────────────────────────────────
+
+    def _build_source_section(self, parent: tk.Frame) -> None:
+        tk.Label(parent, text="Source", font=("", 9, "bold"),
+                 bg="#f5f5f5", fg="#555", anchor="w"
+                 ).pack(fill="x", padx=2, pady=(2, 2))
+
+        self._source_status_var = tk.StringVar()
+        self._source_status_lbl = tk.Label(
+            parent, textvariable=self._source_status_var,
+            bg="#f5f5f5", fg="#222", font=("", 9),
+            anchor="w", justify="left", wraplength=280,
+        )
+        self._source_status_lbl.pack(fill="x", padx=4, pady=(0, 2))
+
+        btn_row = tk.Frame(parent, bg="#f5f5f5")
+        btn_row.pack(fill="x", padx=2, pady=(0, 4))
+        self._source_primary_btn = tk.Button(
+            btn_row, relief="flat", bg="#e8e8e8",
+            command=self._on_source_button,
+        )
+        self._source_primary_btn.pack(side="left")
+
+    def _on_source_button(self) -> None:
+        """Add (when missing) or Modify (when present)."""
+        from ui.source_add_dialog import show_source_add_dialog
+        from ui.source_prepare_modal import SourcePrepareModal
+        from ui.disclaimer_dialog import show_if_needed as show_disclaimer_if_needed
+        from core.source_acquire import AcquireError, ERR_CANCELLED
+        from core.project_schema import ORIGIN_LINK
+
+        current_meta = self.project.meta
+        preset = current_meta.source if self.project.source_status() == "ready" else None
+        title = "修改源视频" if preset else "添加源视频"
+
+        src = show_source_add_dialog(self.root, title=title, preset=preset)
+        if src is None:
+            return
+
+        # First-time disclaimer for link mode.
+        if src.origin == ORIGIN_LINK:
+            if not show_disclaimer_if_needed(self.root):
+                return
+
+        # If we're modifying, nuke the existing source first so the modal's
+        # rollback semantics work cleanly (cancel = "no source", not "old source").
+        # We rebuild from current state on cancel by keeping a snapshot.
+        modal = SourcePrepareModal(
+            self.root, src,
+            dest_video_path=self.project.source_video_path,
+            dest_meta_path=self.project.source_meta_path,
+        )
+        try:
+            result = modal.run()
+        except AcquireError as e:
+            if e.category == ERR_CANCELLED:
+                return  # silent
+            messagebox.showerror(
+                "源视频准备失败",
+                f"{e.message}\n\n{e.details[:400]}" if e.details else e.message,
+                parent=self.root,
+            )
+            return
+        except Exception as e:
+            messagebox.showerror("源视频准备失败", str(e), parent=self.root)
+            return
+
+        # Back-fill metadata
+        meta = self.project.meta
+        meta.source = src  # capture origin/url/clip_range/imported_from
+        if result.title:
+            meta.source.title = result.title
+        if result.duration_sec is not None:
+            meta.source.duration_sec = result.duration_sec
+        if result.width is not None:
+            meta.source.width = result.width
+        if result.height is not None:
+            meta.source.height = result.height
+        self.project.update_meta(meta)
+
+        self._refresh_project_tab()
+
+    # ── Subtitles section ─────────────────────────────────────────────────────
+
+    def _build_subtitles_section(self, parent: tk.Frame) -> None:
+        tk.Label(parent, text="Subtitles", font=("", 9, "bold"),
+                 bg="#f5f5f5", fg="#555", anchor="w"
+                 ).pack(fill="x", padx=2, pady=(2, 2))
+
+        self._subtitles_status_lbl = tk.Label(
+            parent, text="", bg="#f5f5f5", fg="#222",
+            font=("", 9), anchor="w", justify="left", wraplength=280,
+        )
+        self._subtitles_status_lbl.pack(fill="x", padx=4, pady=(0, 2))
+
+        btn_row = tk.Frame(parent, bg="#f5f5f5")
+        btn_row.pack(fill="x", padx=2, pady=(0, 4))
+        self._subtitles_primary_btn = tk.Button(
+            btn_row, relief="flat", bg="#e8e8e8",
+            command=self._on_subtitles_primary,
+        )
+        self._subtitles_primary_btn.pack(side="left")
+        self._subtitles_secondary_btn = tk.Button(
+            btn_row, relief="flat", bg="#e8e8e8",
+            command=self._on_subtitles_secondary,
+        )
+        self._subtitles_secondary_btn.pack(side="left", padx=(4, 0))
+
+    def _on_subtitles_primary(self) -> None:
+        """[+ 生成字幕] or [+ 添加翻译] depending on state. Stub until P4.4."""
+        messagebox.showinfo(
+            "VideoCraft",
+            "字幕生成将在 P4.4 接入。\n"
+            "目前请通过 菜单→语音转字幕 / 菜单→翻译 / 菜单→字幕→pack 手动生成,"
+            "把产物放进 subtitles/ 下。",
+            parent=self.root,
+        )
+
+    def _on_subtitles_secondary(self) -> None:
+        """[重新生成] — placeholder; wired in P4.4."""
+        self._on_subtitles_primary()
+
+    # ── Derivatives section ───────────────────────────────────────────────────
+
+    def _build_derivatives_section(self, parent: tk.Frame) -> None:
+        head = tk.Frame(parent, bg="#f5f5f5")
+        head.pack(fill="x", padx=2, pady=(2, 2))
+        tk.Label(head, text="派生作品", font=("", 9, "bold"),
+                 bg="#f5f5f5", fg="#555"
+                 ).pack(side="left")
+        self._derivative_add_btn = tk.Button(
+            head, text="+ 添加", relief="flat", bg="#e8e8e8",
+            command=self._on_new_derivative_hub,
+        )
+        self._derivative_add_btn.pack(side="right", padx=2)
+
+        tree_frame = tk.Frame(parent, bg="#f5f5f5")
+        tree_frame.pack(fill="both", expand=True)
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical")
+        self._project_tree = ttk.Treeview(tree_frame, show="tree",
                                           yscrollcommand=vsb.set,
                                           selectmode="browse")
         vsb.config(command=self._project_tree.yview)
         self._project_tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
-        # Single-click selects (toggles delete button); double-click opens.
         self._project_tree.bind("<<TreeviewSelect>>",
                                 self._on_derivative_tree_select)
         self._project_tree.bind("<Double-1>",
                                 self._on_derivative_tree_double_click)
+        # Right-click on instance → delete (compact UX, no separate button)
+        self._project_tree.bind("<Button-3>",
+                                self._on_derivative_tree_right_click)
 
-        self._project_empty_lbl = tk.Label(
-            parent, text="还没有派生作品。\n点击 [+ 新建派生] 开始,或通过「创作」菜单。",
-            bg="#f5f5f5", fg="#888", font=("", 9), wraplength=280, justify="left")
-        # empty label is packed only when there are zero derivatives
+        self._derivative_empty_lbl = tk.Label(
+            parent, text="还没有派生作品。点 [+ 添加] 开始。",
+            bg="#f5f5f5", fg="#888", font=("", 9),
+            wraplength=280, justify="left",
+        )
 
-    def _refresh_project_tab(self):
-        """Reload the derivatives tree from the active project."""
+    # ── State refresh ─────────────────────────────────────────────────────────
+
+    def _refresh_project_tab(self) -> None:
+        if not hasattr(self, "_source_status_var"):
+            return  # not built yet
+        self._refresh_source_section()
+        self._refresh_subtitles_section()
+        self._refresh_derivatives_section()
+
+    def _refresh_source_section(self) -> None:
+        if self.project.source_status() == "ready":
+            meta = self.project.meta.source
+            label = "✓ " + (meta.title or "video.mp4")
+            extras = []
+            if meta.duration_sec:
+                extras.append(_fmt_duration(meta.duration_sec))
+            if meta.width and meta.height:
+                extras.append(f"{meta.width}x{meta.height}")
+            if extras:
+                label += "\n   " + " · ".join(extras)
+            self._source_status_var.set(label)
+            self._source_primary_btn.config(text="修改")
+        else:
+            self._source_status_var.set("✗ 无")
+            self._source_primary_btn.config(text="+ 添加源视频")
+
+    def _refresh_subtitles_section(self) -> None:
+        from core import lang_names
+        srt_files = _list_subtitle_srts(self.project.subtitles_dir)
+        meta = self.project.meta.language
+
+        source_ready = self.project.source_status() == "ready"
+
+        if not srt_files:
+            # Empty
+            self._subtitles_status_lbl.config(text="✗ 无")
+            self._subtitles_primary_btn.config(
+                text="+ 生成字幕",
+                state="normal" if source_ready else "disabled",
+            )
+            self._subtitles_secondary_btn.config(text="", state="disabled")
+            self._subtitles_secondary_btn.pack_forget()
+            return
+
+        # Re-show secondary button (might be hidden from empty state)
+        self._subtitles_secondary_btn.pack(side="left", padx=(4, 0))
+
+        # Build per-lang rows
+        lines = []
+        for lang in sorted(srt_files):
+            try:
+                lang_label = lang_names.friendly_name(lang, "zh")
+            except Exception:
+                lang_label = lang
+            role = "源" if meta.source == lang else "翻译"
+            lines.append(f"✓ {role} ({lang_label}): {lang}.srt")
+        self._subtitles_status_lbl.config(text="\n".join(lines))
+
+        self._subtitles_primary_btn.config(text="+ 添加翻译", state="normal")
+        self._subtitles_secondary_btn.config(text="重新生成", state="normal")
+
+    def _refresh_derivatives_section(self) -> None:
         from core import derivative_types
         if not hasattr(self, "_project_tree"):
-            return  # not built yet
+            return
 
-        # Preserve selection where possible (iid is "type/instance").
+        source_ready = self.project.source_status() == "ready"
+        srt_files = _list_subtitle_srts(self.project.subtitles_dir)
+        subs_ready = bool(srt_files)
+
+        # Toggle the [+ 添加] button
+        self._derivative_add_btn.config(
+            state="normal" if (source_ready and subs_ready) else "disabled"
+        )
+
+        # Repopulate tree
         prev_sel = (self._project_tree.selection()[0]
                     if self._project_tree.selection() else None)
-
         self._project_tree.delete(*self._project_tree.get_children())
-        self._project_empty_lbl.pack_forget()
+        self._derivative_empty_lbl.pack_forget()
 
-        derivatives = self.project.list_derivatives()  # {type: [instance,...]}
+        derivatives = self.project.list_derivatives()
         any_instance = False
 
-        # Walk registered types in canonical order so the sidebar layout is
-        # predictable across projects (don't sort alphabetically).
         for t in derivative_types.all_types():
             instances = derivatives.get(t.type_name, [])
             if not instances:
-                continue
+                continue  # type group only shown when non-empty
             group_iid = f"type:{t.type_name}"
             self._project_tree.insert(
                 "", "end", iid=group_iid, open=True,
@@ -704,16 +947,13 @@ class VideoCraftHub:
                 tags=("group",),
             )
             for inst in instances:
-                inst_iid = f"{t.type_name}/{inst}"
                 self._project_tree.insert(
-                    group_iid, "end", iid=inst_iid,
-                    text=f"  {inst}",
-                    tags=("instance",),
+                    group_iid, "end", iid=f"{t.type_name}/{inst}",
+                    text=f"  {inst}", tags=("instance",),
                 )
                 any_instance = True
 
-        # Show any "orphan" types not in registry (forward-compat — e.g.
-        # someone created a future-type folder by hand).
+        # Orphan types (forward-compat)
         for type_name, instances in derivatives.items():
             if derivative_types.get(type_name) is not None:
                 continue
@@ -723,22 +963,20 @@ class VideoCraftHub:
                 text=f"  ({type_name})", tags=("group",),
             )
             for inst in instances:
-                inst_iid = f"{type_name}/{inst}"
                 self._project_tree.insert(
-                    group_iid, "end", iid=inst_iid,
+                    group_iid, "end", iid=f"{type_name}/{inst}",
                     text=f"  {inst}", tags=("instance",),
                 )
                 any_instance = True
 
         if not any_instance:
-            self._project_empty_lbl.pack(fill="x", padx=12, pady=12)
+            self._derivative_empty_lbl.pack(fill="x", padx=12, pady=12)
 
-        # Restore selection if still present.
         if prev_sel and self._project_tree.exists(prev_sel):
             self._project_tree.selection_set(prev_sel)
             self._project_tree.see(prev_sel)
-        self._project_delete_btn.config(
-            state="normal" if self._is_instance_selected() else "disabled")
+
+    # ── Derivative tree interactions ──────────────────────────────────────────
 
     def _is_instance_selected(self) -> bool:
         sel = self._project_tree.selection()
@@ -747,7 +985,6 @@ class VideoCraftHub:
         return "instance" in self._project_tree.item(sel[0], "tags")
 
     def _selected_instance(self) -> tuple[str, str] | None:
-        """Returns (type_name, instance_name) if a leaf is selected, else None."""
         if not self._is_instance_selected():
             return None
         iid = self._project_tree.selection()[0]
@@ -755,8 +992,7 @@ class VideoCraftHub:
         return (type_name, inst) if type_name and inst else None
 
     def _on_derivative_tree_select(self, _event=None):
-        self._project_delete_btn.config(
-            state="normal" if self._is_instance_selected() else "disabled")
+        pass  # no-op; we have no per-selection action right now
 
     def _on_derivative_tree_double_click(self, _event=None):
         info = self._selected_instance()
@@ -765,33 +1001,65 @@ class VideoCraftHub:
         type_name, _instance = info
         self._open_workbench_for_type(type_name)
 
-    def _on_new_derivative_hub(self):
-        from ui.new_derivative_dialog import show_type_picker
-        picked = show_type_picker(self.root, self.project)
-        if picked is None:
+    def _on_derivative_tree_right_click(self, event):
+        item = self._project_tree.identify_row(event.y)
+        if not item:
             return
-        type_name, instance_name = picked
+        self._project_tree.selection_set(item)
+        info = self._selected_instance()
+        if info is None:
+            return
+        type_name, instance_name = info
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(
+            label="打开",
+            command=lambda: self._open_workbench_for_type(type_name),
+        )
+        menu.add_separator()
+        menu.add_command(
+            label="删除",
+            command=lambda: self._delete_derivative(type_name, instance_name),
+        )
+        menu.tk_popup(event.x_root, event.y_root)
+
+    def _on_new_derivative_hub(self):
+        from core import derivative_types
+        from ui.new_derivative_dialog import show_type_picker, show_instance_namer
+
+        types = derivative_types.all_types()
+        if not types:
+            messagebox.showinfo("VideoCraft", "没有可用的派生类型。", parent=self.root)
+            return
+
+        # Single registered type → skip type-picker, go straight to naming.
+        if len(types) == 1:
+            type_name = types[0].type_name
+            inst_name = show_instance_namer(self.root, self.project, type_name)
+            if inst_name is None:
+                return
+        else:
+            picked = show_type_picker(self.root, self.project)
+            if picked is None:
+                return
+            type_name, inst_name = picked
+
         try:
-            self.project.create_derivative_instance(type_name, instance_name)
+            self.project.create_derivative_instance(type_name, inst_name)
         except FileExistsError as e:
             messagebox.showerror("VideoCraft", str(e))
             return
         except ValueError as e:
             messagebox.showerror("VideoCraft", f"Invalid name: {e}")
             return
+
         self._refresh_project_tab()
-        # Select the freshly-created instance and open its workbench.
-        new_iid = f"{type_name}/{instance_name}"
+        new_iid = f"{type_name}/{inst_name}"
         if self._project_tree.exists(new_iid):
             self._project_tree.selection_set(new_iid)
             self._project_tree.see(new_iid)
         self._open_workbench_for_type(type_name)
 
-    def _on_delete_derivative_hub(self):
-        info = self._selected_instance()
-        if info is None:
-            return
-        type_name, instance_name = info
+    def _delete_derivative(self, type_name: str, instance_name: str) -> None:
         if not messagebox.askyesno(
                 "删除派生",
                 f"确定删除派生 {type_name}/{instance_name}?\n"
@@ -808,16 +1076,13 @@ class VideoCraftHub:
         self._refresh_project_tab()
 
     def _open_workbench_for_type(self, type_name: str) -> None:
-        """Open the workbench tool registered for this derivative type."""
         from core import derivative_types
         t = derivative_types.get(type_name)
         if t is None:
             messagebox.showerror(
                 "VideoCraft", f"未知派生类型: {type_name}")
             return
-        # P3 transition: workbench still uses the legacy initial_file path.
-        # P4/P5 will wire instance_name through so the workbench loads the
-        # specific derivative instance directly.
+        # P4.8 will wire instance_name through; for now legacy initial_file.
         self.open_tool(t.tool_key, initial_file=self.project.folder)
 
     def _schedule_auto_refresh(self):
