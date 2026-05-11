@@ -12,8 +12,10 @@ marshal to the Tk main thread itself (`master.after(0, lambda: ...)`).
 
 from __future__ import annotations
 
+import os
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -32,6 +34,13 @@ JOB_RUNNING   = "running"
 JOB_DONE      = "done"
 JOB_FAILED    = "failed"
 JOB_CANCELLED = "cancelled"
+
+# Per-job parallel downloader thread pool size. Tuned for Kokoro-style
+# many-tiny-files repos (375 files, avg 0.5 MB) where per-file TCP
+# roundtrip dominates wall time. Big single-file models (Qwen, Whisper)
+# don't benefit — they saturate bandwidth on one connection anyway,
+# but a few workers doing nothing is harmless.
+_MAX_PARALLEL_FILES = 8
 
 
 @dataclass
@@ -254,70 +263,128 @@ class DownloadManager:
         self._notify()
 
         try:
+            # Triage: separate already-complete files (skip) from pending.
+            # Files complete on disk count toward the start baseline so the
+            # progress bar reflects them immediately on a re-enqueued job.
+            pending: list[tuple] = []  # (rf, target_path)
+            baseline_done = 0
             for rf in job.resolved_files:
                 if job.cancel_token.cancelled:
                     raise DownloadError("cancelled", "Cancelled by user")
                 target = job.spec.file_path(rf.path)
-
-                # Skip files already complete (re-enqueue idempotency).
                 if verify_file(target, expected_sha256=rf.sha256,
                                expected_size=rf.size):
-                    with self._lock:
-                        job.bytes_done += rf.size
-                        job.current_file = rf.path
-                    self._notify()
+                    baseline_done += rf.size
                     continue
+                pending.append((rf, target))
 
-                # Reflect any pre-existing .part bytes on the progress bar
-                # immediately, before the downloader's first emit. Otherwise
-                # a resumed multi-hundred-MB file looks like it restarts
-                # from 0 % for the brief moment until the first chunk lands.
-                import os as _os
+            with self._lock:
+                job.bytes_done = baseline_done
+            self._notify()
+
+            if not pending:
+                # All files were already on disk.
+                with self._lock:
+                    job.state = JOB_DONE
+                    job.finished_at = time.time()
+                    job.bytes_done = job.bytes_total
+                    job.current_file = ""
+                    job.current_url = ""
+                return
+
+            # Parallel per-file download. Per-file progress is tracked in
+            # `file_bytes` (path → last reported in-flight bytes) and
+            # aggregated into job.bytes_done on every progress emit. Cancel
+            # token is shared across workers — flipping it stops them all
+            # at the next chunk boundary.
+            file_bytes: dict[str, int] = {}
+            file_bytes_lock = threading.Lock()
+            # Local monotonic clock for speed/ETA. job.started_at uses
+            # wall clock for human display; mixing the two clocks here
+            # gave bogus GB/s readings on the first emit.
+            exec_started = time.monotonic()
+
+            def _emit_aggregate(notify_after: bool = True) -> None:
+                with file_bytes_lock:
+                    in_flight = sum(file_bytes.values())
+                elapsed = max(time.monotonic() - exec_started, 1e-3)
+                with self._lock:
+                    job.bytes_done = baseline_done + in_flight
+                    rate = (job.bytes_done - baseline_done) / elapsed
+                    job.bytes_per_sec = rate
+                    remaining = max(0, job.bytes_total - job.bytes_done)
+                    job.eta_sec = (remaining / rate) if rate > 0 else None
+                if notify_after:
+                    self._notify()
+
+            def _on_file_progress(rf, p: DownloadProgress) -> None:
+                with file_bytes_lock:
+                    file_bytes[rf.path] = p.bytes_done
+                with self._lock:
+                    # Last writer wins for current_file label; that's
+                    # acceptable since UI is just showing "what's active".
+                    job.current_file = rf.path
+                    job.current_url = p.url
+                _emit_aggregate()
+
+            def _download_one(rf, target: str) -> None:
+                """Try each source URL in order; raise on total failure."""
+                # Pre-seed with .part size (resumable from a prior run)
+                # so the per-file accounting is accurate from the start.
+                part_path = target + ".part"
                 part_existing = 0
-                if _os.path.exists(target + ".part"):
+                if os.path.exists(part_path):
                     try:
-                        part_existing = _os.path.getsize(target + ".part")
+                        part_existing = os.path.getsize(part_path)
                     except OSError:
                         part_existing = 0
-
-                with self._lock:
-                    job.current_file = rf.path
-                    job.bytes_done += part_existing
-                file_baseline = job.bytes_done - part_existing
+                with file_bytes_lock:
+                    file_bytes[rf.path] = part_existing
 
                 last_err: DownloadError | None = None
-                file_complete = False
                 for url in rf.urls:
                     if job.cancel_token.cancelled:
                         raise DownloadError("cancelled", "Cancelled by user")
-                    with self._lock:
-                        job.current_url = url
                     try:
                         download_file(
                             url, target,
                             expected_size=rf.size,
                             expected_sha256=rf.sha256,
-                            on_progress=lambda p, fb=file_baseline, j=job:
-                                self._on_file_progress(j, fb, p),
+                            on_progress=lambda p, r=rf: _on_file_progress(r, p),
                             cancel_token=job.cancel_token,
                         )
-                        file_complete = True
-                        with self._lock:
-                            job.bytes_done = file_baseline + rf.size
-                        break
+                        with file_bytes_lock:
+                            file_bytes[rf.path] = rf.size
+                        return
                     except DownloadError as e:
                         last_err = e
                         if e.kind == "cancelled":
                             raise
                         continue
+                msg = (last_err.args[0] if last_err and last_err.args
+                       else "all sources failed")
+                raise DownloadError(
+                    last_err.kind if last_err else "network",
+                    f"{rf.path}: {msg}",
+                )
 
-                if not file_complete:
-                    msg = (last_err.args[0] if last_err and last_err.args
-                           else "all sources failed")
-                    raise DownloadError(
-                        last_err.kind if last_err else "network",
-                        f"{rf.path}: {msg}",
-                    )
+            # Cap workers at min(_MAX_PARALLEL_FILES, len(pending)) so a
+            # 1-file job spawns 1 worker (no overhead) and a 375-file job
+            # uses 8 (saturating ~typical hf-mirror per-IP slot count).
+            worker_count = min(_MAX_PARALLEL_FILES, len(pending))
+            with ThreadPoolExecutor(max_workers=worker_count,
+                                     thread_name_prefix="ModelDL") as ex:
+                futures = [ex.submit(_download_one, rf, target)
+                           for rf, target in pending]
+                for f in as_completed(futures):
+                    # First exception wins; cancel remaining workers via
+                    # the shared cancel_token so the pool drains quickly.
+                    try:
+                        f.result()
+                    except DownloadError as e:
+                        if e.kind != "cancelled":
+                            job.cancel_token.cancel()
+                        raise
 
             with self._lock:
                 job.state = JOB_DONE
@@ -341,15 +408,6 @@ class DownloadManager:
                 job.finished_at = time.time()
         finally:
             self._notify()
-
-    def _on_file_progress(self, job: DownloadJob, file_baseline: int,
-                          p: DownloadProgress) -> None:
-        with self._lock:
-            job.bytes_done = file_baseline + p.bytes_done
-            job.bytes_per_sec = p.bytes_per_sec
-            remaining = max(0, job.bytes_total - job.bytes_done)
-            job.eta_sec = (remaining / p.bytes_per_sec) if p.bytes_per_sec > 0 else None
-        self._notify()
 
     def _notify(self) -> None:
         with self._lock:
