@@ -136,7 +136,9 @@ class AIConsoleApp(ToolBase):
         nb.add(self.tab_cloud,    text=tr("tool.router.tab_cloud"))
         nb.add(self.tab_aistack,  text=tr("tool.router.tab_aistack"))
         nb.add(self.tab_stats,    text=tr("tool.router.tab_stats"))
-        self._stats_tab_index = 4
+        self._routing_tab_index = 0
+        self._stats_tab_index   = 4
+        self._notebook = nb
         nb.bind("<<NotebookTabChanged>>", self._on_tab_change)
 
         self._build_routing_tab()
@@ -145,10 +147,32 @@ class AIConsoleApp(ToolBase):
         self._build_aistack_tab()
         self._build_stats_tab()
 
+        # Pick up newly-installed local models / fresh aistack model
+        # caches when the user alt-tabs back from the Local Model Manager
+        # window. FocusIn fires on every internal focus change too, so
+        # filter to the toplevel-level event (when Tk reports the master
+        # itself receiving focus = window activation by the OS).
+        master.bind("<FocusIn>", self._on_window_focus)
+
     def _on_tab_change(self, event):
         nb = event.widget
-        if nb.index(nb.select()) == self._stats_tab_index:
+        idx = nb.index(nb.select())
+        if idx == self._stats_tab_index:
             self._refresh_stats()
+        elif idx == self._routing_tab_index:
+            # Switching back to routing also refreshes — covers the case
+            # where the user installed a model in another tab (Embedded
+            # tab's [Edit] dialog) and wants to see it appear here.
+            self._rebuild_routing_tab()
+
+    def _on_window_focus(self, event):
+        if event.widget is not self.master:
+            return
+        # Only spend the rebuild if routing is the visible tab — no
+        # point recreating its widgets when the user is staring at
+        # Stats or aistack.
+        if self._notebook.index(self._notebook.select()) == self._routing_tab_index:
+            self._rebuild_routing_tab()
 
     # ── Routing tab: task-first per-task tier picker ──────────────────────
 
