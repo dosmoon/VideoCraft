@@ -628,22 +628,28 @@ class VideoCraftHub:
     # ── Sidebar: Project tab (manifest list) ────────────────────────────────
 
     def _build_project_tab(self, parent: tk.Frame) -> None:
-        """Build the sidebar 'Project' tab: manifest list + toolbar.
+        """Build the sidebar 'Project' tab: derivatives tree + toolbar.
 
-        Selecting a manifest opens (or focuses) the project-workbench tab in
-        the main content area and tells it to load that manifest. New /
-        Delete / Refresh act on the active project; with no project, the
-        toolbar is disabled and a hint is shown."""
+        Tree structure: type group (folder icon) → instance leaves.
+        Double-clicking an instance opens its workbench. The [新建派生]
+        button shows the type-picker dialog. The trash button deletes
+        the currently selected instance (with confirmation).
+        """
         from i18n import tr
+        from core import derivative_types
+        # Import here to avoid bootstrap import cycles with ui modules.
+        from ui.new_derivative_dialog import show_type_picker
+
         bar = tk.Frame(parent, bg="#e8e8e8")
         bar.pack(fill="x")
         self._project_new_btn = tk.Button(
-            bar, text=tr("tool.project_workbench.new_manifest"),
-            command=self._on_new_manifest_hub, relief="flat", bg="#e8e8e8")
+            bar, text="+ 新建派生",
+            command=self._on_new_derivative_hub, relief="flat", bg="#e8e8e8")
         self._project_new_btn.pack(side="left", padx=2, pady=2)
         self._project_delete_btn = tk.Button(
-            bar, text=tr("tool.project_workbench.delete"),
-            command=self._on_delete_manifest_hub, relief="flat", bg="#e8e8e8")
+            bar, text="删除",
+            command=self._on_delete_derivative_hub, relief="flat", bg="#e8e8e8",
+            state="disabled")
         self._project_delete_btn.pack(side="left", padx=2, pady=2)
         tk.Button(bar, text="⟳", width=3, relief="flat",
                   command=self._refresh_project_tab,
@@ -658,133 +664,161 @@ class VideoCraftHub:
         vsb.config(command=self._project_tree.yview)
         self._project_tree.pack(side="left", fill="both", expand=True)
         vsb.pack(side="right", fill="y")
+        # Single-click selects (toggles delete button); double-click opens.
         self._project_tree.bind("<<TreeviewSelect>>",
-                                self._on_project_tree_select)
+                                self._on_derivative_tree_select)
+        self._project_tree.bind("<Double-1>",
+                                self._on_derivative_tree_double_click)
 
         self._project_empty_lbl = tk.Label(
-            parent, text=tr("hub.sidebar.project.empty_no_project"),
+            parent, text="还没有派生作品。\n点击 [+ 新建派生] 开始,或通过「创作」菜单。",
             bg="#f5f5f5", fg="#888", font=("", 9), wraplength=280, justify="left")
-        # empty label shown only when no project — set in _refresh_project_tab
+        # empty label is packed only when there are zero derivatives
 
     def _refresh_project_tab(self):
-        """Reload the manifest list from the active project."""
-        from i18n import tr
+        """Reload the derivatives tree from the active project."""
+        from core import derivative_types
         if not hasattr(self, "_project_tree"):
             return  # not built yet
-        sel_prev = (self._project_tree.selection()[0]
+
+        # Preserve selection where possible (iid is "type/instance").
+        prev_sel = (self._project_tree.selection()[0]
                     if self._project_tree.selection() else None)
+
         self._project_tree.delete(*self._project_tree.get_children())
         self._project_empty_lbl.pack_forget()
-        self._project_new_btn.config(state="normal")
-        manifests = self.project.list_manifests()
-        for basename in manifests:
-            self._project_tree.insert("", "end", iid=basename,
-                                      text=f"  {basename}")
-        if sel_prev and self._project_tree.exists(sel_prev):
-            self._project_tree.selection_set(sel_prev)
-        self._project_delete_btn.config(
-            state="normal" if self._project_tree.selection() else "disabled")
-        if not manifests:
-            self._project_empty_lbl.config(
-                text=tr("hub.sidebar.project.no_manifests"))
+
+        derivatives = self.project.list_derivatives()  # {type: [instance,...]}
+        any_instance = False
+
+        # Walk registered types in canonical order so the sidebar layout is
+        # predictable across projects (don't sort alphabetically).
+        for t in derivative_types.all_types():
+            instances = derivatives.get(t.type_name, [])
+            if not instances:
+                continue
+            group_iid = f"type:{t.type_name}"
+            self._project_tree.insert(
+                "", "end", iid=group_iid, open=True,
+                text=f"  {derivative_types.display_name(t.type_name)}",
+                tags=("group",),
+            )
+            for inst in instances:
+                inst_iid = f"{t.type_name}/{inst}"
+                self._project_tree.insert(
+                    group_iid, "end", iid=inst_iid,
+                    text=f"  {inst}",
+                    tags=("instance",),
+                )
+                any_instance = True
+
+        # Show any "orphan" types not in registry (forward-compat — e.g.
+        # someone created a future-type folder by hand).
+        for type_name, instances in derivatives.items():
+            if derivative_types.get(type_name) is not None:
+                continue
+            group_iid = f"type:{type_name}"
+            self._project_tree.insert(
+                "", "end", iid=group_iid, open=True,
+                text=f"  ({type_name})", tags=("group",),
+            )
+            for inst in instances:
+                inst_iid = f"{type_name}/{inst}"
+                self._project_tree.insert(
+                    group_iid, "end", iid=inst_iid,
+                    text=f"  {inst}", tags=("instance",),
+                )
+                any_instance = True
+
+        if not any_instance:
             self._project_empty_lbl.pack(fill="x", padx=12, pady=12)
 
-    def _on_project_tree_select(self, _event=None):
-        sel = self._project_tree.selection()
+        # Restore selection if still present.
+        if prev_sel and self._project_tree.exists(prev_sel):
+            self._project_tree.selection_set(prev_sel)
+            self._project_tree.see(prev_sel)
         self._project_delete_btn.config(
-            state="normal" if sel else "disabled")
-        if not sel:
-            return
-        basename = sel[0]
-        # Hub-level dirty check: if workbench is editing another manifest
-        # with unsaved changes, prompt before switching.
-        wb = self._get_workbench_app()
-        if wb is not None and wb.current_basename != basename:
-            if not wb.confirm_discard():
-                # User cancelled — restore the tree selection
-                if wb.current_basename:
-                    self._project_tree.selection_set(wb.current_basename)
-                return
-        self._open_or_focus_workbench(basename)
+            state="normal" if self._is_instance_selected() else "disabled")
 
-    def _on_new_manifest_hub(self):
-        from i18n import tr
-        from tkinter import simpledialog
-        wb = self._get_workbench_app()
-        if wb is not None and not wb.confirm_discard():
+    def _is_instance_selected(self) -> bool:
+        sel = self._project_tree.selection()
+        if not sel:
+            return False
+        return "instance" in self._project_tree.item(sel[0], "tags")
+
+    def _selected_instance(self) -> tuple[str, str] | None:
+        """Returns (type_name, instance_name) if a leaf is selected, else None."""
+        if not self._is_instance_selected():
+            return None
+        iid = self._project_tree.selection()[0]
+        type_name, _, inst = iid.partition("/")
+        return (type_name, inst) if type_name and inst else None
+
+    def _on_derivative_tree_select(self, _event=None):
+        self._project_delete_btn.config(
+            state="normal" if self._is_instance_selected() else "disabled")
+
+    def _on_derivative_tree_double_click(self, _event=None):
+        info = self._selected_instance()
+        if info is None:
             return
-        basename = simpledialog.askstring(
-            tr("tool.project_workbench.new_manifest"),
-            tr("tool.project_workbench.new_manifest_prompt"),
-            parent=self.root,
-        )
-        if not basename:
+        type_name, _instance = info
+        self._open_workbench_for_type(type_name)
+
+    def _on_new_derivative_hub(self):
+        from ui.new_derivative_dialog import show_type_picker
+        picked = show_type_picker(self.root, self.project)
+        if picked is None:
             return
-        basename = basename.strip()
-        if not basename or any(c in basename for c in r'\/:*?"<>|'):
-            messagebox.showerror("VideoCraft",
-                                 tr("tool.project_workbench.invalid_basename"))
-            return
-        if self.project.manifest_exists(basename):
-            messagebox.showerror(
-                "VideoCraft",
-                tr("tool.project_workbench.basename_exists").format(name=basename))
-            return
+        type_name, instance_name = picked
         try:
-            self.project.save_manifest(basename, Project.default_manifest(basename))
-        except Exception as e:
-            messagebox.showerror("VideoCraft", f"Create failed: {e}")
+            self.project.create_derivative_instance(type_name, instance_name)
+        except FileExistsError as e:
+            messagebox.showerror("VideoCraft", str(e))
+            return
+        except ValueError as e:
+            messagebox.showerror("VideoCraft", f"Invalid name: {e}")
             return
         self._refresh_project_tab()
-        if self._project_tree.exists(basename):
-            self._project_tree.selection_set(basename)
-        # selection event will trigger workbench load
+        # Select the freshly-created instance and open its workbench.
+        new_iid = f"{type_name}/{instance_name}"
+        if self._project_tree.exists(new_iid):
+            self._project_tree.selection_set(new_iid)
+            self._project_tree.see(new_iid)
+        self._open_workbench_for_type(type_name)
 
-    def _on_delete_manifest_hub(self):
-        from i18n import tr
-        sel = self._project_tree.selection()
-        if not sel:
+    def _on_delete_derivative_hub(self):
+        info = self._selected_instance()
+        if info is None:
             return
-        basename = sel[0]
+        type_name, instance_name = info
         if not messagebox.askyesno(
-                tr("tool.project_workbench.confirm_delete_title"),
-                tr("tool.project_workbench.confirm_delete_msg").format(name=basename),
+                "删除派生",
+                f"确定删除派生 {type_name}/{instance_name}?\n"
+                "对应目录及其内容将被删除,无法恢复。",
                 default="no"):
             return
-        if not self.project.delete_manifest(basename):
-            messagebox.showerror("VideoCraft", f"Delete failed: {basename}")
+        import shutil
+        inst_dir = self.project.derivative_dir(type_name, instance_name)
+        try:
+            shutil.rmtree(inst_dir)
+        except OSError as e:
+            messagebox.showerror("VideoCraft", f"删除失败: {e}")
             return
-        # If the workbench is showing this manifest, clear it
-        wb = self._get_workbench_app()
-        if wb is not None and wb.current_basename == basename:
-            wb.load_manifest(None)
         self._refresh_project_tab()
 
-    def _get_workbench_app(self) -> "object | None":
-        """Returns the live ProjectWorkbenchApp if its tab is open, else None."""
-        tf = self._tab_frames.get("project-workbench")
-        if tf is None:
-            return None
-        for inst in self._tool_instances:
-            if getattr(inst, "master", None) is tf:
-                return inst
-        return None
-
-    def _open_or_focus_workbench(self, basename: "str | None"):
-        """Open the workbench tab if not yet open and load the given manifest;
-        otherwise focus the existing tab and switch its loaded manifest."""
-        if "project-workbench" in self._tab_frames:
-            self._select_tab("project-workbench")
-            self._show_tabs()
-            wb = self._get_workbench_app()
-            if wb is not None:
-                wb.load_manifest(basename)
+    def _open_workbench_for_type(self, type_name: str) -> None:
+        """Open the workbench tool registered for this derivative type."""
+        from core import derivative_types
+        t = derivative_types.get(type_name)
+        if t is None:
+            messagebox.showerror(
+                "VideoCraft", f"未知派生类型: {type_name}")
             return
-        # Open via the standard tool path, passing initial_basename
-        cfg = TOOL_MAP["project-workbench"]
-        file_path = os.path.join(_SRC, cfg["file"])
-        self._open_in_tab(file_path, cfg["class"], "project-workbench",
-                          initial_basename=basename)
+        # P3 transition: workbench still uses the legacy initial_file path.
+        # P4/P5 will wire instance_name through so the workbench loads the
+        # specific derivative instance directly.
+        self.open_tool(t.tool_key, initial_file=self.project.folder)
 
     def _schedule_auto_refresh(self):
         """每 2 秒检查文件夹变化，有变化时自动刷新 Sidebar。"""

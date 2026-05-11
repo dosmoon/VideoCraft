@@ -283,6 +283,41 @@ class Project:
             for t in self.list_derivative_types()
         }
 
+    def create_derivative_instance(
+        self,
+        type_name: str,
+        instance_name: str,
+        initial_config: dict | None = None,
+        config_filename: str = "config.json",
+    ) -> str:
+        """Create derivatives/<type_name>/<instance_name>/ + initial config.
+
+        Validates instance_name against filesystem rules. Raises
+        FileExistsError if the instance already exists, ValueError on
+        bad name. Returns the absolute path to the new instance folder.
+        """
+        if (not instance_name
+                or instance_name != instance_name.strip()
+                or any(c in instance_name for c in r'\/:*?"<>|')
+                or instance_name.startswith(".")):
+            raise ValueError(f"Invalid instance name: {instance_name!r}")
+        if len(instance_name) > 64:
+            raise ValueError(f"Instance name too long: {len(instance_name)} > 64")
+
+        inst_dir = self.derivative_dir(type_name, instance_name)
+        if os.path.exists(inst_dir):
+            raise FileExistsError(
+                f"Derivative instance already exists: {type_name}/{instance_name}"
+            )
+        os.makedirs(inst_dir, exist_ok=True)
+
+        if initial_config is not None:
+            config_path = os.path.join(inst_dir, config_filename)
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(initial_config, f, ensure_ascii=False, indent=2)
+
+        return inst_dir
+
     # -- 文件列表 ---------------------------------------------------------------
 
     def get_files(self) -> list:
