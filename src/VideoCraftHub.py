@@ -782,11 +782,10 @@ class VideoCraftHub:
                  bg="#f5f5f5", fg="#555", anchor="w"
                  ).pack(fill="x", padx=2, pady=(2, 2))
 
-        self._subtitles_status_lbl = tk.Label(
-            parent, text="", bg="#f5f5f5", fg="#222",
-            font=("", 9), anchor="w", justify="left", wraplength=280,
-        )
-        self._subtitles_status_lbl.pack(fill="x", padx=4, pady=(0, 2))
+        # Container for per-language rows (rebuilt on every refresh).
+        # When no SRTs exist, we show a single "✗ 无" label in here.
+        self._subtitles_lang_box = tk.Frame(parent, bg="#f5f5f5")
+        self._subtitles_lang_box.pack(fill="x", padx=4, pady=(0, 2))
 
         btn_row = tk.Frame(parent, bg="#f5f5f5")
         btn_row.pack(fill="x", padx=2, pady=(0, 4))
@@ -1008,38 +1007,93 @@ class VideoCraftHub:
 
     def _refresh_subtitles_section(self) -> None:
         from core import lang_names
+        from core.subtitle_check import check_srt, SEV_ERROR, SEV_WARNING
+
+        # Rebuild language rows from scratch each refresh — simplest and the
+        # widget count is tiny (1~3 rows in practice).
+        for child in self._subtitles_lang_box.winfo_children():
+            child.destroy()
+
         srt_files = _list_subtitle_srts(self.project.subtitles_dir)
         meta = self.project.meta.language
-
         source_ready = self.project.source_status() == "ready"
 
         if not srt_files:
-            # Empty
-            self._subtitles_status_lbl.config(text="✗ 无")
+            tk.Label(self._subtitles_lang_box, text="✗ 无",
+                     bg="#f5f5f5", fg="#222", font=("", 9),
+                     anchor="w"
+                     ).pack(fill="x")
             self._subtitles_primary_btn.config(
                 text="+ 生成字幕",
                 state="normal" if source_ready else "disabled",
             )
-            self._subtitles_secondary_btn.config(text="", state="disabled")
             self._subtitles_secondary_btn.pack_forget()
             return
 
         # Re-show secondary button (might be hidden from empty state)
         self._subtitles_secondary_btn.pack(side="left", padx=(4, 0))
 
-        # Build per-lang rows
-        lines = []
+        # Reference SRT for length-ratio checks on translations
+        source_lang = meta.source
+        ref_path = (os.path.join(self.project.subtitles_dir, f"{source_lang}.srt")
+                    if source_lang else None)
+
         for lang in sorted(srt_files):
             try:
                 lang_label = lang_names.friendly_name(lang, "zh")
             except Exception:
                 lang_label = lang
             role = "源" if meta.source == lang else "翻译"
-            lines.append(f"✓ {role} ({lang_label}): {lang}.srt")
-        self._subtitles_status_lbl.config(text="\n".join(lines))
+            srt_path = os.path.join(self.project.subtitles_dir, f"{lang}.srt")
+
+            # Quick check — milliseconds even for hour-long files.
+            ref = ref_path if (lang != source_lang and ref_path
+                              and os.path.isfile(ref_path)) else None
+            check = check_srt(srt_path, expected_lang_iso=lang,
+                              reference_srt_path=ref)
+
+            if check.has_errors:
+                icon = "✗"
+                color = "#c00"
+            elif check.has_warnings:
+                icon = "⚠"
+                color = "#a60"
+            else:
+                icon = "✓"
+                color = "#222"
+
+            row = tk.Frame(self._subtitles_lang_box, bg="#f5f5f5")
+            row.pack(fill="x", pady=1)
+            tk.Label(row, text=icon, bg="#f5f5f5", fg=color, font=("", 9),
+                     width=2
+                     ).pack(side="left")
+            text = f"{role} ({lang_label}): {lang}.srt"
+            if check.issue_count > 0:
+                text += f"  · {check.issue_count} 处异常"
+            tk.Label(row, text=text, bg="#f5f5f5", fg=color, font=("", 9),
+                     anchor="w"
+                     ).pack(side="left", fill="x", expand=True)
+            if check.issue_count > 0:
+                tk.Button(row, text="详情", relief="flat", bg="#e8e8e8",
+                          font=("", 8),
+                          command=lambda p=srt_path, l=lang, r=ref:
+                              self._on_show_check_dialog(p, l, r),
+                          ).pack(side="right", padx=2)
 
         self._subtitles_primary_btn.config(text="+ 添加翻译", state="normal")
         self._subtitles_secondary_btn.config(text="重新生成", state="normal")
+
+    def _on_show_check_dialog(
+        self, srt_path: str, lang_iso: str, ref_path: str | None,
+    ) -> None:
+        from ui.subtitle_check_dialog import show_check_dialog
+        applied = show_check_dialog(
+            self.root, srt_path,
+            expected_lang_iso=lang_iso,
+            reference_srt_path=ref_path,
+        )
+        if applied:
+            self._refresh_subtitles_section()
 
     def _refresh_derivatives_section(self) -> None:
         from core import derivative_types
