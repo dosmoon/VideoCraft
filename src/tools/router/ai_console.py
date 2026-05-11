@@ -1,15 +1,19 @@
 """AI Console — provider management + task-routing dropdowns + stats.
 
-UI layout:
-  Tab 1 (Provider & Routing):
-    - Top section "Task Routing": one row per task in TASKS, with a
-      provider dropdown and a model dropdown. Picking either auto-saves
-      via router.set_task_routing(). ASR/TTS rows render an em-dash in
-      the model column (provider-only routing).
-    - Below: providers grouped by tier (Local / Free Online / aistack
-      Gateway / Cloud), each tier's rows show name, key status, Edit
-      and Test buttons.
-  Tab 2 (Stats): per-provider call counters.
+UI layout (5 tabs):
+  Provider — task routing matrix: one row per TASKS entry, with
+             provider + model dropdowns. Picks auto-save via
+             router.set_task_routing().
+  内置模型 — 🏠 Local Embedded (LlamaCpp / faster-whisper) +
+             🌐 Free Online (Microsoft Edge TTS) — bundled providers
+             that need zero API key.
+  云服务   — ☁️ Cloud providers requiring an API key (Gemini /
+             DeepSeek / Custom / ClaudeCode / LemonFox / Fish Audio).
+  aistack  — Self-hosted gateway pane: URL + Test/Refresh + Enable.
+  Stats    — Per-provider call counters.
+
+Editing a provider in any of the 4 provider-related tabs rebuilds
+all 4 (the routing matrix dropdowns may have new choices).
 
 Prompt editing + Playground live in the Prompt Console tool
 (tools/router/prompt_console.py) — split out 2026-05-11.
@@ -91,15 +95,24 @@ class AIConsoleApp(ToolBase):
         nb = ttk.Notebook(master)
         nb.pack(fill="both", expand=True, padx=10, pady=10)
 
-        self.tab_routing = tk.Frame(nb, padx=8, pady=8)
-        self.tab_stats   = tk.Frame(nb, padx=12, pady=10)
+        self.tab_routing  = tk.Frame(nb, padx=8, pady=8)
+        self.tab_embedded = tk.Frame(nb, padx=8, pady=8)
+        self.tab_cloud    = tk.Frame(nb, padx=8, pady=8)
+        self.tab_aistack  = tk.Frame(nb, padx=8, pady=8)
+        self.tab_stats    = tk.Frame(nb, padx=12, pady=10)
 
-        nb.add(self.tab_routing, text=tr("tool.router.tab_routing"))
-        nb.add(self.tab_stats,   text=tr("tool.router.tab_stats"))
-        self._stats_tab_index = 1
+        nb.add(self.tab_routing,  text=tr("tool.router.tab_routing"))
+        nb.add(self.tab_embedded, text=tr("tool.router.tab_embedded"))
+        nb.add(self.tab_cloud,    text=tr("tool.router.tab_cloud"))
+        nb.add(self.tab_aistack,  text=tr("tool.router.tab_aistack"))
+        nb.add(self.tab_stats,    text=tr("tool.router.tab_stats"))
+        self._stats_tab_index = 4
         nb.bind("<<NotebookTabChanged>>", self._on_tab_change)
 
         self._build_routing_tab()
+        self._build_embedded_tab()
+        self._build_cloud_tab()
+        self._build_aistack_tab()
         self._build_stats_tab()
 
     def _on_tab_change(self, event):
@@ -107,76 +120,41 @@ class AIConsoleApp(ToolBase):
         if nb.index(nb.select()) == self._stats_tab_index:
             self._refresh_stats()
 
-    # ── Routing tab: top section + bottom section ──────────────────────────
+    # ── Routing tab: just the per-task provider/model matrix ──────────────
 
     def _build_routing_tab(self):
         tab = self.tab_routing
 
-        # Help line
         tk.Label(tab,
                  text=tr("tool.router.routing_prompt"),
                  font=("", 9), fg="#555", wraplength=1000, justify="left",
                  ).pack(anchor="w", pady=(0, 8))
 
-        # Scrollable container — providers list can grow as users add
-        # custom OpenAI-compat endpoints. Routing section is always 4 rows
-        # so it doesn't need scrolling; both share one canvas for simplicity.
-        outer = tk.Frame(tab)
-        outer.pack(fill="both", expand=True)
-
-        canvas = tk.Canvas(outer, highlightthickness=0)
-        vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=vsb.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        vsb.pack(side="right", fill="y")
-
-        body = tk.Frame(canvas)
-        canvas.create_window((0, 0), window=body, anchor="nw")
-        body.bind("<Configure>",
-                  lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-
-        # Scope mousewheel to this canvas only: bind_all would also fire on
-        # modal Edit dialogs, leaking scroll events through to the background.
-        def _on_wheel(e):
-            # Only scroll if content actually exceeds the viewport
-            bbox = canvas.bbox("all")
-            if not bbox:
-                return
-            if bbox[3] - bbox[1] <= canvas.winfo_height():
-                return
-            canvas.yview_scroll(int(-e.delta / 120), "units")
-
-        def _bind_wheel(_e):
-            canvas.bind_all("<MouseWheel>", _on_wheel)
-
-        def _unbind_wheel(_e):
-            canvas.unbind_all("<MouseWheel>")
-
-        canvas.bind("<Enter>", _bind_wheel)
-        canvas.bind("<Leave>", _unbind_wheel)
-        # Also unbind when the tab/window is destroyed so wheel events don't
-        # target a dead canvas after closing the console.
-        canvas.bind("<Destroy>", _unbind_wheel)
-
-        # Track widgets that need rebuilding/refresh after edits
+        # Track widgets that need rebuilding/refresh after edits in any
+        # of the provider tabs.
         self._test_buttons: dict[str, tk.Button] = {}
         self._task_provider_vars: dict[str, tk.StringVar] = {}
         self._task_provider_combos: dict[str, ttk.Combobox] = {}
         self._task_model_vars: dict[str, tk.StringVar] = {}
         self._task_model_combos: dict[str, ttk.Combobox] = {}
 
-        # ── Top: task routing ──
         routing_frame = tk.LabelFrame(
-            body, text=tr("tool.router.section_routing_title"),
+            tab, text=tr("tool.router.section_routing_title"),
             padx=10, pady=8, font=("", 10, "bold"),
         )
-        routing_frame.pack(fill="x", pady=(0, 12), anchor="w")
+        routing_frame.pack(fill="x", anchor="w")
         self._build_routing_section(routing_frame)
 
-        # ── Providers grouped by tier (🏠 Local → 🌐 Free → 🚀 aistack → ☁️ Cloud) ──
-        # Bucketing happens up-front so the rendering order can interleave
-        # the dedicated aistack pane between Free Online and Cloud without
-        # building two passes over the provider dicts.
+    # ── Embedded tab: 🏠 in-process + 🌐 free online ───────────────────────
+
+    def _build_embedded_tab(self):
+        tab = self.tab_embedded
+        body = self._scrollable_body(tab)
+
+        tk.Label(body, text=tr("tool.router.embedded_intro"),
+                 font=("", 9), fg="#555", wraplength=900, justify="left",
+                 ).pack(anchor="w", padx=2, pady=(0, 8))
+
         buckets = self._bucket_providers_by_tier()
 
         local_frame = tk.LabelFrame(
@@ -196,19 +174,23 @@ class AIConsoleApp(ToolBase):
             body, text=tr("tool.router.section_free_online_title"),
             padx=10, pady=8, font=("", 10, "bold"),
         )
-        free_frame.pack(fill="x", pady=(0, 8), anchor="w")
+        free_frame.pack(fill="x", anchor="w")
         self._build_tier_block(
             free_frame, 0, buckets["free_online"],
             "tool.router.section_free_online_help",
         )
 
-        gateway_frame = tk.LabelFrame(
-            body, text=tr("tool.router.section_gateway_title"),
-            padx=10, pady=8, font=("", 10, "bold"),
-        )
-        gateway_frame.pack(fill="x", pady=(0, 8), anchor="w")
-        self._build_aistack_gateway_section(gateway_frame)
+    # ── Cloud tab: ☁️ providers requiring an API key ──────────────────────
 
+    def _build_cloud_tab(self):
+        tab = self.tab_cloud
+        body = self._scrollable_body(tab)
+
+        tk.Label(body, text=tr("tool.router.cloud_intro"),
+                 font=("", 9), fg="#555", wraplength=900, justify="left",
+                 ).pack(anchor="w", padx=2, pady=(0, 8))
+
+        buckets = self._bucket_providers_by_tier()
         cloud_frame = tk.LabelFrame(
             body, text=tr("tool.router.section_cloud_title"),
             padx=10, pady=8, font=("", 10, "bold"),
@@ -218,6 +200,56 @@ class AIConsoleApp(ToolBase):
             cloud_frame, 0, buckets["cloud"],
             "tool.router.section_cloud_help",
         )
+
+    # ── aistack tab: 🚀 self-hosted gateway ───────────────────────────────
+
+    def _build_aistack_tab(self):
+        tab = self.tab_aistack
+
+        tk.Label(tab, text=tr("tool.router.aistack_intro"),
+                 font=("", 9), fg="#555", wraplength=900, justify="left",
+                 ).pack(anchor="w", pady=(0, 8))
+
+        gateway_frame = tk.LabelFrame(
+            tab, text=tr("tool.router.section_gateway_title"),
+            padx=10, pady=8, font=("", 10, "bold"),
+        )
+        gateway_frame.pack(fill="x", anchor="w")
+        self._build_aistack_gateway_section(gateway_frame)
+
+    # ── Helpers ────────────────────────────────────────────────────────────
+
+    def _scrollable_body(self, parent: tk.Frame) -> tk.Frame:
+        """Wrap parent in a vertically scrollable Canvas + Frame and return
+        the inner frame. Mousewheel is scoped to the canvas only so modal
+        Edit dialogs don't leak scroll events through to the background.
+        """
+        outer = tk.Frame(parent)
+        outer.pack(fill="both", expand=True)
+
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+
+        body = tk.Frame(canvas)
+        canvas.create_window((0, 0), window=body, anchor="nw")
+        body.bind("<Configure>",
+                  lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        def _on_wheel(e):
+            bbox = canvas.bbox("all")
+            if not bbox:
+                return
+            if bbox[3] - bbox[1] <= canvas.winfo_height():
+                return
+            canvas.yview_scroll(int(-e.delta / 120), "units")
+
+        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", _on_wheel))
+        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+        canvas.bind("<Destroy>", lambda _e: canvas.unbind_all("<MouseWheel>"))
+        return body
 
     # ── aistack gateway pane: URL + enable + test/refresh ──────────────────
 
@@ -725,10 +757,20 @@ class AIConsoleApp(ToolBase):
         self._test_buttons[name] = test_btn
         return row + 1
 
-    def _rebuild_routing_tab(self):
-        for w in self.tab_routing.winfo_children():
-            w.destroy()
-        self._build_routing_tab()
+    def _rebuild_provider_tabs(self):
+        """Rebuild Routing + Embedded + Cloud + aistack tabs in place. Used
+        after edit dialogs save / enable toggles / aistack URL changes,
+        any of which can change the routing matrix's available choices.
+        """
+        for tab, builder in (
+            (self.tab_routing,  self._build_routing_tab),
+            (self.tab_embedded, self._build_embedded_tab),
+            (self.tab_cloud,    self._build_cloud_tab),
+            (self.tab_aistack,  self._build_aistack_tab),
+        ):
+            for w in tab.winfo_children():
+                w.destroy()
+            builder()
 
     # ── Edit dialog (provider key + base_url + models + refresh) ────────────
 
@@ -904,7 +946,7 @@ class AIConsoleApp(ToolBase):
             router.update_provider(name, **kwargs)
             messagebox.showinfo(tr("tool.router.saved_title"),
                                 tr("tool.router.saved_config_msg", name=name), parent=dlg)
-            self._rebuild_routing_tab()
+            self._rebuild_provider_tabs()
             dlg.destroy()
 
         btn_row = tk.Frame(dlg)
@@ -1187,7 +1229,7 @@ class AIConsoleApp(ToolBase):
             )
             messagebox.showinfo(tr("tool.router.saved_title"),
                                 tr("tool.router.saved_config_msg", name=name), parent=dlg)
-            self._rebuild_routing_tab()
+            self._rebuild_provider_tabs()
             dlg.destroy()
 
         btn_row = tk.Frame(dlg)
@@ -1275,7 +1317,7 @@ class AIConsoleApp(ToolBase):
                 )
             messagebox.showinfo(tr("tool.router.saved_title"),
                                 tr("tool.router.saved_config_msg", name=display_name), parent=dlg)
-            self._rebuild_routing_tab()
+            self._rebuild_provider_tabs()
             dlg.destroy()
 
         btn_row = tk.Frame(dlg)
@@ -1356,7 +1398,7 @@ class AIConsoleApp(ToolBase):
             messagebox.showinfo(tr("tool.router.saved_title"),
                                 tr("tool.router.saved_config_msg", name=display_name),
                                 parent=dlg)
-            self._rebuild_routing_tab()
+            self._rebuild_provider_tabs()
             dlg.destroy()
 
         btn_row = tk.Frame(dlg)
@@ -1435,7 +1477,7 @@ class AIConsoleApp(ToolBase):
                 tr("tool.router.saved_title"),
                 tr("tool.router.saved_config_msg", name=display_name),
                 parent=dlg)
-            self._rebuild_routing_tab()
+            self._rebuild_provider_tabs()
             dlg.destroy()
 
         btn_row = tk.Frame(dlg)
