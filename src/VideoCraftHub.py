@@ -1180,8 +1180,8 @@ class VideoCraftHub:
         info = self._selected_instance()
         if info is None:
             return
-        type_name, _instance = info
-        self._open_workbench_for_type(type_name)
+        type_name, instance_name = info
+        self._open_workbench_for_type(type_name, instance_name)
 
     def _on_derivative_tree_right_click(self, event):
         item = self._project_tree.identify_row(event.y)
@@ -1195,7 +1195,7 @@ class VideoCraftHub:
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(
             label="打开",
-            command=lambda: self._open_workbench_for_type(type_name),
+            command=lambda: self._open_workbench_for_type(type_name, instance_name),
         )
         menu.add_separator()
         menu.add_command(
@@ -1239,7 +1239,7 @@ class VideoCraftHub:
         if self._project_tree.exists(new_iid):
             self._project_tree.selection_set(new_iid)
             self._project_tree.see(new_iid)
-        self._open_workbench_for_type(type_name)
+        self._open_workbench_for_type(type_name, inst_name)
 
     def _delete_derivative(self, type_name: str, instance_name: str) -> None:
         if not messagebox.askyesno(
@@ -1257,15 +1257,26 @@ class VideoCraftHub:
             return
         self._refresh_project_tab()
 
-    def _open_workbench_for_type(self, type_name: str) -> None:
+    def _open_workbench_for_type(
+        self, type_name: str, instance_name: str | None = None,
+    ) -> None:
         from core import derivative_types
         t = derivative_types.get(type_name)
         if t is None:
             messagebox.showerror(
                 "VideoCraft", f"未知派生类型: {type_name}")
             return
-        # P4.8 will wire instance_name through; for now legacy initial_file.
-        self.open_tool(t.tool_key, initial_file=self.project.folder)
+        # Compound tab key so each derivative instance has its own tab
+        # (字幕视频/default vs 字幕视频/v2 are two different workspaces).
+        tab_key = (f"{t.tool_key}:{instance_name}"
+                   if instance_name else t.tool_key)
+        self.open_tool(
+            t.tool_key,
+            initial_file=self.project.folder,
+            project=self.project,
+            instance_name=instance_name,
+            tab_key=tab_key,
+        )
 
     def _schedule_auto_refresh(self):
         """每 2 秒检查文件夹变化，有变化时自动刷新 Sidebar。"""
@@ -1480,8 +1491,14 @@ class VideoCraftHub:
 
     # ── 工具启动 ──────────────────────────────────────────────────────────────
 
-    def open_tool(self, key: str, initial_file: str | None = None,
-                  initial_basename: str | None = None):
+    def open_tool(
+        self, key: str,
+        initial_file: str | None = None,
+        initial_basename: str | None = None,
+        project: "Project | None" = None,
+        instance_name: str | None = None,
+        tab_key: str | None = None,
+    ):
         cfg = TOOL_MAP.get(key)
         if cfg is None:
             messagebox.showerror("错误", f"未知工具：{key}")
@@ -1495,9 +1512,14 @@ class VideoCraftHub:
         if cfg["class"] is None:
             self._open_subprocess(file_path, initial_file=initial_file)
         else:
-            self._open_in_tab(file_path, cfg["class"], key,
-                              initial_file=initial_file,
-                              initial_basename=initial_basename)
+            self._open_in_tab(
+                file_path, cfg["class"], key,
+                initial_file=initial_file,
+                initial_basename=initial_basename,
+                project=project,
+                instance_name=instance_name,
+                tab_key=tab_key,
+            )
 
     def _open_toplevel(self, file_path: str, class_name: str, initial_file: str | None = None):
         try:
@@ -1516,12 +1538,19 @@ class VideoCraftHub:
         except Exception as e:
             messagebox.showerror("启动失败", str(e))
 
-    def _open_in_tab(self, file_path: str, class_name: str, tool_key: str,
-                     initial_file: str | None = None,
-                     initial_basename: str | None = None):
-        # 去重：已打开则直接切换
-        if tool_key in self._tab_registry:
-            self._select_tab(tool_key)
+    def _open_in_tab(
+        self, file_path: str, class_name: str, tool_key: str,
+        initial_file: str | None = None,
+        initial_basename: str | None = None,
+        project: "Project | None" = None,
+        instance_name: str | None = None,
+        tab_key: str | None = None,
+    ):
+        # tab_key lets one tool open as multiple tabs (one per derivative
+        # instance). Falls back to tool_key for plain non-project tools.
+        registry_key = tab_key or tool_key
+        if registry_key in self._tab_registry:
+            self._select_tab(registry_key)
             self._show_tabs()
             return
         try:
@@ -1536,7 +1565,7 @@ class VideoCraftHub:
             tf = ToolFrame(self._content_area)
             tab_bar = self._tab_bar
             assert tab_bar is not None
-            tf._set_status_cb = lambda s, k=tool_key: tab_bar.set_status(k, s)
+            tf._set_status_cb = lambda s, k=registry_key: tab_bar.set_status(k, s)
 
             # The workbench accepts initial_basename and benefits from being
             # told about the active project upfront. Other tools just take
@@ -1551,16 +1580,21 @@ class VideoCraftHub:
                 # doesn't have to discover one from initial_file.
                 if "initial_file" not in kwargs:
                     kwargs["initial_file"] = self.project.folder
+            # Project-aware tools: subtitle_tool is the first one wired here
+            # (字幕视频 workbench). Others can opt in by accepting these kwargs.
+            if tool_key == "subtitle" and project is not None:
+                kwargs["project"] = project
+                kwargs["instance_name"] = instance_name
             app = cls(tf, **kwargs) if kwargs else cls(tf)
 
             label = tf._tool_title or class_name
-            tab_bar.add_tab(tool_key, label, status="idle")
-            self._tab_frames[tool_key]   = tf
-            self._tab_registry[tool_key] = tool_key
+            tab_bar.add_tab(registry_key, label, status="idle")
+            self._tab_frames[registry_key]   = tf
+            self._tab_registry[registry_key] = registry_key
             self._tool_instances.append(app)
 
             self._show_tabs()
-            self._select_tab(tool_key)
+            self._select_tab(registry_key)
         except Exception as e:
             messagebox.showerror("启动失败", str(e))
 

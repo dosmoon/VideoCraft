@@ -115,10 +115,24 @@ class SubtitleToolApp(ToolBase):
         "auto_output":     "auto_output_var",
     }
 
-    def __init__(self, master, initial_file=None):
+    def __init__(self, master, initial_file=None, project=None,
+                 instance_name=None):
+        """Standalone mode: master + optional initial_file (legacy behavior).
+
+        Project mode: pass `project` (Project) + `instance_name` (str). The
+        tool then locks source / output paths to project canonical positions,
+        replaces the SRT file pickers with project-subtitle pickers, and
+        persists per-instance config under
+        <project>/derivatives/bilingual_video/<instance>/config.json.
+        """
         self.master = master
         master.title(tr("tool.subtitle.title"))
         master.geometry("900x650")
+
+        # Project-mode plumbing (None in standalone mode).
+        self.project = project
+        self.instance_name = instance_name
+        self._project_mode = (project is not None and instance_name is not None)
 
         # 状态变量
         self.video_duration = 0.0
@@ -183,6 +197,12 @@ class SubtitleToolApp(ToolBase):
                 self.entry_video.delete(0, tk.END)
                 self.entry_video.insert(0, initial_file)
             self._maybe_update_output_path()
+
+        # Apply project-mode constraints (source/output lock, SRT picker
+        # redirect, config restore) AFTER all base UI + presets are set up so
+        # we override whatever standalone-mode initialization put in place.
+        if self._project_mode:
+            self._enter_project_mode()
 
     def _build_ui(self):
         root = self.master
@@ -410,6 +430,14 @@ class SubtitleToolApp(ToolBase):
     # ── 文件选择 ────────────────────────────────────────────────────────────
 
     def _select_video(self):
+        if self._project_mode:
+            # Source video is locked to the project. "Browse" just opens the
+            # source folder so the user can verify the file.
+            try:
+                os.startfile(os.path.dirname(self.project.source_video_path))
+            except OSError:
+                pass
+            return
         file_path = filedialog.askopenfilename(
             title=tr("tool.subtitle.dialog.select_video"),
             filetypes=[(tr("tool.subtitle.filter.video"), "*.mp4 *.avi *.mov *.mkv"),
@@ -457,6 +485,13 @@ class SubtitleToolApp(ToolBase):
                                    tr("tool.subtitle.warning.duration_failed", e=e))
 
     def _select_subtitle1(self):
+        if self._project_mode:
+            picked = self._pick_project_subtitle("选择主字幕")
+            if picked:
+                self.entry_sub1.delete(0, tk.END)
+                self.entry_sub1.insert(0, picked)
+                self._save_instance_config()
+            return
         path = filedialog.askopenfilename(
             title=tr("tool.subtitle.dialog.select_sub1"),
             filetypes=[(tr("tool.subtitle.filter.srt"), "*.srt"),
@@ -468,6 +503,13 @@ class SubtitleToolApp(ToolBase):
             self._maybe_update_output_path()
 
     def _select_subtitle2(self):
+        if self._project_mode:
+            picked = self._pick_project_subtitle("选择副字幕(双语)")
+            if picked:
+                self.entry_sub2.delete(0, tk.END)
+                self.entry_sub2.insert(0, picked)
+                self._save_instance_config()
+            return
         path = filedialog.askopenfilename(
             title=tr("tool.subtitle.dialog.select_sub2"),
             filetypes=[(tr("tool.subtitle.filter.srt"), "*.srt"),
@@ -479,6 +521,14 @@ class SubtitleToolApp(ToolBase):
             self._maybe_update_output_path()
 
     def _select_output(self):
+        if self._project_mode:
+            # Output is locked under derivatives/. "Browse" opens the folder.
+            try:
+                os.makedirs(os.path.dirname(self.entry_output.get()), exist_ok=True)
+                os.startfile(os.path.dirname(self.entry_output.get()))
+            except OSError:
+                pass
+            return
         video = self.entry_video.get()
         current = self.entry_output.get().strip()
         if current:
@@ -506,6 +556,9 @@ class SubtitleToolApp(ToolBase):
 
     def _maybe_update_output_path(self):
         """Regenerate entry_output from current video/subtitle paths when auto is on."""
+        if self._project_mode:
+            # Project mode: output is locked to derivatives/<type>/<inst>/output.mp4.
+            return
         if not self.auto_output_var.get():
             return
         video = self.entry_video.get()
@@ -518,6 +571,213 @@ class SubtitleToolApp(ToolBase):
         )
         self.entry_output.delete(0, tk.END)
         self.entry_output.insert(0, path)
+
+    # ── Project mode ────────────────────────────────────────────────────────
+
+    def _enter_project_mode(self) -> None:
+        """Lock paths to project canonical locations + restore prior config.
+
+        Called from __init__ after the standalone UI is fully built.
+        Modifies titles, entry contents, and entry states; redirects picker
+        button callbacks via the `if self._project_mode:` branches above.
+        """
+        # Window title shows the derivative type + instance for clarity.
+        from core import derivative_types
+        type_disp = derivative_types.display_name("bilingual_video")
+        self.master.title(f"{type_disp} — {self.instance_name}")
+
+        # Lock the source video field.
+        self.entry_video.config(state="normal")
+        self.entry_video.delete(0, tk.END)
+        self.entry_video.insert(0, self.project.source_video_path)
+        self.entry_video.config(state="readonly")
+
+        # Lock the output field to derivatives/<type>/<instance>/output.mp4.
+        inst_dir = self.project.derivative_dir(
+            "bilingual_video", self.instance_name)
+        os.makedirs(inst_dir, exist_ok=True)
+        output_path = os.path.join(inst_dir, "output.mp4")
+        self.auto_output_var.set(False)
+        self.entry_output.config(state="normal")
+        self.entry_output.delete(0, tk.END)
+        self.entry_output.insert(0, output_path)
+        self.entry_output.config(state="readonly")
+
+        # Restore SRT selections + style params from instance config.json.
+        self._load_instance_config()
+
+    def _pick_project_subtitle(self, title: str) -> str | None:
+        """Modal combobox dialog showing <project>/subtitles/*.srt.
+
+        Returns absolute path of the picked SRT or None if cancelled.
+        """
+        from core import lang_names
+        subs_dir = self.project.subtitles_dir
+        files = []
+        try:
+            for fn in sorted(os.listdir(subs_dir)):
+                if fn.endswith(".srt"):
+                    files.append(fn)
+        except OSError:
+            pass
+        if not files:
+            messagebox.showinfo(
+                "VideoCraft",
+                "项目还没有字幕。请先在 Sidebar 的 Subtitles 区域生成。",
+                parent=self.master,
+            )
+            return None
+
+        win = tk.Toplevel(self.master)
+        win.title(title)
+        win.transient(self.master)
+        win.grab_set()
+        win.resizable(False, False)
+
+        # Build labeled options
+        items: list[tuple[str, str]] = []  # (filename, display_label)
+        for fn in files:
+            iso = fn[:-4]
+            try:
+                friendly = lang_names.friendly_name(iso, "zh")
+            except Exception:
+                friendly = iso
+            items.append((fn, f"{friendly} ({fn})"))
+
+        var = tk.StringVar(value=items[0][1])
+
+        body = ttk.Frame(win, padding=16)
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=title,
+                  font=("Microsoft YaHei UI", 11, "bold")
+                  ).pack(anchor="w", pady=(0, 8))
+        ttk.Label(body, text="可用字幕:").pack(anchor="w")
+        ttk.Combobox(body, textvariable=var,
+                     values=[lbl for _, lbl in items],
+                     state="readonly", width=30,
+                     ).pack(fill="x", pady=(4, 12))
+
+        chosen: list[str | None] = [None]
+
+        def on_ok():
+            disp = var.get()
+            for fn, lbl in items:
+                if lbl == disp:
+                    chosen[0] = os.path.join(subs_dir, fn)
+                    break
+            win.destroy()
+
+        def on_cancel():
+            chosen[0] = None
+            win.destroy()
+
+        def on_clear():
+            chosen[0] = ""  # empty string = clear selection
+            win.destroy()
+
+        btns = ttk.Frame(body)
+        btns.pack(fill="x")
+        ttk.Button(btns, text="取消", command=on_cancel
+                   ).pack(side="right", padx=(8, 0))
+        ttk.Button(btns, text="确定", command=on_ok
+                   ).pack(side="right")
+        ttk.Button(btns, text="清除选择", command=on_clear
+                   ).pack(side="left")
+
+        # Center
+        win.update_idletasks()
+        pw = self.master.winfo_toplevel()
+        x = pw.winfo_rootx() + (pw.winfo_width() - win.winfo_width()) // 2
+        y = pw.winfo_rooty() + (pw.winfo_height() - win.winfo_height()) // 2
+        win.geometry(f"+{max(0, x)}+{max(0, y)}")
+
+        win.wait_window()
+        return chosen[0]
+
+    def _instance_config_path(self) -> str:
+        inst_dir = self.project.derivative_dir(
+            "bilingual_video", self.instance_name)
+        return os.path.join(inst_dir, "config.json")
+
+    def _load_instance_config(self) -> None:
+        """Restore SRT selections + style params from the instance's config.json."""
+        path = self._instance_config_path()
+        if not os.path.isfile(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return
+
+        # SRT selections (stored as filenames relative to subtitles/)
+        primary = cfg.get("primary_srt")
+        if primary:
+            p = os.path.join(self.project.subtitles_dir, primary)
+            if os.path.isfile(p):
+                self.entry_sub1.delete(0, tk.END)
+                self.entry_sub1.insert(0, p)
+        secondary = cfg.get("secondary_srt")
+        if secondary:
+            p = os.path.join(self.project.subtitles_dir, secondary)
+            if os.path.isfile(p):
+                self.entry_sub2.delete(0, tk.END)
+                self.entry_sub2.insert(0, p)
+
+        # Style params (uses _PARAM_VARS map)
+        params = cfg.get("params")
+        if isinstance(params, dict):
+            self._apply_params(params)
+
+    def _save_instance_config(self) -> None:
+        """Snapshot SRT selections + style params to the instance's config.json."""
+        if not self._project_mode:
+            return
+        sub1 = self.entry_sub1.get().strip()
+        sub2 = self.entry_sub2.get().strip()
+        cfg = {
+            "schema_version": 1,
+            "primary_srt": os.path.basename(sub1) if sub1 else None,
+            "secondary_srt": os.path.basename(sub2) if sub2 else None,
+            "params": self._collect_params(),
+        }
+        # Preserve burned_at if it already exists.
+        path = self._instance_config_path()
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    old = json.load(f)
+                if isinstance(old, dict) and old.get("burned_at"):
+                    cfg["burned_at"] = old["burned_at"]
+            except (OSError, json.JSONDecodeError):
+                pass
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass  # transient FS issue; user just loses the autosave snapshot
+
+    def _mark_instance_burned(self) -> None:
+        """Stamp burned_at into config.json after a successful burn."""
+        if not self._project_mode:
+            return
+        path = self._instance_config_path()
+        cfg: dict = {}
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                if not isinstance(cfg, dict):
+                    cfg = {}
+            except (OSError, json.JSONDecodeError):
+                cfg = {}
+        cfg["burned_at"] = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
+        except OSError:
+            pass
 
     # ── 颜色选择 ────────────────────────────────────────────────────────────
 
@@ -957,6 +1217,9 @@ class SubtitleToolApp(ToolBase):
                         except Exception as cleanup_e:
                             logger.error(f"Failed to clean up temp subtitle {tmp}: {cleanup_e}")
                 logger.info(f"Subtitle burn complete → {os.path.basename(output_path)}")
+                # Project-mode: record burned_at so the sidebar can show a
+                # "已烧录" hint and future-you can find this output again.
+                self._mark_instance_burned()
                 self.set_done()
             else:
                 self.set_error(tr("tool.subtitle.error.burn_ffmpeg", code=process.returncode))
