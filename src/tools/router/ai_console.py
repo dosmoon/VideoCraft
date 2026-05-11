@@ -1103,6 +1103,10 @@ class AIConsoleApp(ToolBase):
             # what's actually installed under <models>/sherpa-tts/.
             self._open_local_tts_edit_dialog(name, cfg)
             return
+        if is_local and not is_asr and name == "edge_tts":
+            # Microsoft Edge online TTS — no key, curated voice picker.
+            self._open_edge_tts_edit_dialog(name, cfg)
+            return
         display_name = cfg.get("name", name)
         dlg = tk.Toplevel(self.master)
         dlg.title(tr("tool.router.edit_dialog_title", name=display_name))
@@ -1364,6 +1368,85 @@ class AIConsoleApp(ToolBase):
 
         btn_row = tk.Frame(dlg)
         btn_row.grid(row=7, column=0, columnspan=2, pady=14)
+        tk.Button(btn_row, text=tr("tool.router.btn_save"), command=save,
+                  width=10).pack(side="left", padx=10)
+        tk.Button(btn_row, text=tr("tool.router.btn_cancel"), command=dlg.destroy,
+                  width=10).pack(side="left")
+
+    def _open_edge_tts_edit_dialog(self, name: str, cfg: dict):
+        """Edit dialog for Microsoft Edge Read-Aloud TTS.
+
+        No API key. Voice combobox lists curated POPULAR_VOICES (CN + EN
+        common ones); users can also type any other Edge voice ID by
+        editing the field directly. Speed via slider (mapped to edge-tts
+        rate '+N%' string), pitch and volume as advanced text fields.
+        """
+        from core.ai.providers import edge_tts as _edge
+
+        display_name = cfg.get("name", name)
+        dlg = tk.Toplevel(self.master)
+        dlg.title(tr("tool.router.edit_dialog_title", name=display_name))
+        dlg.geometry("640x340")
+        dlg.resizable(True, True)
+        dlg.grab_set()
+
+        tk.Label(dlg, text=tr("tool.router.edge_tts_hint"),
+                 fg="#666", anchor="w", justify="left",
+                 wraplength=600).grid(
+            row=0, column=0, columnspan=2, padx=12, pady=(12, 6), sticky="w")
+
+        voices = _edge.list_popular_voices()
+        voice_var  = tk.StringVar(value=cfg.get("voice", _edge.DEFAULT_VOICE))
+        speed_var  = tk.StringVar(value=str(cfg.get("speed", 1.0)))
+        pitch_var  = tk.StringVar(value=str(cfg.get("pitch", "+0Hz")))
+        volume_var = tk.StringVar(value=str(cfg.get("volume", "+0%")))
+
+        def _row(r, label_key, var, values=None, width=32):
+            tk.Label(dlg, text=tr(label_key), anchor="e", width=14).grid(
+                row=r, column=0, padx=10, pady=6, sticky="e")
+            if values:
+                cb = ttk.Combobox(dlg, textvariable=var, values=values,
+                                  width=width)
+                cb.grid(row=r, column=1, padx=4, pady=6, sticky="w")
+            else:
+                tk.Entry(dlg, textvariable=var, width=width).grid(
+                    row=r, column=1, padx=4, pady=6, sticky="w")
+
+        _row(1, "tool.router.label_edge_voice",  voice_var, voices)
+        _row(2, "tool.router.label_tts_speed",   speed_var)
+        _row(3, "tool.router.label_edge_pitch",  pitch_var)
+        _row(4, "tool.router.label_edge_volume", volume_var)
+
+        def save():
+            try:
+                speed = float(speed_var.get().strip())
+                if not (0.3 <= speed <= 3.0):
+                    raise ValueError(tr("tool.router.tts_speed_range_hint"))
+            except ValueError as e:
+                messagebox.showerror(tr("dialog.common.error"), str(e), parent=dlg)
+                return
+            v = voice_var.get().strip()
+            if not v:
+                messagebox.showerror(tr("dialog.common.error"),
+                                      tr("tool.router.error_edge_voice_empty"),
+                                      parent=dlg)
+                return
+            router.update_tts_provider(
+                name,
+                voice=v,
+                speed=speed,
+                pitch=pitch_var.get().strip() or "+0Hz",
+                volume=volume_var.get().strip() or "+0%",
+            )
+            messagebox.showinfo(
+                tr("tool.router.saved_title"),
+                tr("tool.router.saved_config_msg", name=display_name),
+                parent=dlg)
+            self._rebuild_routing_tab()
+            dlg.destroy()
+
+        btn_row = tk.Frame(dlg)
+        btn_row.grid(row=5, column=0, columnspan=2, pady=14)
         tk.Button(btn_row, text=tr("tool.router.btn_save"), command=save,
                   width=10).pack(side="left", padx=10)
         tk.Button(btn_row, text=tr("tool.router.btn_cancel"), command=dlg.destroy,

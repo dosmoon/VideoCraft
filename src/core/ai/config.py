@@ -202,6 +202,18 @@ _DEFAULT_TTS_PROVIDERS = {
         "language":      "English",
         "task_type":     "CustomVoice",
     },
+    "edge_tts": {
+        "name":          "Edge TTS (微软在线，免 key)",
+        "enabled":       True,
+        "key_file":      "",            # No key needed
+        "auth_required": False,
+        "description":   "Microsoft Edge Read-Aloud 端点;新闻级中文/英文;100+ 中文 voice;需联网",
+        "model":         "edge-tts",     # Sentinel — no real model
+        "voice":         "zh-CN-YunxiNeural",
+        "speed":         1.0,
+        "pitch":         "+0Hz",
+        "volume":        "+0%",
+    },
     "sherpa_tts": {
         "name":          "sherpa-onnx Kokoro (内嵌)",
         "enabled":       True,
@@ -257,7 +269,10 @@ def _build_default_task_routing() -> dict:
     # routing in providers.json keep their pick — this seed only fills
     # missing entries.
     asr_seed = {"provider": "faster_whisper",  "model": "faster-whisper-small"}
-    tts_seed = {"provider": "fish_audio", "model": ""}
+    # edge_tts is the default TTS pick: news-grade Chinese, no key, no
+    # local model footprint. Fish Audio / sherpa_tts stay available for
+    # users who explicitly pick them in the AI Console routing matrix.
+    tts_seed = {"provider": "edge_tts", "model": ""}
     out = {}
     for tid, cat, _label in TASKS:
         if cat == "llm":

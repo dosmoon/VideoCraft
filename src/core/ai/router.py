@@ -22,6 +22,7 @@ from core.ai.providers import fish_audio as _fish_audio
 from core.ai.providers import aistack as _aistack
 from core.ai.providers import sherpa as _sherpa
 from core.ai.providers import sherpa_tts as _sherpa_tts
+from core.ai.providers import edge_tts as _edge_tts
 from core.ai.providers import faster_whisper as _faster_whisper
 from core.ai.providers import llama_cpp as _llama_cpp
 from core.ai.errors import AIError, Kind
@@ -559,6 +560,20 @@ class AIRouter:
                     audio_format=audio_format,
                     language=cfg.get("language", "English"),
                     task_type=cfg.get("task_type", "CustomVoice"),
+                    should_cancel=should_cancel,
+                    on_chunk=on_chunk,
+                    cancel_token=cancel_token,
+                )
+            elif provider == "edge_tts":
+                # Microsoft Edge Read-Aloud. Online, no key, news-grade
+                # Chinese / English. voice_id is e.g. zh-CN-YunxiNeural.
+                _edge_tts.synthesize(
+                    text, output_path,
+                    voice_id=voice_id or cfg.get("voice", _edge_tts.DEFAULT_VOICE),
+                    speed=float(cfg.get("speed", 1.0)),
+                    audio_format=audio_format,
+                    pitch=str(cfg.get("pitch", "+0Hz")),
+                    volume=str(cfg.get("volume", "+0%")),
                     should_cancel=should_cancel,
                     on_chunk=on_chunk,
                     cancel_token=cancel_token,

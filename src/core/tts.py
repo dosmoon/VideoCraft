@@ -58,6 +58,14 @@ def status(provider: str = "fish_audio") -> dict:
         configured = bool(base)
         detail = base or "no base_url"
 
+    elif provider == "edge_tts":
+        # Online + key-free; configured = the SDK is importable. We don't
+        # ping the endpoint here (would slow every UI refresh).
+        configured = available
+        voice = cfg.get("voice", "")
+        detail = (f"online · {voice}" if configured
+                  else "edge-tts not installed (pip install edge-tts)")
+
     elif provider == "sherpa_tts":
         # Configured when the chosen model directory has the required
         # files. We don't probe shape here (provider does that on load);

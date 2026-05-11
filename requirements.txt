@@ -14,6 +14,12 @@ google-genai==1.55.0
 fish-audio-sdk==1.3.0
 openai==2.30.0
 
+# Edge TTS — Microsoft Edge Read-Aloud endpoint, free + no key.
+# News-grade Chinese voices (XiaoxiaoNeural, YunxiNeural, etc.) without
+# Azure Cognitive Services subscription. ToS gray-area but stable for
+# years; perfect for personal / open-source use.
+edge-tts==7.2.8
+
 # Local ASR / TTS were extracted into the sibling aistack service
 # (github.com/dosmoon/aistack) on 2026-05-06 and are now reached over
 # HTTP. faster-whisper / nemo_toolkit / funasr / torchaudio /

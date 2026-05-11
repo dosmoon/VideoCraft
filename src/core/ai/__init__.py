@@ -144,6 +144,12 @@ def is_tts_sdk_available(provider: str = "fish_audio") -> bool:
         return _fish_audio.is_sdk_available()
     if provider in ("aistack", "sherpa_tts"):
         return True
+    if provider == "edge_tts":
+        try:
+            import edge_tts  # noqa: F401
+            return True
+        except ImportError:
+            return False
     return False
 
 
