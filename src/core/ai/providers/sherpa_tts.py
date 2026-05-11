@@ -48,6 +48,10 @@ DEFAULT_MODEL_NAME = "kokoro-int8-multi-lang-v1_0"
 # Lazy cache so loading the model (~150 MB onnx + voices) is paid once.
 # Key by (model_dir, provider) so flipping CPU/GPU at runtime works.
 _TTS_CACHE: dict[tuple[str, str], object] = {}
+# Backend label per cached engine. sherpa's OfflineTts is a pybind11
+# C++ class and forbids attribute assignment, so we keep the mapping
+# alongside the cache instead of stashing on the instance.
+_TTS_BACKEND: dict[tuple[str, str], str] = {}
 
 
 def _model_dir(name: str = DEFAULT_MODEL_NAME) -> str:
@@ -63,8 +67,30 @@ def _pick_model_file(model_dir: str) -> str:
             return p
     raise AIError(
         Kind.MALFORMED, "sherpa_tts",
-        f"No Kokoro model file found in {model_dir}. "
+        f"No model file found in {model_dir}. "
         "Expected model.onnx or model.int8.onnx — download via Model Manager."
+    )
+
+
+def _detect_backend(model_dir: str) -> str:
+    """Identify which sherpa TTS backend the on-disk model belongs to.
+
+    Returns "kokoro" | "vits". Distinguishes by file fingerprints:
+      - Kokoro packs include voices.bin (multi-speaker pack)
+      - VITS / MeloTTS packs include lexicon.txt (single-file phoneme map)
+        and no voices.bin.
+
+    Used by _load_tts to build the right OfflineTtsKokoroModelConfig
+    or OfflineTtsVitsModelConfig.
+    """
+    if os.path.exists(os.path.join(model_dir, "voices.bin")):
+        return "kokoro"
+    if os.path.exists(os.path.join(model_dir, "lexicon.txt")):
+        return "vits"
+    raise AIError(
+        Kind.MALFORMED, "sherpa_tts",
+        f"Cannot detect TTS backend in {model_dir}. "
+        "Expected voices.bin (Kokoro) or lexicon.txt (VITS/MeloTTS).",
     )
 
 
@@ -88,49 +114,74 @@ def _load_tts(model_dir: str, *, num_threads: int, provider: str):
         )
 
     model_path = _pick_model_file(model_dir)
-    voices = os.path.join(model_dir, "voices.bin")
     tokens = os.path.join(model_dir, "tokens.txt")
-    data_dir = os.path.join(model_dir, "espeak-ng-data")
-    dict_dir = os.path.join(model_dir, "dict")  # may or may not exist
+    if not os.path.exists(tokens):
+        raise AIError(
+            Kind.MALFORMED, "sherpa_tts",
+            f"Missing tokens.txt in {model_dir}. Re-download via Model Manager.",
+        )
 
-    for required, label in (
-        (voices, "voices.bin"),
-        (tokens, "tokens.txt"),
-        (data_dir, "espeak-ng-data/"),
-    ):
-        if not os.path.exists(required):
+    backend = _detect_backend(model_dir)
+    rule_fsts = ""
+
+    if backend == "kokoro":
+        voices = os.path.join(model_dir, "voices.bin")
+        data_dir = os.path.join(model_dir, "espeak-ng-data")
+        dict_dir = os.path.join(model_dir, "dict")
+        if not os.path.isdir(data_dir):
             raise AIError(
                 Kind.MALFORMED, "sherpa_tts",
-                f"Kokoro model is missing {label} in {model_dir}. "
+                f"Kokoro model missing espeak-ng-data/ in {model_dir}. "
                 "Re-download via Model Manager.",
             )
+        # Multi-lang Kokoro (>= v1.0) refuses to start unless either
+        # `lang` or `lexicon` is set. Discover all lexicon-*.txt files
+        # and feed them as a comma-separated list — matches sherpa CLI.
+        import glob as _glob
+        lexicons = sorted(_glob.glob(os.path.join(model_dir, "lexicon-*.txt")))
+        lexicon_arg = ",".join(lexicons)
+        kokoro_cfg = so.OfflineTtsKokoroModelConfig(
+            model=model_path,
+            voices=voices,
+            tokens=tokens,
+            data_dir=data_dir,
+            dict_dir=dict_dir if os.path.isdir(dict_dir) else "",
+            lexicon=lexicon_arg,
+            length_scale=1.0,
+            lang="",  # auto-detect from script
+        )
+        model_cfg = so.OfflineTtsModelConfig(
+            kokoro=kokoro_cfg,
+            num_threads=num_threads,
+            provider=provider,
+        )
+    else:  # vits / MeloTTS
+        lexicon = os.path.join(model_dir, "lexicon.txt")
+        dict_dir = os.path.join(model_dir, "dict")  # jieba; may exist
+        # MeloTTS Chinese ships date.fst + number.fst (text-normalization
+        # rules for "2026 年" -> "二零二六年" etc.). Pass any *.fst files
+        # found at the top level as rule_fsts — works for both Chinese
+        # MeloTTS and other VITS bundles that bring rule FSTs.
+        import glob as _glob
+        fst_files = sorted(_glob.glob(os.path.join(model_dir, "*.fst")))
+        # Skip new_heteronym.fst — sherpa loads it implicitly via lexicon
+        rule_fsts = ",".join(f for f in fst_files
+                              if not f.endswith("new_heteronym.fst"))
+        vits_cfg = so.OfflineTtsVitsModelConfig(
+            model=model_path,
+            lexicon=lexicon,
+            tokens=tokens,
+            data_dir="",                              # MeloTTS uses lexicon, not espeak
+            dict_dir=dict_dir if os.path.isdir(dict_dir) else "",
+            length_scale=1.0,
+        )
+        model_cfg = so.OfflineTtsModelConfig(
+            vits=vits_cfg,
+            num_threads=num_threads,
+            provider=provider,
+        )
 
-    # Multi-lang Kokoro (>= v1.0) refuses to start unless either
-    # `lang` or `lexicon` is set. Discover all lexicon-*.txt files in
-    # the model dir and feed them as a comma-separated list — matches
-    # the upstream sherpa CLI example. For US/CN news this auto-loads
-    # lexicon-us-en.txt + lexicon-zh.txt + (gb-en if present); the
-    # model picks the right one per detected script at synthesis time.
-    import glob as _glob
-    lexicons = sorted(_glob.glob(os.path.join(model_dir, "lexicon-*.txt")))
-    lexicon_arg = ",".join(lexicons)
-
-    kokoro_cfg = so.OfflineTtsKokoroModelConfig(
-        model=model_path,
-        voices=voices,
-        tokens=tokens,
-        data_dir=data_dir,
-        dict_dir=dict_dir if os.path.isdir(dict_dir) else "",
-        lexicon=lexicon_arg,
-        length_scale=1.0,
-        lang="",  # auto from script (for multi-lang model)
-    )
-    model_cfg = so.OfflineTtsModelConfig(
-        kokoro=kokoro_cfg,
-        num_threads=num_threads,
-        provider=provider,
-    )
-    cfg = so.OfflineTtsConfig(model=model_cfg)
+    cfg = so.OfflineTtsConfig(model=model_cfg, rule_fsts=rule_fsts)
 
     try:
         tts = so.OfflineTts(cfg)
@@ -142,6 +193,7 @@ def _load_tts(model_dir: str, *, num_threads: int, provider: str):
         ) from e
 
     _TTS_CACHE[key] = tts
+    _TTS_BACKEND[key] = backend
     return tts, provider
 
 
@@ -262,10 +314,11 @@ def synthesize(
             f"{tts.num_speakers} voices (valid sid: 0..{tts.num_speakers - 1}).",
         )
 
+    backend = _TTS_BACKEND.get((md, resolved_provider), "?")
     emit(
         "request_summary_local",
         model=model_name,
-        device=f"sherpa-tts-{resolved_provider}",
+        device=f"sherpa-tts-{backend}-{resolved_provider}",
         voice=str(sid),
         speed=str(speed),
         text_len=len(text),

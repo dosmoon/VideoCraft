@@ -241,6 +241,28 @@ CATALOG: dict[str, ModelSpec] = {
         recommended_for="gpu",
     ),
 
+    # MeloTTS (MyShell, MIT) ported to sherpa-onnx by k2-fsa. Higher
+    # subjective quality than Kokoro for Chinese; single-speaker. Supports
+    # mixed Chinese + English in the same input. Bundled jieba dict +
+    # date/number FSTs do prosody-aware text normalization.
+    "vits-melo-tts-zh_en": ModelSpec(
+        id="vits-melo-tts-zh_en",
+        display_name="MeloTTS Chinese+English (VITS, sherpa-onnx)",
+        capability=CAP_TTS,
+        tier=TIER_FIRST,
+        target_subdir="sherpa-tts/vits-melo-tts-zh_en",
+        description=(
+            "MyShell MeloTTS Chinese+English, ~233 MB. Single Chinese voice "
+            "with mixed-language support. Best Chinese TTS quality available "
+            "via the no-torch sherpa-onnx pipeline."
+        ),
+        repo="csukuangfj/vits-melo-tts-zh_en",
+        revision="main",
+        filenames=(),               # ignored — download_all=True
+        download_all=True,
+        recommended_for="both",
+    ),
+
     # ── LLM (translation) ────────────────────────────────────────────────────
     # No official Qwen org GGUF for Qwen3; community ports are the source.
     # Unsloth's quants are widely used and tested.
