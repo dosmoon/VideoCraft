@@ -128,23 +128,37 @@ def run_asr(
         cancel_token=cancel_token,
     )
 
-    # core.asr writes the SRT to whatever final path it picked (may have
-    # rewritten the language suffix when auto-detect resolved).
-    final_path = result["srt_path"]
+    # core.asr writes the SRT via _apply_lang_suffix, which appends `_<iso>.srt`
+    # rather than replacing the basename. We always rename to canonical
+    # `<iso>.srt` form (single file per language, simpler sidebar matching).
+    raw_srt = result["srt_path"]
+    raw_json = result.get("json_path")
     final_lang = result.get("detected_lang_iso") or source_lang_iso
 
-    # If the file is sitting under a suffix like `auto.srt` (no detection
-    # info), rename it to a more useful basename. transcribe_audio handles
-    # most of this, but guard against the auto+no-detect edge case.
-    if final_lang and os.path.basename(final_path).startswith("auto."):
-        nicer = os.path.join(project.subtitles_dir, f"{final_lang}.srt")
-        try:
-            if os.path.exists(nicer) and nicer != final_path:
-                os.remove(nicer)
-            os.rename(final_path, nicer)
-            final_path = nicer
-        except OSError:
-            pass
+    final_path = raw_srt
+    if final_lang:
+        canonical_srt = os.path.join(project.subtitles_dir, f"{final_lang}.srt")
+        if os.path.abspath(raw_srt) != os.path.abspath(canonical_srt):
+            try:
+                if os.path.exists(canonical_srt):
+                    os.remove(canonical_srt)
+                os.rename(raw_srt, canonical_srt)
+                final_path = canonical_srt
+            except OSError:
+                # Keep the ugly name on rename failure — file still works
+                # for downstream consumers that read by suffix scan.
+                pass
+        # Same rename for the sibling JSON.
+        if raw_json and os.path.isfile(raw_json):
+            canonical_json = os.path.join(
+                project.subtitles_dir, f"{final_lang}.json")
+            if os.path.abspath(raw_json) != os.path.abspath(canonical_json):
+                try:
+                    if os.path.exists(canonical_json):
+                        os.remove(canonical_json)
+                    os.rename(raw_json, canonical_json)
+                except OSError:
+                    pass
 
     # Update project meta language.source.
     meta = project.meta
