@@ -802,18 +802,146 @@ class VideoCraftHub:
         self._subtitles_secondary_btn.pack(side="left", padx=(4, 0))
 
     def _on_subtitles_primary(self) -> None:
-        """[+ 生成字幕] or [+ 添加翻译] depending on state. Stub until P4.4."""
-        messagebox.showinfo(
-            "VideoCraft",
-            "字幕生成将在 P4.4 接入。\n"
-            "目前请通过 菜单→语音转字幕 / 菜单→翻译 / 菜单→字幕→pack 手动生成,"
-            "把产物放进 subtitles/ 下。",
-            parent=self.root,
-        )
+        """[+ 生成字幕] when no SRTs exist, else [+ 添加翻译]."""
+        srt_files = _list_subtitle_srts(self.project.subtitles_dir)
+        if not srt_files:
+            self._invoke_asr()
+        else:
+            self._invoke_translate()
 
     def _on_subtitles_secondary(self) -> None:
-        """[重新生成] — placeholder; wired in P4.4."""
-        self._on_subtitles_primary()
+        """[重新生成]: confirm + nuke existing SRTs + re-run ASR."""
+        from ui.subtitles_dialogs import confirm_regenerate
+        if not confirm_regenerate(self.root):
+            return
+        # Wipe everything in subtitles/ then re-run ASR (and any prior
+        # translations are gone — user will re-add manually if wanted).
+        import os, shutil
+        for name in os.listdir(self.project.subtitles_dir):
+            path = os.path.join(self.project.subtitles_dir, name)
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+                elif os.path.isdir(path):
+                    shutil.rmtree(path)
+            except OSError:
+                pass
+        # Reset language metadata
+        meta = self.project.meta
+        meta.language.source = None
+        meta.language.translated_to = []
+        self.project.update_meta(meta)
+        self._refresh_project_tab()
+        # Now run ASR fresh
+        self._invoke_asr()
+
+    # ── Subtitle pipeline drivers ─────────────────────────────────────────────
+
+    def _invoke_asr(self) -> None:
+        """Show ASR dialog → run pipeline → refresh."""
+        from ui.subtitles_dialogs import show_asr_dialog
+        from ui.subtitles_progress_modal import SubtitlesProgressModal
+        from core.subtitle_pipeline import run_asr
+        from core.ai.errors import AIError, Kind
+
+        choice = show_asr_dialog(self.root)
+        if choice is None:
+            return
+
+        if choice["mode"] == "import":
+            # Pure file copy — no worker thread needed.
+            self._import_subtitle_file(choice["path"], choice["lang_iso"])
+            return
+
+        lang_iso = choice["lang_iso"]  # None = auto-detect
+
+        def worker(progress_cb, cancel_token):
+            return run_asr(
+                self.project,
+                source_lang_iso=lang_iso,
+                progress_cb=progress_cb,
+                cancel_token=cancel_token,
+            )
+
+        modal = SubtitlesProgressModal(self.root, worker, title="生成字幕")
+        try:
+            modal.run()
+        except AIError as e:
+            if e.kind == Kind.CANCELLED:
+                return
+            messagebox.showerror("ASR 失败", str(e), parent=self.root)
+            return
+        except FileNotFoundError as e:
+            messagebox.showerror("源视频缺失", str(e), parent=self.root)
+            return
+        except Exception as e:
+            messagebox.showerror("ASR 失败", repr(e), parent=self.root)
+            return
+
+        self._refresh_project_tab()
+
+    def _invoke_translate(self) -> None:
+        """Show translate dialog → run pipeline → refresh."""
+        from ui.subtitles_dialogs import show_translate_dialog
+        from ui.subtitles_progress_modal import SubtitlesProgressModal
+        from core.subtitle_pipeline import run_translate
+        from core.ai.errors import AIError, Kind
+
+        meta = self.project.meta
+        src_iso = meta.language.source
+        if not src_iso:
+            messagebox.showerror(
+                "VideoCraft", "项目未设置源语言,请先重新生成字幕。",
+                parent=self.root)
+            return
+
+        target_iso = show_translate_dialog(
+            self.root, src_iso, meta.language.translated_to,
+        )
+        if target_iso is None:
+            return
+
+        def worker(progress_cb, cancel_token):
+            return run_translate(
+                self.project,
+                target_lang_iso=target_iso,
+                progress_cb=progress_cb,
+                cancel_token=cancel_token,
+            )
+
+        modal = SubtitlesProgressModal(self.root, worker, title="添加翻译")
+        try:
+            modal.run()
+        except AIError as e:
+            if e.kind == Kind.CANCELLED:
+                return
+            messagebox.showerror("翻译失败", str(e), parent=self.root)
+            return
+        except (ValueError, FileNotFoundError) as e:
+            messagebox.showerror("翻译失败", str(e), parent=self.root)
+            return
+        except Exception as e:
+            messagebox.showerror("翻译失败", repr(e), parent=self.root)
+            return
+
+        self._refresh_project_tab()
+
+    def _import_subtitle_file(self, src_path: str, lang_iso: str) -> None:
+        """Copy an external SRT into subtitles/<lang>.srt and mark it as source."""
+        import shutil, os
+        dst = os.path.join(self.project.subtitles_dir, f"{lang_iso}.srt")
+        os.makedirs(self.project.subtitles_dir, exist_ok=True)
+        try:
+            shutil.copy2(src_path, dst)
+        except OSError as e:
+            messagebox.showerror("导入失败", str(e), parent=self.root)
+            return
+        # Record as the source language (first imported SRT becomes the source).
+        meta = self.project.meta
+        if not meta.language.source:
+            meta.language.source = lang_iso
+        self.project.update_meta(meta)
+        self._refresh_project_tab()
 
     # ── Derivatives section ───────────────────────────────────────────────────
 
