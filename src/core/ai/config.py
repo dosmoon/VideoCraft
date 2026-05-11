@@ -202,6 +202,18 @@ _DEFAULT_TTS_PROVIDERS = {
         "language":      "English",
         "task_type":     "CustomVoice",
     },
+    "sherpa_tts": {
+        "name":          "sherpa-onnx Kokoro (内嵌)",
+        "enabled":       True,
+        "key_file":      "",            # In-process — no API key
+        "auth_required": False,
+        "description":   "内嵌 Kokoro TTS;多语言;CPU/CUDA 自动选;模型: <models>/sherpa-tts/<model_name>/",
+        "model":         "kokoro-int8-multi-lang-v1_0",
+        "voice":         "0",           # Speaker index; multi-lang pack ships ~50
+        "speed":         1.0,
+        "provider":      "auto",        # "auto" | "cpu" | "cuda"
+        "num_threads":   4,
+    },
 }
 
 # ── Task catalog (function × tier routing) ──────────────────────────────────

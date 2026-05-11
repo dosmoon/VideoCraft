@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from core.models.catalog import CATALOG, ModelSpec, get
 from core.models.downloader import verify_file
 from core.models.hf_api import (
-    ResolvedFile, resolve_files, ResolveError,
+    ResolvedFile, resolve_files, resolve_all_files, ResolveError,
 )
 
 
@@ -76,10 +76,15 @@ def status_for(model_id: str, *, force_refresh: bool = False) -> InstalledStatus
     """
     spec = get(model_id)
     try:
-        resolved = resolve_files(
-            spec.repo, spec.revision, list(spec.filenames),
-            force=force_refresh,
-        )
+        if spec.download_all:
+            resolved = resolve_all_files(
+                spec.repo, spec.revision, force=force_refresh,
+            )
+        else:
+            resolved = resolve_files(
+                spec.repo, spec.revision, list(spec.filenames),
+                force=force_refresh,
+            )
     except ResolveError as e:
         return InstalledStatus(spec=spec, resolved=False,
                                resolve_error=str(e))
@@ -136,13 +141,34 @@ def scan(*, force_refresh: bool = False) -> dict[str, InstalledStatus]:
 
 
 def remove(model_id: str) -> int:
-    """Delete final + .part files for a model. Returns bytes freed.
+    """Delete files for a model. Returns bytes freed.
 
-    Uses the spec's declared filenames so this works even when the catalog
-    has never been resolved against HF (offline removal).
+    For `download_all=True` specs we don't have a static file list, so
+    we walk the target_subdir and delete it wholesale (it's an isolated
+    per-model directory by convention). For listed-files specs we only
+    delete what we declared, leaving anything else the user manually
+    placed alongside intact.
     """
     spec = get(model_id)
     freed = 0
+
+    if spec.download_all:
+        target = spec.target_dir()
+        if os.path.isdir(target):
+            for root, _dirs, files in os.walk(target):
+                for f in files:
+                    p = os.path.join(root, f)
+                    try:
+                        freed += os.path.getsize(p)
+                        os.remove(p)
+                    except OSError:
+                        pass
+            try:
+                shutil.rmtree(target, ignore_errors=True)
+            except OSError:
+                pass
+        return freed
+
     for name in spec.filenames:
         for path in (spec.file_path(name), spec.file_path(name) + ".part"):
             if os.path.exists(path):

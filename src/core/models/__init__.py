@@ -19,8 +19,8 @@ from core.models.catalog import (
     TIER_FIRST, TIER_RECOMMENDED, TIER_PREMIUM,
 )
 from core.models.hf_api import (
-    ResolvedFile, resolve_files, repo_listing, invalidate_all,
-    cache_age_sec, ResolveError,
+    ResolvedFile, resolve_files, resolve_all_files, repo_listing,
+    invalidate_all, cache_age_sec, ResolveError,
 )
 from core.models.downloader import (
     DownloadProgress, CancelToken, download_file, DownloadError,
@@ -37,8 +37,8 @@ __all__ = [
     "get", "by_capability", "by_tier",
     "CAP_ASR", "CAP_TTS", "CAP_LLM", "CAP_VAD",
     "TIER_FIRST", "TIER_RECOMMENDED", "TIER_PREMIUM",
-    "ResolvedFile", "resolve_files", "repo_listing", "invalidate_all",
-    "cache_age_sec", "ResolveError",
+    "ResolvedFile", "resolve_files", "resolve_all_files", "repo_listing",
+    "invalidate_all", "cache_age_sec", "ResolveError",
     "DownloadProgress", "CancelToken", "download_file", "DownloadError",
     "InstalledStatus", "FileStatus", "scan", "status_for", "remove",
     "reveal_in_explorer",

@@ -22,7 +22,7 @@ from core.models.downloader import (
     DownloadProgress, CancelToken, DownloadError, download_file, verify_file,
 )
 from core.models.hf_api import (
-    ResolvedFile, resolve_files, ResolveError,
+    ResolvedFile, resolve_files, resolve_all_files, ResolveError,
 )
 from core.models.registry import disk_free_bytes
 
@@ -128,9 +128,12 @@ class DownloadManager:
 
         # Resolve outside the lock — HF API call may block on network.
         try:
-            resolved = resolve_files(
-                spec.repo, spec.revision, list(spec.filenames),
-            )
+            if spec.download_all:
+                resolved = resolve_all_files(spec.repo, spec.revision)
+            else:
+                resolved = resolve_files(
+                    spec.repo, spec.revision, list(spec.filenames),
+                )
             with self._lock:
                 job.resolved_files = resolved
                 job.bytes_total = sum(rf.size for rf in resolved)
@@ -201,8 +204,11 @@ class DownloadManager:
                 continue
             spec = get(mid)
             try:
-                files = resolve_files(spec.repo, spec.revision,
-                                       list(spec.filenames))
+                if spec.download_all:
+                    files = resolve_all_files(spec.repo, spec.revision)
+                else:
+                    files = resolve_files(spec.repo, spec.revision,
+                                          list(spec.filenames))
                 needed += sum(rf.size for rf in files)
             except ResolveError:
                 pass

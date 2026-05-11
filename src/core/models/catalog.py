@@ -45,18 +45,27 @@ class ModelSpec:
     repo: str                  # HF repo, e.g. "csukuangfj/sherpa-onnx-whisper-small"
     revision: str              # usually "main"
     filenames: tuple[str, ...] # basenames inside the repo to install
+                               # (ignored when download_all=True)
     notes: str = ""
     # Hardware target. UI surfaces this as a badge so the user picks the
     # right variant for their machine. Two specs may share target_subdir
     # (their on-disk filenames don't collide) — provider auto-selects at
     # load time. Values: "cpu" | "gpu" | "both".
     recommended_for: str = "both"
+    # When True, the resolver fetches the full repo tree and downloads
+    # every file (preserving subdirectory structure). Used for models
+    # like sherpa Kokoro TTS that ship hundreds of small espeak-ng /
+    # jieba dict files alongside the ONNX weights — listing them
+    # individually in `filenames` would be tedious and brittle.
+    download_all: bool = False
 
     def target_dir(self) -> str:
         return os.path.join(models_dir(), *self.target_subdir.split("/"))
 
-    def file_path(self, basename: str) -> str:
-        return os.path.join(self.target_dir(), basename)
+    def file_path(self, relpath: str) -> str:
+        # relpath may contain subdirectory separators ("espeak-ng-data/lang/...")
+        # — os.path.join handles that fine.
+        return os.path.join(self.target_dir(), relpath)
 
 
 # ── Catalog ──────────────────────────────────────────────────────────────────
@@ -189,6 +198,46 @@ CATALOG: dict[str, ModelSpec] = {
             "turbo-decoder.onnx",
             "turbo-tokens.txt",
         ),
+        recommended_for="gpu",
+    ),
+
+    # ── TTS ──────────────────────────────────────────────────────────────────
+    # Kokoro (sherpa-onnx) ships hundreds of small espeak-ng phoneme files +
+    # jieba dict alongside the ONNX weights. download_all=True pulls the
+    # full repo tree instead of listing each file in `filenames`.
+    "kokoro-int8-multi-lang-v1_0": ModelSpec(
+        id="kokoro-int8-multi-lang-v1_0",
+        display_name="Kokoro multi-lang v1.0 — int8 (sherpa-onnx)",
+        capability=CAP_TTS,
+        tier=TIER_FIRST,
+        target_subdir="sherpa-tts/kokoro-int8-multi-lang-v1_0",
+        description=(
+            "First-launch TTS. ~180 MB. Quantized int8; ~50 voices; "
+            "multilingual (English / Chinese / Japanese / Korean / Spanish / "
+            "French / Italian / Portuguese / Hindi). CPU-friendly; works on "
+            "GPU too via the same wheel."
+        ),
+        repo="csukuangfj/kokoro-int8-multi-lang-v1_0",
+        revision="main",
+        filenames=(),               # ignored — download_all=True
+        download_all=True,
+        recommended_for="both",
+    ),
+
+    "kokoro-multi-lang-v1_0": ModelSpec(
+        id="kokoro-multi-lang-v1_0",
+        display_name="Kokoro multi-lang v1.0 — fp32 (sherpa-onnx)",
+        capability=CAP_TTS,
+        tier=TIER_RECOMMENDED,
+        target_subdir="sherpa-tts/kokoro-multi-lang-v1_0",
+        description=(
+            "Full-precision Kokoro. ~380 MB. Same voices and languages as "
+            "the int8 variant; better quality on GPU at the cost of disk."
+        ),
+        repo="csukuangfj/kokoro-multi-lang-v1_0",
+        revision="main",
+        filenames=(),               # ignored — download_all=True
+        download_all=True,
         recommended_for="gpu",
     ),
 

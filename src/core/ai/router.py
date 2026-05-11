@@ -21,6 +21,7 @@ from core.ai.providers import lemonfox as _lemonfox
 from core.ai.providers import fish_audio as _fish_audio
 from core.ai.providers import aistack as _aistack
 from core.ai.providers import sherpa as _sherpa
+from core.ai.providers import sherpa_tts as _sherpa_tts
 from core.ai.providers import faster_whisper as _faster_whisper
 from core.ai.providers import llama_cpp as _llama_cpp
 from core.ai.errors import AIError, Kind
@@ -558,6 +559,27 @@ class AIRouter:
                     audio_format=audio_format,
                     language=cfg.get("language", "English"),
                     task_type=cfg.get("task_type", "CustomVoice"),
+                    should_cancel=should_cancel,
+                    on_chunk=on_chunk,
+                    cancel_token=cancel_token,
+                )
+            elif provider == "sherpa_tts":
+                # In-process Kokoro TTS via sherpa-onnx. voice_id is a
+                # speaker index (string), not a name — model_name picks
+                # the catalog entry (kokoro-int8-multi-lang by default).
+                resolved_model = (
+                    task_model
+                    if task_model and task_model != "auto"
+                    else (cfg.get("model") or _sherpa_tts.DEFAULT_MODEL_NAME)
+                )
+                _sherpa_tts.synthesize(
+                    text, output_path,
+                    model_name=resolved_model,
+                    voice_id=voice_id or str(cfg.get("voice", "0")),
+                    speed=float(cfg.get("speed", 1.0)),
+                    audio_format=audio_format,
+                    num_threads=int(cfg.get("num_threads", 4)),
+                    provider=cfg.get("provider", "auto"),
                     should_cancel=should_cancel,
                     on_chunk=on_chunk,
                     cancel_token=cancel_token,

@@ -135,6 +135,49 @@ def resolve_files(repo: str, revision: str, filenames: list[str],
     return out
 
 
+def resolve_all_files(repo: str, revision: str,
+                      *, force: bool = False) -> list[ResolvedFile]:
+    """Like resolve_files but expands to EVERY file in the repo tree.
+
+    Used for catalog entries with `download_all=True` (sherpa Kokoro TTS
+    bundles hundreds of espeak-ng dict files alongside the ONNX weights).
+    Skips a few obvious non-content files at the root (.gitattributes,
+    LICENSE, README.md) — they cost network roundtrips and aren't needed
+    by the runtime.
+    """
+    _ensure_mem_cache()
+    key = f"{repo}@{revision}"
+    entry = _MEM_CACHE.get(key)
+    fresh = (
+        entry is not None
+        and (time.time() - entry.get("fetched_at", 0)) < _CACHE_TTL_SEC
+    )
+    if force or not fresh:
+        try:
+            entry = _fetch_repo_tree(repo, revision)
+            _MEM_CACHE[key] = entry
+            _save_disk_cache(_MEM_CACHE)
+        except ResolveError:
+            if entry is None:
+                raise
+
+    skip_at_root = {".gitattributes", "LICENSE", "README.md"}
+    out: list[ResolvedFile] = []
+    for meta in entry["files"]:
+        path = meta["path"]
+        if "/" not in path and path in skip_at_root:
+            continue
+        out.append(ResolvedFile(
+            repo=repo,
+            revision=revision,
+            path=path,
+            size=int(meta.get("size", 0)),
+            sha256=meta.get("sha256"),
+            urls=_build_urls(repo, revision, path),
+        ))
+    return out
+
+
 def repo_listing(repo: str, revision: str = "main",
                  *, force: bool = False) -> list[dict]:
     """Return the cached file list for a repo (raw HF metadata, dicts).
