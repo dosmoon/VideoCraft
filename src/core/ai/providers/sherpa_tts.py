@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import os
 import struct
+import subprocess
+import tempfile
 import time
 import wave
 from typing import Callable
@@ -103,12 +105,23 @@ def _load_tts(model_dir: str, *, num_threads: int, provider: str):
                 "Re-download via Model Manager.",
             )
 
+    # Multi-lang Kokoro (>= v1.0) refuses to start unless either
+    # `lang` or `lexicon` is set. Discover all lexicon-*.txt files in
+    # the model dir and feed them as a comma-separated list — matches
+    # the upstream sherpa CLI example. For US/CN news this auto-loads
+    # lexicon-us-en.txt + lexicon-zh.txt + (gb-en if present); the
+    # model picks the right one per detected script at synthesis time.
+    import glob as _glob
+    lexicons = sorted(_glob.glob(os.path.join(model_dir, "lexicon-*.txt")))
+    lexicon_arg = ",".join(lexicons)
+
     kokoro_cfg = so.OfflineTtsKokoroModelConfig(
         model=model_path,
         voices=voices,
         tokens=tokens,
         data_dir=data_dir,
         dict_dir=dict_dir if os.path.isdir(dict_dir) else "",
+        lexicon=lexicon_arg,
         length_scale=1.0,
         lang="",  # auto from script (for multi-lang model)
     )
@@ -141,6 +154,28 @@ def _write_wav(path: str, samples: np.ndarray, sample_rate: int) -> None:
         w.setsampwidth(2)         # 16-bit
         w.setframerate(int(sample_rate))
         w.writeframes(int16.tobytes())
+
+
+def _transcode_with_ffmpeg(src_wav: str, dst: str) -> None:
+    """Convert src_wav → dst, format inferred from dst extension. Used so
+    sherpa-onnx (wav-only output) can satisfy callers asking for mp3/opus.
+    Errors are wrapped as AIError so the router records the right kind."""
+    cmd = ["ffmpeg", "-y", "-i", src_wav, "-loglevel", "error", dst]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+    except FileNotFoundError as e:
+        raise AIError(
+            Kind.MALFORMED, "sherpa_tts",
+            "ffmpeg not on PATH; cannot transcode wav to requested format. "
+            "Install ffmpeg or set audio_format='wav'.",
+            raw=e,
+        ) from e
+    except subprocess.CalledProcessError as e:
+        msg = (e.stderr or b"").decode("utf-8", errors="replace")[:400]
+        raise AIError(
+            Kind.UNKNOWN, "sherpa_tts",
+            f"ffmpeg transcode failed: {msg}", raw=e,
+        ) from e
 
 
 def synthesize(
@@ -201,12 +236,7 @@ def synthesize(
     if not text or not text.strip():
         raise AIError(Kind.MALFORMED, "sherpa_tts",
                       "Empty text — nothing to synthesize.")
-    if audio_format.lower() != "wav":
-        raise AIError(
-            Kind.MALFORMED, "sherpa_tts",
-            f"sherpa_tts only supports audio_format='wav'; got {audio_format!r}. "
-            "Transcode externally with ffmpeg if you need mp3/opus.",
-        )
+    fmt = (audio_format or "wav").lower()
     try:
         sid = int(voice_id)
     except (TypeError, ValueError):
@@ -260,7 +290,21 @@ def synthesize(
     elapsed = time.monotonic() - started
     rtf = audio_sec / max(elapsed, 1e-3)
 
-    _write_wav(output_path, samples, sample_rate)
+    # Write wav to a temp file when the caller wants something else, then
+    # let ffmpeg do the conversion. For wav callers we write directly.
+    if fmt == "wav":
+        _write_wav(output_path, samples, sample_rate)
+    else:
+        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+        tmp.close()
+        try:
+            _write_wav(tmp.name, samples, sample_rate)
+            _transcode_with_ffmpeg(tmp.name, output_path)
+        finally:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
 
     bytes_written = os.path.getsize(output_path) if os.path.exists(output_path) else 0
     if on_chunk is not None:
