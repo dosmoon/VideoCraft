@@ -262,3 +262,59 @@ def list_all_voices() -> list[dict]:
     except ImportError:
         return []
     return _run_async(edge_tts.list_voices())
+
+
+def fetch_voice_catalog() -> list:
+    """Pull the live Edge voice catalog and convert to TTSVoice records
+    consumed by core.ai.tts_voice. Imports tts_voice lazily so the
+    catalog module doesn't have to import every provider eagerly.
+
+    Microsoft's list_voices() returns dicts shaped like:
+      {
+        "Name":         "Microsoft Server Speech ... (zh-CN, XiaoxiaoNeural)",
+        "ShortName":    "zh-CN-XiaoxiaoNeural",
+        "Gender":       "Female",
+        "Locale":       "zh-CN",
+        "FriendlyName": "Microsoft Xiaoxiao Online (Natural) - Chinese ...",
+        "Status":       "GA",
+        "VoiceTag":     {"ContentCategories": ["News","Novel"],
+                         "VoicePersonalities": ["Warm"]},
+      }
+
+    Map:
+      voice_id     = ShortName  (what synthesize() expects)
+      display_name = trimmed FriendlyName
+      language     = Locale
+      gender       = "F" / "M" (Edge only emits Female / Male today)
+      tags         = ContentCategories + VoicePersonalities
+      description  = Name (the long verbose form)
+    """
+    from core.ai.tts_voice import TTSVoice
+    raw = list_all_voices()
+    out: list[TTSVoice] = []
+    for v in raw:
+        gender_raw = v.get("Gender", "")
+        gender = "F" if gender_raw == "Female" else "M" if gender_raw == "Male" else ""
+        tag_block = v.get("VoiceTag") or {}
+        tags = tuple(
+            list(tag_block.get("ContentCategories", []))
+            + list(tag_block.get("VoicePersonalities", []))
+        )
+        # FriendlyName is the most human-readable surface; trim the noisy
+        # "Microsoft" / "Online (Natural)" boilerplate so the picker
+        # column stays narrow.
+        friendly = v.get("FriendlyName") or v.get("ShortName", "")
+        display = (friendly
+                   .replace("Microsoft ", "")
+                   .replace(" Online (Natural)", "")
+                   .strip())
+        out.append(TTSVoice(
+            provider="edge_tts",
+            voice_id=v.get("ShortName", ""),
+            display_name=display,
+            language=v.get("Locale", ""),
+            gender=gender,
+            tags=tags,
+            description=v.get("Name", ""),
+        ))
+    return out
