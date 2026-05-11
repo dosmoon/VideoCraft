@@ -1,8 +1,9 @@
 {
   "menu.file": "文件",
-  "menu.file.open_folder": "打开文件夹...",
-  "menu.file.recent_projects": "最近工程",
+  "menu.file.recent_projects": "最近项目",
   "menu.file.recent_empty": "（无历史记录）",
+  "menu.file.close_project": "关闭项目",
+  "hub.placeholder.hint": "从左侧 Sidebar 选择派生作品,或通过「创作」菜单新建",
   "menu.file.preferences": "设置...",
   "menu.file.exit": "退出",
   "menu.create": "创作",

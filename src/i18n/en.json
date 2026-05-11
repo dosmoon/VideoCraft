@@ -1,8 +1,9 @@
 {
   "menu.file": "File",
-  "menu.file.open_folder": "Open Folder...",
   "menu.file.recent_projects": "Recent Projects",
   "menu.file.recent_empty": "(no recent projects)",
+  "menu.file.close_project": "Close Project",
+  "hub.placeholder.hint": "Pick a derivative from the sidebar, or use the Create menu to make a new one.",
   "menu.file.preferences": "Settings...",
   "menu.file.exit": "Exit",
   "menu.create": "Create",

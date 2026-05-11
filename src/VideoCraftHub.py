@@ -13,7 +13,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 # Windows GBK stdout/stderr → UTF-8，防止工具内 print(emoji) 抛 UnicodeEncodeError
 if sys.stdout and hasattr(sys.stdout, "buffer"):
@@ -27,7 +27,7 @@ if sys.stderr and hasattr(sys.stderr, "buffer"):
 from core.paths import apply_cache_env as _apply_cache_env
 _apply_cache_env()
 
-from project import Project, add_recent_project, get_recent_projects, file_icon
+from project import Project, get_recent_projects, file_icon
 from operations import get_operations
 
 # ── 工具注册表 ────────────────────────────────────────────────────────────────
@@ -178,9 +178,22 @@ class TabBar(tk.Frame):
 # ── Hub 主类 ──────────────────────────────────────────────────────────────────
 
 class VideoCraftHub:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, project: Project):
+        """Construct the main hub. Project is REQUIRED (with-project single
+        state, see docs/draft/project-restructure.md). To switch projects,
+        set reopen_launcher=True and close the window — main loop reopens
+        the launcher.
+        """
         self.root = root
-        self.root.title("VideoCraft")
+        self.project: Project = project
+        # Signals to the main loop after Hub destroys itself:
+        #   reopen_launcher=True + requested_project_path=None → show launcher
+        #   reopen_launcher=True + requested_project_path=<p>  → open that project directly
+        #   reopen_launcher=False                              → exit application
+        self.reopen_launcher: bool = False
+        self.requested_project_path: str | None = None
+
+        self.root.title(f"VideoCraft — {self.project.name}")
         self.root.minsize(600, 400)
 
         # Load persisted layout (geometry / sash positions / zoom state).
@@ -195,25 +208,26 @@ class VideoCraftHub:
         from ui.ai_error_dialog import set_open_console_handler
         set_open_console_handler(lambda: self.open_tool("ai-console"))
 
-        self.project: Project | None = None
         self._recent_menu: tk.Menu | None = None
         self._tool_instances: list = []   # 防止工具实例被 GC 回收
-        self._last_snapshot: set = set()  # 上次文件夹快照，用于自动刷新检测
-        self._status_var = tk.StringVar() # 状态栏变量（保持向后兼容）
+        self._last_snapshot: set = self._folder_snapshot(self.project.folder)
+        self._status_var = tk.StringVar()
+        self._status_var.set(self.project.folder)
 
         # Tab 系统
         self._tab_registry: dict[str, str] = {}      # tool_key → tool_key
         self._tab_frames: dict[str, ToolFrame] = {}  # tool_key → ToolFrame
         self._tab_bar: TabBar | None = None
         self._content_area: tk.Frame | None = None   # Tab 内容切换区
-        self._welcome_frame: tk.Frame | None = None
+        self._content_placeholder: tk.Frame | None = None  # shown when no tab open
         self._vpane: ttk.PanedWindow | None = None
         self._log_frame: tk.Frame | None = None
 
         self._build_menu()
         self._build_layout()
-        self._refresh_project_tab()  # show "no project" hint
-        self._show_welcome()
+        self._refresh_project_tab()
+        self.refresh_sidebar()
+        self._show_empty_content()  # no tab open initially
         self._schedule_auto_refresh()
 
         # Apply zoom + sash positions after widgets have been realized.
@@ -308,36 +322,34 @@ class VideoCraftHub:
         menubar = tk.Menu(self.root)
         self.root.config(menu=menubar)
 
-        # File
+        # File — Close Project returns to launcher; Open / new go through launcher.
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label=tr("menu.file"), menu=file_menu)
-        file_menu.add_command(label=tr("menu.file.open_folder"),
-                              command=self.open_folder, accelerator="Ctrl+O")
         self._recent_menu = tk.Menu(file_menu, tearoff=0)
-        file_menu.add_cascade(label=tr("menu.file.recent_projects"), menu=self._recent_menu)
+        file_menu.add_cascade(label=tr("menu.file.recent_projects"),
+                              menu=self._recent_menu)
+        file_menu.add_separator()
+        file_menu.add_command(label=tr("menu.file.close_project"),
+                              command=self.close_project)
         file_menu.add_separator()
         file_menu.add_command(label=tr("menu.file.preferences"),
                               command=lambda: self.open_tool("preferences"))
         file_menu.add_separator()
         file_menu.add_command(label=tr("menu.file.exit"), command=self.root.quit)
-        # postcommand fires right before the menu is posted — reliable across
-        # platforms, unlike <Map> events on tk.Menu which don't fire on
-        # Windows native menus.
         file_menu.configure(postcommand=self._rebuild_recent_menu)
-        self.root.bind("<Control-o>", lambda e: self.open_folder())
 
-        # Create — bilingual subtitle video pipeline + AI clip workbench
+        # Create — bilingual subtitle video pipeline + AI clip workbench.
+        # Project is always loaded; pass its folder directly.
         create_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label=tr("menu.create"), menu=create_menu)
         create_menu.add_command(label=tr("menu.create.bilingual_video"),
                                 command=lambda: self.open_tool(
                                     "project-workbench",
-                                    initial_file=self.project.folder if self.project else None))
+                                    initial_file=self.project.folder))
         create_menu.add_command(label=tr("menu.create.ai_clip"),
                                 command=lambda: self.open_tool(
                                     "clip-script",
-                                    initial_file=self.project.folder
-                                    if self.project else None))
+                                    initial_file=self.project.folder))
 
         # Download
         dl_menu = tk.Menu(menubar, tearoff=0)
@@ -345,7 +357,7 @@ class VideoCraftHub:
         dl_menu.add_command(label=tr("menu.download.yt_dlp"),
                             command=lambda: self.open_tool(
                                 "yt-dlp",
-                                initial_file=self.project.folder if self.project else None))
+                                initial_file=self.project.folder))
 
         # Speech to text
         stt_menu = tk.Menu(menubar, tearoff=0)
@@ -446,12 +458,15 @@ class VideoCraftHub:
         recents = get_recent_projects()
         if not recents:
             self._recent_menu.add_command(label=tr("menu.file.recent_empty"), state="disabled")
-        else:
-            for path in recents:
-                self._recent_menu.add_command(
-                    label=path,
-                    command=lambda p=path: self.open_folder(p)
-                )
+            return
+        for path in recents:
+            # Mark the current project but still allow clicking it (no-op switch).
+            label = ("✓ " if path == self.project.folder else "  ") + path
+            state = "disabled" if path == self.project.folder else "normal"
+            self._recent_menu.add_command(
+                label=label, state=state,
+                command=lambda p=path: self.switch_to_project(p),
+            )
 
     # ── 布局 ──────────────────────────────────────────────────────────────────
 
@@ -522,39 +537,37 @@ class VideoCraftHub:
         self._vpane.add(self._log_frame, weight=0)
         self._build_logpanel()
 
-    # ── 欢迎页 ────────────────────────────────────────────────────────────────
+    # ── 内容区状态 ────────────────────────────────────────────────────────────
 
-    def _show_welcome(self):
-        """隐藏 Tab 系统，显示欢迎页（懒加载）。"""
+    def _show_empty_content(self):
+        """No tab open: hide tab bar/content area, show a subtle hint placeholder.
+        With-project single state: the project is always loaded; this state
+        only means "user has no workbench tab open right now"."""
         from i18n import tr
         assert self._tab_bar is not None and self._content_area is not None
         self._tab_bar.pack_forget()
         self._content_area.pack_forget()
-        if self._welcome_frame is None:
-            self._welcome_frame = tk.Frame(self._content, bg="white")
-            inner = tk.Frame(self._welcome_frame, bg="white")
+        if self._content_placeholder is None:
+            self._content_placeholder = tk.Frame(self._content, bg="white")
+            inner = tk.Frame(self._content_placeholder, bg="white")
             inner.place(relx=0.5, rely=0.45, anchor="center")
-            tk.Label(inner, text=tr("hub.welcome.title"), font=("", 22, "bold"),
-                     bg="white", fg="#333").pack(pady=(0, 6))
-            tk.Label(inner, text=tr("hub.welcome.hint"),
-                     font=("", 11), bg="white", fg="#888").pack(pady=(0, 20))
-            tk.Button(inner, text=tr("hub.welcome.open_folder_btn"), font=("", 11),
-                      command=self.open_folder,
-                      bg="#0078d4", fg="white", relief="flat",
-                      padx=10, pady=6).pack()
-        assert self._welcome_frame is not None
-        self._welcome_frame.pack(fill="both", expand=True)
+            tk.Label(inner, text=self.project.name, font=("", 18, "bold"),
+                     bg="white", fg="#333").pack(pady=(0, 8))
+            tk.Label(inner, text=tr("hub.placeholder.hint"),
+                     font=("", 10), bg="white", fg="#888",
+                     wraplength=500, justify="center").pack()
+        assert self._content_placeholder is not None
+        self._content_placeholder.pack(fill="both", expand=True)
 
     def _show_tabs(self):
-        """隐藏欢迎页，显示 Tab 栏 + 内容区。"""
+        """Show tab bar + content area (a tool is now open)."""
         assert self._tab_bar is not None and self._content_area is not None
-        if self._welcome_frame:
-            self._welcome_frame.pack_forget()
+        if self._content_placeholder is not None:
+            self._content_placeholder.pack_forget()
         self._tab_bar.pack(side="top", fill="x")
         self._content_area.pack(fill="both", expand=True)
 
     def _select_tab(self, key: str):
-        """切换到指定 Tab。"""
         assert self._tab_bar is not None
         for tf in self._tab_frames.values():
             tf.pack_forget()
@@ -563,48 +576,39 @@ class VideoCraftHub:
         self._tab_bar.set_active(key)
 
     def _close_tab(self, key: str):
-        """关闭指定 Tab；若无剩余 Tab 则恢复欢迎页。"""
+        """Close a tool tab; fall back to the empty content placeholder."""
         assert self._tab_bar is not None
         if key in self._tab_frames:
             self._tab_frames[key].destroy()
             del self._tab_frames[key]
         self._tab_registry.pop(key, None)
-        # 从 _tool_instances 中移除对应实例（无法精确匹配时保持原样）
         nxt = self._tab_bar.remove_tab(key)
         if nxt:
             self._select_tab(nxt)
         else:
-            self._show_welcome()
+            self._show_empty_content()
 
     # ── Project 操作 ──────────────────────────────────────────────────────────
 
-    def open_folder(self, path: str | None = None):
-        if path is None:
-            path = filedialog.askdirectory(title="打开文件夹")
-            if not path:
-                return
+    def close_project(self):
+        """File → 关闭项目: destroy Hub and signal main to reopen the launcher."""
+        self.reopen_launcher = True
+        self.requested_project_path = None
+        # Run the normal close handler so layout is persisted, then destroy.
+        self._on_close()
 
+    def switch_to_project(self, path: str):
+        """File → Recent → click another project: switch directly without
+        bouncing through the launcher UI."""
         if not os.path.isdir(path):
-            messagebox.showerror("错误", f"文件夹不存在：\n{path}")
+            messagebox.showerror("VideoCraft", f"项目不存在:\n{path}")
             return
-
-        self.project = Project.open(path)
-        add_recent_project(path)
-        self.root.title(f"VideoCraft — {self.project.name}")
-        self._status_var.set(self.project.folder)
-        self._last_snapshot = self._folder_snapshot(self.project.folder)
-        self.refresh_sidebar()
-        self._refresh_project_tab()
-        # If a workbench tab is already open, swap its project so it doesn't
-        # keep showing manifests from the previous project.
-        wb = self._get_workbench_app()
-        if wb is not None:
-            wb.set_project(self.project)
+        self.reopen_launcher = True
+        self.requested_project_path = path
+        self._on_close()
 
     def refresh_sidebar(self):
         self._tree.delete(*self._tree.get_children())
-        if self.project is None:
-            return
 
         root_node = self._tree.insert(
             "", "end",
@@ -663,20 +667,13 @@ class VideoCraftHub:
         # empty label shown only when no project — set in _refresh_project_tab
 
     def _refresh_project_tab(self):
-        """Reload the manifest list from the active project (or clear it)."""
+        """Reload the manifest list from the active project."""
         from i18n import tr
         if not hasattr(self, "_project_tree"):
             return  # not built yet
         sel_prev = (self._project_tree.selection()[0]
                     if self._project_tree.selection() else None)
         self._project_tree.delete(*self._project_tree.get_children())
-        if self.project is None:
-            self._project_new_btn.config(state="disabled")
-            self._project_delete_btn.config(state="disabled")
-            self._project_empty_lbl.config(
-                text=tr("hub.sidebar.project.empty_no_project"))
-            self._project_empty_lbl.pack(fill="x", padx=12, pady=12)
-            return
         self._project_empty_lbl.pack_forget()
         self._project_new_btn.config(state="normal")
         manifests = self.project.list_manifests()
@@ -713,8 +710,6 @@ class VideoCraftHub:
     def _on_new_manifest_hub(self):
         from i18n import tr
         from tkinter import simpledialog
-        if self.project is None:
-            return
         wb = self._get_workbench_app()
         if wb is not None and not wb.confirm_discard():
             return
@@ -748,7 +743,7 @@ class VideoCraftHub:
     def _on_delete_manifest_hub(self):
         from i18n import tr
         sel = self._project_tree.selection()
-        if not sel or self.project is None:
+        if not sel:
             return
         basename = sel[0]
         if not messagebox.askyesno(
@@ -793,7 +788,7 @@ class VideoCraftHub:
 
     def _schedule_auto_refresh(self):
         """每 2 秒检查文件夹变化，有变化时自动刷新 Sidebar。"""
-        if self.project and os.path.isdir(self.project.folder):
+        if os.path.isdir(self.project.folder):
             snapshot = self._folder_snapshot(self.project.folder)
             if snapshot != self._last_snapshot:
                 self._last_snapshot = snapshot
@@ -1073,7 +1068,7 @@ class VideoCraftHub:
                     kwargs["initial_basename"] = initial_basename
                 # Bootstrap the workbench with the Hub's active project so it
                 # doesn't have to discover one from initial_file.
-                if self.project is not None and "initial_file" not in kwargs:
+                if "initial_file" not in kwargs:
                     kwargs["initial_file"] = self.project.folder
             app = cls(tf, **kwargs) if kwargs else cls(tf)
 
@@ -1112,22 +1107,9 @@ class VideoCraftHub:
 
 # ── 入口 ──────────────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
-    # Per-monitor DPI awareness MUST be enabled before any Tk window is
-    # created. Required by ui.web_preview.WebPreviewFrame (clip-script
-    # preview etc.) — SetParent across DPI-awareness boundaries breaks
-    # WebView2 sizing. tk scaling is then bumped to compensate so existing
-    # widgets/fonts keep their on-screen size.
-    try:
-        from ui.web_preview import setup_dpi_aware
-        setup_dpi_aware()
-    except Exception:
-        pass
-
-    root = tk.Tk()
-
-    # Compensate for the DPI-aware shift so Tk fonts/widgets keep their
-    # logical inch size. tk's scaling unit is points (1/72 inch).
+def _setup_dpi_and_scaling(root: tk.Tk) -> None:
+    """Bump tk scaling to compensate for per-monitor DPI awareness so fonts
+    and widgets keep their logical inch size."""
     try:
         import ctypes
         dpi = ctypes.windll.user32.GetDpiForSystem()
@@ -1135,5 +1117,54 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    app = VideoCraftHub(root)
-    root.mainloop()
+
+def _run() -> None:
+    """Application main loop: launcher → hub → (launcher | exit).
+
+    The launcher returns a Project (or None to quit). Hub may signal
+    reopen_launcher=True with optional requested_project_path to switch
+    project directly (skipping the launcher UI for File → Recent clicks).
+    """
+    # Per-monitor DPI awareness MUST be enabled before any Tk window is
+    # created. Required by ui.web_preview.WebPreviewFrame (clip-script
+    # preview etc.) — SetParent across DPI-awareness boundaries breaks
+    # WebView2 sizing.
+    try:
+        from ui.web_preview import setup_dpi_aware
+        setup_dpi_aware()
+    except Exception:
+        pass
+
+    from launcher import run_launcher
+
+    next_project_path: str | None = None
+
+    while True:
+        # Acquire a Project, either by direct request (File → Recent
+        # switching) or via the launcher window.
+        if next_project_path is not None:
+            try:
+                project = Project.open(next_project_path)
+            except Exception as e:
+                messagebox.showerror("打开失败", f"{next_project_path}\n{e}")
+                next_project_path = None
+                continue
+            next_project_path = None
+        else:
+            project = run_launcher()
+            if project is None:
+                return  # user closed launcher → quit app
+
+        # Run the Hub for the chosen project.
+        root = tk.Tk()
+        _setup_dpi_and_scaling(root)
+        hub = VideoCraftHub(root, project)
+        root.mainloop()
+
+        if not hub.reopen_launcher:
+            return  # Hub closed via X or File→Exit → quit app
+        next_project_path = hub.requested_project_path  # may be None → launcher
+
+
+if __name__ == "__main__":
+    _run()
