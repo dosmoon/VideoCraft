@@ -1,18 +1,18 @@
 """GPU runtime detection + DLL path setup for embedded-AI providers.
 
-Sherpa-onnx (CUDA build) and llama-cpp-python (CUDA build) both expect
-`cublasLt64_12.dll`, `cudnn64_9.dll`, etc. on the OS DLL search path at
-load time. We get those DLLs from the `nvidia-*-cu12` pip packages
-(installed alongside the CUDA wheels), but pip drops them in
-`site-packages/nvidia/<lib>/bin/` which isn't on PATH by default.
+faster-whisper (CTranslate2 CUDA build) and llama-cpp-python (CUDA build)
+both expect `cublasLt64_12.dll`, `cudnn64_9.dll`, etc. on the OS DLL
+search path at load time. We get those DLLs from the `nvidia-*-cu12` pip
+packages, but pip drops them in `site-packages/nvidia/<lib>/bin/` which
+isn't on PATH by default.
 
 This module:
-  - Adds those bin dirs to PATH **before** any sherpa_onnx / llama_cpp
+  - Adds those bin dirs to PATH **before** any ctranslate2 / llama_cpp
     import so the C++ side's LoadLibrary calls resolve cleanly.
-  - Probes whether a CUDA-capable build is actually present (the user
-    may have only the CPU wheels installed).
+  - Probes whether the CUDA runtime DLLs are present (the user may have
+    only the CPU wheels installed).
   - Exposes `cuda_available()` so providers can flip their default
-    config (sherpa.provider, llama_cpp.n_gpu_layers) accordingly.
+    config (faster_whisper.compute_type, llama_cpp.n_gpu_layers) accordingly.
 
 Idempotent — `ensure_cuda_dlls()` is safe to call from multiple modules.
 First call wins; subsequent calls are no-ops.
@@ -63,38 +63,37 @@ def ensure_cuda_dlls() -> None:
 
 
 def cuda_available() -> bool:
-    """True when CUDA-capable wheels for our embedded providers are installed.
+    """True when CUDA runtime DLLs for our embedded providers are present.
 
-    Detection is purely metadata-based — we DO NOT import onnxruntime here
-    because doing so loads a separate copy of the CUDA DLLs into the
-    process and conflicts with sherpa-onnx's bundled onnxruntime when it
-    later tries to load its own (Error 1114: DLL_INIT_FAILED). Two checks:
-        1. nvidia/<lib>/bin dirs exist (the runtime DLLs are pip-installed)
-        2. sherpa-onnx wheel was built with CUDA (version string ends in +cuda...)
+    Detection is metadata-based — we don't import any CUDA-using library
+    here (would load DLLs into the process and risk init order conflicts
+    with the providers themselves). Two checks:
+        1. nvidia/<lib>/bin dirs exist (cublas + cudnn pip packages)
+        2. nvidia-smi reports a usable GPU + driver
 
-    Both conditions are necessary; either alone gives a false positive.
+    Either alone gives a false positive (driver without runtime, or
+    runtime wheels installed on a CPU-only host).
     """
     global _CUDA_PROBE_RESULT
     if _CUDA_PROBE_RESULT is not None:
         return _CUDA_PROBE_RESULT
     ensure_cuda_dlls()
 
-    # 1. NVIDIA runtime DLLs present
     nvidia_root = os.path.join(sys.prefix, "Lib", "site-packages", "nvidia")
     has_runtime = (sys.platform == "win32" and os.path.isdir(nvidia_root)
                    and bool(glob.glob(os.path.join(nvidia_root, "*", "bin"))))
 
-    # 2. sherpa-onnx wheel has CUDA build. We import the metadata only;
-    # the heavy C++ side gets touched lazily by the providers themselves.
-    has_cuda_wheel = False
+    has_driver = False
     try:
-        from importlib.metadata import version
-        v = version("sherpa-onnx")
-        has_cuda_wheel = "+cuda" in v
-    except Exception:
+        r = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=4.0,
+        )
+        has_driver = (r.returncode == 0 and bool(r.stdout.strip()))
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         pass
 
-    _CUDA_PROBE_RESULT = bool(has_runtime and has_cuda_wheel)
+    _CUDA_PROBE_RESULT = bool(has_runtime and has_driver)
     return _CUDA_PROBE_RESULT
 
 
@@ -107,7 +106,7 @@ def cuda_status() -> dict:
           "device_name": str (nvidia-smi readout, "" if unknown),
           "driver":      str,
           "vram_mb":     int,
-          "wheel":       str  (sherpa-onnx version, e.g. "1.13.0+cuda12.cudnn9"),
+          "wheel":       str  (faster-whisper version),
           "reason":      str  (short one-liner shown to user),
         }
     """
@@ -122,7 +121,7 @@ def cuda_status() -> dict:
     }
     try:
         from importlib.metadata import version
-        out["wheel"] = version("sherpa-onnx")
+        out["wheel"] = version("faster-whisper")
     except Exception:
         pass
 
@@ -150,16 +149,13 @@ def cuda_status() -> dict:
         if out["device_name"]:
             out["reason"] = (
                 f"{out['device_name']} ({out['vram_mb']} MiB), "
-                f"driver {out['driver']}, wheel {out['wheel']}"
+                f"driver {out['driver']}, faster-whisper {out['wheel']}"
             )
         else:
-            out["reason"] = f"CUDA wheel {out['wheel']} loaded"
+            out["reason"] = f"faster-whisper {out['wheel']} loaded"
     else:
-        if not out["wheel"] or "+cuda" not in out["wheel"]:
-            out["reason"] = (
-                f"CPU-only sherpa wheel installed ({out['wheel']}). "
-                "Install +cuda wheel to enable GPU."
-            )
-        else:
-            out["reason"] = "CUDA runtime DLLs (nvidia-* pip packages) missing."
+        out["reason"] = (
+            "CUDA runtime DLLs (nvidia-cublas-cu12 / nvidia-cudnn-cu12) "
+            "or NVIDIA driver missing."
+        )
     return out

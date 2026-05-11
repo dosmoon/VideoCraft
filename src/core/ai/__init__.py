@@ -134,15 +134,14 @@ def tts(text: str, output_path: str, *,
 def is_tts_sdk_available(provider: str = "fish_audio") -> bool:
     """Check whether the given TTS provider's SDK / runtime is installed.
 
-    For cloud SDKs ("fish_audio") this is an import probe. For local
-    providers (aistack / sherpa_tts) the SDK ships with VideoCraft —
-    sherpa-onnx is in requirements.txt, aistack is just HTTP — so they
-    are always 'available' as far as the UI is concerned.
+    For cloud SDKs ("fish_audio") this is an import probe. For aistack
+    the gateway is just HTTP — always 'available' as far as the UI is
+    concerned (reachability is checked at dispatch time).
     """
     if provider == "fish_audio":
         from core.ai.providers import fish_audio as _fish_audio
         return _fish_audio.is_sdk_available()
-    if provider in ("aistack", "sherpa_tts"):
+    if provider == "aistack":
         return True
     if provider == "edge_tts":
         try:

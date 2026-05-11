@@ -1098,11 +1098,6 @@ class AIConsoleApp(ToolBase):
         if is_local and is_asr:
             self._open_local_asr_edit_dialog(name, cfg)
             return
-        if is_local and not is_asr and name == "sherpa_tts":
-            # In-process Kokoro TTS — no API key, model picker driven by
-            # what's actually installed under <models>/sherpa-tts/.
-            self._open_local_tts_edit_dialog(name, cfg)
-            return
         if is_local and not is_asr and name == "edge_tts":
             # Microsoft Edge online TTS — no key, curated voice picker.
             self._open_edge_tts_edit_dialog(name, cfg)
@@ -1263,111 +1258,6 @@ class AIConsoleApp(ToolBase):
 
         btn_row = tk.Frame(dlg)
         btn_row.grid(row=5, column=0, columnspan=2, pady=18)
-        tk.Button(btn_row, text=tr("tool.router.btn_save"), command=save,
-                  width=10).pack(side="left", padx=10)
-        tk.Button(btn_row, text=tr("tool.router.btn_cancel"), command=dlg.destroy,
-                  width=10).pack(side="left")
-
-    def _open_local_tts_edit_dialog(self, name: str, cfg: dict):
-        """Edit dialog for in-process sherpa_tts (Kokoro).
-
-        No API key. Model dropdown lists subdirectories actually present
-        under <models>/sherpa-tts/ — that way the user picks between an
-        installed int8 vs fp32 variant by name, and the same dropdown
-        also surfaces any other Kokoro pack they manually dropped in.
-        """
-        display_name = cfg.get("name", name)
-        dlg = tk.Toplevel(self.master)
-        dlg.title(tr("tool.router.edit_dialog_title", name=display_name))
-        dlg.geometry("620x320")
-        dlg.resizable(True, True)
-        dlg.grab_set()
-
-        tk.Label(dlg, text=tr("tool.router.local_tts_hint"),
-                 fg="#666", anchor="w", justify="left",
-                 wraplength=580).grid(
-            row=0, column=0, columnspan=2, padx=12, pady=(12, 6), sticky="w")
-
-        # Discover what's actually on disk under <models>/sherpa-tts/.
-        # Falls back to the cfg value if the dir is empty (user might be
-        # editing before downloading anything).
-        from core.paths import cache_subdir
-        tts_root = cache_subdir("sherpa-tts")
-        try:
-            installed = sorted(
-                d for d in os.listdir(tts_root)
-                if os.path.isdir(os.path.join(tts_root, d))
-            )
-        except OSError:
-            installed = []
-        model_options = installed or [cfg.get("model", "kokoro-int8-multi-lang-v1_0")]
-
-        DEVICE_OPTIONS = ["auto", "cpu", "cuda"]
-
-        model_var   = tk.StringVar(value=cfg.get("model") or model_options[0])
-        device_var  = tk.StringVar(value=cfg.get("provider", "auto"))
-        voice_var   = tk.StringVar(value=str(cfg.get("voice", "0")))
-        speed_var   = tk.StringVar(value=str(cfg.get("speed", 1.0)))
-        threads_var = tk.StringVar(value=str(cfg.get("num_threads", 4)))
-
-        def _row(r, label_key, var, values=None, width=24):
-            tk.Label(dlg, text=tr(label_key), anchor="e", width=14).grid(
-                row=r, column=0, padx=10, pady=6, sticky="e")
-            if values:
-                ttk.Combobox(dlg, textvariable=var, values=values,
-                             state="readonly", width=width).grid(
-                    row=r, column=1, padx=4, pady=6, sticky="w")
-            else:
-                tk.Entry(dlg, textvariable=var, width=width).grid(
-                    row=r, column=1, padx=4, pady=6, sticky="w")
-
-        _row(1, "tool.router.label_tts_model",   model_var,   model_options)
-        _row(2, "tool.router.label_tts_device",  device_var,  DEVICE_OPTIONS)
-        _row(3, "tool.router.label_tts_voice",   voice_var)
-        _row(4, "tool.router.label_tts_speed",   speed_var)
-        _row(5, "tool.router.label_tts_threads", threads_var)
-
-        # Reveal the install dir so the user can see what's been downloaded.
-        bar = tk.Frame(dlg)
-        bar.grid(row=6, column=0, columnspan=2, pady=(8, 0))
-        def _open_dir():
-            from core.models.registry import reveal_in_explorer
-            reveal_in_explorer(tts_root)
-        tk.Button(bar, text=tr("tool.router.btn_open_tts_dir"),
-                  command=_open_dir, width=18).pack(side="left", padx=4)
-
-        def save():
-            try:
-                voice = int(voice_var.get().strip())
-                if voice < 0:
-                    raise ValueError("voice must be ≥ 0")
-                speed = float(speed_var.get().strip())
-                if not (0.3 <= speed <= 3.0):
-                    raise ValueError(tr("tool.router.tts_speed_range_hint"))
-                threads = int(threads_var.get().strip())
-                if not (1 <= threads <= 32):
-                    raise ValueError("threads must be 1..32")
-            except ValueError as e:
-                messagebox.showerror(tr("dialog.common.error"), str(e), parent=dlg)
-                return
-
-            router.update_tts_provider(
-                name,
-                model=model_var.get(),
-                provider=device_var.get(),
-                voice=str(voice),
-                speed=speed,
-                num_threads=threads,
-            )
-            messagebox.showinfo(
-                tr("tool.router.saved_title"),
-                tr("tool.router.saved_config_msg", name=display_name),
-                parent=dlg)
-            self._rebuild_routing_tab()
-            dlg.destroy()
-
-        btn_row = tk.Frame(dlg)
-        btn_row.grid(row=7, column=0, columnspan=2, pady=14)
         tk.Button(btn_row, text=tr("tool.router.btn_save"), command=save,
                   width=10).pack(side="left", padx=10)
         tk.Button(btn_row, text=tr("tool.router.btn_cancel"), command=dlg.destroy,

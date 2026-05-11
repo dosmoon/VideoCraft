@@ -29,7 +29,6 @@ def status(provider: str = "fish_audio") -> dict:
     Per-provider semantics for `configured`:
       - fish_audio: API key file present.
       - aistack:    base_url set (gateway must be reachable separately).
-      - sherpa_tts: model directory exists on disk (downloaded models).
       - others:     fall back to api-key-style check.
 
     Returns:
@@ -65,20 +64,6 @@ def status(provider: str = "fish_audio") -> dict:
         voice = cfg.get("voice", "")
         detail = (f"online · {voice}" if configured
                   else "edge-tts not installed (pip install edge-tts)")
-
-    elif provider == "sherpa_tts":
-        # Configured when the chosen model directory has the required
-        # files. We don't probe shape here (provider does that on load);
-        # just check the dir exists so the indicator means 'something
-        # to load'.
-        import os
-        from core.paths import cache_subdir
-        model_name = cfg.get("model", "")
-        model_dir = os.path.join(cache_subdir("sherpa-tts"), model_name) \
-            if model_name else ""
-        configured = bool(model_dir) and os.path.isdir(model_dir)
-        detail = (model_name + (" ✓" if configured else " (not downloaded)")
-                  if model_name else "no model selected")
 
     else:
         # Unknown provider — fall back to the legacy api-key check.

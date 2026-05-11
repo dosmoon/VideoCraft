@@ -147,20 +147,6 @@ _DEFAULT_ASR_PROVIDERS = {
         "description":   "本地 AI 服务 (github.com/dosmoon/aistack);model 字段决定后端: whisper-{tiny,base,small,medium,large-v3,large-v3-turbo} / parakeet / sensevoice",
         "model":         "whisper-small",
     },
-    "sherpa": {
-        "name":          "sherpa-onnx (内嵌)",
-        "enabled":       True,
-        "key_file":      "",            # In-process — no API key
-        "auth_required": False,
-        "description":   "内嵌 sherpa-onnx Whisper;CPU/CUDA 自动选;int8/fp32 按盘上文件自动挑;模型: <models>/sherpa/<model_name>/",
-        "model":         "whisper-small",
-        # "auto" = use CUDA wheel when available, CPU otherwise.
-        "provider":      "auto",
-        # 0 = auto (4 on CUDA, 1 on CPU). Bump to 8 on 8 GB VRAM with
-        # whisper-small; keep ≤4 with turbo. Higher = better GPU util,
-        # more VRAM. Lower = safer if you OOM.
-        "batch_size":    0,
-    },
     "faster_whisper": {
         "name":            "faster-whisper (内嵌, CTranslate2)",
         "enabled":         True,
@@ -214,18 +200,6 @@ _DEFAULT_TTS_PROVIDERS = {
         "pitch":         "+0Hz",
         "volume":        "+0%",
     },
-    "sherpa_tts": {
-        "name":          "sherpa-onnx Kokoro (内嵌)",
-        "enabled":       True,
-        "key_file":      "",            # In-process — no API key
-        "auth_required": False,
-        "description":   "内嵌 Kokoro TTS;多语言;CPU/CUDA 自动选;模型: <models>/sherpa-tts/<model_name>/",
-        "model":         "kokoro-int8-multi-lang-v1_0",
-        "voice":         "0",           # Speaker index; multi-lang pack ships ~50
-        "speed":         1.0,
-        "provider":      "auto",        # "auto" | "cpu" | "cuda"
-        "num_threads":   4,
-    },
 }
 
 # ── Task catalog (function × tier routing) ──────────────────────────────────
@@ -263,14 +237,14 @@ def task_category(task_id: str) -> str | None:
 def _build_default_task_routing() -> dict:
     llm_seed = {"provider": "", "model": ""}
     # faster-whisper is the embedded ASR default — CTranslate2 backend
-    # delivers RTF 35× on a 4060 fp16 vs sherpa's ~10× ceiling, and works
+    # delivers RTF 35× on a 4060 fp16, and works
     # on CPU too via int8 quant. Fresh installs see the right provider
     # the moment they download the model. Existing users with a custom
     # routing in providers.json keep their pick — this seed only fills
     # missing entries.
     asr_seed = {"provider": "faster_whisper",  "model": "faster-whisper-small"}
     # edge_tts is the default TTS pick: news-grade Chinese, no key, no
-    # local model footprint. Fish Audio / sherpa_tts stay available for
+    # local model footprint. Fish Audio / aistack stay available for
     # users who explicitly pick them in the AI Console routing matrix.
     tts_seed = {"provider": "edge_tts", "model": ""}
     out = {}
@@ -450,10 +424,15 @@ def _normalize_asr_providers(asr_providers: dict) -> dict:
 
 
 def _normalize_tts_providers(tts_providers: dict) -> tuple[dict, bool]:
-    """Backfill missing TTS providers (e.g. the aistack entry added 2026-05-06)
-    and missing fields on existing entries.
+    """Backfill missing TTS providers and missing fields on existing entries.
+    Also drops retired providers (sherpa_tts removed 2026-05-10 — replaced by
+    edge_tts; see docs/research-notes/sherpa-detour.md).
     """
     dirty = False
+    for retired in ("sherpa_tts",):
+        if retired in tts_providers:
+            tts_providers.pop(retired, None)
+            dirty = True
     for name, default_cfg in _DEFAULT_TTS_PROVIDERS.items():
         if name not in tts_providers:
             tts_providers[name] = copy.deepcopy(default_cfg)
@@ -478,7 +457,9 @@ def _migrate_removed_asr_providers(
     are cleaned here; task_routing slots that pointed at them are
     redirected to 'aistack'.
     """
-    removed = {"faster_whisper", "parakeet", "sensevoice"}
+    # Note: faster_whisper was re-added 2026-05-10 as the embedded ASR default
+    # (see _DEFAULT_ASR_PROVIDERS); only the older sherpa entry is dropped here.
+    removed = {"parakeet", "sensevoice", "sherpa"}
     redirect_to = "aistack"
     dirty = False
 
@@ -576,6 +557,12 @@ def _migrate_task_routing(task_routing: dict | None) -> tuple[dict, bool]:
             # re-pick from aistack's /v1/models inventory.
             if cell.get("provider") == "Ollama":
                 cell["provider"] = "aistack"
+                cell["model"] = ""
+                dirty = True
+            # 2026-05-10: sherpa_tts retired in favor of edge_tts (news-grade
+            # quality, no key, no local model). See research note for details.
+            if cell.get("provider") == "sherpa_tts":
+                cell["provider"] = "edge_tts"
                 cell["model"] = ""
                 dirty = True
 

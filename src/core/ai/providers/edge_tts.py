@@ -6,15 +6,15 @@ Python library (MIT). Quality is on par with Azure Neural TTS — these are
 the same voice models (XiaoxiaoNeural, YunxiNeural, etc.) — without the
 Cognitive Services key requirement.
 
-Trade-offs vs the embedded sherpa-onnx providers:
-  + News-broadcast Chinese quality (vs Kokoro / MeloTTS mediocrity)
+Trade-offs:
+  + News-broadcast Chinese quality
   + 400+ voices including 100+ Chinese
   + Zero local model footprint
   - Requires internet connection (online-only)
   - Microsoft could shut the endpoint down at any time (it's been up 5+ years)
   - ToS gray area; fine for personal / open-source / non-commercial use
 
-Caller contract matches sherpa_tts / fish_audio:
+Caller contract matches fish_audio:
     synthesize(text, output_path, *, voice_id, ...) -> None
 
 `voice_id` is the Edge voice short name (e.g. 'zh-CN-YunxiNeural').

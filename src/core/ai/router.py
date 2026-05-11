@@ -20,8 +20,6 @@ from core.ai.providers import claude_code as _claude_code
 from core.ai.providers import lemonfox as _lemonfox
 from core.ai.providers import fish_audio as _fish_audio
 from core.ai.providers import aistack as _aistack
-from core.ai.providers import sherpa as _sherpa
-from core.ai.providers import sherpa_tts as _sherpa_tts
 from core.ai.providers import edge_tts as _edge_tts
 from core.ai.providers import faster_whisper as _faster_whisper
 from core.ai.providers import llama_cpp as _llama_cpp
@@ -426,26 +424,6 @@ class AIRouter:
                     on_event=on_event,
                     cancel_token=cancel_token,
                 )
-            elif provider == "sherpa":
-                # In-process Whisper int8. Per-task model pick (e.g.
-                # "whisper-small") chooses the subdir under <models>/sherpa/.
-                # "auto" is meaningless here (no gateway-side routing); fall
-                # back to cfg default.
-                resolved_model = (
-                    task_model
-                    if task_model and task_model != "auto"
-                    else (cfg.get("model") or _sherpa.DEFAULT_MODEL_NAME)
-                )
-                result = _sherpa.transcribe(
-                    audio_path,
-                    model_name=resolved_model,
-                    language=language,
-                    translate=translate,
-                    provider=cfg.get("provider", "auto"),
-                    batch_size=int(cfg.get("batch_size", 0)),
-                    on_event=on_event,
-                    cancel_token=cancel_token,
-                )
             else:
                 raise RuntimeError(f"Unsupported ASR provider type: {provider!r}")
 
@@ -574,27 +552,6 @@ class AIRouter:
                     audio_format=audio_format,
                     pitch=str(cfg.get("pitch", "+0Hz")),
                     volume=str(cfg.get("volume", "+0%")),
-                    should_cancel=should_cancel,
-                    on_chunk=on_chunk,
-                    cancel_token=cancel_token,
-                )
-            elif provider == "sherpa_tts":
-                # In-process Kokoro TTS via sherpa-onnx. voice_id is a
-                # speaker index (string), not a name — model_name picks
-                # the catalog entry (kokoro-int8-multi-lang by default).
-                resolved_model = (
-                    task_model
-                    if task_model and task_model != "auto"
-                    else (cfg.get("model") or _sherpa_tts.DEFAULT_MODEL_NAME)
-                )
-                _sherpa_tts.synthesize(
-                    text, output_path,
-                    model_name=resolved_model,
-                    voice_id=voice_id or str(cfg.get("voice", "0")),
-                    speed=float(cfg.get("speed", 1.0)),
-                    audio_format=audio_format,
-                    num_threads=int(cfg.get("num_threads", 4)),
-                    provider=cfg.get("provider", "auto"),
                     should_cancel=should_cancel,
                     on_chunk=on_chunk,
                     cancel_token=cancel_token,

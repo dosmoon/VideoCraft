@@ -35,10 +35,10 @@ edge-tts==7.2.8
 #                 on Whisper-turbo and Qwen3-8B.
 #
 # CPU profile (default):
-sherpa-onnx==1.13.1
 llama-cpp-python==0.3.22  # see CPU wheel install note below
 faster-whisper==1.2.1     # CTranslate2-backed Whisper; works on CPU and CUDA
                            # without a separate wheel (CT2 picks at runtime).
+                           # Bundles silero VAD via vad_filter=True.
 #
 # DO NOT install `torch` into this venv. ctranslate2.converters.transformers
 # has `try: import torch`; if torch is present it eagerly loads its bundled
@@ -52,23 +52,20 @@ faster-whisper==1.2.1     # CTranslate2-backed Whisper; works on CPU and CUDA
 #     --only-binary=:all:
 #
 # ── GPU profile (CUDA 12 / cuDNN 9) ────────────────────────────────────────
-# Replaces the CPU wheels above. ~700 MB extra disk; ~2-4× speedup on
-# embedded providers. Run AFTER the CPU install (or skip the CPU install
-# entirely):
+# Adds CUDA wheels for llama-cpp-python + the nvidia-* runtime DLLs that
+# faster-whisper / CTranslate2 also pick up automatically. Run AFTER the
+# CPU install (or skip the CPU install entirely):
 #
 #   pip install --force-reinstall --no-deps llama-cpp-python==0.3.22 \
 #     --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 \
 #     --only-binary=:all:
 #
-#   pip install --force-reinstall --no-deps \
-#     "https://huggingface.co/csukuangfj2/sherpa-onnx-wheels/resolve/main/cuda/1.13.0/sherpa_onnx-1.13.0+cuda12.cudnn9-cp312-cp312-win_amd64.whl"
-#
 #   pip install --no-deps \
 #     nvidia-cuda-runtime-cu12 nvidia-cublas-cu12 nvidia-cudnn-cu12 nvidia-cufft-cu12
 #
 # Activation is automatic: core/gpu.py prepends the nvidia/* DLL dirs to
-# PATH at provider import, and providers default n_gpu_layers / sherpa
-# provider to "auto" which picks GPU when these wheels are detected.
+# PATH at provider import, and providers default to "auto" which picks
+# GPU when these wheels + an NVIDIA driver are detected.
 
 # Media
 Pillow==12.0.0

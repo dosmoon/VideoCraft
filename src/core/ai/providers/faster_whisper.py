@@ -1,21 +1,19 @@
 """faster-whisper provider — CTranslate2-backed Whisper ASR.
 
-Second embedded ASR provider (alongside `sherpa`). Sherpa-onnx hits a
-~10× RTF ceiling on Whisper because its DecodeStreams iterates streams
-sequentially in C++ — no real GPU batching for Whisper. faster-whisper
-uses CTranslate2 which has proper batched encoder/decoder kernels, real
-4060 throughput is 30-40× RTF on small fp16.
+The embedded ASR provider. CTranslate2 has properly batched encoder/decoder
+kernels; real 4060 throughput is 30-40× RTF on small fp16.
 
-Returns the same verbose_json dict shape as sherpa / aistack / lemonfox:
+Returns the same verbose_json dict shape as aistack / lemonfox:
     {language, duration, text, segments[], words[]}
 
-Differences from sherpa:
-  - No need for our own VAD chunking — faster-whisper has silero-VAD
-    built in (vad_filter=True). One less moving part.
-  - words[] is populated when `word_timestamps=True` (free, not blocked
-    by quantization the way sherpa's int8 export was).
+Notes:
+  - Built-in silero VAD via vad_filter=True — no separate chunker needed.
+  - words[] populated when `word_timestamps=True`.
   - Model files live under `<models>/faster-whisper/<model_name>/` as a
     directory of (config.json, model.bin, tokenizer.json, vocabulary.*).
+
+Background on the earlier sherpa-onnx attempt:
+  see docs/research-notes/sherpa-detour.md.
 """
 
 from __future__ import annotations
@@ -130,7 +128,7 @@ def transcribe(
     on_event: EventCallback | None = None,
     cancel_token=None,
 ) -> dict:
-    """faster-whisper transcription. Same dict shape as the sherpa provider.
+    """faster-whisper transcription. Standard verbose_json dict shape.
 
     Args:
         audio_path:      Local audio/video. faster-whisper decodes via
@@ -145,7 +143,7 @@ def transcribe(
         compute_type:    "auto" → float16 on cuda, int8 on cpu. Or any of
                          CT2's supported types ('float32','int8_float16',etc).
         word_timestamps: True → populate words[]. Adds ~10-20 % overhead.
-        on_event:        Same callback shape as sherpa. Emits
+        on_event:        Lifecycle callback. Emits
                          request_summary_local, state_processing per VAD
                          segment, state_perf_breakdown, state_done.
         cancel_token:    Cooperative; checked between segments. CTranslate2
@@ -197,8 +195,7 @@ def transcribe(
     try:
         # vad_filter=True uses faster-whisper's bundled silero-VAD to skip
         # silence; no need for our manual chunking logic. The library
-        # internally batches the speech regions so we get the throughput
-        # we couldn't get from sherpa.
+        # internally batches the speech regions.
         segments_iter, info = model.transcribe(
             audio_path,
             language=language,

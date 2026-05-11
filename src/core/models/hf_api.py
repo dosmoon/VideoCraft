@@ -139,9 +139,9 @@ def resolve_all_files(repo: str, revision: str,
                       *, force: bool = False) -> list[ResolvedFile]:
     """Like resolve_files but expands to EVERY file in the repo tree.
 
-    Used for catalog entries with `download_all=True` (sherpa Kokoro TTS
-    bundles hundreds of espeak-ng dict files alongside the ONNX weights).
-    Skips a few obvious non-content files at the root (.gitattributes,
+    Used for catalog entries with `download_all=True` (repos that bundle
+    many small files — phoneme tables, jieba dicts, etc. — alongside the
+    main weights). Skips a few non-content files at the root (.gitattributes,
     LICENSE, README.md) — they cost network roundtrips and aren't needed
     by the runtime.
     """

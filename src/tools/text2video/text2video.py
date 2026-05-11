@@ -44,8 +44,8 @@ class TTSApp(ToolBase):
         tk.Label(tab, text=tr("tool.tts.provider_label")).grid(
             row=row, column=0, padx=10, pady=8, sticky="e")
         # Provider dropdown sources from the AI router so any configured
-        # TTS provider (fish_audio cloud / sherpa_tts in-process /
-        # aistack gateway / future ones) shows up automatically. The
+        # TTS provider (fish_audio cloud / edge_tts online / aistack
+        # gateway / future ones) shows up automatically. The
         # status indicator updates whenever the user picks a different
         # entry.
         from core.ai.router import router as _router

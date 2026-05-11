@@ -40,9 +40,9 @@ class ModelSpec:
     display_name: str
     capability: str
     tier: str
-    target_subdir: str         # under models_dir(), e.g. "sherpa/whisper-small"
+    target_subdir: str         # under models_dir(), e.g. "faster-whisper/faster-whisper-small"
     description: str
-    repo: str                  # HF repo, e.g. "csukuangfj/sherpa-onnx-whisper-small"
+    repo: str                  # HF repo, e.g. "Systran/faster-whisper-small"
     revision: str              # usually "main"
     filenames: tuple[str, ...] # basenames inside the repo to install
                                # (ignored when download_all=True)
@@ -53,10 +53,9 @@ class ModelSpec:
     # load time. Values: "cpu" | "gpu" | "both".
     recommended_for: str = "both"
     # When True, the resolver fetches the full repo tree and downloads
-    # every file (preserving subdirectory structure). Used for models
-    # like sherpa Kokoro TTS that ship hundreds of small espeak-ng /
-    # jieba dict files alongside the ONNX weights — listing them
-    # individually in `filenames` would be tedious and brittle.
+    # every file (preserving subdirectory structure). Useful for repos
+    # that ship many small assets (espeak-ng phonemes, jieba dicts, etc.)
+    # alongside the main weights.
     download_all: bool = False
 
     def target_dir(self) -> str:
@@ -72,80 +71,10 @@ class ModelSpec:
 # Repos verified to exist 2026-05-10 via HF API. Update if upstream renames.
 
 CATALOG: dict[str, ModelSpec] = {
-    # ── ASR ──────────────────────────────────────────────────────────────────
-    # Each Whisper size ships in two variants in the same upstream repo:
-    #   int8 — quantized, ~3× smaller, fast on CPU. ONNX Runtime CUDA EP
-    #          has only partial int8 op coverage so GPU users see most ops
-    #          fall back to CPU silently → don't pick this for GPU.
-    #   fp32 — full precision. Bigger download, but full GPU acceleration.
-    # Both variants share target_subdir; their filenames don't collide so
-    # both can sit on disk and the sherpa provider auto-picks at load time.
-    "sherpa-whisper-small-int8": ModelSpec(
-        id="sherpa-whisper-small-int8",
-        display_name="Whisper small — int8 (CPU)",
-        capability=CAP_ASR,
-        tier=TIER_FIRST,
-        target_subdir="sherpa/whisper-small",
-        description=(
-            "Multilingual ASR for first launch. ~360 MB. Quantized int8 "
-            "for CPU inference; sentence-level timestamps; words[] empty."
-        ),
-        repo="csukuangfj/sherpa-onnx-whisper-small",
-        revision="main",
-        filenames=(
-            "small-encoder.int8.onnx",
-            "small-decoder.int8.onnx",
-            "small-tokens.txt",
-        ),
-        recommended_for="cpu",
-    ),
-
-    "sherpa-whisper-small-fp32": ModelSpec(
-        id="sherpa-whisper-small-fp32",
-        display_name="Whisper small — fp32 (GPU)",
-        capability=CAP_ASR,
-        tier=TIER_FIRST,
-        target_subdir="sherpa/whisper-small",
-        description=(
-            "Same model, full precision. ~970 MB. Required for real GPU "
-            "speed-up — the int8 variant runs ~half on CPU even with "
-            "CUDA EP loaded due to partial op coverage."
-        ),
-        repo="csukuangfj/sherpa-onnx-whisper-small",
-        revision="main",
-        filenames=(
-            "small-encoder.onnx",
-            "small-decoder.onnx",
-            "small-tokens.txt",
-        ),
-        recommended_for="gpu",
-    ),
-
-    "sherpa-whisper-turbo-int8": ModelSpec(
-        id="sherpa-whisper-turbo-int8",
-        display_name="Whisper turbo — int8 (CPU)",
-        capability=CAP_ASR,
-        tier=TIER_RECOMMENDED,
-        target_subdir="sherpa/whisper-turbo",
-        description=(
-            "Whisper large-v3-turbo distilled, int8 quantized. ~1.0 GB. "
-            "Near-real-time on CPU; choose fp32 variant if you have GPU."
-        ),
-        repo="csukuangfj/sherpa-onnx-whisper-turbo",
-        revision="main",
-        filenames=(
-            "turbo-encoder.int8.onnx",
-            "turbo-decoder.int8.onnx",
-            "turbo-tokens.txt",
-        ),
-        recommended_for="cpu",
-    ),
-
-    # ── faster-whisper (CTranslate2) — preferred for GPU users ───────────────
-    # 30-40× RTF on a 4060 vs sherpa-onnx Whisper's ~10× ceiling. Each
-    # entry is a directory of (config.json, model.bin, tokenizer.json,
-    # vocabulary.{txt,json}). The provider auto-picks float16 on CUDA
-    # and int8 on CPU at runtime, so one model covers both devices.
+    # ── ASR (faster-whisper / CTranslate2) ───────────────────────────────────
+    # Each entry is a directory of (config.json, model.bin, tokenizer.json,
+    # vocabulary.{txt,json}). The provider auto-picks float16 on CUDA and
+    # int8 on CPU at runtime, so one model covers both devices.
     "faster-whisper-small": ModelSpec(
         id="faster-whisper-small",
         display_name="faster-whisper small (CT2, GPU+CPU)",
@@ -178,88 +107,6 @@ CATALOG: dict[str, ModelSpec] = {
         revision="main",
         filenames=("config.json", "model.bin", "preprocessor_config.json",
                    "tokenizer.json", "vocabulary.json"),
-        recommended_for="both",
-    ),
-
-    "sherpa-whisper-turbo-fp32": ModelSpec(
-        id="sherpa-whisper-turbo-fp32",
-        display_name="Whisper turbo — fp32 (GPU)",
-        capability=CAP_ASR,
-        tier=TIER_RECOMMENDED,
-        target_subdir="sherpa/whisper-turbo",
-        description=(
-            "Whisper large-v3-turbo distilled, full precision. ~3 GB. "
-            "Real GPU speedup; quality close to large-v3."
-        ),
-        repo="csukuangfj/sherpa-onnx-whisper-turbo",
-        revision="main",
-        filenames=(
-            "turbo-encoder.onnx",
-            "turbo-decoder.onnx",
-            "turbo-tokens.txt",
-        ),
-        recommended_for="gpu",
-    ),
-
-    # ── TTS ──────────────────────────────────────────────────────────────────
-    # Kokoro (sherpa-onnx) ships hundreds of small espeak-ng phoneme files +
-    # jieba dict alongside the ONNX weights. download_all=True pulls the
-    # full repo tree instead of listing each file in `filenames`.
-    "kokoro-int8-multi-lang-v1_0": ModelSpec(
-        id="kokoro-int8-multi-lang-v1_0",
-        display_name="Kokoro multi-lang v1.0 — int8 (sherpa-onnx)",
-        capability=CAP_TTS,
-        tier=TIER_FIRST,
-        target_subdir="sherpa-tts/kokoro-int8-multi-lang-v1_0",
-        description=(
-            "First-launch TTS. ~180 MB. Quantized int8; ~50 voices; "
-            "multilingual (English / Chinese / Japanese / Korean / Spanish / "
-            "French / Italian / Portuguese / Hindi). CPU-friendly; works on "
-            "GPU too via the same wheel."
-        ),
-        repo="csukuangfj/kokoro-int8-multi-lang-v1_0",
-        revision="main",
-        filenames=(),               # ignored — download_all=True
-        download_all=True,
-        recommended_for="both",
-    ),
-
-    "kokoro-multi-lang-v1_0": ModelSpec(
-        id="kokoro-multi-lang-v1_0",
-        display_name="Kokoro multi-lang v1.0 — fp32 (sherpa-onnx)",
-        capability=CAP_TTS,
-        tier=TIER_RECOMMENDED,
-        target_subdir="sherpa-tts/kokoro-multi-lang-v1_0",
-        description=(
-            "Full-precision Kokoro. ~380 MB. Same voices and languages as "
-            "the int8 variant; better quality on GPU at the cost of disk."
-        ),
-        repo="csukuangfj/kokoro-multi-lang-v1_0",
-        revision="main",
-        filenames=(),               # ignored — download_all=True
-        download_all=True,
-        recommended_for="gpu",
-    ),
-
-    # MeloTTS (MyShell, MIT) ported to sherpa-onnx by k2-fsa. Higher
-    # subjective quality than Kokoro for Chinese; single-speaker. Supports
-    # mixed Chinese + English in the same input. Bundled jieba dict +
-    # date/number FSTs do prosody-aware text normalization.
-    "vits-melo-tts-zh_en": ModelSpec(
-        id="vits-melo-tts-zh_en",
-        display_name="MeloTTS Chinese+English (VITS, sherpa-onnx)",
-        capability=CAP_TTS,
-        tier=TIER_FIRST,
-        target_subdir="sherpa-tts/vits-melo-tts-zh_en",
-        description=(
-            "MyShell MeloTTS Chinese+English, ~233 MB. Single Chinese voice "
-            "with mixed-language support. Best Chinese TTS quality available "
-            "via the no-torch sherpa-onnx pipeline."
-        ),
-        repo="csukuangfj/vits-melo-tts-zh_en",
-        revision="main",
-        filenames=(),               # ignored — download_all=True
-        download_all=True,
         recommended_for="both",
     ),
 
@@ -300,22 +147,8 @@ CATALOG: dict[str, ModelSpec] = {
         filenames=("Qwen3-8B-Q4_K_M.gguf",),
     ),
 
-    # ── VAD ──────────────────────────────────────────────────────────────────
-    # snakers4/silero-vad on HF is gated — use deepghs's mirror of the .onnx.
-    "silero-vad": ModelSpec(
-        id="silero-vad",
-        display_name="Silero VAD",
-        capability=CAP_VAD,
-        tier=TIER_FIRST,
-        target_subdir="sherpa/silero-vad",
-        description=(
-            "Voice-activity detection. ~2 MB. Trims silence and suppresses "
-            "Whisper hallucinations on long inputs."
-        ),
-        repo="deepghs/silero-vad-onnx",
-        revision="main",
-        filenames=("silero_vad.onnx",),
-    ),
+    # VAD: faster-whisper bundles its own silero VAD weights (used via
+    # vad_filter=True), so we no longer ship a separate VAD entry.
 }
 
 
