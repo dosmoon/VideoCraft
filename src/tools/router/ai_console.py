@@ -183,21 +183,51 @@ class AIConsoleApp(ToolBase):
         routing_frame.pack(fill="x", pady=(0, 12), anchor="w")
         self._build_routing_section(routing_frame)
 
-        # ── Middle: aistack local gateway (single conceptual entry) ──
+        # ── Providers grouped by tier (🏠 Local → 🌐 Free → 🚀 aistack → ☁️ Cloud) ──
+        # Bucketing happens up-front so the rendering order can interleave
+        # the dedicated aistack pane between Free Online and Cloud without
+        # building two passes over the provider dicts.
+        buckets = self._bucket_providers_by_tier()
+
+        local_frame = tk.LabelFrame(
+            body, text=tr("tool.router.section_local_title"),
+            padx=10, pady=8, font=("", 10, "bold"),
+        )
+        local_frame.pack(fill="x", pady=(0, 8), anchor="w")
+        self._build_tier_block(
+            local_frame, 0, buckets["local"],
+            "tool.router.section_local_help",
+            empty_key="tool.router.section_local_empty",
+            extra_button=("tool.router.btn_open_model_manager",
+                          self._open_local_model_manager),
+        )
+
+        free_frame = tk.LabelFrame(
+            body, text=tr("tool.router.section_free_online_title"),
+            padx=10, pady=8, font=("", 10, "bold"),
+        )
+        free_frame.pack(fill="x", pady=(0, 8), anchor="w")
+        self._build_tier_block(
+            free_frame, 0, buckets["free_online"],
+            "tool.router.section_free_online_help",
+        )
+
         gateway_frame = tk.LabelFrame(
             body, text=tr("tool.router.section_gateway_title"),
             padx=10, pady=8, font=("", 10, "bold"),
         )
-        gateway_frame.pack(fill="x", pady=(0, 12), anchor="w")
+        gateway_frame.pack(fill="x", pady=(0, 8), anchor="w")
         self._build_aistack_gateway_section(gateway_frame)
 
-        # ── Bottom: cloud providers grouped by capability ──
-        providers_frame = tk.LabelFrame(
-            body, text=tr("tool.router.section_providers_title"),
+        cloud_frame = tk.LabelFrame(
+            body, text=tr("tool.router.section_cloud_title"),
             padx=10, pady=8, font=("", 10, "bold"),
         )
-        providers_frame.pack(fill="x", anchor="w")
-        self._build_providers_section(providers_frame)
+        cloud_frame.pack(fill="x", anchor="w")
+        self._build_tier_block(
+            cloud_frame, 0, buckets["cloud"],
+            "tool.router.section_cloud_help",
+        )
 
     # ── aistack gateway pane: URL + enable + test/refresh ──────────────────
 
@@ -531,41 +561,124 @@ class AIConsoleApp(ToolBase):
 
     # ── Bottom section: cloud providers, grouped by capability ─────────────
 
-    def _build_providers_section(self, parent):
-        """Render LLM / ASR / TTS sub-blocks. aistack is excluded (lives in
-        its own gateway pane above); only cloud / external providers
-        appear here. Each sub-block has its own header + table.
+    # Provider-name → tier classification. Tiers drive the visual bucket a
+    # provider lands in inside the Routing tab. Kept as a hard-coded map
+    # rather than a cfg field so users can't accidentally mis-classify
+    # their own provider into the "free online" bucket. New providers must
+    # be added here (default = cloud).
+    _LOCAL_PROVIDER_NAMES = frozenset({
+        "LlamaCpp",            # in-process llama-cpp-python
+        "faster_whisper",      # in-process CTranslate2 Whisper
+    })
+    _FREE_ONLINE_PROVIDER_NAMES = frozenset({
+        "edge_tts",            # Microsoft Read-Aloud, no key
+    })
+
+    def _classify_provider_tier(self, name: str) -> str:
+        """Return one of: 'local' | 'free_online' | 'aistack' | 'cloud'."""
+        if name == "aistack":
+            return "aistack"
+        if name in self._LOCAL_PROVIDER_NAMES:
+            return "local"
+        if name in self._FREE_ONLINE_PROVIDER_NAMES:
+            return "free_online"
+        return "cloud"
+
+    def _bucket_providers_by_tier(self) -> dict[str, dict[str, list]]:
+        """Walk LLM/ASR/TTS provider dicts and bucket each entry by tier.
+        aistack is dropped here — it has its own dedicated pane.
+        Returns {tier: {category: [(name, cfg), ...]}}.
         """
-        row_idx = 0
-        for category, src, header_key in (
-            ("llm", router._providers,     "tool.router.subhead_llm"),
-            ("asr", router._asr_providers, "tool.router.subhead_asr"),
-            ("tts", router._tts_providers, "tool.router.subhead_tts"),
-        ):
-            # Filter out aistack — it has a dedicated gateway pane.
-            entries = [(n, c) for n, c in src.items() if n != "aistack"]
+        buckets: dict[str, dict[str, list]] = {
+            "local":       {"llm": [], "asr": [], "tts": []},
+            "free_online": {"llm": [], "asr": [], "tts": []},
+            "cloud":       {"llm": [], "asr": [], "tts": []},
+        }
+        for category, src in (("llm", router._providers),
+                              ("asr", router._asr_providers),
+                              ("tts", router._tts_providers)):
+            for name, cfg in src.items():
+                tier = self._classify_provider_tier(name)
+                if tier == "aistack":
+                    continue
+                buckets[tier][category].append((name, cfg))
+        return buckets
+
+    def _build_tier_block(self, parent, row_idx: int,
+                          tier_buckets: dict[str, list],
+                          help_key: str,
+                          *,
+                          empty_key: str | None = None,
+                          extra_button: tuple[str, callable] | None = None,
+                          ) -> int:
+        """Render the inside of one tier LabelFrame:
+            [help line]   [optional button at top-right]
+            ── pill: LLM ── (if any)
+              <provider rows>
+            ── pill: ASR ── (if any)
+              <provider rows>
+            ── pill: TTS ── (if any)
+              <provider rows>
+        Caller owns the LabelFrame title. Returns next free row index.
+        """
+        # Help line + optional action button on the same row
+        help_row = tk.Frame(parent)
+        help_row.grid(row=row_idx, column=0, columnspan=5,
+                      sticky="ew", padx=0, pady=(0, 4))
+        help_row.columnconfigure(0, weight=1)
+        tk.Label(help_row, text=tr(help_key), fg="#777", anchor="w",
+                 font=("", 8), wraplength=820, justify="left",
+                 ).grid(row=0, column=0, sticky="w")
+        if extra_button is not None:
+            btn_key, btn_cmd = extra_button
+            tk.Button(help_row, text=tr(btn_key), command=btn_cmd,
+                      font=("", 8), padx=4, pady=0,
+                      ).grid(row=0, column=1, sticky="e", padx=4)
+        row_idx += 1
+
+        # Empty-state line if no providers in this tier
+        if (empty_key is not None
+                and not any(tier_buckets[c] for c in ("llm", "asr", "tts"))):
+            tk.Label(parent, text=tr(empty_key), fg="#999",
+                     font=("", 9, "italic"), anchor="w",
+                     ).grid(row=row_idx, column=0, columnspan=5,
+                            sticky="w", padx=4, pady=(0, 4))
+            row_idx += 1
+            return row_idx
+
+        # Capability sub-blocks within the tier
+        for category, header_key in (("llm", "tool.router.subhead_llm"),
+                                     ("asr", "tool.router.subhead_asr"),
+                                     ("tts", "tool.router.subhead_tts")):
+            entries = tier_buckets[category]
             if not entries:
                 continue
-
-            # Capability sub-header with the same colored pill used in
-            # the routing table for visual cross-referencing.
             pill_style = self._PILL_STYLE.get(category, {})
-            head_frame = tk.Frame(parent, bg="#f6f7fa")
-            head_frame.grid(row=row_idx, column=0, columnspan=5,
-                            sticky="ew", padx=2, pady=(8, 2))
-            tk.Label(head_frame, text=" " + pill_style.get("text", "?") + " ",
+            sub_head = tk.Frame(parent, bg="#f6f7fa")
+            sub_head.grid(row=row_idx, column=0, columnspan=5,
+                          sticky="ew", padx=2, pady=(4, 2))
+            tk.Label(sub_head, text=" " + pill_style.get("text", "?") + " ",
                      bg=pill_style.get("bg", "#eee"),
                      fg=pill_style.get("fg", "#333"),
                      font=("", 8, "bold"), padx=4, pady=1,
                      ).pack(side="left", padx=(2, 6))
-            tk.Label(head_frame, text=tr(header_key),
+            tk.Label(sub_head, text=tr(header_key),
                      font=("", 9, "bold"), bg="#f6f7fa", fg="#334",
                      ).pack(side="left", pady=2)
             row_idx += 1
-
             for name, cfg in entries:
                 row_idx = self._build_provider_row(
                     parent, row_idx, name, cfg, category)
+        return row_idx
+
+    def _open_local_model_manager(self):
+        """Spawn a Toplevel hosting the Local Model Manager. Opens fresh
+        each click (no singleton tracking) — matches the rest of the
+        Console's modal-style buttons.
+        """
+        from tools.models.manager_window import ModelManagerApp
+        win = tk.Toplevel(self.master)
+        ModelManagerApp(win)
 
     def _build_provider_row(self, parent, row: int, name: str,
                             cfg: dict, category: str) -> int:
