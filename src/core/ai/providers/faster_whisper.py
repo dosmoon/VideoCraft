@@ -45,6 +45,26 @@ def _model_dir(name: str = DEFAULT_MODEL_NAME) -> str:
     return os.path.join(cache_subdir("faster-whisper"), name)
 
 
+def list_models() -> list[str]:
+    """Return subdir names under <models>/faster-whisper/ that look like
+    a CT2 model (have model.bin + config.json), sorted.
+
+    Empty list when no models are installed — UI surfaces this as a hint
+    to download via the Local Model Manager.
+    """
+    root = cache_subdir("faster-whisper")
+    if not os.path.isdir(root):
+        return []
+    out: list[str] = []
+    for name in sorted(os.listdir(root)):
+        path = os.path.join(root, name)
+        if (os.path.isdir(path)
+                and os.path.exists(os.path.join(path, "model.bin"))
+                and os.path.exists(os.path.join(path, "config.json"))):
+            out.append(name)
+    return out
+
+
 def _resolve_device_and_compute(provider: str, compute_type: str
                                  ) -> tuple[str, str]:
     """Translate (provider, compute_type) into CTranslate2's (device, compute_type).

@@ -504,7 +504,12 @@ class AIConsoleApp(ToolBase):
                                        is_active, current_cell)
             return
 
-        # ── embedded/cloud ASR & TTS: provider label + static model label ──
+        # ── embedded ASR: provider label + model dropdown from disk ──
+        if tier == "embedded" and category == "asr":
+            self._render_embedded_asr_row(parent, r, task_id, tier)
+            return
+
+        # ── all other ASR/TTS: provider label + static model label ──
         self._render_simple_asr_tts_row(parent, r, task_id, category, tier)
 
     # ── Per-tier-shape renderers ───────────────────────────────────────────
@@ -637,6 +642,37 @@ class AIConsoleApp(ToolBase):
             # No choices: persist with empty model. The dispatch will 503
             # at runtime (better than silently using a meaningless "auto"
             # for LLM, which the gateway can't auto-pick).
+            self._task_tier_state[task_id][tier] = {
+                "provider": provider, "model": "",
+            }
+
+    def _render_embedded_asr_row(self, parent, r, task_id, tier):
+        """faster-whisper: model dropdown enumerates installed CT2 model
+        directories under <models>/faster-whisper/. User can pick small
+        vs large-v3-turbo inline without going through Edit dialog.
+        """
+        from core.ai.providers import faster_whisper as _fw
+        provider = "faster_whisper"
+        models = _fw.list_models()
+        _prov, init_model = self._initial_pick(task_id, tier, provider, models)
+
+        tk.Label(parent, text=provider, anchor="w", width=18, fg="#222",
+                 ).grid(row=r, column=2, padx=4, pady=2, sticky="w")
+
+        if models:
+            model_var = tk.StringVar(value=init_model)
+            cb = ttk.Combobox(parent, textvariable=model_var, values=models,
+                              state="readonly", width=28)
+            cb.grid(row=r, column=3, padx=4, pady=2, sticky="w")
+            cb.bind("<<ComboboxSelected>>",
+                    lambda _e: self._on_tier_model_picked(task_id, tier))
+            self._task_tier_state[task_id][tier] = {
+                "provider": provider, "model_var": model_var,
+            }
+        else:
+            tk.Label(parent, text=tr("tool.router.tier_no_model_installed"),
+                     fg="#a32", anchor="w",
+                     ).grid(row=r, column=3, padx=4, pady=2, sticky="w")
             self._task_tier_state[task_id][tier] = {
                 "provider": provider, "model": "",
             }
@@ -1476,16 +1512,17 @@ class AIConsoleApp(ToolBase):
                   width=10).pack(side="left")
 
     def _open_local_asr_edit_dialog(self, name: str, cfg: dict):
-        """Edit dialog for a local ASR provider (faster-whisper).
+        """Edit dialog for the embedded faster-whisper provider.
 
-        No API key row; instead exposes model size, device, compute type,
-        and beam size. First-time use of a model triggers a HuggingFace
-        download — emit that warning in the hint label.
+        Model selection lives in the Provider Routing tab (per-task pick
+        from installed model directories) — this dialog only exposes the
+        runtime knobs that apply globally to every dispatch: device,
+        compute precision, word-timestamp emission.
         """
         display_name = cfg.get("name", name)
         dlg = tk.Toplevel(self.master)
         dlg.title(tr("tool.router.edit_dialog_title", name=display_name))
-        dlg.geometry("620x360")
+        dlg.geometry("620x300")
         dlg.resizable(True, True)
         dlg.grab_set()
 
@@ -1494,54 +1531,36 @@ class AIConsoleApp(ToolBase):
                  wraplength=580).grid(
             row=0, column=0, columnspan=2, padx=12, pady=(12, 6), sticky="w")
 
-        # Model size dropdown — sorted from smallest to largest, with a
-        # short capability hint per option.
-        MODEL_OPTIONS = [
-            "tiny",
-            "base",
-            "small",
-            "medium",
-            "large-v3-turbo",
-            "large-v3",
-        ]
-        DEVICE_OPTIONS = ["auto", "cpu", "cuda"]
+        DEVICE_OPTIONS  = ["auto", "cpu", "cuda"]
         COMPUTE_OPTIONS = ["auto", "int8", "int8_float16", "float16", "float32"]
 
-        model_var   = tk.StringVar(value=cfg.get("model", "small"))
-        device_var  = tk.StringVar(value=cfg.get("device", "auto"))
-        compute_var = tk.StringVar(value=cfg.get("compute_type", "auto"))
-        beam_var    = tk.StringVar(value=str(cfg.get("beam_size", 5)))
+        # cfg keys mirror config._DEFAULT_ASR_PROVIDERS["faster_whisper"]:
+        #   provider = device hint, compute_type = quant, word_timestamps.
+        device_var   = tk.StringVar(value=cfg.get("provider", "auto"))
+        compute_var  = tk.StringVar(value=cfg.get("compute_type", "auto"))
+        words_var    = tk.BooleanVar(value=bool(cfg.get("word_timestamps", False)))
 
-        def _row(r, label_key, var, values):
-            tk.Label(dlg, text=tr(label_key), anchor="e", width=14).grid(
+        def _combo_row(r, label_key, var, values):
+            tk.Label(dlg, text=tr(label_key), anchor="e", width=18).grid(
                 row=r, column=0, padx=10, pady=6, sticky="e")
             ttk.Combobox(dlg, textvariable=var, values=values,
                          state="readonly", width=24).grid(
                 row=r, column=1, padx=4, pady=6, sticky="w")
 
-        _row(1, "tool.router.label_fw_model", model_var, MODEL_OPTIONS)
-        _row(2, "tool.router.label_fw_device", device_var, DEVICE_OPTIONS)
-        _row(3, "tool.router.label_fw_compute", compute_var, COMPUTE_OPTIONS)
+        _combo_row(1, "tool.router.label_fw_device",  device_var,  DEVICE_OPTIONS)
+        _combo_row(2, "tool.router.label_fw_compute", compute_var, COMPUTE_OPTIONS)
 
-        tk.Label(dlg, text=tr("tool.router.label_fw_beam_size"),
-                 anchor="e", width=14).grid(
-            row=4, column=0, padx=10, pady=6, sticky="e")
-        tk.Entry(dlg, textvariable=beam_var, width=10).grid(
-            row=4, column=1, padx=4, pady=6, sticky="w")
+        ttk.Checkbutton(
+            dlg, text=tr("tool.router.label_fw_word_timestamps"),
+            variable=words_var,
+        ).grid(row=3, column=1, padx=4, pady=8, sticky="w")
 
         def save():
-            try:
-                bs = _parse_int_range(beam_var.get(), minimum=1, maximum=10,
-                                      field_label=tr("tool.router.label_fw_beam_size"))
-            except ValueError as e:
-                messagebox.showerror(tr("dialog.common.error"), str(e), parent=dlg)
-                return
             router.update_asr_provider(
                 name,
-                model=model_var.get(),
-                device=device_var.get(),
+                provider=device_var.get(),
                 compute_type=compute_var.get(),
-                beam_size=bs,
+                word_timestamps=bool(words_var.get()),
             )
             messagebox.showinfo(tr("tool.router.saved_title"),
                                 tr("tool.router.saved_config_msg", name=display_name),
@@ -1550,7 +1569,7 @@ class AIConsoleApp(ToolBase):
             dlg.destroy()
 
         btn_row = tk.Frame(dlg)
-        btn_row.grid(row=5, column=0, columnspan=2, pady=18)
+        btn_row.grid(row=4, column=0, columnspan=2, pady=18)
         tk.Button(btn_row, text=tr("tool.router.btn_save"), command=save,
                   width=10).pack(side="left", padx=10)
         tk.Button(btn_row, text=tr("tool.router.btn_cancel"), command=dlg.destroy,
