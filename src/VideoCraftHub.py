@@ -326,13 +326,18 @@ class VideoCraftHub:
         file_menu.configure(postcommand=self._rebuild_recent_menu)
         self.root.bind("<Control-o>", lambda e: self.open_folder())
 
-        # Project
-        proj_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label=tr("menu.project"), menu=proj_menu)
-        proj_menu.add_command(label=tr("menu.project.workbench"),
-                              command=lambda: self.open_tool(
-                                  "project-workbench",
-                                  initial_file=self.project.folder if self.project else None))
+        # Create — bilingual subtitle video pipeline + AI clip workbench
+        create_menu = tk.Menu(menubar, tearoff=0)
+        menubar.add_cascade(label=tr("menu.create"), menu=create_menu)
+        create_menu.add_command(label=tr("menu.create.bilingual_video"),
+                                command=lambda: self.open_tool(
+                                    "project-workbench",
+                                    initial_file=self.project.folder if self.project else None))
+        create_menu.add_command(label=tr("menu.create.ai_clip"),
+                                command=lambda: self.open_tool(
+                                    "clip-script",
+                                    initial_file=self.project.folder
+                                    if self.project else None))
 
         # Download
         dl_menu = tk.Menu(menubar, tearoff=0)
@@ -409,15 +414,6 @@ class VideoCraftHub:
                              command=lambda: self.open_tool("daily-news"))
         t2v_menu.add_command(label=tr("menu.text2video.composer"),
                              command=lambda: self.open_tool("media-composer"))
-
-        # Program (节目) — script generation tools (clip / summary / etc.)
-        prog_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label=tr("menu.program"), menu=prog_menu)
-        prog_menu.add_command(label=tr("menu.program.clip_script"),
-                              command=lambda: self.open_tool(
-                                  "clip-script",
-                                  initial_file=self.project.folder
-                                  if self.project else None))
 
         # AI
         ai_menu = tk.Menu(menubar, tearoff=0)
