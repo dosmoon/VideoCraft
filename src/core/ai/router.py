@@ -489,9 +489,9 @@ class AIRouter:
     # ── TTS API ──────────────────────────────────────────────────────────────
 
     def tts(self, text: str, output_path: str, *,
-            task: str = "tts.synthesize",
-            provider: str = "fish_audio",
+            provider: str,
             voice_id: str,
+            task: str = "",
             audio_format: str = "mp3",
             should_cancel=None,
             on_chunk=None,
@@ -501,9 +501,11 @@ class AIRouter:
         Args:
             text:          Input text.
             output_path:   Destination audio file.
-            provider:      TTS provider name. Phase 1 only supports
-                           "fish_audio".
+            provider:      TTS provider name (required — fish_audio /
+                           edge_tts / aistack today).
             voice_id:      Voice / reference ID for the provider.
+            task:          Optional task tag for telemetry / per-task
+                           model override (empty string = no override).
             audio_format:  'mp3' | 'wav' | 'opus'.
             should_cancel: Optional predicate for cooperative cancel;
                            provider raises InterruptedError mid-stream

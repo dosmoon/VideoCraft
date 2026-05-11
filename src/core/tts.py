@@ -14,71 +14,10 @@ import tempfile
 from typing import Callable
 
 from core import ai
-from core.ai import config as _ai_config
 
 
 ProgressCallback = Callable[[int, int, str], None]  # (done, total, msg)
 CancelPredicate  = Callable[[], bool]
-
-
-# ── Status ──────────────────────────────────────────────────────────────────
-
-def status(provider: str = "fish_audio") -> dict:
-    """UI-friendly provider status for the TTS app's header indicator.
-
-    Per-provider semantics for `configured`:
-      - fish_audio: API key file present.
-      - aistack:    base_url set (gateway must be reachable separately).
-      - others:     fall back to api-key-style check.
-
-    Returns:
-        {
-          "available":  bool — SDK / runtime importable,
-          "configured": bool — provider can actually run a synth,
-          "masked_key": str  — 'ffff****1234' or '' for non-key providers,
-          "detail":     str  — short human-readable line for the UI label,
-        }
-    """
-    available = ai.is_tts_sdk_available(provider)
-    cfg = ai.router.get_tts_config(provider) or {}
-    masked = ""
-    detail = ""
-    configured = False
-
-    if provider == "fish_audio":
-        key = _ai_config.read_key(cfg)
-        configured = key is not None
-        if key and len(key) > 10:
-            masked = f"{key[:6]}****{key[-4:]}"
-        detail = masked if configured else "no API key"
-
-    elif provider == "aistack":
-        base = (cfg.get("base_url") or "").strip()
-        configured = bool(base)
-        detail = base or "no base_url"
-
-    elif provider == "edge_tts":
-        # Online + key-free; configured = the SDK is importable. We don't
-        # ping the endpoint here (would slow every UI refresh).
-        configured = available
-        voice = cfg.get("voice", "")
-        detail = (f"online · {voice}" if configured
-                  else "edge-tts not installed (pip install edge-tts)")
-
-    else:
-        # Unknown provider — fall back to the legacy api-key check.
-        key = _ai_config.read_key(cfg) if cfg else None
-        configured = key is not None
-        if key and len(key) > 10:
-            masked = f"{key[:6]}****{key[-4:]}"
-        detail = masked or ("ready" if configured else "not configured")
-
-    return {
-        "available":  available,
-        "configured": configured,
-        "masked_key": masked,
-        "detail":     detail,
-    }
 
 
 # ── Synthesis ───────────────────────────────────────────────────────────────
@@ -88,13 +27,17 @@ def synthesize_text(
     output_path: str,
     *,
     voice_id: str,
+    provider: str,
     audio_format: str = "mp3",
-    provider: str = "fish_audio",
     should_cancel: CancelPredicate | None = None,
     on_progress: ProgressCallback | None = None,
     cancel_token=None,
 ) -> str:
     """Single-voice TTS. Streams audio to output_path.
+
+    `provider` is required (no default since 2026-05-11 — TTS picks
+    are context-specific, callers always know which engine they want
+    via VoicePickerDialog).
 
     on_progress is called with (bytes_written, -1, "streaming") per chunk.
     The -1 total indicates the total is unknown (streaming API).

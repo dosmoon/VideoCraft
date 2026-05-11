@@ -105,16 +105,23 @@ def asr(audio_path: str, *,
 
 
 def tts(text: str, output_path: str, *,
-        task: str = "tts.synthesize",
-        provider: str = "fish_audio",
+        provider: str,
         voice_id: str,
+        task: str = "",
         audio_format: str = "mp3",
         should_cancel=None,
         on_chunk=None,
         cancel_token=None) -> None:
     """Stream TTS audio to a file.
 
-    `task` is recorded for forward compatibility; Phase 1 ignores it.
+    `provider` is now required (the old `provider="fish_audio"` default
+    was removed 2026-05-11 since TTS no longer routes — every caller
+    knows the engine via VoicePickerDialog at use time, and silently
+    defaulting to fish_audio masked "forgot to pass provider" bugs).
+
+    `task` is now optional (no default) since tts.synthesize was removed
+    from TASKS; pass an empty string when there's no task tag to record.
+
     `should_cancel` is the legacy predicate API (kept for back-compat);
     `cancel_token` is the canonical CancellationToken integration. Either
     or both work; both signals stop the stream.
@@ -129,27 +136,6 @@ def tts(text: str, output_path: str, *,
         on_chunk=on_chunk,
         cancel_token=cancel_token,
     )
-
-
-def is_tts_sdk_available(provider: str = "fish_audio") -> bool:
-    """Check whether the given TTS provider's SDK / runtime is installed.
-
-    For cloud SDKs ("fish_audio") this is an import probe. For aistack
-    the gateway is just HTTP — always 'available' as far as the UI is
-    concerned (reachability is checked at dispatch time).
-    """
-    if provider == "fish_audio":
-        from core.ai.providers import fish_audio as _fish_audio
-        return _fish_audio.is_sdk_available()
-    if provider == "aistack":
-        return True
-    if provider == "edge_tts":
-        try:
-            import edge_tts  # noqa: F401
-            return True
-        except ImportError:
-            return False
-    return False
 
 
 def list_models(provider: str) -> list[str]:
@@ -175,6 +161,5 @@ __all__ = [
     "describe",
     "asr",
     "tts",
-    "is_tts_sdk_available",
     "list_models",
 ]
