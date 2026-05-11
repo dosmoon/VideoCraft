@@ -78,6 +78,40 @@ def _catalog_path(provider: str) -> str:
     return os.path.join(_catalog_root(), f"{provider}.json")
 
 
+def _extras_path(provider: str) -> str:
+    """Sidecar JSON of voice IDs the user marked / favorited on the
+    provider's web app. Currently only fish_audio uses this — Fish v1
+    API has no "list my marks" endpoint, so we keep a local list and
+    fetch metadata for each ID at refresh time."""
+    return os.path.join(_catalog_root(), f"{provider}_extras.json")
+
+
+def get_extra_voice_ids(provider: str) -> list[str]:
+    """Read the sidecar list of marked IDs for `provider`. Returns []
+    when the sidecar doesn't exist yet."""
+    path = _extras_path(provider)
+    if not os.path.exists(path):
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return [str(x) for x in (data.get("voice_ids") or []) if x]
+    except (OSError, json.JSONDecodeError):
+        return []
+
+
+def set_extra_voice_ids(provider: str, voice_ids: list[str]) -> None:
+    """Persist the sidecar list. Caller is responsible for triggering
+    a catalog refresh afterwards (so the new IDs get fetched)."""
+    path = _extras_path(provider)
+    cleaned = sorted({v.strip() for v in voice_ids if v and v.strip()})
+    payload = {"version": 1, "voice_ids": cleaned}
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
 def get_catalog(provider: str, *, refresh: bool = False) -> list[TTSVoice]:
@@ -179,7 +213,9 @@ def _fetch(provider: str) -> list[TTSVoice] | None:
             from core.ai.router import router as _router
             cfg = _router._tts_providers.get("fish_audio", {}) or {}
             api_key = _cfg.read_key(cfg)
-            return _fish.fetch_voice_catalog(api_key=api_key)
+            extras = tuple(get_extra_voice_ids("fish_audio"))
+            return _fish.fetch_voice_catalog(
+                api_key=api_key, extra_voice_ids=extras)
         if provider == "aistack":
             from core.ai.providers import aistack as _aistack
             from core.ai.router import router as _router

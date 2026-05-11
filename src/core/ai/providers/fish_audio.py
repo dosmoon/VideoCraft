@@ -120,16 +120,60 @@ def synthesize(
         ) from e
 
 
-def fetch_voice_catalog(api_key: str | None = None) -> list:
-    """Pull the user's fish.audio voice models, page by page.
+def _model_to_voice(m):
+    """Map a fish_audio_sdk.ModelEntity → TTSVoice."""
+    from core.ai.tts_voice import TTSVoice
+    return TTSVoice(
+        provider="fish_audio",
+        voice_id=m.id,
+        display_name=m.title or m.id,
+        # Languages is a list of ISO codes per Fish docs;
+        # take the first as the primary tag.
+        language=(m.languages[0] if m.languages else ""),
+        gender="",     # Fish doesn't expose gender metadata
+        tags=tuple(m.tags or ()),
+        description=(m.description or "")[:280],
+    )
 
-    Calls Session.list_models(self_only=True) — only the voices in the
-    caller's own account, not the public marketplace (which is enormous
-    and full of community uploads they don't actually use).
 
-    api_key is loaded by the catalog dispatcher from
-    keys/FishAudio.key. When missing, returns []; the picker UI shows
-    "no key configured" upstream rather than a stack trace.
+def fetch_voice_by_id(api_key: str, voice_id: str):
+    """GET /model/{id} → TTSVoice, or None on any failure (404, network,
+    state != trained, etc.). Used to pull metadata for voice IDs the
+    user has marked on fish.audio's web app — Fish v1 API has no
+    "list my marks" endpoint, so we fetch them one ID at a time.
+    """
+    if not api_key or not voice_id:
+        return None
+    try:
+        from fish_audio_sdk import Session
+        sess = Session(api_key)
+        m = sess.get_model(voice_id)
+    except Exception:
+        return None
+    if getattr(m, "type", "tts") != "tts":
+        return None
+    if getattr(m, "state", "") != "trained":
+        return None
+    return _model_to_voice(m)
+
+
+def fetch_voice_catalog(api_key: str | None = None,
+                        extra_voice_ids: tuple[str, ...] = (),
+                        ) -> list:
+    """Pull the user's fish.audio voices.
+
+    Two sources, merged + deduped by voice_id:
+      1. Session.list_models(self_only=True) — voices the user *created*
+         in their own account (paginated 50/page).
+      2. extra_voice_ids — voice IDs the user *marked / favorited* on
+         the fish.audio web app, fetched individually via /model/{id}.
+         Fish v1 API has no "list my marks" endpoint, so the user
+         maintains this list explicitly via the TTS tab's "import
+         marked IDs" button.
+
+    api_key is loaded by the catalog dispatcher from keys/FishAudio.key.
+    When missing, returns []; the picker UI shows "no key configured"
+    upstream rather than a stack trace.
     """
     from core.ai.tts_voice import TTSVoice
     if not api_key:
@@ -146,6 +190,9 @@ def fetch_voice_catalog(api_key: str | None = None) -> list:
         return []
 
     out: list[TTSVoice] = []
+    seen: set[str] = set()
+
+    # Source 1: own models, paginated.
     page = 1
     page_size = 50
     while True:
@@ -155,35 +202,38 @@ def fetch_voice_catalog(api_key: str | None = None) -> list:
                 sort_by="created_at",
             )
         except Exception:
-            # Network / auth error — return what we have so far so the
-            # picker still shows something on a flaky connection.
             break
-
         items = resp.items or []
         for m in items:
-            # Type 'tts' only (Fish also has 'svc' / voice conversion
-            # entries that don't apply to standard text → audio).
             if getattr(m, "type", "tts") != "tts":
                 continue
-            # State 'trained' = ready to use. 'training' / 'created' /
-            # 'failed' would 4xx on synth.
             if getattr(m, "state", "") != "trained":
                 continue
-            out.append(TTSVoice(
-                provider="fish_audio",
-                voice_id=m.id,
-                display_name=m.title or m.id,
-                # Languages is a list of ISO codes per Fish docs;
-                # take the first as the primary tag.
-                language=(m.languages[0] if m.languages else ""),
-                gender="",     # Fish doesn't expose gender metadata
-                tags=tuple(m.tags or ()),
-                description=(m.description or "")[:280],
-            ))
-
+            if m.id in seen:
+                continue
+            out.append(_model_to_voice(m))
+            seen.add(m.id)
         total = getattr(resp, "total", len(out))
         if page * page_size >= total or not items:
             break
         page += 1
+
+    # Source 2: user-marked IDs from sidecar. Each fetched via
+    # /model/{id}; failures are silently skipped so a typo or removed
+    # voice doesn't break the whole refresh.
+    for vid in extra_voice_ids:
+        vid = vid.strip()
+        if not vid or vid in seen:
+            continue
+        try:
+            m = sess.get_model(vid)
+        except Exception:
+            continue
+        if getattr(m, "type", "tts") != "tts":
+            continue
+        if getattr(m, "state", "") != "trained":
+            continue
+        out.append(_model_to_voice(m))
+        seen.add(m.id)
 
     return out

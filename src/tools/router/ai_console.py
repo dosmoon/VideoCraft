@@ -341,6 +341,16 @@ class AIConsoleApp(ToolBase):
             command=lambda n=provider_name, c=cfg: self._open_edit_dialog(n, c, "tts"),
         ).pack(side="left", padx=4)
 
+        # Fish Audio: marks/favorites aren't exposed by their v1 API,
+        # so users keep a local list of marked voice IDs they care
+        # about. Refresh fetches each via /model/{id} and merges into
+        # the catalog alongside their own-created voices.
+        if provider_name == "fish_audio":
+            tk.Button(
+                btn_row, text=tr("tool.router.tts_btn_import_marks"), width=18,
+                command=self._on_fish_import_marks,
+            ).pack(side="left", padx=4)
+
         # aistack gets a hint pointing at the gateway tab (connection
         # state isn't editable here — it's owned by the aistack tab).
         if provider_name == "aistack":
@@ -429,6 +439,76 @@ class AIConsoleApp(ToolBase):
         for w in self.tab_tts.winfo_children():
             w.destroy()
         self._build_tts_tab()
+
+    def _on_fish_import_marks(self):
+        """Modal dialog for editing the user's marked fish.audio voice
+        IDs. Saved IDs are fetched on the next catalog refresh
+        (/model/{id} per ID). Persisted to user_data/voice_catalog/
+        fish_audio_extras.json.
+        """
+        from core.ai.tts_voice import (
+            get_extra_voice_ids, set_extra_voice_ids, get_catalog,
+        )
+
+        dlg = tk.Toplevel(self.master)
+        dlg.title(tr("tool.router.fish_import_title"))
+        dlg.geometry("640x440")
+        dlg.transient(self.master)
+        dlg.grab_set()
+
+        tk.Label(dlg, text=tr("tool.router.fish_import_hint"),
+                 fg="#555", anchor="w", justify="left", wraplength=600,
+                 ).pack(fill="x", padx=12, pady=(12, 6))
+
+        editor_frame = tk.Frame(dlg)
+        editor_frame.pack(fill="both", expand=True, padx=12)
+        text = tk.Text(editor_frame, font=("Consolas", 10), undo=True,
+                       wrap="word")
+        vsb = ttk.Scrollbar(editor_frame, orient="vertical",
+                            command=text.yview)
+        text.configure(yscrollcommand=vsb.set)
+        text.pack(side="left", fill="both", expand=True)
+        vsb.pack(side="right", fill="y")
+
+        existing = get_extra_voice_ids("fish_audio")
+        if existing:
+            text.insert("1.0", "\n".join(existing))
+
+        status_var = tk.StringVar(value="")
+        tk.Label(dlg, textvariable=status_var, fg="#666", anchor="w",
+                 ).pack(fill="x", padx=12, pady=(2, 0))
+
+        def _do_save_and_refresh():
+            raw = text.get("1.0", "end").strip()
+            ids: list[str] = []
+            for line in raw.splitlines():
+                # Tolerate commas, whitespace, and # comments.
+                line = line.split("#", 1)[0].strip()
+                if not line:
+                    continue
+                for part in line.replace(",", " ").split():
+                    if part:
+                        ids.append(part)
+            set_extra_voice_ids("fish_audio", ids)
+            status_var.set(tr("tool.router.fish_import_fetching",
+                              n=len(ids)))
+            dlg.update_idletasks()
+            # Refresh catalog (off-thread would be nicer; for now block —
+            # /model/{id} ~200ms each, list of <50 IDs feels acceptable).
+            voices = get_catalog("fish_audio", refresh=True)
+            status_var.set(tr("tool.router.fish_import_done",
+                              total=len(voices)))
+            self._rebuild_tts_tab()
+            dlg.after(800, dlg.destroy)
+
+        btn_row = tk.Frame(dlg)
+        btn_row.pack(fill="x", padx=12, pady=(8, 12))
+        tk.Button(btn_row, text=tr("tool.router.fish_import_btn_save"),
+                  command=_do_save_and_refresh, width=18,
+                  ).pack(side="right", padx=(6, 0))
+        tk.Button(btn_row, text=tr("tool.router.btn_cancel"),
+                  command=dlg.destroy, width=10,
+                  ).pack(side="right")
 
     # ── Helpers ────────────────────────────────────────────────────────────
 
