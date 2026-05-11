@@ -117,16 +117,22 @@ def synthesize_text(
 
 def synthesize_dialogue(
     segments: list[tuple[str, str]],
-    role_voice_map: dict[str, str],
+    role_voice_map: dict[str, tuple[str, str]],
     output_path: str,
     *,
     audio_format: str = "mp3",
-    provider: str = "fish_audio",
     should_cancel: CancelPredicate | None = None,
     on_progress: ProgressCallback | None = None,
     cancel_token=None,
 ) -> str:
-    """Multi-voice dialogue TTS.
+    """Multi-voice dialogue TTS — each role independently picks its
+    engine + voice.
+
+    role_voice_map shape:  {role_name: (provider, voice_id)}
+
+    Roles can mix providers freely (e.g. narrator on edge_tts, child
+    voice on fish_audio); each segment dispatches to whatever the role
+    is mapped to.
 
     Synthesizes each (role, text) segment to a temp file, then ffmpeg-concat
     into `output_path`. Cleans up temps whether the run succeeds, fails, or
@@ -152,9 +158,14 @@ def synthesize_dialogue(
             if should_cancel and should_cancel():
                 raise InterruptedError("Cancelled")
 
-            voice_id = role_voice_map.get(role, "")
-            if not voice_id:
-                raise RuntimeError(f"No voice_id configured for role {role!r}")
+            entry = role_voice_map.get(role)
+            if not entry:
+                raise RuntimeError(f"No voice configured for role {role!r}")
+            provider, voice_id = entry
+            if not provider or not voice_id:
+                raise RuntimeError(
+                    f"Role {role!r} has incomplete voice mapping "
+                    f"(provider={provider!r}, voice_id={voice_id!r})")
 
             if on_progress:
                 on_progress(i, total, role)

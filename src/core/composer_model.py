@@ -46,7 +46,11 @@ class MediaSegment:
 @dataclass
 class ComposerProject:
     segments: list[MediaSegment] = field(default_factory=list)
+    # Voice is now (provider, voice_id) — TTS picks carry both. Old
+    # projects with only voice_id load with voice_provider="" and
+    # the picker's set_from_ids fills in metadata on first display.
     voice_id: str = ""
+    voice_provider: str = ""
     output_path: str = ""
     resolution: tuple[int, int] = (1920, 1080)
 
@@ -54,6 +58,7 @@ class ComposerProject:
         return {
             "segments": [s.to_dict() for s in self.segments],
             "voice_id": self.voice_id,
+            "voice_provider": self.voice_provider,
             "output_path": self.output_path,
             "resolution": list(self.resolution),
         }
@@ -63,6 +68,7 @@ class ComposerProject:
         return cls(
             segments=[MediaSegment.from_dict(s) for s in d.get("segments", [])],
             voice_id=d.get("voice_id", ""),
+            voice_provider=d.get("voice_provider", ""),
             output_path=d.get("output_path", ""),
             resolution=tuple(d.get("resolution", [1920, 1080])),
         )

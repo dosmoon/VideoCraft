@@ -420,6 +420,7 @@ class AIConsoleApp(ToolBase):
         VoicePickerDialog.ask(
             self.master,
             initial_provider=provider_name,
+            lock_provider=True,
             allowed_providers=(provider_name,),
             title=tr("tool.router.tts_browse_title", provider=provider_name),
         )

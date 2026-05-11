@@ -26,6 +26,7 @@ from core import user_data
 from core.composer_model import ComposerProject, MediaSegment
 from i18n import tr
 from tools.base import ToolBase
+from tools.router.voice_picker import VoiceSlot
 
 
 _AUDIO_EXTS = (".mp3", ".wav", ".m4a", ".aac")
@@ -80,11 +81,13 @@ class MediaSegmentComposerApp(ToolBase):
 
         toolbar = ttk.Frame(self.master, padding=(8, 6))
         toolbar.grid(row=0, column=0, sticky="ew")
-        ttk.Label(toolbar, text=tr("composer.voice_id") + ":").pack(side="left")
-        self._voice_var = tk.StringVar()
-        self._voice_var.trace_add("write", lambda *_: self._schedule_save())
-        ttk.Entry(toolbar, textvariable=self._voice_var, width=32).pack(
-            side="left", padx=(4, 14))
+        ttk.Label(toolbar, text=tr("tool.tts.voice_label")).pack(side="left")
+        # Composer-wide voice — applies to every TTS call this project
+        # makes. Per-segment overrides are out of scope; if the user
+        # wants different voices they can split into multiple projects.
+        self._voice_slot = VoiceSlot(toolbar, on_change=lambda _v: self._schedule_save(),
+                                     label_width=32)
+        self._voice_slot.pack(side="left", padx=(4, 14))
         ttk.Button(toolbar, text=tr("composer.gen_all_audio"),
                    command=self._generate_all_audio).pack(side="left", padx=2)
         ttk.Button(toolbar, text=tr("composer.compose"),
@@ -353,15 +356,15 @@ class MediaSegmentComposerApp(ToolBase):
         if not seg.text.strip():
             messagebox.showwarning(tr("composer.title"), tr("composer.warn_no_text"))
             return
-        voice_id = self._voice_var.get().strip()
-        if not voice_id:
+        voice = self._voice_slot.voice
+        if voice is None or not voice.voice_id:
             messagebox.showwarning(tr("composer.title"), tr("composer.warn_no_voice"))
             return
         if self._working:
             return
         self._working = True
         self.set_busy()
-        threading.Thread(target=self._tts_worker, args=([seg], voice_id),
+        threading.Thread(target=self._tts_worker, args=([seg], voice),
                          daemon=True).start()
 
     def _generate_all_audio(self):
@@ -371,25 +374,27 @@ class MediaSegmentComposerApp(ToolBase):
         if not missing:
             messagebox.showinfo(tr("composer.title"), tr("composer.info_no_missing"))
             return
-        voice_id = self._voice_var.get().strip()
-        if not voice_id:
+        voice = self._voice_slot.voice
+        if voice is None or not voice.voice_id:
             messagebox.showwarning(tr("composer.title"), tr("composer.warn_no_voice"))
             return
         if self._working:
             return
         self._working = True
         self.set_busy()
-        threading.Thread(target=self._tts_worker, args=(missing, voice_id),
+        threading.Thread(target=self._tts_worker, args=(missing, voice),
                          daemon=True).start()
 
-    def _tts_worker(self, segments: list[MediaSegment], voice_id: str):
+    def _tts_worker(self, segments: list[MediaSegment], voice):
         audio_dir = user_data.path("audio")
         os.makedirs(audio_dir, exist_ok=True)
         try:
             for i, seg in enumerate(segments):
                 self.log(f"TTS [{i + 1}/{len(segments)}] {seg.id[:8]}…")
                 out = os.path.join(audio_dir, f"{seg.id}.mp3")
-                _tts.synthesize_text(seg.text, out, voice_id=voice_id)
+                _tts.synthesize_text(seg.text, out,
+                                     voice_id=voice.voice_id,
+                                     provider=voice.provider)
                 seg.audio_path = out
             self.master.after(0, self._refresh_cards)
             self._schedule_save()
@@ -496,7 +501,9 @@ class MediaSegmentComposerApp(ToolBase):
         self._save_timer = None
         try:
             os.makedirs(os.path.dirname(_AUTOSAVE_PATH), exist_ok=True)
-            self._project.voice_id = self._voice_var.get()
+            v = self._voice_slot.voice
+            self._project.voice_id       = v.voice_id  if v else ""
+            self._project.voice_provider = v.provider  if v else ""
             self._project.save(_AUTOSAVE_PATH)
         except Exception as e:
             self.log_error(f"Auto-save failed: {e}")
@@ -514,5 +521,6 @@ class MediaSegmentComposerApp(ToolBase):
                 tr("composer.title"),
                 tr("composer.ask_restore").format(n=len(preview.segments))):
             self._project = preview
-            self._voice_var.set(self._project.voice_id)
+            self._voice_slot.set_from_ids(
+                self._project.voice_provider, self._project.voice_id)
             self._refresh_cards()

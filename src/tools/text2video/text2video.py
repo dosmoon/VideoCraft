@@ -17,6 +17,7 @@ import subprocess
 import tempfile
 
 from core import tts as core_tts
+from tools.router.voice_picker import VoiceSlot
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -34,43 +35,18 @@ class TTSApp(ToolBase):
         self._last_output = ""   # 记录最后生成的音频路径，供其他工具使用
 
         self._build_ui()
-        self._refresh_api_status()
 
     def _build_ui(self):
         tab = self.master
         tab.columnconfigure(1, weight=1)
 
+        # Provider dropdown was removed 2026-05-11 — voice + engine pick
+        # now lives in VoiceSlot's [Pick voice…] dialog at use time
+        # (single mode below has its own slot, multi mode each role has
+        # its own slot, and dispatch reads provider from the picked
+        # TTSVoice). No more shared "default TTS provider" config.
+
         row = 0
-        tk.Label(tab, text=tr("tool.tts.provider_label")).grid(
-            row=row, column=0, padx=10, pady=8, sticky="e")
-        # Provider dropdown sources from the AI router so any configured
-        # TTS provider (fish_audio cloud / edge_tts online / aistack
-        # gateway / future ones) shows up automatically. The
-        # status indicator updates whenever the user picks a different
-        # entry.
-        from core.ai.router import router as _router
-        self._tts_providers = _router.get_available_tts_providers()
-        provider_names = [p["name"] for p in self._tts_providers] or ["fish_audio"]
-        # Default = whatever task_routing currently points at, fall back
-        # to the first registered provider.
-        routing = _router.get_task_routing().get("tts.synthesize", {})
-        default_provider = routing.get("provider") or provider_names[0]
-        if default_provider not in provider_names:
-            default_provider = provider_names[0]
-        self.provider_var = tk.StringVar(value=default_provider)
-        provider_box = ttk.Combobox(tab, textvariable=self.provider_var,
-                                     values=provider_names, state="readonly",
-                                     width=22)
-        provider_box.grid(row=row, column=1, sticky="w", padx=(0, 8))
-        provider_box.bind("<<ComboboxSelected>>",
-                          lambda _e: self._refresh_api_status())
-
-        self.api_status_var = tk.StringVar(value=tr("tool.tts.api_status_unknown"))
-        self.api_status_lbl = tk.Label(tab, textvariable=self.api_status_var,
-                                        fg="red", anchor="w")
-        self.api_status_lbl.grid(row=row, column=2, sticky="ew", padx=(0, 10))
-
-        row += 1
         mode_frame = tk.LabelFrame(tab, text=tr("tool.tts.mode_frame"), padx=8, pady=6)
         mode_frame.grid(row=row, column=0, columnspan=3, padx=10, pady=6, sticky="ew")
         self.mode_var = tk.StringVar(value="single")
@@ -83,14 +59,13 @@ class TTSApp(ToolBase):
         self.single_frame = tk.LabelFrame(tab, text=tr("tool.tts.single_frame"), padx=10, pady=8)
         self.single_frame.grid(row=2, column=0, columnspan=3, padx=10, pady=4, sticky="ew")
         self.single_frame.columnconfigure(1, weight=1)
-        tk.Label(self.single_frame, text="Voice ID:").grid(row=0, column=0, padx=5, pady=6, sticky="e")
-        self.voice_id_var = tk.StringVar()
-        tk.Entry(self.single_frame, textvariable=self.voice_id_var, width=45).grid(row=0, column=1, sticky="ew", padx=5)
-        tk.Label(self.single_frame, text=tr("tool.tts.single_hint"),
-                 fg="gray", font=("Arial", 8)).grid(row=1, column=1, sticky="w", padx=5)
-        tk.Label(self.single_frame, text=tr("tool.tts.input_text")).grid(row=2, column=0, padx=5, pady=6, sticky="ne")
+        tk.Label(self.single_frame, text=tr("tool.tts.voice_label")).grid(
+            row=0, column=0, padx=5, pady=6, sticky="e")
+        self._single_voice_slot = VoiceSlot(self.single_frame)
+        self._single_voice_slot.grid(row=0, column=1, sticky="ew", padx=5)
+        tk.Label(self.single_frame, text=tr("tool.tts.input_text")).grid(row=1, column=0, padx=5, pady=6, sticky="ne")
         self.single_text = tk.Text(self.single_frame, height=8, width=55, wrap=tk.WORD)
-        self.single_text.grid(row=2, column=1, columnspan=2, sticky="ew", padx=5)
+        self.single_text.grid(row=1, column=1, columnspan=2, sticky="ew", padx=5)
         self.single_text.insert(tk.END, tr("tool.tts.single_placeholder"))
 
         # 多角色
@@ -100,15 +75,18 @@ class TTSApp(ToolBase):
         hdr = tk.Frame(self.multi_frame)
         hdr.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 4))
         tk.Label(hdr, text=tr("tool.tts.role_name_hdr"), width=12, font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=4)
-        tk.Label(hdr, text=tr("tool.tts.voice_id_hdr"),
+        tk.Label(hdr, text=tr("tool.tts.voice_label"),
                  font=("Arial", 9, "bold")).pack(side=tk.LEFT, padx=4)
+        # roles entries: (name_var, voice_slot, frame). Each role's
+        # voice_slot is independent — a dialogue can mix engines (e.g.
+        # narrator on edge_tts, child on fish_audio).
         self.roles = []
         self.roles_frame = tk.Frame(self.multi_frame)
         self.roles_frame.grid(row=1, column=0, columnspan=4, sticky="ew")
-        self._add_role(tr("tool.tts.default_role1"), "")
-        self._add_role(tr("tool.tts.default_role2"), "")
+        self._add_role(tr("tool.tts.default_role1"))
+        self._add_role(tr("tool.tts.default_role2"))
         tk.Button(self.multi_frame, text=tr("tool.tts.add_role"),
-                  command=lambda: self._add_role("", "")).grid(row=2, column=0, pady=6, sticky="w")
+                  command=lambda: self._add_role("")).grid(row=2, column=0, pady=6, sticky="w")
         tk.Label(self.multi_frame, text=tr("tool.tts.dialog_text")).grid(row=3, column=0, padx=5, pady=6, sticky="ne")
         self.multi_text = tk.Text(self.multi_frame, height=8, width=55, wrap=tk.WORD)
         self.multi_text.grid(row=3, column=1, columnspan=3, sticky="ew", padx=5)
@@ -159,14 +137,14 @@ class TTSApp(ToolBase):
 
         self._on_mode_change()
 
-    def _add_role(self, name="", voice_id=""):
+    def _add_role(self, name=""):
         f = tk.Frame(self.roles_frame)
         f.pack(fill="x", pady=2)
         name_var = tk.StringVar(value=name)
-        voice_var = tk.StringVar(value=voice_id)
         tk.Entry(f, textvariable=name_var, width=12).pack(side=tk.LEFT, padx=4)
-        tk.Entry(f, textvariable=voice_var, width=42).pack(side=tk.LEFT, padx=4)
-        role = (name_var, voice_var, f)
+        voice_slot = VoiceSlot(f, label_width=44)
+        voice_slot.pack(side=tk.LEFT, padx=4, fill="x", expand=True)
+        role = (name_var, voice_slot, f)
         self.roles.append(role)
         tk.Button(f, text="✕", command=lambda r=role: self._remove_role(r), width=2).pack(side=tk.LEFT)
 
@@ -194,30 +172,11 @@ class TTSApp(ToolBase):
         if path:
             self.output_path_var.set(path)
 
-    def _refresh_api_status(self):
-        provider = self.provider_var.get()
-        st = core_tts.status(provider)
-        # `detail` is the per-provider human-readable bit (masked key
-        # for cloud, model name for in-process, base_url for gateway).
-        if st["configured"]:
-            self.api_status_var.set(
-                tr("tool.tts.provider_status_ok", detail=st["detail"]))
-            self.api_status_lbl.config(fg="green")
-        else:
-            self.api_status_var.set(
-                tr("tool.tts.provider_status_bad", detail=st["detail"]))
-            self.api_status_lbl.config(fg="red")
-
     def start_generation(self):
-        provider = self.provider_var.get()
-        st = core_tts.status(provider)
-        if not st["available"]:
-            self._show_error(tr("tool.tts.error_no_sdk"))
-            return
-        if not st["configured"]:
-            self._show_error(tr("tool.tts.error_provider_not_ready",
-                                provider=provider, detail=st["detail"]))
-            return
+        # Provider readiness is checked at dispatch time per-voice — the
+        # picker only lets users pick voices from configured providers,
+        # but we revalidate here in case state shifted (key removed
+        # since the pick, gateway went offline, etc.).
         self._stop_flag = False
         self.generate_btn.config(state="disabled")
         self.stop_btn.config(state="normal")
@@ -241,11 +200,11 @@ class TTSApp(ToolBase):
 
     def _run_single(self):
         try:
-            voice_id = self.voice_id_var.get().strip()
+            voice = self._single_voice_slot.voice
             text = self.single_text.get("1.0", tk.END).strip()
             output = self.output_path_var.get().strip()
-            if not voice_id:
-                self._show_error(tr("tool.tts.error_no_voice_id")); return
+            if voice is None or not voice.voice_id:
+                self._show_error(tr("tool.tts.error_no_voice_picked")); return
             if not text:
                 self._show_error(tr("tool.tts.error_no_text")); return
             if not output:
@@ -263,9 +222,9 @@ class TTSApp(ToolBase):
             try:
                 core_tts.synthesize_text(
                     text, output,
-                    voice_id=voice_id,
+                    voice_id=voice.voice_id,
                     audio_format=self.audio_format_var.get(),
-                    provider=self.provider_var.get(),
+                    provider=voice.provider,
                     should_cancel=lambda: self._stop_flag,
                     on_progress=on_progress,
                 )
@@ -285,13 +244,25 @@ class TTSApp(ToolBase):
 
     def _run_multi(self):
         try:
-            role_map = {nv.get().strip(): vv.get().strip()
-                        for nv, vv, _ in self.roles
-                        if nv.get().strip() and vv.get().strip()}
-            if not role_map:
+            # role_map_full: name -> (provider, voice_id) — each role
+            # carries its own engine pick.
+            role_map_full: dict[str, tuple[str, str]] = {}
+            for nv, slot, _ in self.roles:
+                name = nv.get().strip()
+                if not name:
+                    continue
+                if slot.voice is None or not slot.voice.voice_id:
+                    self._show_error(tr("tool.tts.error_role_no_voice", role=name))
+                    return
+                role_map_full[name] = (slot.voice.provider, slot.voice.voice_id)
+            if not role_map_full:
                 self._show_error(tr("tool.tts.error_no_role_voice")); return
+
+            # parse_dialogue still expects {name: voice_id} for matching;
+            # voice_id value isn't used by the parser — only the key matters.
+            role_keys = {name: vid for name, (_, vid) in role_map_full.items()}
             raw = self.multi_text.get("1.0", tk.END).strip()
-            segments = core_tts.parse_dialogue(raw, role_map)
+            segments = core_tts.parse_dialogue(raw, role_keys)
             if not segments:
                 self._show_error(tr("tool.tts.error_no_valid_dialog")); return
             output = self.output_path_var.get().strip()
@@ -314,9 +285,8 @@ class TTSApp(ToolBase):
 
             try:
                 core_tts.synthesize_dialogue(
-                    segments, role_map, output,
+                    segments, role_map_full, output,
                     audio_format=self.audio_format_var.get(),
-                    provider=self.provider_var.get(),
                     should_cancel=lambda: self._stop_flag,
                     on_progress=on_progress,
                 )

@@ -63,11 +63,89 @@ def _preview_text_for(language: str) -> str:
     return _PREVIEW_SAMPLES["en"]
 
 
+# ── VoiceSlot ─────────────────────────────────────────────────────────────────
+
+class VoiceSlot(tk.Frame):
+    """Inline widget combining a [Pick voice…] button with a label that
+    shows the current selection. Owns its TTSVoice state.
+
+    Used at TTS use sites:
+      - text2video single mode (one slot per synthesis)
+      - text2video multi mode (one slot per dialog role)
+      - composer toolbar (project-wide voice)
+
+    Example:
+        slot = VoiceSlot(parent, on_change=lambda v: project.save())
+        slot.pack(side="left")
+        slot.set_voice(TTSVoice(...))    # programmatic preselect
+        v = slot.voice                   # current pick (or None)
+    """
+
+    def __init__(self, parent, *,
+                 on_change=None,
+                 label_width: int = 38,
+                 ):
+        super().__init__(parent)
+        self.voice: TTSVoice | None = None
+        self._on_change = on_change
+
+        self._label_var = tk.StringVar(value=tr("tool.tts.no_voice_picked"))
+        tk.Button(self, text=tr("tool.tts.btn_pick_voice"),
+                  command=self._on_pick).pack(side="left", padx=(0, 6))
+        self._label = tk.Label(self, textvariable=self._label_var,
+                               anchor="w", width=label_width, fg="#888",
+                               font=("", 9))
+        self._label.pack(side="left", fill="x", expand=True)
+
+    def _on_pick(self):
+        v = VoicePickerDialog.ask(
+            self,
+            initial_voice_id=self.voice.voice_id if self.voice else "",
+            initial_provider=self.voice.provider if self.voice else None,
+        )
+        if v is None:
+            return
+        self.set_voice(v)
+
+    def set_voice(self, voice: TTSVoice | None):
+        self.voice = voice
+        if voice is None:
+            self._label_var.set(tr("tool.tts.no_voice_picked"))
+            self._label.configure(fg="#888")
+        else:
+            label_bits = []
+            if voice.display_name:
+                label_bits.append(voice.display_name)
+            label_bits.append(voice.voice_id)
+            label_bits.append(f"({voice.provider})")
+            self._label_var.set(" · ".join(label_bits))
+            self._label.configure(fg="#222")
+        if self._on_change:
+            self._on_change(voice)
+
+    def set_from_ids(self, provider: str, voice_id: str):
+        """Restore from persisted (provider, voice_id) pair. Looks up
+        catalog metadata when available; falls back to a minimal
+        TTSVoice when the cached catalog doesn't include this voice
+        (cache stale, manual ID, etc.).
+        """
+        if not provider and not voice_id:
+            self.set_voice(None)
+            return
+        from core.ai.tts_voice import find_voice
+        v = find_voice(provider, voice_id) or TTSVoice(
+            provider=provider, voice_id=voice_id,
+            display_name=voice_id, language="", gender="", tags=(),
+        )
+        self.set_voice(v)
+
+
 class VoicePickerDialog:
     @classmethod
     def ask(cls, parent: tk.Misc, *,
             initial_voice_id: str = "",
             initial_provider: str | None = None,
+            lock_provider: bool = False,
             allowed_providers: tuple[str, ...] | None = None,
             title: str | None = None,
             ) -> TTSVoice | None:
@@ -76,11 +154,14 @@ class VoicePickerDialog:
         Args:
             initial_voice_id:   If set + present in any cached catalog,
                                 that row is preselected.
-            initial_provider:   Lock the provider filter to this value
-                                (and pin the manual-input dropdown to it).
-                                Useful when caller knows the engine in
-                                advance (e.g. "this dialogue role is
-                                already on edge_tts, just pick a voice").
+            initial_provider:   Sets which provider's catalog the picker
+                                opens to. The user can still switch via
+                                the provider dropdown unless lock_provider
+                                is True.
+            lock_provider:      When True, disables the provider dropdown
+                                and pins the manual-input dropdown to the
+                                same provider. Used by the TTS tab's
+                                "Browse <provider> voices" affordance.
             allowed_providers:  Restrict the provider dropdown to this
                                 subset of KNOWN_TTS_PROVIDERS. Default =
                                 all known.
@@ -90,6 +171,7 @@ class VoicePickerDialog:
         dlg = cls(parent,
                   initial_voice_id=initial_voice_id,
                   initial_provider=initial_provider,
+                  lock_provider=lock_provider,
                   allowed_providers=allowed_providers,
                   title=title)
         parent.wait_window(dlg.top)
@@ -98,13 +180,15 @@ class VoicePickerDialog:
     def __init__(self, parent, *,
                  initial_voice_id: str,
                  initial_provider: str | None,
+                 lock_provider: bool,
                  allowed_providers: tuple[str, ...] | None,
                  title: str | None):
         self.parent = parent
         self.result: TTSVoice | None = None
 
         self._initial_voice_id = initial_voice_id or ""
-        self._provider_lock = initial_provider
+        self._initial_provider = initial_provider
+        self._provider_lock = initial_provider if lock_provider else None
         self._allowed_providers = tuple(allowed_providers
                                         or KNOWN_TTS_PROVIDERS)
 
@@ -147,7 +231,7 @@ class VoicePickerDialog:
         if len(self._allowed_providers) > 1 and self._provider_lock is None:
             provider_options = [tr("tool.voice_picker.filter_all"),
                                 *self._allowed_providers]
-        init_provider = (self._provider_lock
+        init_provider = (self._initial_provider
                          or self._allowed_providers[0])
         self._provider_var = tk.StringVar(value=init_provider)
         prov_cb = ttk.Combobox(filt, textvariable=self._provider_var,
