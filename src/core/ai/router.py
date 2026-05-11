@@ -43,11 +43,12 @@ class AIRouter:
     """
 
     def __init__(self):
-        self._providers:     dict = {}
-        self._asr_providers: dict = {}
-        self._tts_providers: dict = {}
-        self._task_routing:  dict = {}
-        self._models_dir:    str  = ""
+        self._providers:       dict = {}
+        self._asr_providers:   dict = {}
+        self._tts_providers:   dict = {}
+        self._task_routing:    dict = {}
+        self._task_tier_prefs: dict = {}
+        self._models_dir:      str  = ""
         self._stats = Stats()
         self._load_config()
 
@@ -167,6 +168,28 @@ class AIRouter:
     def set_task_routing(self, task: str, provider: str, model: str) -> None:
         """Set the single routing entry for a task and persist."""
         self._task_routing[task] = {"provider": provider, "model": model}
+        self._persist()
+
+    # ── Per-(task, tier) sticky picks ───────────────────────────────────────
+    # Each tier row in the AI Console's routing tab keeps its own "what would
+    # I dispatch" state, even when not currently active. The active row
+    # mirrors task_routing; the inactive ones live here. Schema:
+    #   self._task_tier_prefs[task_id][tier_id] = {"provider": str, "model": str}
+
+    def get_task_tier_pref(self, task: str, tier: str) -> dict | None:
+        """Return the stored (provider, model) for a (task, tier) cell, or
+        None if the user hasn't configured this cell yet (caller should
+        fall back to its own default)."""
+        return self._task_tier_prefs.get(task, {}).get(tier)
+
+    def set_task_tier_pref(self, task: str, tier: str,
+                           provider: str, model: str) -> None:
+        """Persist a per-tier pick. Does NOT touch task_routing — that
+        only changes when the user explicitly clicks the tier's radio.
+        """
+        self._task_tier_prefs.setdefault(task, {})[tier] = {
+            "provider": provider, "model": model,
+        }
         self._persist()
 
     # ── aistack gateway (single conceptual entry across LLM/ASR/TTS) ────────
@@ -848,20 +871,22 @@ class AIRouter:
     def _load_config(self) -> None:
         """Load (or initialize) configuration; reseed stats."""
         data = _cfg.load_config()
-        self._providers     = data["providers"]
-        self._asr_providers = data["asr_providers"]
-        self._tts_providers = data["tts_providers"]
-        self._task_routing  = data["task_routing"]
-        self._models_dir    = data.get("models_dir", "")
+        self._providers       = data["providers"]
+        self._asr_providers   = data["asr_providers"]
+        self._tts_providers   = data["tts_providers"]
+        self._task_routing    = data["task_routing"]
+        self._task_tier_prefs = data.get("task_tier_prefs", {}) or {}
+        self._models_dir      = data.get("models_dir", "")
         self._stats.init_providers(list(self._providers.keys()))
 
     def _persist(self) -> None:
         _cfg.save_config({
-            "providers":     self._providers,
-            "asr_providers": self._asr_providers,
-            "tts_providers": self._tts_providers,
-            "task_routing":  self._task_routing,
-            "models_dir":    self._models_dir,
+            "providers":       self._providers,
+            "asr_providers":   self._asr_providers,
+            "tts_providers":   self._tts_providers,
+            "task_routing":    self._task_routing,
+            "task_tier_prefs": self._task_tier_prefs,
+            "models_dir":      self._models_dir,
         })
 
     # ── Models cache directory ──────────────────────────────────────────────

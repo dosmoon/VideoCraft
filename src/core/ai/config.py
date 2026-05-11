@@ -322,8 +322,10 @@ def load_config() -> dict:
         asr_providers = data.get("asr_providers", copy.deepcopy(_DEFAULT_ASR_PROVIDERS))
         tts_providers = data.get("tts_providers", copy.deepcopy(_DEFAULT_TTS_PROVIDERS))
         task_routing  = data.get("task_routing")
+        task_tier_prefs = data.get("task_tier_prefs", {})
         models_dir    = data.get("models_dir", "")
         models_dir_dirty = "models_dir" not in data
+        task_tier_prefs_dirty = "task_tier_prefs" not in data
         # Drop the retired tier_routing field; flag dirty so the cleanup
         # is persisted on first load after upgrade.
         tier_routing_dropped = "tier_routing" in data
@@ -333,8 +335,10 @@ def load_config() -> dict:
         asr_providers = copy.deepcopy(_DEFAULT_ASR_PROVIDERS)
         tts_providers = copy.deepcopy(_DEFAULT_TTS_PROVIDERS)
         task_routing  = None
+        task_tier_prefs = {}
         models_dir    = ""
         models_dir_dirty = False
+        task_tier_prefs_dirty = False
         tier_routing_dropped = False
         wrote_on_first_run = True
         # First-run write happens below after migrations run
@@ -349,16 +353,17 @@ def load_config() -> dict:
     task_routing, task_routing_dirty = _migrate_task_routing(task_routing)
 
     result = {
-        "providers":     providers,
-        "asr_providers": asr_providers,
-        "tts_providers": tts_providers,
-        "task_routing":  task_routing,
-        "models_dir":    models_dir,
+        "providers":       providers,
+        "asr_providers":   asr_providers,
+        "tts_providers":   tts_providers,
+        "task_routing":    task_routing,
+        "task_tier_prefs": task_tier_prefs,
+        "models_dir":      models_dir,
     }
 
     if (wrote_on_first_run or migrated or asr_migrated or normalized
             or tts_normalized or task_routing_dirty or models_dir_dirty
-            or tier_routing_dropped):
+            or task_tier_prefs_dirty or tier_routing_dropped):
         save_config(result)
 
     return result
@@ -370,11 +375,19 @@ def save_config(data: dict) -> None:
     os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump({
-            "models_dir":    data.get("models_dir", ""),
-            "task_routing":  data.get("task_routing", {}),
-            "providers":     data["providers"],
-            "asr_providers": data["asr_providers"],
-            "tts_providers": data["tts_providers"],
+            "models_dir":      data.get("models_dir", ""),
+            "task_routing":    data.get("task_routing", {}),
+            # Per-(task, tier) sticky picks. Schema:
+            #   {task_id: {tier_id: {"provider": str, "model": str}}}
+            # Independent from task_routing — the latter records which
+            # tier is currently active; this records what each tier row
+            # *would* dispatch to if its radio were picked. Lets the UI
+            # preserve "I configured Gemini for translate's cloud row,
+            # even though I'm currently using LlamaCpp for translate".
+            "task_tier_prefs": data.get("task_tier_prefs", {}),
+            "providers":       data["providers"],
+            "asr_providers":   data["asr_providers"],
+            "tts_providers":   data["tts_providers"],
         }, f, ensure_ascii=False, indent=2)
 
 

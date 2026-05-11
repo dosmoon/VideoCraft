@@ -508,14 +508,36 @@ class AIConsoleApp(ToolBase):
         self._render_simple_asr_tts_row(parent, r, task_id, category, tier)
 
     # ── Per-tier-shape renderers ───────────────────────────────────────────
+    # All renderers read their initial (provider, model) pick from the
+    # task_tier_prefs sidecar via _initial_pick (so per-tier configs survive
+    # tier switches and Console reopens). Defaults kick in lazily — first
+    # time a row is rendered with no pref, we fall back to a sensible
+    # default and write nothing; the user's first dropdown change will
+    # populate the pref.
+
+    def _initial_pick(self, task_id: str, tier: str,
+                      default_provider: str, valid_models: list[str],
+                      ) -> tuple[str, str]:
+        """Read pref → validate against current options → fall back if stale.
+        Returns (provider, model)."""
+        pref = router.get_task_tier_pref(task_id, tier)
+        if pref:
+            prov = pref.get("provider", "")
+            model = pref.get("model", "")
+            # Embedded/aistack tiers have a fixed provider; cloud LLM is
+            # the only multi-provider tier (validated by caller). Validate
+            # the model belongs to whatever provider the pref names.
+            if prov and (not valid_models or model in valid_models):
+                return (prov, model)
+        if not valid_models:
+            return (default_provider, "")
+        return (default_provider, valid_models[0])
 
     def _render_embedded_llm_row(self, parent, r, task_id, tier,
                                  is_active, current_cell):
         provider = "LlamaCpp"
         models = list(router._providers.get(provider, {}).get("models", []))
-        init_model = current_cell.get("model", "") if is_active else ""
-        if not init_model or init_model not in models:
-            init_model = models[0] if models else ""
+        _prov, init_model = self._initial_pick(task_id, tier, provider, models)
 
         tk.Label(parent, text=provider, anchor="w", width=18, fg="#222",
                  ).grid(row=r, column=2, padx=4, pady=2, sticky="w")
@@ -542,10 +564,13 @@ class AIConsoleApp(ToolBase):
                               is_active, current_cell):
         providers = [n for n in router._providers.keys()
                      if n != "aistack" and n != "LlamaCpp"]
-        # Pick a sensible default cloud provider: current routing if it's
-        # already cloud, else first provider with key, else first listed.
-        if is_active and current_cell.get("provider") in providers:
-            init_prov = current_cell["provider"]
+
+        # Initial provider: prev pref's provider if still listed; else
+        # first provider with a configured key; else first listed.
+        pref = router.get_task_tier_pref(task_id, tier) or {}
+        pref_prov = pref.get("provider", "")
+        if pref_prov and pref_prov in providers:
+            init_prov = pref_prov
         else:
             init_prov = next(
                 (p for p in providers
@@ -561,8 +586,11 @@ class AIConsoleApp(ToolBase):
                      lambda _e: self._on_cloud_llm_provider_picked(task_id, tier))
 
         models = list(router._providers.get(init_prov, {}).get("models", []))
-        init_model = current_cell.get("model", "") if is_active else ""
-        if not init_model or init_model not in models:
+        # Initial model: pref's model if it belongs to the picked provider
+        # (and pref's provider == init_prov); else first model.
+        if pref_prov == init_prov and pref.get("model") in models:
+            init_model = pref["model"]
+        else:
             init_model = models[0] if models else ""
         model_var = tk.StringVar(value=init_model)
         model_cb = ttk.Combobox(parent, textvariable=model_var, values=models,
@@ -588,9 +616,7 @@ class AIConsoleApp(ToolBase):
                  ).grid(row=r, column=2, padx=4, pady=2, sticky="w")
 
         choices = self._aistack_model_choices(category) if gw_enabled else []
-        init_model = current_cell.get("model", "") if is_active else ""
-        if not init_model or init_model not in choices:
-            init_model = choices[0] if choices else ""
+        _prov, init_model = self._initial_pick(task_id, tier, provider, choices)
 
         if choices:
             model_var = tk.StringVar(value=init_model)
@@ -638,29 +664,47 @@ class AIConsoleApp(ToolBase):
         }
 
     # ── Event handlers ────────────────────────────────────────────────────
+    # Two write surfaces:
+    #   - Radio click  → set_task_routing (this row becomes active)
+    #   - Dropdown change → set_task_tier_pref (saved as that tier's pick;
+    #     does NOT touch the radio — user's "exploring" the cloud row's
+    #     options shouldn't yank the active routing)
+    # When the radio happens to already be on the row whose dropdown
+    # changed, we additionally update task_routing so dispatch sees the
+    # fresh pick immediately (no stale-routing window between the pref
+    # write and the next radio click).
 
     def _on_tier_radio_picked(self, task_id: str, category: str, tier: str):
-        """Persist the row's effective (provider, model) as task routing."""
+        """Activate this tier: copy its current (provider, model) pick into
+        task_routing so dispatch uses it.
+        """
         provider, model = self._effective_pick(task_id, tier)
         router.set_task_routing(task_id, provider, model)
 
     def _on_cloud_llm_provider_picked(self, task_id: str, tier: str):
-        """User changed the cloud-LLM vendor in this row. Refresh the
-        model dropdown to the new vendor's models, activate this tier."""
+        """Cloud LLM only: vendor changed. Reset the model dropdown to
+        the new vendor's first model, persist the pref. If this row is
+        already active, keep task_routing in sync.
+        """
         state = self._task_tier_state[task_id][tier]
         new_prov = state["provider_var"].get()
         models = list(router._providers.get(new_prov, {}).get("models", []))
         state["model_cb"].configure(values=models)
-        state["model_var"].set(models[0] if models else "")
-        self._task_radio_vars[task_id].set(tier)
-        router.set_task_routing(task_id, new_prov, state["model_var"].get())
+        new_model = models[0] if models else ""
+        state["model_var"].set(new_model)
+        router.set_task_tier_pref(task_id, tier, new_prov, new_model)
+        if self._task_radio_vars[task_id].get() == tier:
+            router.set_task_routing(task_id, new_prov, new_model)
 
     def _on_tier_model_picked(self, task_id: str, tier: str):
-        """User changed the model in this row. Activate the row's tier
-        and persist the new (provider, model)."""
-        self._task_radio_vars[task_id].set(tier)
+        """Model dropdown changed in any tier row. Always persist as that
+        tier's pref (per-tier configs survive tier switches). Only touch
+        task_routing if this row is the currently active tier.
+        """
         provider, model = self._effective_pick(task_id, tier)
-        router.set_task_routing(task_id, provider, model)
+        router.set_task_tier_pref(task_id, tier, provider, model)
+        if self._task_radio_vars[task_id].get() == tier:
+            router.set_task_routing(task_id, provider, model)
 
     def _effective_pick(self, task_id: str, tier: str) -> tuple[str, str]:
         """Compute (provider, model) currently shown by a tier row."""
