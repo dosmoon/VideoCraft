@@ -25,7 +25,7 @@
 | 🟢 P3 | [~] | 操作参数持久化 | 🟡 subtitle_tool 已完成 preset 系统（user_data/presets/subtitle_burn.json，支持命名保存/切换/记忆 last_used）；其他工具待跟进 |
 | 🟢 P3 | [ ] | ASR / TTS Test 真实施 | AI 控制台 Lemonfox / Fish Audio 的 Test 按钮目前 disabled 占位。需要：(a) ASR — 在 `prompts/samples/silence-1s.wav` 塞 1 秒静音样本，Test 拿它打 Lemonfox；(b) TTS — provider 配置加 `test_voice_id` 字段，Test 调短文本合成 |
 | 🟢 P3 | [ ] | per-(task, provider) prompt 变体 | `core.prompts.get(task)` 当前一 task 一 prompt。不同 provider 在同一任务上风格差异明显（DeepSeek 喜欢长解释、Gemini 偏简洁）。需要：扩展 prompts 文件命名为 `<task>.<provider>.md`，loader 优先匹配 (task, provider) 后 fallback 到 (task) |
-| 🟢 P3 | [ ] | TTS Voice ID 收藏 | Fish Audio TTS 当前每次合成都要手填 Voice ID（一串 32 位 hex）。AI 控制台加常用 voice 库下拉，或在 TTSApp 加最近用过的下拉 |
+| 🟢 P3 | [x] | TTS Voice ID 收藏 | 2026-05-11 完成 — 整套 TTS 抽象重构 (P1~P6)：`core/ai/tts_voice.py` (TTSVoice 数据模型 + 磁盘缓存)、`tools/router/voice_picker.py` (VoicePickerDialog 跨 provider 选择 + ffplay 试听 + 手动输入 ID + VoiceSlot widget)、AI 控制台第 5 个独立 TTS tab (替代散落在内置/云/aistack)、text2video 单声 + 多角色每角色独立选引擎、`ai.tts(provider=...)` 必填。Fish Audio "我的收藏" workaround：v1 API 没 /me/marks 端点，做了 [导入收藏 voice IDs...] 入口让用户粘贴 ID 列表逐个 GET /model/{id} 拉 metadata。详见 commits 67845f8..d6b6336 |
 
 ---
 
@@ -36,12 +36,11 @@
 
 | 优先级 | 状态 | 子任务 | 说明 |
 |--------|------|------|------|
-| 🔴 P1 | [x] | sherpa-onnx Whisper ASR provider（CPU） | 2026-05-10 落地 — `core/ai/providers/sherpa.py` in-process Whisper int8/fp32；VAD 切片 + 打包 + 批处理；CPU/CUDA 自动选。**实测瓶颈**：sherpa-onnx Whisper backend 串行 decode，4060 GPU 上 RTF 上限 ~10x。保留作 fallback / VAD 用，ASR 主路改用 faster-whisper |
-| 🔴 P1 | [x] | faster-whisper ASR provider（CTranslate2） | 2026-05-10 加（commit 99ef873）。`core/ai/providers/faster_whisper.py`。CT2 真批处理 GPU kernel，4060 fp16 实测 **RTF 35.8x**（whisper-small）。built-in silero VAD。catalog 加 small (480MB) + large-v3-turbo (1.6GB) 两档 |
-| 🔴 P1 | [x] | sherpa-onnx Kokoro TTS | 2026-05-11 落地 commit `c7b3880` — `core/ai/providers/sherpa_tts.py` synthesize() 接口；catalog 加 kokoro-int8-multi-lang-v1_0 (~180 MB) 和 kokoro-multi-lang-v1_0 (~380 MB fp32)；引入 `ModelSpec.download_all=True` 配 `resolve_all_files()` 走整 repo 下载（375 文件，含 espeak-ng 音素 + jieba 字典）；CPU/CUDA 自动选；voice_id 是 speaker index (0..49) |
+| 🔴 P1 | [x] | faster-whisper ASR provider（CTranslate2） | 2026-05-10 加（commit 99ef873）。`core/ai/providers/faster_whisper.py`。CT2 真批处理 GPU kernel，4060 fp16 实测 **RTF 35.8x**（whisper-small）。built-in silero VAD。catalog 加 small (480MB) + large-v3-turbo (1.6GB) 两档。**取代 sherpa-onnx Whisper**（其后端串行 decode，RTF 上限 ~10x） |
+| 🔴 P1 | [x] | edge-tts 在线免费 TTS | 2026-05-11 上线，取代 sherpa Kokoro。Microsoft Edge Read-Aloud 端点（rany2/edge-tts，MIT），新闻级中文/英文音质，免 key、零本地模型。详见 docs/research-notes/sherpa-detour.md |
 | 🔴 P1 | [x] | llama-cpp-python Qwen3 翻译 provider | 2026-05-10 落地 — `core/ai/providers/llama_cpp.py` (call/call_json/list_models)；新 ptype `llama_cpp` 接进 router；模型放 `<models>/llama/*.gguf` 用户自取；GPU auto (n_gpu_layers=-2 sentinel)；4060 实测 **70 tok/s** (Qwen3-1.7B Q4_K_M)。pip install 必须用 abetlen 预编译索引（见 requirements.txt 注释） |
-| 🟡 P2 | [x] | GPU 加速升级 | 2026-05-10 落地 commit `3f1f4a8`。`core/gpu.py` 自动 PATH 设置 + cuda_available() 元数据探测。**绝对禁止装 torch 到此 venv**（会触发 cudnn DLL 冲突，详见 requirements.txt 注释） |
-| 🔴 P1 | [x] | 模型分发系统 | 2026-05-10 落地 — `core/models/{catalog,downloader,registry,manager,hf_api}.py` + `tools/models/manager_window.py`（菜单 AI → 模型管理）。Range 续传 + 多源 fallback (hf-mirror/HF) + sha256 (HF lfs.oid 自动获取) + 磁盘预检 + 队列 UI。catalog 内置 8 项 (sherpa whisper int8/fp32 各 2 + faster-whisper 2 + qwen3 2 + silero-vad)。性能优化：scan 跳过 sha256 重哈希（每 5s 冻 UI 10s 的 bug，b39ae4d 修） |
+| 🟡 P2 | [x] | GPU 加速升级 | 2026-05-10 落地 commit `3f1f4a8`。`core/gpu.py` 自动 PATH 设置 + cuda_available() 元数据探测（2026-05-11 改为 nvidia-smi + nvidia/* 目录双重检测，不再依赖 sherpa-onnx wheel）。**绝对禁止装 torch 到此 venv**（会触发 cudnn DLL 冲突，详见 requirements.txt 注释） |
+| 🔴 P1 | [x] | 模型分发系统 | 2026-05-10 落地 — `core/models/{catalog,downloader,registry,manager,hf_api}.py` + `tools/models/manager_window.py`（菜单 AI → 本地模型管理）。Range 续传 + 多源 fallback (hf-mirror/HF) + sha256 (HF lfs.oid 自动获取) + 磁盘预检 + 队列 UI。catalog 当前 4 项 (faster-whisper small + large-v3-turbo + qwen3 1.7B + qwen3 8B)，sherpa 系全删。性能优化：scan 跳过 sha256 重哈希（每 5s 冻 UI 10s 的 bug，b39ae4d 修） |
 | 🟡 P2 | [ ] | 首启 / 升档 UI | 首启可跳过下载向导（强引导非强制）；推荐档升档对话框；设置 → 模型管理 |
 | 🟡 P2 | [ ] | AI Console 加 GPU 状态 pane | 显示 cuda_status() 输出（device_name / VRAM / wheel）让用户清楚走的 CPU 还是 GPU |
 
