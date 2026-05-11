@@ -160,18 +160,21 @@ class Project:
     # -- New-model factory (2026-05-11) ----------------------------------------
 
     @staticmethod
-    def new(parent_dir: str, name: str, source: Source) -> "Project":
+    def new(parent_dir: str, name: str, source: Source | None = None) -> "Project":
         """Create a fresh new-model project under parent_dir/name.
 
         Builds the canonical directory skeleton and writes a ProjectMeta
-        to .videocraft/project.json. Caller is responsible for actually
-        acquiring source/video.mp4 afterwards (yt-dlp download / local
-        copy) — this factory only creates the empty structure.
+        to .videocraft/project.json. Source defaults to an empty
+        placeholder; the sidebar's Source row drives acquisition later
+        and back-fills the meta. Caller may pass a populated Source if
+        creating a project with a known source upfront.
 
         Raises FileExistsError if parent_dir/name already exists.
         Raises ValueError if name is empty or contains illegal chars.
         Raises OSError if parent_dir is not writable.
         """
+        if source is None:
+            source = Source()
         if not name or any(c in name for c in r'\/:*?"<>|') or name != name.strip():
             raise ValueError(f"Invalid project name: {name!r}")
 
