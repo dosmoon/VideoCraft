@@ -31,6 +31,16 @@ from typing import Optional
 import srt as _srt
 
 
+def _tr(key: str, **kwargs) -> str:
+    """Bilingual issue messages. Imported lazily so subtitle_check stays
+    runnable as a stand-alone script (its smoke test path)."""
+    try:
+        from i18n import tr
+    except Exception:
+        return key
+    return tr(key, **kwargs)
+
+
 def _read_srt(path: str) -> str:
     """Lazy proxy to core.subtitle_ops.read_srt so this module is importable
     when run directly (python src/core/subtitle_check.py) without sys.path
@@ -135,21 +145,24 @@ def _classify(category: str, severity: str, auto_fixable: bool) -> str:
 # Captures common artifacts from LLM translation that leak into SRT text.
 # Each entry: (compiled regex, message_template, auto_fixable)
 
+# Each entry maps a regex to an i18n key (resolved at issue-creation time).
 _FORMAT_RESIDUE_PATTERNS: list[tuple[re.Pattern, str]] = [
     # Batch markers from translate prompt: 【1】, 【123】 — always leaked when
     # model copies the marker into output.
-    (re.compile(r"【\s*\d+\s*】"), "残留批次标记 【N】"),
+    (re.compile(r"【\s*\d+\s*】"), "subtitle.check.residue_marker"),
     # Chat / role tokens from various models.
-    (re.compile(r"<\|im_(?:start|end|sep)\|>", re.IGNORECASE), "残留模型 token"),
-    (re.compile(r"<\|endoftext\|>", re.IGNORECASE), "残留模型 token"),
+    (re.compile(r"<\|im_(?:start|end|sep)\|>", re.IGNORECASE),
+     "subtitle.check.residue_token"),
+    (re.compile(r"<\|endoftext\|>", re.IGNORECASE),
+     "subtitle.check.residue_token"),
     # Raw role labels at line start.
     (re.compile(r"^(?:assistant|user|system)\s*:\s*", re.IGNORECASE),
-     "残留角色标签"),
+     "subtitle.check.residue_role"),
     # JSON wrapper leaks: `{"text": "...", "index": ...}` style.
     (re.compile(r"^\s*\{[^{}]*\bindex\b[^{}]*\btext\b[^{}]*\}\s*$"),
-     "残留 JSON 包装"),
+     "subtitle.check.residue_json"),
     # Triple-backtick code fences.
-    (re.compile(r"^\s*```"), "残留代码块标记"),
+    (re.compile(r"^\s*```"), "subtitle.check.residue_codefence"),
 ]
 
 
@@ -252,11 +265,13 @@ def check_srt(
         cues = list(_srt.parse(raw))
     except FileNotFoundError:
         result.issues.append(SubtitleIssue(
-            0, CAT_PARSE, SEV_ERROR, f"文件不存在: {srt_path}"))
+            0, CAT_PARSE, SEV_ERROR,
+            _tr("subtitle.check.parse_not_found", path=srt_path)))
         return result
     except Exception as e:
         result.issues.append(SubtitleIssue(
-            0, CAT_PARSE, SEV_ERROR, f"SRT 解析失败: {e}"))
+            0, CAT_PARSE, SEV_ERROR,
+            _tr("subtitle.check.parse_failed", error=str(e))))
         return result
 
     result.cue_count = len(cues)
@@ -273,7 +288,8 @@ def check_srt(
     if ref_cues and len(ref_cues) != len(cues):
         result.issues.append(SubtitleIssue(
             0, CAT_COUNT_MISMATCH, SEV_ERROR,
-            f"cue 数量不一致: 源 {len(ref_cues)} vs 目标 {len(cues)}",
+            _tr("subtitle.check.count_mismatch",
+                ref_count=len(ref_cues), tgt_count=len(cues)),
         ))
 
     # ── Per-cue scans ──
@@ -289,17 +305,19 @@ def check_srt(
         # Empty content
         if not text:
             result.issues.append(SubtitleIssue(
-                idx, CAT_EMPTY, SEV_ERROR, "内容为空", auto_fixable=False))
+                idx, CAT_EMPTY, SEV_ERROR,
+                _tr("subtitle.check.empty"), auto_fixable=False))
 
         # Timing invalid
         if end_ms <= start_ms:
             result.issues.append(SubtitleIssue(
                 idx, CAT_TIMING, SEV_ERROR,
-                f"时间无效: {start_ms}ms → {end_ms}ms (结束 ≤ 开始)"))
+                _tr("subtitle.check.timing_invalid",
+                    start=start_ms, end=end_ms)))
         if start_ms < 0:
             result.issues.append(SubtitleIssue(
                 idx, CAT_TIMING, SEV_ERROR,
-                f"开始时间为负: {start_ms}ms"))
+                _tr("subtitle.check.timing_negative", start=start_ms)))
 
         # Overlap with previous
         if prev_end_ms >= 0 and start_ms < prev_end_ms:
@@ -307,14 +325,14 @@ def check_srt(
             sev = SEV_WARNING if overlap > overlap_ms_tolerance else SEV_INFO
             result.issues.append(SubtitleIssue(
                 idx, CAT_OVERLAP, sev,
-                f"与上一行重叠 {overlap}ms"))
+                _tr("subtitle.check.overlap", ms=overlap)))
 
         # Format residue
-        for pat, msg in _FORMAT_RESIDUE_PATTERNS:
+        for pat, msg_key in _FORMAT_RESIDUE_PATTERNS:
             if pat.search(text):
                 result.issues.append(SubtitleIssue(
-                    idx, CAT_FORMAT_RESIDUE, SEV_WARNING, msg,
-                    auto_fixable=True))
+                    idx, CAT_FORMAT_RESIDUE, SEV_WARNING,
+                    _tr(msg_key), auto_fixable=True))
                 break  # one residue flag per cue is enough
 
         # Length ratio (vs reference)
@@ -325,12 +343,17 @@ def check_srt(
             if ratio > length_ratio_max:
                 result.issues.append(SubtitleIssue(
                     idx, CAT_LENGTH_RATIO, SEV_WARNING,
-                    f"长度异常: 译文 {ratio:.1f}× 原文 ({len(text)}/{ref_len})"))
+                    _tr("subtitle.check.length_too_long",
+                        ratio=f"{ratio:.1f}",
+                        tgt_len=len(text), ref_len=ref_len)))
             elif ratio < length_ratio_min and len(ref_text) > 5:
                 # Skip very short source cues — ratios become noisy.
+                pct = int(round(ratio * 100))
                 result.issues.append(SubtitleIssue(
                     idx, CAT_LENGTH_RATIO, SEV_WARNING,
-                    f"长度异常: 译文 {ratio:.1f}× 原文 ({len(text)}/{ref_len})"))
+                    _tr("subtitle.check.length_too_short",
+                        pct=pct,
+                        tgt_len=len(text), ref_len=ref_len)))
 
         # Duplicate run detection
         if text and text == last_text:
@@ -340,7 +363,8 @@ def check_srt(
                 start_idx = idx - duplicate_run_threshold + 2
                 result.issues.append(SubtitleIssue(
                     start_idx, CAT_DUPLICATE, SEV_WARNING,
-                    f"连续 {duplicate_run_threshold}+ 行内容重复 (模型可能复读)"))
+                    _tr("subtitle.check.duplicate_run",
+                        n=duplicate_run_threshold)))
         else:
             dup_run = 0
         last_text = text
@@ -356,8 +380,10 @@ def check_srt(
             if total >= 20 and ratio < _PURITY_FLOOR_DEFAULT:
                 result.issues.append(SubtitleIssue(
                     0, CAT_LANG_PURITY, SEV_ERROR,
-                    f"目标语言纯度不足: {ratio:.0%} 字符属于 "
-                    f"{expected_lang_iso} 字符集 (期望 ≥ {_PURITY_FLOOR_DEFAULT:.0%})"))
+                    _tr("subtitle.check.lang_purity",
+                        pct=int(round(ratio * 100)),
+                        lang=expected_lang_iso,
+                        floor=int(round(_PURITY_FLOOR_DEFAULT * 100)))))
 
     # Classify every issue in one pass.
     for issue in result.issues:

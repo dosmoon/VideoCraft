@@ -25,6 +25,7 @@ from core.subtitle_check import (
     SEV_ERROR, SEV_WARNING, SEV_INFO,
     CLASS_HARD, CLASS_FIXABLE, CLASS_ADVISORY,
 )
+from i18n import tr
 
 
 _TS_RE = re.compile(
@@ -35,10 +36,10 @@ _IDX_RE = re.compile(r"^\d+\s*$")
 _SEV_ICON = {SEV_ERROR: "✗", SEV_WARNING: "⚠", SEV_INFO: "ⓘ"}
 _SEV_COLOR = {SEV_ERROR: "#c00", SEV_WARNING: "#a60", SEV_INFO: "#666"}
 
-_CLASS_HEAD = {
-    CLASS_HARD:     ("必须处理", "#c00"),
-    CLASS_FIXABLE:  ("自动修复", "#a60"),
-    CLASS_ADVISORY: ("建议",     "#666"),
+_CLASS_KEY = {
+    CLASS_HARD:     ("subtitle.preview.cls_hard",     "#c00"),
+    CLASS_FIXABLE:  ("subtitle.preview.cls_fixable",  "#a60"),
+    CLASS_ADVISORY: ("subtitle.preview.cls_advisory", "#666"),
 }
 
 
@@ -150,7 +151,7 @@ class _SrtPreviewPane:
 
         # Fix button (visibility toggled per check)
         self._fix_btn = tk.Button(
-            side, text="🔧 一键修复",
+            side, text=tr("subtitle.preview.fix_btn"),
             relief="flat", bg="#fff3cd", fg="#856404",
             font=("Microsoft YaHei UI", 9), cursor="hand2",
             command=self._on_apply_fix,
@@ -205,7 +206,10 @@ class _SrtPreviewPane:
             with open(self.srt_path, "r", encoding="utf-8") as f:
                 raw = f.read()
         except OSError as e:
-            self._text.insert("end", f"读取失败: {e}\n", ("err",))
+            self._text.insert("end",
+                              tr("subtitle.preview.read_failed", error=str(e))
+                              + "\n",
+                              ("err",))
             self._text.config(state="disabled")
             return
 
@@ -232,31 +236,33 @@ class _SrtPreviewPane:
 
     def _render_meta(self, result: CheckResult) -> None:
         bits = [
-            f"{result.cue_count} cues",
+            tr("subtitle.preview.meta_cues", n=result.cue_count),
             _fmt_size(self.srt_path),
-            f"修改于 {_fmt_mtime(self.srt_path)}",
+            tr("subtitle.preview.meta_mtime", ts=_fmt_mtime(self.srt_path)),
         ]
         if self.lang_iso:
-            bits.insert(0, f"语言 {self.lang_iso}")
+            bits.insert(0, tr("subtitle.preview.meta_lang", iso=self.lang_iso))
         self._meta_var.set("  ·  ".join(bits))
 
         if not result.issues:
-            self._summary_var.set("✓ 全部正常")
+            self._summary_var.set(tr("subtitle.preview.all_ok"))
         else:
             chunks = []
             if result.hard_count:
-                chunks.append(f"{result.hard_count} 处必须处理")
+                chunks.append(tr("subtitle.preview.summary_hard",
+                                  n=result.hard_count))
             if result.fixable_count:
-                chunks.append(f"{result.fixable_count} 处可修")
+                chunks.append(tr("subtitle.preview.summary_fixable",
+                                  n=result.fixable_count))
             if result.advisory_count:
-                chunks.append(f"{result.advisory_count} 条建议")
+                chunks.append(tr("subtitle.preview.summary_advisory",
+                                  n=result.advisory_count))
             self._summary_var.set("  ·  ".join(chunks))
 
         n_fix = result.fixable_count
         if n_fix > 0:
-            self._fix_btn.config(text=f"🔧 一键修复 ({n_fix})")
-            self._fix_btn.pack(fill="x", pady=(0, 6),
-                                before=self._side_sep)
+            self._fix_btn.config(text=tr("subtitle.preview.fix_btn_n", n=n_fix))
+            self._fix_btn.pack(fill="x", pady=(0, 6), before=self._side_sep)
         else:
             self._fix_btn.pack_forget()
 
@@ -266,7 +272,7 @@ class _SrtPreviewPane:
 
         if not result.issues:
             tk.Label(self._list_inner,
-                     text="✓ 未发现任何问题。",
+                     text=tr("subtitle.preview.no_issues"),
                      bg="white", fg="#999",
                      font=("Microsoft YaHei UI", 9, "italic"),
                      anchor="w",
@@ -277,9 +283,10 @@ class _SrtPreviewPane:
             items = result.by_class(cls)
             if not items:
                 continue
-            title, color = _CLASS_HEAD[cls]
-            tk.Label(self._list_inner,
-                     text=f"{title} ({len(items)})",
+            title_key, color = _CLASS_KEY[cls]
+            header = tr("subtitle.preview.section_header",
+                        title=tr(title_key), n=len(items))
+            tk.Label(self._list_inner, text=header,
                      bg="white", fg=color,
                      font=("Microsoft YaHei UI", 9, "bold"),
                      anchor="w",
@@ -291,7 +298,7 @@ class _SrtPreviewPane:
         icon = _SEV_ICON.get(issue.severity, "·")
         color = _SEV_COLOR.get(issue.severity, "#222")
         if issue.cue_index == 0:
-            text = f"  {icon}  文件级 — {issue.message}"
+            text = f"  {icon}  {tr('subtitle.preview.file_level')} — {issue.message}"
         else:
             text = f"  {icon}  #{issue.cue_index}  {issue.message}"
         lbl = tk.Label(self._list_inner, text=text,
@@ -326,7 +333,8 @@ class _SrtPreviewPane:
         try:
             res = apply_auto_fixes(self.srt_path)
         except Exception as e:
-            messagebox.showerror("清理失败", str(e), parent=self.frame)
+            messagebox.showerror(tr("subtitle.preview.fix_failed_title"),
+                                 str(e), parent=self.frame)
             return
         if res["cues_fixed"] > 0 and self.on_fixed is not None:
             self.on_fixed()
