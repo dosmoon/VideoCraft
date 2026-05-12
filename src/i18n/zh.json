@@ -1738,5 +1738,14 @@
   "subtitle_tool.project.pick_secondary": "选择副字幕(双语)",
   "subtitle_tool.project.no_subs": "项目还没有字幕。请先在 Sidebar 的 Subtitles 区域生成。",
   "subtitle_tool.project.available_subs": "可用字幕:",
-  "subtitle_tool.project.btn_clear": "清除选择"
+  "subtitle_tool.project.btn_clear": "清除选择",
+
+  "analysis.kind.titles": "标题",
+  "analysis.kind.chapters": "章节",
+  "analysis.kind.transcript": "全文文字稿",
+  "analysis.kind.chapter_transcript": "分章节全文",
+  "analysis.kind.chapter_refined": "分章节精炼",
+  "analysis.kind.hotclips": "热点片段",
+  "analysis_preview.missing": "（产物尚未生成）",
+  "analysis_preview.read_failed": "读取失败: {error}"
 }

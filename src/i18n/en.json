@@ -1738,5 +1738,14 @@
   "subtitle_tool.project.pick_secondary": "Select secondary subtitle (bilingual)",
   "subtitle_tool.project.no_subs": "Project has no subtitles yet. Generate them from the Subtitles section in the sidebar.",
   "subtitle_tool.project.available_subs": "Available subtitles:",
-  "subtitle_tool.project.btn_clear": "Clear selection"
+  "subtitle_tool.project.btn_clear": "Clear selection",
+
+  "analysis.kind.titles": "Titles",
+  "analysis.kind.chapters": "Chapters",
+  "analysis.kind.transcript": "Transcript",
+  "analysis.kind.chapter_transcript": "Chapter Transcript",
+  "analysis.kind.chapter_refined": "Chapter Refined",
+  "analysis.kind.hotclips": "Hot Clips",
+  "analysis_preview.missing": "(not generated yet)",
+  "analysis_preview.read_failed": "Read failed: {error}"
 }

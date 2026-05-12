@@ -626,6 +626,17 @@ class VideoCraftHub:
             self._preview_key = key
         self._select_tab(PREVIEW_TAB_KEY)
 
+    def show_analysis_preview(self, artifact) -> None:
+        """Sidebar click handler: preview a subtitle analysis artifact in tab 0."""
+        from ui.subtitle_analysis_preview import build_analysis_preview
+        key = f"analysis:{artifact.lang_iso}:{artifact.type.kind}"
+        if self._preview_key != key:
+            self._clear_preview_tab()
+            frame = build_analysis_preview(self._preview_tab, artifact)
+            frame.pack(fill="both", expand=True)
+            self._preview_key = key
+        self._select_tab(PREVIEW_TAB_KEY)
+
     def show_derivative_video_preview(self, video_path: str) -> None:
         """Sidebar click handler: preview a derivative output video."""
         if not os.path.isfile(video_path):
@@ -1136,7 +1147,31 @@ class VideoCraftHub:
                           self._on_regenerate_subtitle(l, s),
                       ).pack(side="right", padx=2)
 
+            # Analysis artifacts (titles / chapters / hotclips / ...) as indented
+            # sub-rows below the language row. Only existing artifacts are shown
+            # in P1; the [+ generate] affordance lands in P2.
+            self._populate_analysis_rows(lang)
+
         self._subtitles_primary_btn.config(text=tr("hub.button.add_translation"), state="normal")
+
+    def _populate_analysis_rows(self, lang_iso: str) -> None:
+        """Render one indented sub-row per existing analysis artifact for the
+        given subtitle language. Skips silently if nothing is on disk."""
+        from core.subtitle_analysis import existing_artifacts
+        artifacts = existing_artifacts(self.project.subtitles_dir, lang_iso)
+        for art in artifacts:
+            row = tk.Frame(self._subtitles_lang_box, bg="#f5f5f5")
+            row.pack(fill="x", pady=0)
+            tk.Label(row, text="     " + art.type.icon, bg="#f5f5f5",
+                     fg="#555", font=("", 9), anchor="w", width=4,
+                     ).pack(side="left")
+            display = tr(f"analysis.kind.{art.type.kind}")
+            tk.Label(row, text=display, bg="#f5f5f5", fg="#333",
+                     font=("", 9), anchor="w",
+                     ).pack(side="left", fill="x", expand=True)
+            for w in (row,) + tuple(row.winfo_children()):
+                w.bind("<Button-1>", lambda _e, a=art: self.show_analysis_preview(a))
+                w.configure(cursor="hand2")
 
     def _on_regenerate_subtitle(self, lang_iso: str, is_source: bool) -> None:
         """Per-row [↻]: re-run ASR for the source row or re-translate for a
