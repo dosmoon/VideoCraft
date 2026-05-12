@@ -44,6 +44,15 @@ REGISTRY: list[DerivativeType] = [
         description_zh="把源视频和字幕烧录成成片(单语或双语)",
         description_en="Render the source video with burned-in subtitles",
     ),
+    DerivativeType(
+        type_name="clip",
+        i18n_key="derivative.clip",
+        tool_key="clip",
+        default_basename="default",
+        single_instance=False,
+        description_zh="基于字幕热点片段，批量切出短视频",
+        description_en="Batch-cut short clips from subtitle hotclips",
+    ),
 ]
 
 _BY_NAME: dict[str, DerivativeType] = {t.type_name: t for t in REGISTRY}

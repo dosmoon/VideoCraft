@@ -1772,5 +1772,24 @@
   "dialog.source_context.platform_tone": "Platform tone:",
   "dialog.source_context.notes": "Notes:",
   "dialog.source_context.hint": "Context is fed to AI (chapters/titles/hotclips) to produce on-target outputs. All fields optional.",
-  "dialog.source_context.btn_save": "Save"
+  "dialog.source_context.btn_save": "Save",
+
+  "derivative.clip": "Clip",
+  "clip_tool.tab_title": "Clip / {instance}",
+  "clip_tool.lang_label": "Hotclips source:",
+  "clip_tool.candidates": "Candidates",
+  "clip_tool.btn_select_all": "Select All",
+  "clip_tool.btn_select_none": "Select None",
+  "clip_tool.btn_render": "Render Selected",
+  "clip_tool.status_no_hotclips": "No hotclips yet. Generate them via the [+] menu on a subtitle row.",
+  "clip_tool.status_loaded": "{n} candidates loaded",
+  "clip_tool.status_load_failed": "Load failed: {error}",
+  "clip_tool.warn_no_selection": "Please select at least one clip to render.",
+  "clip_tool.warn_no_valid_plan": "Selected clips have invalid timestamps.",
+  "clip_tool.err_no_source": "Source video is missing.",
+  "clip_tool.rendering": "Rendering...",
+  "clip_tool.progress_fmt": "{done}/{total}  ·  {label}",
+  "clip_tool.error_line": "  #{index}: {error}",
+  "clip_tool.done_ok": "Rendered {n} clip(s).",
+  "clip_tool.done_with_errors": "Done: {rendered} succeeded, {errors} failed\n\n{detail}"
 }

@@ -41,6 +41,7 @@ TOOL_MAP = {
     "speech2text": {"file": "tools/speech/speech2text.py",         "class": "Speech2TextApp"},
     "translate":   {"file": "tools/translate/translate_srt.py",    "class": "TranslateApp"},
     "subtitle":    {"file": "tools/subtitle/subtitle_tool.py",     "class": "SubtitleToolApp"},
+    "clip":        {"file": "tools/clip/clip_tool.py",             "class": "ClipToolApp"},
     "word-subtitle": {"file": "tools/subtitle/word_subtitle.py",   "class": "WordSubtitleApp"},
     "srt-extract-subtitles":  {"file": "tools/subtitle/srt_tools.py", "class": "SrtExtractSubtitlesApp"},
     "srt-gen-segments":       {"file": "tools/subtitle/srt_tools.py", "class": "SrtGenerateSegmentsApp"},
@@ -1910,7 +1911,7 @@ class VideoCraftHub:
                 kwargs["initial_file"] = initial_file
             # Project-aware tools: subtitle_tool is the first one wired here
             # (字幕视频 workbench). Others can opt in by accepting these kwargs.
-            if tool_key == "subtitle" and project is not None:
+            if tool_key in ("subtitle", "clip") and project is not None:
                 kwargs["project"] = project
                 kwargs["instance_name"] = instance_name
             app = cls(tf, **kwargs) if kwargs else cls(tf)
