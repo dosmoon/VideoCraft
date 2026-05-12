@@ -1068,6 +1068,16 @@ class VideoCraftHub:
         from core import lang_names
         from core.subtitle_check import check_srt
 
+        # Auto-refresh runs every 2s and would otherwise destroy+rebuild the
+        # whole section on every tick, causing visible flicker — especially
+        # noticeable now that analysis sub-rows multiply the widget count.
+        # Gate on a cheap content snapshot of subtitles/ + source language
+        # state; bail out early when nothing relevant has changed.
+        snapshot = self._subtitles_section_snapshot()
+        if snapshot == getattr(self, "_subtitles_snapshot", None):
+            return
+        self._subtitles_snapshot = snapshot
+
         # Rebuild language rows from scratch each refresh — simplest and the
         # widget count is tiny (1~3 rows in practice).
         for child in self._subtitles_lang_box.winfo_children():
@@ -1227,6 +1237,30 @@ class VideoCraftHub:
             return
 
         self._refresh_subtitles_section()
+
+    def _subtitles_section_snapshot(self) -> tuple:
+        """Cheap fingerprint of what _refresh_subtitles_section renders.
+
+        Walks subtitles/ once collecting (name, size, mtime) for every entry
+        plus the project's source-language pointer (drives the role label).
+        Same shape as _folder_snapshot but scoped to subtitles/ since that's
+        what this section reads.
+        """
+        result: list = []
+        subs_dir = self.project.subtitles_dir
+        try:
+            for name in os.listdir(subs_dir):
+                p = os.path.join(subs_dir, name)
+                try:
+                    st = os.stat(p)
+                    result.append((name, st.st_size, round(st.st_mtime, 1)))
+                except OSError:
+                    result.append((name, -1, 0))
+        except OSError:
+            pass
+        result.sort()
+        src_lang = self.project.meta.language.source or ""
+        return (tuple(result), src_lang, self.project.source_status())
 
     def _populate_analysis_rows(self, lang_iso: str) -> None:
         """Render one indented sub-row per existing analysis artifact for the
