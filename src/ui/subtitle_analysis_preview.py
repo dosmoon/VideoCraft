@@ -22,8 +22,18 @@ from core.subtitle_analysis import AnalysisArtifact, get_type
 from i18n import tr
 
 
-def build_analysis_preview(parent: tk.Frame, artifact: AnalysisArtifact) -> tk.Frame:
-    """Build the analysis preview UI inside parent. Returns the outer Frame."""
+def build_analysis_preview(
+    parent: tk.Frame,
+    artifact: AnalysisArtifact,
+    *,
+    on_clip_clicked=None,
+) -> tk.Frame:
+    """Build the analysis preview UI inside parent. Returns the outer Frame.
+
+    `on_clip_clicked(clip_dict)` is invoked when the user clicks a hotclip
+    card; ignored for other analysis kinds. Hub uses it to switch tab 0
+    to the source SRT scrolled to the clip's start cue.
+    """
     outer = tk.Frame(parent, bg="white")
 
     # Header
@@ -59,7 +69,7 @@ def build_analysis_preview(parent: tk.Frame, artifact: AnalysisArtifact) -> tk.F
 
     try:
         if artifact.type.format == "json":
-            _render_json(body, artifact)
+            _render_json(body, artifact, on_clip_clicked=on_clip_clicked)
         else:
             _render_markdown(body, artifact)
     except Exception as e:
@@ -74,7 +84,8 @@ def build_analysis_preview(parent: tk.Frame, artifact: AnalysisArtifact) -> tk.F
 
 # ── Format-specific renderers ────────────────────────────────────────────────
 
-def _render_json(parent: tk.Frame, artifact: AnalysisArtifact) -> None:
+def _render_json(parent: tk.Frame, artifact: AnalysisArtifact,
+                 *, on_clip_clicked=None) -> None:
     with open(artifact.path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -84,7 +95,7 @@ def _render_json(parent: tk.Frame, artifact: AnalysisArtifact) -> None:
     elif kind == "chapters":
         _render_chapters(parent, data)
     elif kind == "hotclips":
-        _render_hotclips(parent, data)
+        _render_hotclips(parent, data, on_clip_clicked=on_clip_clicked)
     else:
         _render_raw_json(parent, data)
 
@@ -141,7 +152,7 @@ def _render_chapters(parent: tk.Frame, data) -> None:
                  ).pack(side="left", fill="x", expand=True)
 
 
-def _render_hotclips(parent: tk.Frame, data) -> None:
+def _render_hotclips(parent: tk.Frame, data, *, on_clip_clicked=None) -> None:
     clips = data.get("clips") if isinstance(data, dict) else data
     if not isinstance(clips, list):
         _render_raw_json(parent, data)
@@ -189,7 +200,27 @@ def _render_hotclips(parent: tk.Frame, data) -> None:
             tk.Label(card, text="🏷 " + title, bg="#fafafa", fg="#222",
                      font=("Microsoft YaHei UI", 9, "italic"),
                      wraplength=560, justify="left", anchor="w",
+                     ).pack(fill="x", padx=8, pady=(0, 2))
+        hashtags = c.get("suggested_hashtags") or []
+        if isinstance(hashtags, list) and hashtags:
+            tk.Label(card, text="  ".join(str(t) for t in hashtags if t),
+                     bg="#fafafa", fg="#0070c0",
+                     font=("Microsoft YaHei UI", 9),
+                     wraplength=560, justify="left", anchor="w",
                      ).pack(fill="x", padx=8, pady=(0, 6))
+
+        # Make the whole card clickable: hover cursor + Button-1 dispatch.
+        if on_clip_clicked is not None:
+            _bind_clip_click(card, c, on_clip_clicked)
+
+
+def _bind_clip_click(widget: tk.Widget, clip: dict, callback) -> None:
+    """Recursively bind Button-1 on a widget tree so clicks anywhere on a
+    hotclip card route to `callback(clip)`."""
+    widget.bind("<Button-1>", lambda _e, c=clip: callback(c))
+    widget.configure(cursor="hand2")
+    for child in widget.winfo_children():
+        _bind_clip_click(child, clip, callback)
 
 
 def _render_raw_json(parent: tk.Frame, data) -> None:

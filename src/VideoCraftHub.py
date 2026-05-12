@@ -603,8 +603,13 @@ class VideoCraftHub:
                  wraplength=500, justify="center").pack()
         self._preview_key = "placeholder"
 
-    def show_subtitle_preview(self, srt_path: str, lang_iso: str) -> None:
-        """Sidebar click handler: show SRT contents + inline issues."""
+    def show_subtitle_preview(self, srt_path: str, lang_iso: str,
+                              *, jump_to_sec: float | None = None) -> None:
+        """Sidebar click handler: show SRT contents + inline issues.
+
+        When `jump_to_sec` is provided (e.g. clicking a hotclip card), the
+        SRT preview pane scrolls to the cue containing that timestamp.
+        """
         from ui.srt_preview_pane import build_srt_preview
         key = f"subtitle:{lang_iso}"
         if self._preview_key != key:
@@ -622,18 +627,48 @@ class VideoCraftHub:
                 lang_iso=lang_iso,
                 reference_srt_path=ref_path,
                 on_fixed=self._refresh_subtitles_section,
+                jump_to_sec=jump_to_sec,
             )
             frame.pack(fill="both", expand=True)
             self._preview_key = key
+        elif jump_to_sec is not None:
+            # Same SRT already shown; re-jump without rebuilding the pane.
+            for child in self._preview_tab.winfo_children():
+                pane = getattr(child, "_srt_pane", None)
+                if pane is not None:
+                    pane.jump_to_time(jump_to_sec)
+                    break
         self._select_tab(PREVIEW_TAB_KEY)
 
     def show_analysis_preview(self, artifact) -> None:
-        """Sidebar click handler: preview a subtitle analysis artifact in tab 0."""
+        """Sidebar click handler: preview a subtitle analysis artifact in tab 0.
+
+        For `hotclips`, cards are clickable: clicking one swaps tab 0 to the
+        source SRT preview scrolled to the clip's start cue. Lets the user
+        sanity-check AI picks against the actual transcript without leaving
+        the project tab.
+        """
         from ui.subtitle_analysis_preview import build_analysis_preview
         key = f"analysis:{artifact.lang_iso}:{artifact.type.kind}"
         if self._preview_key != key:
             self._clear_preview_tab()
-            frame = build_analysis_preview(self._preview_tab, artifact)
+
+            from core.clip_render import _parse_ts as _parse_clip_time_to_sec
+
+            def _on_clip_clicked(clip: dict) -> None:
+                start_sec = _parse_clip_time_to_sec(clip.get("start", ""))
+                srt_path = os.path.join(self.project.subtitles_dir,
+                                        f"{artifact.lang_iso}.srt")
+                if os.path.isfile(srt_path):
+                    self.show_subtitle_preview(
+                        srt_path, artifact.lang_iso,
+                        jump_to_sec=start_sec,
+                    )
+
+            frame = build_analysis_preview(
+                self._preview_tab, artifact,
+                on_clip_clicked=_on_clip_clicked,
+            )
             frame.pack(fill="both", expand=True)
             self._preview_key = key
         self._select_tab(PREVIEW_TAB_KEY)
