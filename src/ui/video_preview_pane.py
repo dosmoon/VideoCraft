@@ -16,6 +16,7 @@ import os
 import tkinter as tk
 
 from ui.web_preview import WebPreviewFrame
+from i18n import tr
 
 
 _HTML_TEMPLATE = """<!doctype html>
@@ -68,7 +69,7 @@ def build_video_preview(
     body.pack(fill="both", expand=True, padx=12, pady=(0, 10))
 
     if not os.path.isfile(video_path):
-        tk.Label(body, text="✗ 视频不存在", bg="black", fg="#aaa",
+        tk.Label(body, text=tr("video_preview.missing"), bg="black", fg="#aaa",
                  font=("Microsoft YaHei UI", 11),
                  ).pack(expand=True)
         return outer

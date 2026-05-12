@@ -23,6 +23,7 @@ from tkinter import filedialog, ttk
 from typing import Optional
 
 from core import settings
+from i18n import tr
 
 
 # Settings keys — also read by sidebar Source-add dialog and Preferences.
@@ -76,7 +77,7 @@ class _NewProjectDialog:
         self._result: Optional[NewProjectRequest] = None
 
         self.win = tk.Toplevel(parent)
-        self.win.title("新建项目")
+        self.win.title(tr("dialog.new_project.title"))
         self.win.transient(parent.winfo_toplevel())
         self.win.resizable(False, False)
         self.win.grab_set()
@@ -93,14 +94,14 @@ class _NewProjectDialog:
         body = ttk.Frame(self.win, padding=20)
         body.pack(fill="both", expand=True)
 
-        ttk.Label(body, text="新建项目",
+        ttk.Label(body, text=tr("dialog.new_project.heading"),
                   font=("Microsoft YaHei UI", 13, "bold")
                   ).pack(anchor="w", pady=(0, 12))
 
         # Project name
         row1 = ttk.Frame(body)
         row1.pack(fill="x", pady=4)
-        ttk.Label(row1, text="项目名:", width=8, anchor="e"
+        ttk.Label(row1, text=tr("dialog.new_project.label_name"), width=8, anchor="e"
                   ).pack(side="left", padx=(0, 6))
         name_entry = ttk.Entry(row1, textvariable=self._name_var, width=40)
         name_entry.pack(side="left", fill="x", expand=True)
@@ -109,17 +110,17 @@ class _NewProjectDialog:
         # Parent directory
         row2 = ttk.Frame(body)
         row2.pack(fill="x", pady=4)
-        ttk.Label(row2, text="保存到:", width=8, anchor="e"
+        ttk.Label(row2, text=tr("dialog.new_project.label_location"), width=8, anchor="e"
                   ).pack(side="left", padx=(0, 6))
         ttk.Entry(row2, textvariable=self._parent_var
                   ).pack(side="left", fill="x", expand=True)
-        ttk.Button(row2, text="浏览...", command=self._on_pick_parent
+        ttk.Button(row2, text=tr("dialog.new_project.btn_browse"), command=self._on_pick_parent
                    ).pack(side="left", padx=(6, 0))
 
         # Hint about empty project
         ttk.Label(
             body,
-            text="项目创建后即可添加源视频和字幕。",
+            text=tr("dialog.new_project.hint"),
             font=("Microsoft YaHei UI", 8), foreground="#888",
         ).pack(anchor="w", pady=(8, 0))
 
@@ -133,9 +134,9 @@ class _NewProjectDialog:
         # Buttons
         btns = ttk.Frame(body)
         btns.pack(fill="x", pady=(10, 0))
-        ttk.Button(btns, text="取消", command=self._on_cancel
+        ttk.Button(btns, text=tr("dialog.common.btn_cancel"), command=self._on_cancel
                    ).pack(side="right", padx=(8, 0))
-        ttk.Button(btns, text="创建项目", command=self._on_create
+        ttk.Button(btns, text=tr("dialog.new_project.btn_create"), command=self._on_create
                    ).pack(side="right")
 
         # Enter creates, Escape cancels.
@@ -147,7 +148,7 @@ class _NewProjectDialog:
         initial = cur if cur and os.path.isdir(cur) else _default_parent_dir()
         path = filedialog.askdirectory(
             parent=self.win,
-            title="选择项目存放位置",
+            title=tr("dialog.new_project.pick_location_title"),
             initialdir=initial,
         )
         if path:
@@ -157,29 +158,27 @@ class _NewProjectDialog:
         # Validate name
         name = self._name_var.get().strip()
         if not name:
-            return self._show_error("请填入项目名")
+            return self._show_error(tr("dialog.new_project.err_empty_name"))
         sanitized = _sanitize_name(name)
         if sanitized != name:
-            return self._show_error(
-                "项目名包含非法字符 (\\ / : * ? \" < > |),请修改"
-            )
+            return self._show_error(tr("dialog.new_project.err_illegal_chars"))
         if len(sanitized) > 64:
-            return self._show_error("项目名过长(超过 64 字符)")
+            return self._show_error(tr("dialog.new_project.err_name_too_long"))
 
         # Validate parent dir
         parent_dir = self._parent_var.get().strip()
         if not parent_dir:
-            return self._show_error("请选择保存位置")
+            return self._show_error(tr("dialog.new_project.err_select_location"))
         if not os.path.isdir(parent_dir):
             try:
                 os.makedirs(parent_dir, exist_ok=True)
             except OSError as e:
-                return self._show_error(f"无法创建保存目录: {e}")
+                return self._show_error(tr("dialog.new_project.err_mkdir_failed", error=str(e)))
         if not os.access(parent_dir, os.W_OK):
-            return self._show_error("保存目录不可写")
+            return self._show_error(tr("dialog.new_project.err_parent_not_writable"))
 
         if os.path.exists(os.path.join(parent_dir, sanitized)):
-            return self._show_error(f"项目目录已存在: {sanitized}")
+            return self._show_error(tr("dialog.new_project.err_dir_exists", name=sanitized))
 
         # Remember the parent for next time.
         settings.set_(SETTINGS_KEY_LAST_PARENT, parent_dir)

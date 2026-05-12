@@ -24,6 +24,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from project import Project, get_recent_projects, add_recent_project
 from ui.new_project_dialog import show_new_project_dialog
+from i18n import tr
 
 
 # ── Visual constants ──────────────────────────────────────────────────────────
@@ -79,25 +80,25 @@ class _LauncherWindow:
         header.pack(fill="x", padx=24, pady=(24, 8))
         tk.Label(header, text="VideoCraft", font=("Microsoft YaHei UI", 18, "bold"),
                  bg=BG, fg=TEXT_DARK).pack(anchor="w")
-        tk.Label(header, text="源视频派生创作工具", font=("Microsoft YaHei UI", 10),
+        tk.Label(header, text=tr("launcher.tagline"), font=("Microsoft YaHei UI", 10),
                  bg=BG, fg=TEXT_MUTED).pack(anchor="w", pady=(2, 0))
 
         # Primary actions
         actions = tk.Frame(self.root, bg=BG)
         actions.pack(fill="x", padx=24, pady=(16, 8))
-        tk.Button(actions, text="  +  新建项目", font=("Microsoft YaHei UI", 11),
+        tk.Button(actions, text=tr("launcher.btn_new"), font=("Microsoft YaHei UI", 11),
                   command=self._on_new_project,
                   bg=ACCENT, fg="white", relief="flat", padx=10, pady=8,
                   cursor="hand2", activebackground="#005ea2"
                   ).pack(fill="x", pady=(0, 6))
-        tk.Button(actions, text="  □  打开已有项目...", font=("Microsoft YaHei UI", 11),
+        tk.Button(actions, text=tr("launcher.btn_open"), font=("Microsoft YaHei UI", 11),
                   command=self._on_open_existing,
                   bg="#e0e0e0", fg=TEXT_DARK, relief="flat", padx=10, pady=8,
                   cursor="hand2", activebackground="#d0d0d0"
                   ).pack(fill="x")
 
         # Recent projects
-        tk.Label(self.root, text="最近项目", font=("Microsoft YaHei UI", 10, "bold"),
+        tk.Label(self.root, text=tr("launcher.recent_projects"), font=("Microsoft YaHei UI", 10, "bold"),
                  bg=BG, fg=TEXT_DARK).pack(anchor="w", padx=24, pady=(20, 4))
 
         list_frame = tk.Frame(self.root, bg=BG)
@@ -119,7 +120,7 @@ class _LauncherWindow:
         self._recent_tree.delete(*self._recent_tree.get_children())
         recents = get_recent_projects()
         if not recents:
-            self._recent_tree.insert("", "end", text="  (空)", tags=("muted",))
+            self._recent_tree.insert("", "end", text=tr("launcher.recent_empty"), tags=("muted",))
             self._recent_tree.tag_configure("muted", foreground=TEXT_MUTED)
             return
         for path in recents:
@@ -143,13 +144,14 @@ class _LauncherWindow:
         try:
             project = Project.new(req.parent_dir, req.name)
         except FileExistsError as e:
-            messagebox.showerror("无法创建", str(e), parent=self.root)
+            messagebox.showerror(tr("launcher.error.cannot_create"), str(e), parent=self.root)
             return
         except ValueError as e:
-            messagebox.showerror("项目名不合法", str(e), parent=self.root)
+            messagebox.showerror(tr("launcher.error.invalid_name"), str(e), parent=self.root)
             return
         except OSError as e:
-            messagebox.showerror("无法创建", f"目录不可写或磁盘错误:\n{e}",
+            messagebox.showerror(tr("launcher.error.cannot_create"),
+                                 tr("launcher.error.disk_error", error=str(e)),
                                  parent=self.root)
             return
 
@@ -159,7 +161,7 @@ class _LauncherWindow:
 
     def _on_open_existing(self) -> None:
         path = filedialog.askdirectory(
-            title="选择项目文件夹",
+            title=tr("launcher.dialog.select_folder"),
             parent=self.root,
         )
         if not path:
@@ -175,7 +177,8 @@ class _LauncherWindow:
             return
         if not os.path.isdir(path):
             messagebox.showwarning(
-                "项目不存在", f"路径不存在或已被移动:\n{path}",
+                tr("launcher.error.project_missing"),
+                tr("launcher.error.path_not_exist", path=path),
                 parent=self.root,
             )
             # Remove from recent list (get_recent_projects already filters,
@@ -188,7 +191,7 @@ class _LauncherWindow:
         try:
             project = Project.open(path)
         except Exception as e:
-            messagebox.showerror("打开失败", str(e), parent=self.root)
+            messagebox.showerror(tr("launcher.error.open_failed"), str(e), parent=self.root)
             return
         add_recent_project(project.folder)
         self._selected_project = project

@@ -24,9 +24,13 @@ from tkinter import filedialog, ttk
 from typing import Optional
 
 from core.lang_names import WHISPER_LANG_CHOICES, WHISPER_DISPLAY_TO_ISO
+from i18n import tr
 
 
-_AUTO_DETECT_DISPLAY = "自动检测"
+def _auto_detect_display() -> str:
+    return tr("dialog.asr.auto_detect")
+
+
 _AUTO_DETECT_ISO = None
 
 
@@ -46,16 +50,16 @@ class _AsrDialog:
         self._result: Optional[dict] = None
 
         self.win = tk.Toplevel(parent)
-        self.win.title("生成字幕")
+        self.win.title(tr("dialog.asr.title"))
         self.win.transient(parent.winfo_toplevel())
         self.win.resizable(False, False)
         self.win.grab_set()
         self.win.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
         self._mode_var = tk.StringVar(value="asr")
-        self._lang_var = tk.StringVar(value=_AUTO_DETECT_DISPLAY)
+        self._lang_var = tk.StringVar(value=_auto_detect_display())
         self._import_path_var = tk.StringVar()
-        self._import_lang_var = tk.StringVar(value=_AUTO_DETECT_DISPLAY)
+        self._import_lang_var = tk.StringVar(value=_auto_detect_display())
         self._error_var = tk.StringVar()
 
         self._build_ui()
@@ -66,22 +70,22 @@ class _AsrDialog:
         body = ttk.Frame(self.win, padding=20)
         body.pack(fill="both", expand=True)
 
-        ttk.Label(body, text="生成字幕",
+        ttk.Label(body, text=tr("dialog.asr.heading"),
                   font=("Microsoft YaHei UI", 12, "bold")
                   ).pack(anchor="w", pady=(0, 10))
 
         # Mode radios
-        ttk.Radiobutton(body, text="自动生成 (ASR)", value="asr",
+        ttk.Radiobutton(body, text=tr("dialog.asr.option_auto"), value="asr",
                         variable=self._mode_var, command=self._update_mode
                         ).pack(anchor="w")
-        ttk.Radiobutton(body, text="导入已有 SRT 文件", value="import",
+        ttk.Radiobutton(body, text=tr("dialog.asr.option_import"), value="import",
                         variable=self._mode_var, command=self._update_mode
                         ).pack(anchor="w", pady=(2, 8))
 
         # ASR sub-frame
         self._asr_frame = ttk.Frame(body, padding=(20, 0, 0, 8))
-        ttk.Label(self._asr_frame, text="源视频语言:").pack(side="left")
-        lang_choices = [_AUTO_DETECT_DISPLAY] + [d for _, d in WHISPER_LANG_CHOICES]
+        ttk.Label(self._asr_frame, text=tr("dialog.asr.source_lang")).pack(side="left")
+        lang_choices = [_auto_detect_display()] + [d for _, d in WHISPER_LANG_CHOICES]
         ttk.Combobox(self._asr_frame, textvariable=self._lang_var,
                      values=lang_choices, state="readonly", width=20
                      ).pack(side="left", padx=(6, 0))
@@ -90,15 +94,15 @@ class _AsrDialog:
         self._import_frame = ttk.Frame(body, padding=(20, 0, 0, 8))
         row1 = ttk.Frame(self._import_frame)
         row1.pack(fill="x", pady=(0, 4))
-        ttk.Label(row1, text="SRT 文件:", width=10
+        ttk.Label(row1, text=tr("dialog.asr.srt_file"), width=10
                   ).pack(side="left")
         ttk.Entry(row1, textvariable=self._import_path_var
                   ).pack(side="left", fill="x", expand=True)
-        ttk.Button(row1, text="选择...", command=self._on_pick_srt
+        ttk.Button(row1, text=tr("dialog.common.btn_select"), command=self._on_pick_srt
                    ).pack(side="left", padx=(6, 0))
         row2 = ttk.Frame(self._import_frame)
         row2.pack(fill="x")
-        ttk.Label(row2, text="字幕语言:", width=10
+        ttk.Label(row2, text=tr("dialog.asr.subtitle_lang"), width=10
                   ).pack(side="left")
         ttk.Combobox(row2, textvariable=self._import_lang_var,
                      values=[d for _, d in WHISPER_LANG_CHOICES],
@@ -109,9 +113,9 @@ class _AsrDialog:
         ttk.Separator(body, orient="horizontal").pack(fill="x", pady=(8, 6))
         btns = ttk.Frame(body)
         btns.pack(fill="x")
-        ttk.Button(btns, text="取消", command=self._on_cancel
+        ttk.Button(btns, text=tr("dialog.common.btn_cancel"), command=self._on_cancel
                    ).pack(side="right", padx=(8, 0))
-        ttk.Button(btns, text="开始", command=self._on_submit
+        ttk.Button(btns, text=tr("dialog.common.btn_start"), command=self._on_submit
                    ).pack(side="right")
 
         ttk.Label(body, textvariable=self._error_var,
@@ -131,8 +135,8 @@ class _AsrDialog:
     def _on_pick_srt(self) -> None:
         path = filedialog.askopenfilename(
             parent=self.win,
-            title="选择 SRT 文件",
-            filetypes=[("SubRip 字幕", "*.srt"), ("所有文件", "*.*")],
+            title=tr("dialog.asr.pick_srt_title"),
+            filetypes=[(tr("dialog.asr.filter_srt"), "*.srt"), (tr("dialog.source_add.filter_all"), "*.*")],
         )
         if path:
             self._import_path_var.set(path)
@@ -141,25 +145,25 @@ class _AsrDialog:
         mode = self._mode_var.get()
         if mode == "asr":
             disp = self._lang_var.get()
-            lang_iso = (None if disp == _AUTO_DETECT_DISPLAY
+            lang_iso = (None if disp == _auto_detect_display()
                         else WHISPER_DISPLAY_TO_ISO.get(disp))
             self._result = {"mode": "asr", "lang_iso": lang_iso}
         else:
             path = self._import_path_var.get().strip()
             if not path:
-                self._error_var.set("请选择 SRT 文件")
+                self._error_var.set(tr("dialog.asr.err_select_srt"))
                 return
             import os
             if not os.path.isfile(path):
-                self._error_var.set("文件不存在")
+                self._error_var.set(tr("dialog.asr.err_file_missing"))
                 return
             disp = self._import_lang_var.get()
-            if disp == _AUTO_DETECT_DISPLAY:
-                self._error_var.set("导入需指定字幕语言")
+            if disp == _auto_detect_display():
+                self._error_var.set(tr("dialog.asr.err_import_need_lang"))
                 return
             iso = WHISPER_DISPLAY_TO_ISO.get(disp)
             if not iso:
-                self._error_var.set("未知语言")
+                self._error_var.set(tr("dialog.asr.err_unknown_lang"))
                 return
             self._result = {"mode": "import", "path": path, "lang_iso": iso}
         self.win.destroy()
@@ -196,7 +200,7 @@ def show_translate_dialog(
     from core import lang_names
 
     win = tk.Toplevel(parent)
-    win.title("添加翻译")
+    win.title(tr("dialog.translate.title"))
     win.transient(parent.winfo_toplevel())
     win.resizable(False, False)
     win.grab_set()
@@ -208,7 +212,7 @@ def show_translate_dialog(
 
     src_label = lang_names.friendly_name(source_lang_iso, "zh")
     ttk.Label(body,
-              text=f"从源语言 {src_label} ({source_lang_iso}.srt) 翻译到:",
+              text=tr("dialog.translate.from_to", lang=src_label, iso=source_lang_iso),
               font=("Microsoft YaHei UI", 10)
               ).pack(anchor="w")
 
@@ -222,12 +226,12 @@ def show_translate_dialog(
     if existing_targets:
         existing_str = ", ".join(existing_targets)
         ttk.Label(body,
-                  text=f"已有翻译: {existing_str}",
+                  text=tr("dialog.translate.existing", langs=existing_str),
                   font=("Microsoft YaHei UI", 8), foreground="#888"
                   ).pack(anchor="w", pady=(8, 0))
 
     ttk.Label(body,
-              text="若目标语言已存在,旧字幕将被覆盖。",
+              text=tr("dialog.translate.will_overwrite"),
               font=("Microsoft YaHei UI", 8), foreground="#888"
               ).pack(anchor="w", pady=(4, 0))
 
@@ -245,9 +249,9 @@ def show_translate_dialog(
         result[0] = None
         win.destroy()
 
-    ttk.Button(btns, text="取消", command=on_cancel
+    ttk.Button(btns, text=tr("dialog.common.btn_cancel"), command=on_cancel
                ).pack(side="right", padx=(8, 0))
-    ttk.Button(btns, text="开始翻译", command=on_submit
+    ttk.Button(btns, text=tr("dialog.translate.btn_start"), command=on_submit
                ).pack(side="right")
     win.protocol("WM_DELETE_WINDOW", on_cancel)
 
@@ -269,8 +273,8 @@ def confirm_regenerate(parent: tk.Misc) -> bool:
     """
     from tkinter import messagebox
     return messagebox.askyesno(
-        "重新生成字幕",
-        "重新生成将覆盖现有所有字幕文件 (源语言 + 所有翻译)。\n\n确定继续吗?",
+        tr("hub.subtitle.regenerate.title"),
+        tr("dialog.regenerate_all.message"),
         default="no",
         parent=parent,
     )

@@ -25,6 +25,7 @@ from typing import Optional, Tuple
 
 from project import Project
 from core import derivative_types
+from i18n import tr
 
 
 def show_type_picker(
@@ -52,7 +53,7 @@ class _TypePickerDialog:
         self._result: Optional[Tuple[str, str]] = None
 
         self.win = tk.Toplevel(parent)
-        self.win.title("新建派生")
+        self.win.title(tr("dialog.new_derivative.title"))
         self.win.transient(parent.winfo_toplevel())
         self.win.resizable(False, False)
         self.win.grab_set()
@@ -73,12 +74,12 @@ class _TypePickerDialog:
         body = ttk.Frame(self.win, padding=20)
         body.pack(fill="both", expand=True)
 
-        ttk.Label(body, text="新建派生",
+        ttk.Label(body, text=tr("dialog.new_derivative.heading"),
                   font=("Microsoft YaHei UI", 13, "bold")
                   ).pack(anchor="w", pady=(0, 10))
 
         # Type radios with descriptions
-        types_box = ttk.LabelFrame(body, text="类型", padding=10)
+        types_box = ttk.LabelFrame(body, text=tr("dialog.new_derivative.section_type"), padding=10)
         types_box.pack(fill="x", pady=(0, 12))
         for t in derivative_types.all_types():
             row = ttk.Frame(types_box)
@@ -97,7 +98,7 @@ class _TypePickerDialog:
         # Instance name + preview path
         name_box = ttk.Frame(body)
         name_box.pack(fill="x", pady=(0, 4))
-        ttk.Label(name_box, text="实例名:", width=8, anchor="e"
+        ttk.Label(name_box, text=tr("dialog.new_derivative.label_instance"), width=8, anchor="e"
                   ).pack(side="left", padx=(0, 6))
         ttk.Entry(name_box, textvariable=self._name_var, width=36
                   ).pack(side="left", fill="x", expand=True)
@@ -123,9 +124,9 @@ class _TypePickerDialog:
         # Buttons
         btns = ttk.Frame(body)
         btns.pack(fill="x", pady=(10, 0))
-        ttk.Button(btns, text="取消", command=self._on_cancel
+        ttk.Button(btns, text=tr("dialog.common.btn_cancel"), command=self._on_cancel
                    ).pack(side="right", padx=(8, 0))
-        ttk.Button(btns, text="新建并打开", command=self._on_create
+        ttk.Button(btns, text=tr("dialog.new_derivative.btn_create_open"), command=self._on_create
                    ).pack(side="right")
 
     def _auto_name(self) -> None:
@@ -146,7 +147,7 @@ class _TypePickerDialog:
             self._path_preview.config(text="")
             return
         self._path_preview.config(
-            text=f"将创建: derivatives/{type_name}/{inst}/"
+            text=tr("dialog.new_derivative.path_preview", type=type_name, instance=inst)
         )
 
     def _on_create(self) -> None:
@@ -186,7 +187,7 @@ class _InstanceNamerDialog:
         self._result: Optional[str] = None
 
         self.win = tk.Toplevel(parent)
-        title = f"新建 {derivative_types.display_name(type_name)}"
+        title = tr("dialog.new_derivative.title_typed", type=derivative_types.display_name(type_name))
         self.win.title(title)
         self.win.transient(parent.winfo_toplevel())
         self.win.resizable(False, False)
@@ -212,7 +213,7 @@ class _InstanceNamerDialog:
 
         row = ttk.Frame(body)
         row.pack(fill="x")
-        ttk.Label(row, text="实例名:", width=8, anchor="e"
+        ttk.Label(row, text=tr("dialog.new_derivative.label_instance"), width=8, anchor="e"
                   ).pack(side="left", padx=(0, 6))
         ttk.Entry(row, textvariable=self._name_var, width=36
                   ).pack(side="left", fill="x", expand=True)
@@ -231,15 +232,15 @@ class _InstanceNamerDialog:
 
         btns = ttk.Frame(body)
         btns.pack(fill="x", pady=(10, 0))
-        ttk.Button(btns, text="取消", command=self._on_cancel
+        ttk.Button(btns, text=tr("dialog.common.btn_cancel"), command=self._on_cancel
                    ).pack(side="right", padx=(8, 0))
-        ttk.Button(btns, text="新建并打开", command=self._on_create
+        ttk.Button(btns, text=tr("dialog.new_derivative.btn_create_open"), command=self._on_create
                    ).pack(side="right")
 
     def _update_preview(self) -> None:
         inst = self._name_var.get().strip()
         self._path_preview.config(
-            text=f"将创建: derivatives/{self.type_name}/{inst}/" if inst else ""
+            text=tr("dialog.new_derivative.path_preview", type=self.type_name, instance=inst) if inst else ""
         )
 
     def _on_create(self) -> None:
@@ -274,18 +275,18 @@ class _InstanceNamerDialog:
 def _validate_instance_name(project: Project, type_name: str, name: str) -> str:
     """Return human-readable error string, or empty string when OK."""
     if not name:
-        return "实例名不能为空"
+        return tr("dialog.new_derivative.err_empty_name")
     if name != name.strip():
-        return "实例名首尾不能有空格"
+        return tr("dialog.new_derivative.err_name_whitespace")
     if any(c in name for c in r'\/:*?"<>|'):
-        return "实例名包含非法字符 (\\ / : * ? \" < > |)"
+        return tr("dialog.new_derivative.err_illegal_chars")
     if name.startswith("."):
-        return "实例名不能以 . 开头"
+        return tr("dialog.new_derivative.err_leading_dot")
     if len(name) > 64:
-        return "实例名过长(超过 64 字符)"
+        return tr("dialog.new_derivative.err_name_too_long")
     existing = project.list_derivative_instances(type_name)
     if name in existing:
-        return f"实例名 '{name}' 已存在"
+        return tr("dialog.new_derivative.err_name_exists", name=name)
     return ""
 
 

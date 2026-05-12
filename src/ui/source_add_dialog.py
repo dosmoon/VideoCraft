@@ -22,6 +22,7 @@ from typing import Optional
 
 from core.project_schema import Source, ClipRange, ORIGIN_LINK, ORIGIN_LOCAL
 from core.source_acquire import fetch_link_info, parse_hms, AcquireError
+from i18n import tr
 
 
 # Video extension whitelist for the local-file picker.
@@ -30,14 +31,14 @@ VIDEO_EXTS = (".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv")
 
 def show_source_add_dialog(
     parent: tk.Misc,
-    title: str = "添加源视频",
+    title: str | None = None,
     preset: Source | None = None,
 ) -> Optional[Source]:
     """Show the dialog. Returns Source or None if cancelled.
 
     `preset` pre-fills the form (used by the "modify source" path).
     """
-    return _SourceAddDialog(parent, title=title, preset=preset).run()
+    return _SourceAddDialog(parent, title=title or tr("hub.dialog.source.title_add"), preset=preset).run()
 
 
 class _SourceAddDialog:
@@ -81,16 +82,16 @@ class _SourceAddDialog:
         body.pack(fill="both", expand=True)
 
         # ── Source type ──
-        src_box = ttk.LabelFrame(body, text="源视频", padding=10)
+        src_box = ttk.LabelFrame(body, text=tr("dialog.source_add.section_source"), padding=10)
         src_box.pack(fill="x", pady=(0, 8))
 
         radios = ttk.Frame(src_box)
         radios.pack(fill="x")
-        ttk.Radiobutton(radios, text="视频链接", value=ORIGIN_LINK,
+        ttk.Radiobutton(radios, text=tr("dialog.source_add.option_link"), value=ORIGIN_LINK,
                         variable=self._origin_var,
                         command=self._update_source_mode
                         ).pack(side="left", padx=(0, 16))
-        ttk.Radiobutton(radios, text="本地文件", value=ORIGIN_LOCAL,
+        ttk.Radiobutton(radios, text=tr("dialog.source_add.option_local"), value=ORIGIN_LOCAL,
                         variable=self._origin_var,
                         command=self._update_source_mode
                         ).pack(side="left")
@@ -98,41 +99,39 @@ class _SourceAddDialog:
         self._link_row = ttk.Frame(src_box)
         ttk.Entry(self._link_row, textvariable=self._url_var, width=46
                   ).pack(side="left", fill="x", expand=True)
-        ttk.Button(self._link_row, text="获取视频信息",
+        ttk.Button(self._link_row, text=tr("dialog.source_add.btn_fetch_info"),
                    command=self._on_fetch_info
                    ).pack(side="left", padx=(8, 0))
 
         self._local_row = ttk.Frame(src_box)
         ttk.Entry(self._local_row, textvariable=self._local_path_var, width=46
                   ).pack(side="left", fill="x", expand=True)
-        ttk.Button(self._local_row, text="选择文件...",
+        ttk.Button(self._local_row, text=tr("dialog.source_add.btn_select_file"),
                    command=self._on_pick_local
                    ).pack(side="left", padx=(8, 0))
 
         # ── Advanced (collapsed by default) ──
         ttk.Checkbutton(
-            body, text="高级选项",
+            body, text=tr("dialog.source_add.advanced"),
             variable=self._advanced_open,
             command=self._toggle_advanced,
         ).pack(anchor="w", pady=(4, 0))
 
         self._adv_frame = ttk.Frame(body, padding=(20, 4, 0, 0))
-        ttk.Label(self._adv_frame, text="源视频范围(可选):",
+        ttk.Label(self._adv_frame, text=tr("dialog.source_add.range_label"),
                   font=("Microsoft YaHei UI", 9)).pack(anchor="w")
 
         rng_row = ttk.Frame(self._adv_frame)
         rng_row.pack(anchor="w", pady=(4, 4))
-        ttk.Label(rng_row, text="起 ").pack(side="left")
+        ttk.Label(rng_row, text=tr("dialog.source_add.range_start")).pack(side="left")
         ttk.Entry(rng_row, textvariable=self._range_start_var, width=10
                   ).pack(side="left")
-        ttk.Label(rng_row, text="  止 ").pack(side="left")
+        ttk.Label(rng_row, text=tr("dialog.source_add.range_end")).pack(side="left")
         ttk.Entry(rng_row, textvariable=self._range_end_var, width=10
                   ).pack(side="left")
 
         ttk.Label(self._adv_frame,
-                  text=("留空 = 完整下载/拷贝。\n"
-                        "已知精彩段时填入可大幅节省下载/磁盘。\n"
-                        "格式: HH:MM:SS 或 MM:SS"),
+                  text=tr("dialog.source_add.range_hint"),
                   font=("Microsoft YaHei UI", 8), foreground="#888",
                   justify="left"
                   ).pack(anchor="w", pady=(2, 0))
@@ -141,16 +140,16 @@ class _SourceAddDialog:
         ttk.Separator(body, orient="horizontal").pack(fill="x", pady=(12, 6))
         ttk.Label(
             body,
-            text="ⓘ  由你确认对所提供内容的合法使用权,版权责任自负。",
+            text=tr("dialog.source_add.disclaimer"),
             font=("Microsoft YaHei UI", 8), foreground="#666",
         ).pack(anchor="w")
 
         # ── Buttons ──
         btns = ttk.Frame(body)
         btns.pack(fill="x", pady=(12, 0))
-        ttk.Button(btns, text="取消", command=self._on_cancel
+        ttk.Button(btns, text=tr("dialog.common.btn_cancel"), command=self._on_cancel
                    ).pack(side="right", padx=(8, 0))
-        ttk.Button(btns, text="开始", command=self._on_submit
+        ttk.Button(btns, text=tr("dialog.common.btn_start"), command=self._on_submit
                    ).pack(side="right")
 
         # Inline error
@@ -185,21 +184,21 @@ class _SourceAddDialog:
     def _on_fetch_info(self) -> None:
         url = self._url_var.get().strip()
         if not url:
-            self._show_error("请先填入视频链接")
+            self._show_error(tr("dialog.source_add.err_fill_link"))
             return
         self._clear_error()
-        self._error_var.set("正在解析链接...")
+        self._error_var.set(tr("dialog.source_add.status_fetching"))
         self._error_label.config(foreground="#666")
         self.win.update_idletasks()
         try:
             info = fetch_link_info(url)
         except AcquireError as e:
             self._error_label.config(foreground="#c00")
-            self._show_error(f"无法获取视频信息: {e.message}")
+            self._show_error(tr("dialog.source_add.err_fetch_failed", error=e.message))
             return
         except Exception as e:
             self._error_label.config(foreground="#c00")
-            self._show_error(f"无法获取视频信息: {e}")
+            self._show_error(tr("dialog.source_add.err_fetch_failed", error=str(e)))
             return
         self._error_label.config(foreground="#c00")
         self._clear_error()
@@ -210,10 +209,10 @@ class _SourceAddDialog:
     def _on_pick_local(self) -> None:
         path = filedialog.askopenfilename(
             parent=self.win,
-            title="选择本地视频文件",
+            title=tr("dialog.source_add.pick_local_title"),
             filetypes=[
-                ("视频文件", " ".join(f"*{e}" for e in VIDEO_EXTS)),
-                ("所有文件", "*.*"),
+                (tr("dialog.source_add.filter_video"), " ".join(f"*{e}" for e in VIDEO_EXTS)),
+                (tr("dialog.source_add.filter_all"), "*.*"),
             ],
         )
         if path:
@@ -230,19 +229,19 @@ class _SourceAddDialog:
         if mode == ORIGIN_LINK:
             url = self._url_var.get().strip()
             if not url:
-                return self._show_error("请填入视频链接")
+                return self._show_error(tr("dialog.source_add.err_fill_link"))
             if not _looks_like_url(url):
-                return self._show_error("视频链接格式无效")
+                return self._show_error(tr("dialog.source_add.err_invalid_url"))
         else:
             local_path = self._local_path_var.get().strip()
             if not local_path:
-                return self._show_error("请选择本地视频文件")
+                return self._show_error(tr("dialog.source_add.err_select_local"))
             if not os.path.isfile(local_path):
-                return self._show_error("文件不存在")
+                return self._show_error(tr("dialog.source_add.err_file_missing"))
             ext = os.path.splitext(local_path)[1].lower()
             if ext not in VIDEO_EXTS:
                 return self._show_error(
-                    f"不支持的文件格式: {ext or '(无扩展名)'}"
+                    tr("dialog.source_add.err_unsupported_ext", ext=ext or tr("dialog.source_add.no_extension"))
                 )
 
         # Time range
@@ -252,14 +251,14 @@ class _SourceAddDialog:
             re_ = self._range_end_var.get().strip()
             if rs or re_:
                 if not (rs and re_):
-                    return self._show_error("源视频范围需要同时填写起和止时间")
+                    return self._show_error(tr("dialog.source_add.err_range_pair"))
                 try:
                     s_sec = parse_hms(rs)
                     e_sec = parse_hms(re_)
                 except ValueError as e:
-                    return self._show_error(f"时间格式无效: {e}")
+                    return self._show_error(tr("dialog.source_add.err_time_format", error=str(e)))
                 if s_sec >= e_sec:
-                    return self._show_error("起始时间必须小于结束时间")
+                    return self._show_error(tr("dialog.source_add.err_range_order"))
                 clip_range = ClipRange(start=rs, end=re_)
 
         self._result = Source(

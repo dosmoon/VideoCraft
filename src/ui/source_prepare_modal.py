@@ -22,6 +22,7 @@ from core.source_acquire import (
     acquire, AcquireError, CancelToken, ProgressInfo, AcquireResult,
     ERR_CANCELLED,
 )
+from i18n import tr
 
 
 class SourcePrepareModal:
@@ -35,7 +36,7 @@ class SourcePrepareModal:
         source: Source,
         dest_video_path: str,
         dest_meta_path: str | None = None,
-        title: str = "准备源视频",
+        title: str | None = None,
     ) -> None:
         self.parent = parent
         self.source = source
@@ -47,7 +48,7 @@ class SourcePrepareModal:
         self._cancel_token = CancelToken()
 
         self.win = tk.Toplevel(parent)
-        self.win.title(title)
+        self.win.title(title or tr("dialog.source_prepare.title"))
         self.win.transient(parent.winfo_toplevel())
         self.win.resizable(False, False)
         self.win.grab_set()
@@ -70,7 +71,7 @@ class SourcePrepareModal:
         body.pack(fill="both", expand=True)
 
         self._phase_label = ttk.Label(
-            body, text="准备中...", font=("Microsoft YaHei UI", 11, "bold")
+            body, text=tr("dialog.source_prepare.preparing"), font=("Microsoft YaHei UI", 11, "bold")
         )
         self._phase_label.pack(anchor="w")
 
@@ -89,7 +90,7 @@ class SourcePrepareModal:
         btns = ttk.Frame(body)
         btns.pack(fill="x", pady=(18, 0))
         self._cancel_btn = ttk.Button(
-            btns, text="取消并删除项目", command=self._on_cancel,
+            btns, text=tr("dialog.source_prepare.btn_cancel"), command=self._on_cancel,
         )
         self._cancel_btn.pack(side="right")
 
@@ -110,14 +111,15 @@ class SourcePrepareModal:
 
     def _apply_progress(self, info: ProgressInfo) -> None:
         # Phase label
-        phase_zh = {
-            "fetching info": "正在解析链接",
-            "downloading":   "正在下载",
-            "copying":       "正在拷贝",
-            "cutting":       "正在切段",
-            "probing":       "正在读取视频信息",
-        }.get(info.phase, info.phase)
-        self._phase_label.config(text=phase_zh)
+        phase_key_map = {
+            "fetching info": "dialog.source_prepare.phase.fetching_info",
+            "downloading":   "dialog.source_prepare.phase.downloading",
+            "copying":       "dialog.source_prepare.phase.copying",
+            "cutting":       "dialog.source_prepare.phase.cutting",
+            "probing":       "dialog.source_prepare.phase.probing",
+        }
+        phase_key = phase_key_map.get(info.phase)
+        self._phase_label.config(text=tr(phase_key) if phase_key else info.phase)
 
         # Progress bar
         if info.percent is None:
@@ -144,7 +146,7 @@ class SourcePrepareModal:
             if info.speed_bps:
                 parts.append(f"{_fmt_bytes(info.speed_bps)}/s")
             if info.eta_sec is not None:
-                parts.append(f"剩 {_fmt_eta(info.eta_sec)}")
+                parts.append(tr("dialog.source_prepare.remaining", eta=_fmt_eta(info.eta_sec)))
             self._status_label.config(text=" · ".join(parts))
 
     def _on_cancel(self) -> None:
@@ -152,7 +154,7 @@ class SourcePrepareModal:
         if self._cancel_token.cancelled:
             return  # already cancelling
         self._cancel_token.cancel()
-        self._cancel_btn.config(state="disabled", text="正在取消...")
+        self._cancel_btn.config(state="disabled", text=tr("dialog.source_prepare.cancelling"))
 
     # ── Run the worker ────────────────────────────────────────────────────────
 
@@ -168,7 +170,7 @@ class SourcePrepareModal:
         except AcquireError as e:
             self._error = e
         except Exception as e:  # last-ditch safety net
-            self._error = AcquireError("other", "意外错误", repr(e))
+            self._error = AcquireError("other", tr("dialog.source_prepare.unexpected_error"), repr(e))
         finally:
             # Close the modal from the UI thread.
             self.win.after(0, self.win.destroy)

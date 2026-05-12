@@ -20,6 +20,7 @@ from typing import Callable, Optional
 from core.ai.cancellation import CancellationToken
 from core.ai.errors import AIError, Kind
 from core.subtitle_pipeline import ProgressInfo
+from i18n import tr
 
 
 # A worker function takes (progress_cb, cancel_token) and returns a dict.
@@ -38,12 +39,13 @@ class SubtitlesProgressModal:
         self,
         parent: tk.Misc,
         worker: Worker,
-        title: str = "生成字幕",
-        cancel_label: str = "取消",
+        title: str | None = None,
+        cancel_label: str | None = None,
     ) -> None:
         self.parent = parent
         self.worker = worker
-        self._cancel_label = cancel_label
+        self._cancel_label = cancel_label or tr("dialog.common.btn_cancel")
+        title = title or tr("hub.dialog.subtitles_progress.title_asr")
 
         self._result: dict | None = None
         self._error: Exception | None = None
@@ -72,7 +74,7 @@ class SubtitlesProgressModal:
         body.pack(fill="both", expand=True)
 
         self._phase_label = ttk.Label(
-            body, text="准备中...", font=("Microsoft YaHei UI", 11, "bold")
+            body, text=tr("dialog.subtitles_progress.preparing"), font=("Microsoft YaHei UI", 11, "bold")
         )
         self._phase_label.pack(anchor="w")
 
@@ -98,12 +100,13 @@ class SubtitlesProgressModal:
         self.win.after(0, lambda i=info: self._apply_progress(i))
 
     def _apply_progress(self, info: ProgressInfo) -> None:
-        phase_zh = {
-            "preparing":    "准备中",
-            "transcribing": "正在转写",
-            "translating":  "正在翻译",
-        }.get(info.phase, info.phase)
-        self._phase_label.config(text=phase_zh)
+        phase_key_map = {
+            "preparing":    "dialog.subtitles_progress.phase.preparing",
+            "transcribing": "dialog.subtitles_progress.phase.transcribing",
+            "translating":  "dialog.subtitles_progress.phase.translating",
+        }
+        phase_key = phase_key_map.get(info.phase)
+        self._phase_label.config(text=tr(phase_key) if phase_key else info.phase)
 
         if info.percent is None:
             if self._progress["mode"] != "indeterminate":
@@ -122,7 +125,7 @@ class SubtitlesProgressModal:
         if self._cancel_token.cancelled:
             return
         self._cancel_token.cancel()
-        self._cancel_btn.config(state="disabled", text="正在取消...")
+        self._cancel_btn.config(state="disabled", text=tr("dialog.subtitles_progress.cancelling"))
 
     # ── Worker ────────────────────────────────────────────────────────────────
 

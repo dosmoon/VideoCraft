@@ -486,7 +486,7 @@ class SubtitleToolApp(ToolBase):
 
     def _select_subtitle1(self):
         if self._project_mode:
-            picked = self._pick_project_subtitle("选择主字幕")
+            picked = self._pick_project_subtitle(tr("subtitle_tool.project.pick_primary"))
             if picked:
                 self.entry_sub1.delete(0, tk.END)
                 self.entry_sub1.insert(0, picked)
@@ -504,7 +504,7 @@ class SubtitleToolApp(ToolBase):
 
     def _select_subtitle2(self):
         if self._project_mode:
-            picked = self._pick_project_subtitle("选择副字幕(双语)")
+            picked = self._pick_project_subtitle(tr("subtitle_tool.project.pick_secondary"))
             if picked:
                 self.entry_sub2.delete(0, tk.END)
                 self.entry_sub2.insert(0, picked)
@@ -584,7 +584,7 @@ class SubtitleToolApp(ToolBase):
         # Window title shows the derivative type + instance for clarity.
         from core import derivative_types
         type_disp = derivative_types.display_name("bilingual_video")
-        self.master.title(f"{type_disp} — {self.instance_name}")
+        self.master.title(tr("subtitle_tool.project.title", type=type_disp, instance=self.instance_name))
 
         # Lock the source video field.
         self.entry_video.config(state="normal")
@@ -623,7 +623,7 @@ class SubtitleToolApp(ToolBase):
         if not files:
             messagebox.showinfo(
                 "VideoCraft",
-                "项目还没有字幕。请先在 Sidebar 的 Subtitles 区域生成。",
+                tr("subtitle_tool.project.no_subs"),
                 parent=self.master,
             )
             return None
@@ -651,7 +651,7 @@ class SubtitleToolApp(ToolBase):
         ttk.Label(body, text=title,
                   font=("Microsoft YaHei UI", 11, "bold")
                   ).pack(anchor="w", pady=(0, 8))
-        ttk.Label(body, text="可用字幕:").pack(anchor="w")
+        ttk.Label(body, text=tr("subtitle_tool.project.available_subs")).pack(anchor="w")
         ttk.Combobox(body, textvariable=var,
                      values=[lbl for _, lbl in items],
                      state="readonly", width=30,
@@ -677,11 +677,11 @@ class SubtitleToolApp(ToolBase):
 
         btns = ttk.Frame(body)
         btns.pack(fill="x")
-        ttk.Button(btns, text="取消", command=on_cancel
+        ttk.Button(btns, text=tr("dialog.common.btn_cancel"), command=on_cancel
                    ).pack(side="right", padx=(8, 0))
-        ttk.Button(btns, text="确定", command=on_ok
+        ttk.Button(btns, text=tr("dialog.common.btn_ok"), command=on_ok
                    ).pack(side="right")
-        ttk.Button(btns, text="清除选择", command=on_clear
+        ttk.Button(btns, text=tr("subtitle_tool.project.btn_clear"), command=on_clear
                    ).pack(side="left")
 
         # Center

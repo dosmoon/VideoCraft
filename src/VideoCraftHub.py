@@ -29,6 +29,7 @@ _apply_cache_env()
 
 from project import Project, get_recent_projects, file_icon
 from operations import get_operations
+from i18n import tr
 
 # ── 工具注册表 ────────────────────────────────────────────────────────────────
 # class: None → 用 subprocess 启动；有 class 名 → Toplevel 内嵌
@@ -698,7 +699,7 @@ class VideoCraftHub:
         """File → Recent → click another project: switch directly without
         bouncing through the launcher UI."""
         if not os.path.isdir(path):
-            messagebox.showerror("VideoCraft", f"项目不存在:\n{path}")
+            messagebox.showerror("VideoCraft", tr("hub.error.project_not_found", path=path))
             return
         self.reopen_launcher = True
         self.requested_project_path = path
@@ -762,7 +763,7 @@ class VideoCraftHub:
     # ── Source section ────────────────────────────────────────────────────────
 
     def _build_source_section(self, parent: tk.Frame) -> None:
-        tk.Label(parent, text="Source", font=("", 9, "bold"),
+        tk.Label(parent, text=tr("hub.sidebar.source.title"), font=("", 9, "bold"),
                  bg="#f5f5f5", fg="#555", anchor="w"
                  ).pack(fill="x", padx=2, pady=(2, 2))
 
@@ -794,7 +795,7 @@ class VideoCraftHub:
 
         current_meta = self.project.meta
         preset = current_meta.source if self.project.source_status() == "ready" else None
-        title = "修改源视频" if preset else "添加源视频"
+        title = tr("hub.dialog.source.title_modify") if preset else tr("hub.dialog.source.title_add")
 
         src = show_source_add_dialog(self.root, title=title, preset=preset)
         if src is None:
@@ -819,13 +820,13 @@ class VideoCraftHub:
             if e.category == ERR_CANCELLED:
                 return  # silent
             messagebox.showerror(
-                "源视频准备失败",
+                tr("hub.error.source_prepare_failed"),
                 f"{e.message}\n\n{e.details[:400]}" if e.details else e.message,
                 parent=self.root,
             )
             return
         except Exception as e:
-            messagebox.showerror("源视频准备失败", str(e), parent=self.root)
+            messagebox.showerror(tr("hub.error.source_prepare_failed"), str(e), parent=self.root)
             return
 
         # Back-fill metadata
@@ -846,7 +847,7 @@ class VideoCraftHub:
     # ── Subtitles section ─────────────────────────────────────────────────────
 
     def _build_subtitles_section(self, parent: tk.Frame) -> None:
-        tk.Label(parent, text="Subtitles", font=("", 9, "bold"),
+        tk.Label(parent, text=tr("hub.sidebar.subtitles.title"), font=("", 9, "bold"),
                  bg="#f5f5f5", fg="#555", anchor="w"
                  ).pack(fill="x", padx=2, pady=(2, 2))
 
@@ -901,19 +902,19 @@ class VideoCraftHub:
                 cancel_token=cancel_token,
             )
 
-        modal = SubtitlesProgressModal(self.root, worker, title="生成字幕")
+        modal = SubtitlesProgressModal(self.root, worker, title=tr("hub.dialog.subtitles_progress.title_asr"))
         try:
             modal.run()
         except AIError as e:
             if e.kind == Kind.CANCELLED:
                 return
-            messagebox.showerror("ASR 失败", str(e), parent=self.root)
+            messagebox.showerror(tr("hub.error.asr_failed"), str(e), parent=self.root)
             return
         except FileNotFoundError as e:
-            messagebox.showerror("源视频缺失", str(e), parent=self.root)
+            messagebox.showerror(tr("hub.error.source_missing"), str(e), parent=self.root)
             return
         except Exception as e:
-            messagebox.showerror("ASR 失败", repr(e), parent=self.root)
+            messagebox.showerror(tr("hub.error.asr_failed"), repr(e), parent=self.root)
             return
 
         self._refresh_project_tab()
@@ -931,7 +932,7 @@ class VideoCraftHub:
         src_iso = meta.language.source
         if not src_iso:
             messagebox.showerror(
-                "VideoCraft", "项目未设置源语言,请先重新生成字幕。",
+                "VideoCraft", tr("hub.error.no_source_lang"),
                 parent=self.root)
             return
 
@@ -952,19 +953,19 @@ class VideoCraftHub:
                 cancel_token=cancel_token,
             )
 
-        modal = SubtitlesProgressModal(self.root, worker, title="添加翻译")
+        modal = SubtitlesProgressModal(self.root, worker, title=tr("hub.dialog.subtitles_progress.title_translate"))
         try:
             modal.run()
         except AIError as e:
             if e.kind == Kind.CANCELLED:
                 return
-            messagebox.showerror("翻译失败", str(e), parent=self.root)
+            messagebox.showerror(tr("hub.error.translate_failed"), str(e), parent=self.root)
             return
         except (ValueError, FileNotFoundError) as e:
-            messagebox.showerror("翻译失败", str(e), parent=self.root)
+            messagebox.showerror(tr("hub.error.translate_failed"), str(e), parent=self.root)
             return
         except Exception as e:
-            messagebox.showerror("翻译失败", repr(e), parent=self.root)
+            messagebox.showerror(tr("hub.error.translate_failed"), repr(e), parent=self.root)
             return
 
         self._refresh_project_tab()
@@ -977,7 +978,7 @@ class VideoCraftHub:
         try:
             shutil.copy2(src_path, dst)
         except OSError as e:
-            messagebox.showerror("导入失败", str(e), parent=self.root)
+            messagebox.showerror(tr("hub.error.import_failed"), str(e), parent=self.root)
             return
         # Record as the source language (first imported SRT becomes the source).
         meta = self.project.meta
@@ -991,11 +992,11 @@ class VideoCraftHub:
     def _build_derivatives_section(self, parent: tk.Frame) -> None:
         head = tk.Frame(parent, bg="#f5f5f5")
         head.pack(fill="x", padx=2, pady=(2, 2))
-        tk.Label(head, text="派生作品", font=("", 9, "bold"),
+        tk.Label(head, text=tr("hub.sidebar.derivatives.title"), font=("", 9, "bold"),
                  bg="#f5f5f5", fg="#555"
                  ).pack(side="left")
         self._derivative_add_btn = tk.Button(
-            head, text="+ 添加", relief="flat", bg="#e8e8e8",
+            head, text=tr("hub.button.add"), relief="flat", bg="#e8e8e8",
             command=self._on_new_derivative_hub,
         )
         self._derivative_add_btn.pack(side="right", padx=2)
@@ -1018,7 +1019,7 @@ class VideoCraftHub:
                                 self._on_derivative_tree_right_click)
 
         self._derivative_empty_lbl = tk.Label(
-            parent, text="还没有派生作品。点 [+ 添加] 开始。",
+            parent, text=tr("hub.sidebar.derivatives.empty"),
             bg="#f5f5f5", fg="#888", font=("", 9),
             wraplength=280, justify="left",
         )
@@ -1044,11 +1045,11 @@ class VideoCraftHub:
             if extras:
                 label += "\n   " + " · ".join(extras)
             self._source_status_var.set(label)
-            self._source_primary_btn.config(text="修改")
+            self._source_primary_btn.config(text=tr("hub.button.modify"))
             self._source_status_lbl.configure(cursor="hand2")
         else:
-            self._source_status_var.set("✗ 无")
-            self._source_primary_btn.config(text="+ 添加源视频")
+            self._source_status_var.set(tr("hub.status.none"))
+            self._source_primary_btn.config(text=tr("hub.button.add_source_video"))
             self._source_status_lbl.configure(cursor="")
 
     def _refresh_subtitles_section(self) -> None:
@@ -1065,12 +1066,12 @@ class VideoCraftHub:
         source_ready = self.project.source_status() == "ready"
 
         if not srt_files:
-            tk.Label(self._subtitles_lang_box, text="✗ 无",
+            tk.Label(self._subtitles_lang_box, text=tr("hub.status.none"),
                      bg="#f5f5f5", fg="#222", font=("", 9),
                      anchor="w"
                      ).pack(fill="x")
             self._subtitles_primary_btn.config(
-                text="+ 生成字幕",
+                text=tr("hub.button.add_subtitles"),
                 state="normal" if source_ready else "disabled",
             )
             return
@@ -1085,7 +1086,7 @@ class VideoCraftHub:
                 lang_label = lang_names.friendly_name(lang, "zh")
             except Exception:
                 lang_label = lang
-            role = "源" if meta.source == lang else "翻译"
+            role = tr("hub.subtitle.role_source") if meta.source == lang else tr("hub.subtitle.role_translated")
             srt_path = os.path.join(self.project.subtitles_dir, f"{lang}.srt")
 
             ref = ref_path if (lang != source_lang and ref_path
@@ -1096,7 +1097,7 @@ class VideoCraftHub:
             # Worst-class drives the badge; advisory is silent in sidebar.
             if check.hard_count > 0:
                 icon, color = "✗", "#c00"
-                badge = f"  · {check.hard_count} 处错误"
+                badge = tr("hub.subtitle.badge_hard_count", n=check.hard_count)
             elif check.fixable_count > 0:
                 icon, color = "⚠", "#a60"
                 badge = ""  # fixable count appears on the action button
@@ -1122,7 +1123,7 @@ class VideoCraftHub:
 
             # Right side (packed right→left so visual order is [↻] [🔧]):
             if check.hard_count == 0 and check.fixable_count > 0:
-                tk.Button(row, text=f"🔧 修 {check.fixable_count}",
+                tk.Button(row, text=tr("hub.subtitle.quick_fix_btn", n=check.fixable_count),
                           relief="flat", bg="#fff3cd", fg="#856404",
                           font=("", 8),
                           command=lambda p=srt_path:
@@ -1135,7 +1136,7 @@ class VideoCraftHub:
                           self._on_regenerate_subtitle(l, s),
                       ).pack(side="right", padx=2)
 
-        self._subtitles_primary_btn.config(text="+ 添加翻译", state="normal")
+        self._subtitles_primary_btn.config(text=tr("hub.button.add_translation"), state="normal")
 
     def _on_regenerate_subtitle(self, lang_iso: str, is_source: bool) -> None:
         """Per-row [↻]: re-run ASR for the source row or re-translate for a
@@ -1147,12 +1148,10 @@ class VideoCraftHub:
         except Exception:
             display = lang_iso
         if is_source:
-            prompt = (f"将重新运行 ASR 生成「{display}」字幕，"
-                      f"现有 {lang_iso}.srt 会被覆盖。确定继续吗？")
+            prompt = tr("hub.subtitle.regenerate.confirm_asr", lang=display, iso=lang_iso)
         else:
-            prompt = (f"将重新翻译生成「{display}」字幕，"
-                      f"现有 {lang_iso}.srt 会被覆盖。确定继续吗？")
-        if not messagebox.askyesno("重新生成字幕", prompt,
+            prompt = tr("hub.subtitle.regenerate.confirm_translate", lang=display, iso=lang_iso)
+        if not messagebox.askyesno(tr("hub.subtitle.regenerate.title"), prompt,
                                     default="no", parent=self.root):
             return
         if is_source:
@@ -1166,7 +1165,7 @@ class VideoCraftHub:
         try:
             apply_auto_fixes(srt_path)
         except Exception as e:
-            messagebox.showerror("清理失败", str(e), parent=self.root)
+            messagebox.showerror(tr("hub.error.cleanup_failed"), str(e), parent=self.root)
             return
         self._refresh_subtitles_section()
         # Refresh preview if it was showing this file.
@@ -1364,12 +1363,12 @@ class VideoCraftHub:
         type_name, instance_name = info
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(
-            label="打开",
+            label=tr("hub.derivative.menu_open"),
             command=lambda: self._open_workbench_for_type(type_name, instance_name),
         )
         menu.add_separator()
         menu.add_command(
-            label="删除",
+            label=tr("hub.derivative.menu_delete"),
             command=lambda: self._delete_derivative(type_name, instance_name),
         )
         menu.tk_popup(event.x_root, event.y_root)
@@ -1380,7 +1379,7 @@ class VideoCraftHub:
 
         types = derivative_types.all_types()
         if not types:
-            messagebox.showinfo("VideoCraft", "没有可用的派生类型。", parent=self.root)
+            messagebox.showinfo("VideoCraft", tr("hub.derivative.no_types"), parent=self.root)
             return
 
         # Single registered type → skip type-picker, go straight to naming.
@@ -1401,7 +1400,7 @@ class VideoCraftHub:
             messagebox.showerror("VideoCraft", str(e))
             return
         except ValueError as e:
-            messagebox.showerror("VideoCraft", f"Invalid name: {e}")
+            messagebox.showerror("VideoCraft", tr("hub.derivative.invalid_name", error=str(e)))
             return
 
         self._refresh_project_tab()
@@ -1413,9 +1412,8 @@ class VideoCraftHub:
 
     def _delete_derivative(self, type_name: str, instance_name: str) -> None:
         if not messagebox.askyesno(
-                "删除派生",
-                f"确定删除派生 {type_name}/{instance_name}?\n"
-                "对应目录及其内容将被删除,无法恢复。",
+                tr("hub.derivative.delete.title"),
+                tr("hub.derivative.delete.confirm", type=type_name, instance=instance_name),
                 default="no"):
             return
         import shutil
@@ -1423,7 +1421,7 @@ class VideoCraftHub:
         try:
             shutil.rmtree(inst_dir)
         except OSError as e:
-            messagebox.showerror("VideoCraft", f"删除失败: {e}")
+            messagebox.showerror("VideoCraft", tr("hub.derivative.delete.failed", error=str(e)))
             return
         self._refresh_project_tab()
 
@@ -1434,7 +1432,7 @@ class VideoCraftHub:
         t = derivative_types.get(type_name)
         if t is None:
             messagebox.showerror(
-                "VideoCraft", f"未知派生类型: {type_name}")
+                "VideoCraft", tr("hub.derivative.unknown_type", type=type_name))
             return
         # Compound tab key so each derivative instance has its own tab
         # (字幕视频/default vs 字幕视频/v2 are two different workspaces).
@@ -1539,7 +1537,7 @@ class VideoCraftHub:
 
         menu.add_separator()
         menu.add_command(
-            label="删除",
+            label=tr("hub.derivative.menu_delete"),
             command=lambda fp=file_path: self._delete_item(fp)
         )
 
@@ -1547,10 +1545,10 @@ class VideoCraftHub:
 
     def _delete_item(self, file_path: str):
         name = os.path.basename(file_path)
-        kind = "文件夹" if os.path.isdir(file_path) else "文件"
+        kind = tr("hub.file.kind_folder") if os.path.isdir(file_path) else tr("hub.file.kind_file")
         confirmed = messagebox.askyesno(
-            "确认删除",
-            f"将 {kind} 移至回收站：\n\n{name}\n\n确定吗？",
+            tr("hub.file.delete.title"),
+            tr("hub.file.delete.confirm", kind=kind, name=name),
             default="no"
         )
         if not confirmed:
@@ -1583,7 +1581,7 @@ class VideoCraftHub:
             op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT
             ctypes.windll.shell32.SHFileOperationW(ctypes.byref(op))
         except Exception as e:
-            messagebox.showerror("删除失败", str(e))
+            messagebox.showerror(tr("hub.file.delete.failed"), str(e))
             return
         self.refresh_sidebar()
 
@@ -1600,7 +1598,7 @@ class VideoCraftHub:
                                  progress_callback=self._update_status)
                 if result:
                     self.root.after(0, lambda r=result: self._status_var.set(
-                        f"完成: {os.path.basename(r)}"))
+                        tr("hub.status.completed", name=os.path.basename(r))))
             except Exception as e:
                 from hub_logger import logger
                 self.root.after(0, lambda err=str(e): logger.error(err))
@@ -1630,7 +1628,7 @@ class VideoCraftHub:
             w.configure(cursor="hand2")
 
         self._log_toggle_btn = tk.Button(
-            self._log_strip, text="▲ 日志",
+            self._log_strip, text=tr("hub.log.toggle.show"),
             bg="#2d2d2d", fg="#888", relief="flat",
             font=("", 9), cursor="hand2", padx=8,
             command=self._toggle_log,
@@ -1643,7 +1641,7 @@ class VideoCraftHub:
         title_bar.pack(fill="x")
         tk.Label(title_bar, text=tr("hub.log.title"), bg="#2d2d2d", fg="#aaa",
                  font=("", 9), padx=6).pack(side="left")
-        tk.Button(title_bar, text="复制", bg="#2d2d2d", fg="#888",
+        tk.Button(title_bar, text=tr("hub.log.copy"), bg="#2d2d2d", fg="#888",
                   relief="flat", font=("", 8), cursor="hand2",
                   command=self._copy_log).pack(side="right", padx=4, pady=1)
         tk.Button(title_bar, text=tr("hub.log.clear"), bg="#2d2d2d", fg="#888",
@@ -1680,10 +1678,10 @@ class VideoCraftHub:
             # Insert above the status strip.
             self._log_frame.pack(side="bottom", fill="both", expand=False,
                                  before=self._log_strip)
-            self._log_toggle_btn.config(text="▼ 收起")
+            self._log_toggle_btn.config(text=tr("hub.log.toggle.hide"))
         else:
             self._log_frame.pack_forget()
-            self._log_toggle_btn.config(text="▲ 日志")
+            self._log_toggle_btn.config(text=tr("hub.log.toggle.show"))
 
     def _copy_log(self) -> None:
         try:
@@ -1734,12 +1732,12 @@ class VideoCraftHub:
     ):
         cfg = TOOL_MAP.get(key)
         if cfg is None:
-            messagebox.showerror("错误", f"未知工具：{key}")
+            messagebox.showerror(tr("dialog.common.error"), tr("hub.error.unknown_tool", key=key))
             return
 
         file_path = os.path.join(_SRC, cfg["file"])
         if not os.path.exists(file_path):
-            messagebox.showerror("错误", f"工具文件不存在：\n{file_path}")
+            messagebox.showerror(tr("dialog.common.error"), tr("hub.error.tool_not_found", path=file_path))
             return
 
         if cfg["class"] is None:
@@ -1768,7 +1766,7 @@ class VideoCraftHub:
             win.bind("<Destroy>", lambda e, a=app: self._tool_instances.remove(a)
                      if a in self._tool_instances else None)
         except Exception as e:
-            messagebox.showerror("启动失败", str(e))
+            messagebox.showerror(tr("hub.error.launch_failed"), str(e))
 
     def _open_in_tab(
         self, file_path: str, class_name: str, tool_key: str,
@@ -1817,7 +1815,7 @@ class VideoCraftHub:
 
             self._select_tab(registry_key)
         except Exception as e:
-            messagebox.showerror("启动失败", str(e))
+            messagebox.showerror(tr("hub.error.launch_failed"), str(e))
 
     def _open_subprocess(self, file_path: str, initial_file: str | None = None):
         venv_python = os.path.join(_SRC, "..", "myenv", "Scripts", "python.exe")
@@ -1828,15 +1826,14 @@ class VideoCraftHub:
                 cmd.append(initial_file)
             subprocess.Popen(cmd)
         except Exception as e:
-            messagebox.showerror("启动失败", str(e))
+            messagebox.showerror(tr("hub.error.launch_failed"), str(e))
 
     # ── 关于 ──────────────────────────────────────────────────────────────────
 
     def _show_about(self):
         messagebox.showinfo(
-            "关于 VideoCraft",
-            "VideoCraft\n视频生产工具集\n\n"
-            "核心流程：下载 → 语音转字幕 → 翻译 → 字幕烧录"
+            tr("hub.about.title"),
+            tr("hub.about.body"),
         )
 
 
@@ -1882,7 +1879,7 @@ def _run() -> None:
             try:
                 project = Project.open(next_project_path)
             except Exception as e:
-                messagebox.showerror("打开失败", f"{next_project_path}\n{e}")
+                messagebox.showerror(tr("launcher.error.open_failed"), f"{next_project_path}\n{e}")
                 next_project_path = None
                 continue
             next_project_path = None

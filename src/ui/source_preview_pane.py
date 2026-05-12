@@ -21,6 +21,7 @@ from tkinter import messagebox, ttk
 
 from core.project_schema import ORIGIN_LINK, ORIGIN_LOCAL
 from ui.web_preview import WebPreviewFrame
+from i18n import tr
 
 
 _HTML_TEMPLATE = """<!doctype html>
@@ -92,7 +93,7 @@ def build_source_preview(
 
     # ── Video column ──
     if not ready:
-        tk.Label(video_col, text="✗ 源视频缺失", bg="black", fg="#aaa",
+        tk.Label(video_col, text=tr("source_preview.missing"), bg="black", fg="#aaa",
                  font=("Microsoft YaHei UI", 11),
                  ).pack(expand=True)
     else:
@@ -122,15 +123,15 @@ def build_source_preview(
              anchor="w", wraplength=270, justify="left",
              ).pack(fill="x", anchor="w")
 
-    status_txt = (f"✓ 已就绪  ·  {_fmt_size(video_path)}"
-                  if ready else "✗ 源视频缺失")
+    status_txt = (tr("source_preview.status_ready", size=_fmt_size(video_path))
+                  if ready else tr("source_preview.missing"))
     tk.Label(meta_col, text=status_txt,
              bg="white", fg="#666", font=("Microsoft YaHei UI", 9),
              anchor="w",
              ).pack(fill="x", anchor="w", pady=(2, 0))
 
     if ready:
-        tk.Label(meta_col, text=f"修改于 {_fmt_mtime(video_path)}",
+        tk.Label(meta_col, text=tr("source_preview.modified_at", ts=_fmt_mtime(video_path)),
                  bg="white", fg="#888", font=("Microsoft YaHei UI", 9),
                  anchor="w",
                  ).pack(fill="x", anchor="w", pady=(0, 6))
@@ -140,24 +141,24 @@ def build_source_preview(
     # Field rows
     rows: list[tuple[str, str]] = []
     if src.origin == ORIGIN_LINK:
-        rows.append(("来源", "链接"))
+        rows.append((tr("source_preview.field_origin"), tr("source_preview.origin_link")))
         rows.append(("URL", src.url or "—"))
     elif src.origin == ORIGIN_LOCAL:
-        rows.append(("来源", "本地文件"))
-        rows.append(("原始路径", src.imported_from or "—"))
+        rows.append((tr("source_preview.field_origin"), tr("source_preview.origin_local")))
+        rows.append((tr("source_preview.field_imported_from"), src.imported_from or "—"))
     else:
-        rows.append(("来源", src.origin or "—"))
+        rows.append((tr("source_preview.field_origin"), src.origin or "—"))
     if src.clip_range:
-        rows.append(("截取范围",
+        rows.append((tr("source_preview.field_clip_range"),
                      f"{src.clip_range.start} → {src.clip_range.end}"))
     else:
-        rows.append(("截取范围", "全片"))
-    rows.append(("时长", _fmt_duration(src.duration_sec)))
+        rows.append((tr("source_preview.field_clip_range"), tr("source_preview.clip_full")))
+    rows.append((tr("source_preview.field_duration"), _fmt_duration(src.duration_sec)))
     if src.width and src.height:
-        rows.append(("分辨率", f"{src.width} × {src.height}"))
+        rows.append((tr("source_preview.field_resolution"), f"{src.width} × {src.height}"))
     else:
-        rows.append(("分辨率", "—"))
-    rows.append(("本地路径", video_path))
+        rows.append((tr("source_preview.field_resolution"), "—"))
+    rows.append((tr("source_preview.field_local_path"), video_path))
 
     grid = tk.Frame(meta_col, bg="white")
     grid.pack(fill="x", anchor="w")
@@ -175,15 +176,15 @@ def build_source_preview(
     actions = tk.Frame(meta_col, bg="white")
     actions.pack(fill="x", anchor="w", pady=(12, 0))
     if on_modify is not None:
-        tk.Button(actions, text="修改", relief="flat", bg="#e8e8e8",
+        tk.Button(actions, text=tr("hub.button.modify"), relief="flat", bg="#e8e8e8",
                   command=on_modify).pack(side="left")
 
     def _on_open_folder():
         try:
             os.startfile(project.source_dir)
         except OSError as e:
-            messagebox.showerror("无法打开文件夹", str(e), parent=outer)
-    tk.Button(actions, text="在资源管理器中显示", relief="flat", bg="#e8e8e8",
+            messagebox.showerror(tr("source_preview.err_open_folder"), str(e), parent=outer)
+    tk.Button(actions, text=tr("source_preview.btn_show_in_explorer"), relief="flat", bg="#e8e8e8",
               command=_on_open_folder).pack(side="left", padx=(6, 0))
 
     return outer
