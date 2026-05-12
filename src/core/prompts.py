@@ -188,6 +188,34 @@ DEFAULTS: dict[str, str] = {
         "\n"
         "{subtitle_content}\n"
     ),
+
+    "subtitle.hotclips": (
+        "# 热点片段挖掘\n"
+        "\n"
+        "请基于以下 SRT 字幕内容，挖掘最多 {desired_count} 条"
+        "具有传播潜力的短视频候选片段。每条片段应满足：\n"
+        "\n"
+        "- 时长在 {target_min_sec}~{target_max_sec} 秒之间\n"
+        "- 自包含（开头和结尾完整，不依赖前后文）\n"
+        "- 有吸引力的开场（反共识 / 悬念 / 强烈观点 / 数据反差 / 情绪密度高）\n"
+        "\n"
+        "对每条候选片段，输出：\n"
+        "- start / end：HH:MM:SS 时间戳\n"
+        "- duration_sec：整数秒\n"
+        "- hook：开场一句钩子文案（≤30 字 / ≤15 词），用于片头吸引点击\n"
+        "- why_viral：一句话说明为什么这段有传播力\n"
+        "- score：1~10 综合评分（10 = 极强），考虑 hook 强度、信息密度、"
+        "情绪起伏、完整性\n"
+        "- suggested_title：完整短视频标题（≤30 字 / ≤15 词）\n"
+        "- suggested_hashtags：3~5 个相关标签（带 # 前缀）\n"
+        "\n"
+        "输出语言 = 输入字幕语言。返回严格符合调用方提供的 JSON Schema，"
+        "不要附加解释文字。\n"
+        "\n"
+        "以下是 SRT 字幕内容：\n"
+        "\n"
+        "{subtitle_content}\n"
+    ),
 }
 
 
@@ -200,6 +228,8 @@ PLACEHOLDERS: dict[str, list[str]] = {
     "subtitle.refine":   ["{all_segments_content}"],
     "subtitle.titles":   [],
     "subtitle.pack":     ["{subtitle_content}"],
+    "subtitle.hotclips": ["{subtitle_content}", "{desired_count}",
+                          "{target_min_sec}", "{target_max_sec}"],
     "clip.rank-chapters": ["{chapter_list}"],
     "clip.find-peaks":   ["{chapter_paragraphs}"],
     "clip.package":      ["{clip_excerpt}"],

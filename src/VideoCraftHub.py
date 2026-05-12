@@ -1169,14 +1169,11 @@ class VideoCraftHub:
         menu = tk.Menu(self.root, tearoff=0)
         for t in all_types():
             label = "+ " + tr(f"analysis.kind.{t.kind}")
-            if t.kind == "hotclips":
-                menu.add_command(label=label + "  (P4)", state="disabled")
-            else:
-                menu.add_command(
-                    label=label,
-                    command=lambda k=t.kind, l=lang_iso:
-                        self._invoke_analysis(l, k),
-                )
+            menu.add_command(
+                label=label,
+                command=lambda k=t.kind, l=lang_iso:
+                    self._invoke_analysis(l, k),
+            )
         # Pop just below the anchor widget for predictable placement.
         x = anchor.winfo_rootx()
         y = anchor.winfo_rooty() + anchor.winfo_height()

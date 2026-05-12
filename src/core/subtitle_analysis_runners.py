@@ -292,6 +292,175 @@ def run_chapter_transcript(srt_path: str, subtitles_dir: str, lang_iso: str,
     return {"path": out_path, "kind": "chapter_transcript"}
 
 
+# ── Hotclips runner (P4a) ────────────────────────────────────────────────────
+#
+# Chapter scoping strategy (design §2.5):
+#   - "auto"        — use chapters when chapters.json exists, else full
+#   - "per_chapter" — require chapters; fail loud if missing
+#   - "full"        — single AI call on the whole transcript
+# Chapters only do prompt-window slicing; they don't participate in final
+# ranking. All slice outputs merge into one pool, sorted by start time.
+
+HOTCLIPS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "clips": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "start":         {"type": "string"},
+                    "end":           {"type": "string"},
+                    "duration_sec":  {"type": "number"},
+                    "hook":          {"type": "string"},
+                    "why_viral":     {"type": "string"},
+                    "score":         {"type": "integer", "minimum": 1, "maximum": 10},
+                    "suggested_title":   {"type": "string"},
+                    "suggested_hashtags": {"type": "array", "items": {"type": "string"}},
+                },
+                "required": ["start", "end", "hook", "score", "suggested_title"],
+            },
+        }
+    },
+    "required": ["clips"],
+}
+
+
+def _srt_to_slice_text(subs: list, t_start_sec: float, t_end_sec: float) -> str:
+    """Render a contiguous block of SRT cues into the `[HH:MM:SS] text\n` form
+    used by AI prompts. `t_end_sec=0` means open-ended (take everything from
+    t_start_sec onward)."""
+    out = []
+    for sub in subs:
+        start = sub.start.total_seconds()
+        if start < t_start_sec:
+            continue
+        if t_end_sec > 0 and start >= t_end_sec:
+            break
+        ts = str(sub.start)[:8]
+        text = sub.content.replace("\n", " ").strip()
+        if text:
+            out.append(f"[{ts}] {text}")
+    return "\n".join(out)
+
+
+def _call_hotclips_ai(slice_text: str, ctx_block: str,
+                      desired_count: int, target_min_sec: int, target_max_sec: int,
+                      cancel_token) -> list[dict]:
+    """One AI call for one slice. Returns raw clip dicts (may include
+    bogus entries — caller validates)."""
+    from core import ai as _ai, prompts as _prompts
+    from core.ai.tiers import TIER_PREMIUM
+    from core.ai.errors import AIError as _AIError
+
+    base = _prompts.get("subtitle.hotclips")
+    body = base.replace("{subtitle_content}", slice_text) \
+               .replace("{desired_count}", str(desired_count)) \
+               .replace("{target_min_sec}", str(target_min_sec)) \
+               .replace("{target_max_sec}", str(target_max_sec))
+    prompt = (ctx_block + "\n\n" + body) if ctx_block else body
+    try:
+        result = _ai.complete_json(
+            prompt, schema=HOTCLIPS_SCHEMA,
+            task="subtitle.post", tier=TIER_PREMIUM,
+            cancel_token=cancel_token,
+        )
+    except Exception as e:
+        if isinstance(e, _AIError):
+            raise
+        raise RuntimeError(f"调用 AI 生成热点失败: {e}")
+    if not isinstance(result, dict):
+        return []
+    clips = result.get("clips")
+    return clips if isinstance(clips, list) else []
+
+
+def run_hotclips(srt_path: str, subtitles_dir: str, lang_iso: str,
+                 progress_cb, cancel_token,
+                 *,
+                 strategy: str = "auto",
+                 desired_count: int = 10,
+                 target_min_sec: int = 30,
+                 target_max_sec: int = 90) -> dict:
+    """Generate hotclip candidates. See module docstring for strategy semantics."""
+    from core.subtitle_analysis import analysis_path
+
+    subs = list(srt.parse(read_srt(srt_path)))
+    if not subs:
+        raise ValueError("SRT 为空，无法生成热点片段")
+
+    chapters_path = analysis_path(subtitles_dir, lang_iso, "chapters")
+    has_chapters = os.path.isfile(chapters_path)
+
+    use_chapters = (
+        strategy == "per_chapter" or (strategy == "auto" and has_chapters)
+    )
+    if strategy == "per_chapter" and not has_chapters:
+        raise ValueError("strategy=per_chapter 但 chapters.json 不存在")
+
+    ctx_block = _context_block(subtitles_dir)
+
+    # Build (chapter_label, slice_text) pairs.
+    slices: list[tuple[str, str]] = []
+    if use_chapters:
+        with open(chapters_path, "r", encoding="utf-8") as f:
+            chapters = (json.load(f).get("chapters") or [])
+        for ch in chapters:
+            t0 = _parse_time_str(ch.get("start", ""))
+            t1 = _parse_time_str(ch.get("end", ""))
+            slice_text = _srt_to_slice_text(subs, t0, t1)
+            if slice_text:
+                slices.append((ch.get("title", "")[:40] or "—", slice_text))
+        if not slices:
+            # Chapters present but yielded no text — fall back to full.
+            slices = [("", _srt_to_slice_text(subs, 0.0, 0.0))]
+            use_chapters = False
+    else:
+        slices = [("", _srt_to_slice_text(subs, 0.0, 0.0))]
+
+    # Per-slice budget: split the total across chapters with a floor of 3 so
+    # short chapters still get a fair shot at producing candidates.
+    if use_chapters and len(slices) > 1:
+        per_slice = max(3, desired_count // len(slices) + 1)
+    else:
+        per_slice = desired_count
+
+    all_clips: list[dict] = []
+    total = len(slices)
+    for i, (label, slice_text) in enumerate(slices, 1):
+        pct = (i - 1) / total * 90
+        _say(progress_cb, "transcribing",
+             f"挖掘热点（{i}/{total}{' · ' + label if label else ''}）...",
+             pct)
+        clips = _call_hotclips_ai(
+            slice_text, ctx_block,
+            per_slice, target_min_sec, target_max_sec,
+            cancel_token,
+        )
+        all_clips.extend(clips)
+
+    # Sort by start time (UI may re-sort by score).
+    def _start_sec(c):
+        return _parse_time_str(c.get("start", ""))
+    all_clips.sort(key=_start_sec)
+
+    _say(progress_cb, "transcribing", "正在写入产物...", 95)
+    out_path = analysis_path(subtitles_dir, lang_iso, "hotclips")
+    _atomic_write_json(out_path, {
+        "schema_version": 1,
+        "generated_at": _now_iso(),
+        "source_subtitle": f"{lang_iso}.srt",
+        "strategy": "per_chapter" if use_chapters else "full",
+        "params": {
+            "desired_count": desired_count,
+            "target_min_sec": target_min_sec,
+            "target_max_sec": target_max_sec,
+        },
+        "clips": all_clips,
+    })
+    return {"path": out_path, "kind": "hotclips", "count": len(all_clips)}
+
+
 # ── Dispatch table ───────────────────────────────────────────────────────────
 
 RUNNERS: dict[str, Callable[..., dict]] = {
@@ -300,7 +469,7 @@ RUNNERS: dict[str, Callable[..., dict]] = {
     "transcript":         run_transcript,
     "chapter_transcript": run_chapter_transcript,
     "chapter_refined":    run_chapter_refined,
-    # "hotclips": run_hotclips,   # P4
+    "hotclips":           run_hotclips,
 }
 
 
