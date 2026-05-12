@@ -187,4 +187,11 @@ def build_source_preview(
     tk.Button(actions, text=tr("source_preview.btn_show_in_explorer"), relief="flat", bg="#e8e8e8",
               command=_on_open_folder).pack(side="left", padx=(6, 0))
 
+    def _on_edit_context():
+        from ui.source_context_dialog import show_source_context_dialog
+        show_source_context_dialog(outer, project.source_dir)
+    tk.Button(actions, text=tr("source_preview.btn_edit_context"), relief="flat",
+              bg="#e8e8e8", command=_on_edit_context
+              ).pack(side="left", padx=(6, 0))
+
     return outer

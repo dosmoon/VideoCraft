@@ -24,6 +24,7 @@ from typing import Any, Callable, Optional
 from core.subtitle_pipeline import ProgressInfo
 from core.ai.cancellation import CancellationToken
 from core.subtitle_ops import read_srt
+from core.source_context import read_context as _read_context
 
 
 # ── Shared output helpers ────────────────────────────────────────────────────
@@ -123,10 +124,37 @@ def _derive_chapters(pack_segments: list[dict], srt_path: str) -> list[dict]:
 # the sibling artifacts. The artifact the user explicitly asked for is the
 # return value; the bonus writes are best-effort and silent.
 
-def _run_pack(srt_path: str, progress_cb, cancel_token) -> dict:
-    """Call generate_subtitle_pack with progress + cancel plumbing."""
+def _source_dir_for(subtitles_dir: str) -> str:
+    """Sibling source/ given the project's subtitles/ dir."""
+    return os.path.join(os.path.dirname(subtitles_dir), "source")
+
+
+def _context_block(subtitles_dir: str) -> str:
+    """Read source/context.json and render as a prompt prefix block."""
+    try:
+        ctx = _read_context(_source_dir_for(subtitles_dir))
+    except Exception:
+        return ""
+    return ctx.as_prompt_block()
+
+
+def _run_pack(srt_path: str, subtitles_dir: str,
+              progress_cb, cancel_token) -> dict:
+    """Call generate_subtitle_pack with progress + cancel plumbing.
+
+    Prepends the project's source context (if any) to the prompt so the
+    AI has situational signal (topic, host, audience) when picking
+    titles and chapter boundaries.
+    """
+    from core import prompts as _prompts
     from core.srt_ops import generate_subtitle_pack
     _say(progress_cb, "transcribing", "正在调用 AI 生成结构化分析...", None)
+    ctx_block = _context_block(subtitles_dir)
+    if ctx_block:
+        base = _prompts.get("subtitle.pack")
+        prompt = ctx_block + "\n\n" + base
+        return generate_subtitle_pack(srt_path, prompt=prompt,
+                                      cancel_token=cancel_token)
     return generate_subtitle_pack(srt_path, cancel_token=cancel_token)
 
 
@@ -175,7 +203,7 @@ def _persist_pack(pack: dict, srt_path: str, subtitles_dir: str, lang_iso: str,
 
 def run_titles(srt_path: str, subtitles_dir: str, lang_iso: str,
                progress_cb, cancel_token) -> dict:
-    pack = _run_pack(srt_path, progress_cb, cancel_token)
+    pack = _run_pack(srt_path, subtitles_dir, progress_cb, cancel_token)
     _say(progress_cb, "transcribing", "正在写入产物...", 95)
     path = _persist_pack(pack, srt_path, subtitles_dir, lang_iso, "titles")
     return {"path": path, "kind": "titles"}
@@ -183,7 +211,7 @@ def run_titles(srt_path: str, subtitles_dir: str, lang_iso: str,
 
 def run_chapters(srt_path: str, subtitles_dir: str, lang_iso: str,
                  progress_cb, cancel_token) -> dict:
-    pack = _run_pack(srt_path, progress_cb, cancel_token)
+    pack = _run_pack(srt_path, subtitles_dir, progress_cb, cancel_token)
     _say(progress_cb, "transcribing", "正在写入产物...", 95)
     path = _persist_pack(pack, srt_path, subtitles_dir, lang_iso, "chapters")
     return {"path": path, "kind": "chapters"}
@@ -191,7 +219,7 @@ def run_chapters(srt_path: str, subtitles_dir: str, lang_iso: str,
 
 def run_chapter_refined(srt_path: str, subtitles_dir: str, lang_iso: str,
                         progress_cb, cancel_token) -> dict:
-    pack = _run_pack(srt_path, progress_cb, cancel_token)
+    pack = _run_pack(srt_path, subtitles_dir, progress_cb, cancel_token)
     _say(progress_cb, "transcribing", "正在写入产物...", 95)
     path = _persist_pack(pack, srt_path, subtitles_dir, lang_iso, "chapter_refined")
     return {"path": path, "kind": "chapter_refined"}
@@ -224,7 +252,7 @@ def run_chapter_transcript(srt_path: str, subtitles_dir: str, lang_iso: str,
     if not os.path.isfile(chapters_path):
         _say(progress_cb, "transcribing",
              "未发现章节，先调用 AI 生成章节...", None)
-        pack = _run_pack(srt_path, progress_cb, cancel_token)
+        pack = _run_pack(srt_path, subtitles_dir, progress_cb, cancel_token)
         _persist_pack(pack, srt_path, subtitles_dir, lang_iso, "chapters")
 
     with open(chapters_path, "r", encoding="utf-8") as f:

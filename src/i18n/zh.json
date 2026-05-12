@@ -1753,5 +1753,24 @@
   "analysis.confirm_overwrite.title": "覆盖确认",
   "analysis.confirm_overwrite.message": "{iso} 已经有「{kind}」产物，重新生成会覆盖。确定继续吗？",
   "analysis.error.srt_missing": "字幕文件不存在。",
-  "analysis.error.failed": "生成失败"
+  "analysis.error.failed": "生成失败",
+
+  "source_preview.btn_edit_context": "编辑上下文",
+  "dialog.source_context.title": "内容上下文",
+  "dialog.source_context.heading": "源视频内容上下文",
+  "dialog.source_context.platform_section": "平台元数据（只读，来自 yt-dlp）",
+  "dialog.source_context.pf_uploader": "上传者",
+  "dialog.source_context.pf_description": "描述",
+  "dialog.source_context.pf_tags": "标签",
+  "dialog.source_context.edit_section": "可编辑字段",
+  "dialog.source_context.show_type": "节目类型:",
+  "dialog.source_context.host": "主讲人:",
+  "dialog.source_context.host_bio": "身份:",
+  "dialog.source_context.guests": "嘉宾:",
+  "dialog.source_context.audience": "观众:",
+  "dialog.source_context.episode_topic": "整集主题:",
+  "dialog.source_context.platform_tone": "平台语气:",
+  "dialog.source_context.notes": "备注:",
+  "dialog.source_context.hint": "上下文用于喂给 AI（章节/标题/热点片段），帮助生成更切题的结果。所有字段可选。",
+  "dialog.source_context.btn_save": "保存"
 }

@@ -1753,5 +1753,24 @@
   "analysis.confirm_overwrite.title": "Confirm overwrite",
   "analysis.confirm_overwrite.message": "{iso} already has a \"{kind}\" artifact. Regenerating will overwrite it. Continue?",
   "analysis.error.srt_missing": "Subtitle file not found.",
-  "analysis.error.failed": "Generation failed"
+  "analysis.error.failed": "Generation failed",
+
+  "source_preview.btn_edit_context": "Edit Context",
+  "dialog.source_context.title": "Content Context",
+  "dialog.source_context.heading": "Source Video Content Context",
+  "dialog.source_context.platform_section": "Platform metadata (read-only, from yt-dlp)",
+  "dialog.source_context.pf_uploader": "Uploader",
+  "dialog.source_context.pf_description": "Description",
+  "dialog.source_context.pf_tags": "Tags",
+  "dialog.source_context.edit_section": "Editable fields",
+  "dialog.source_context.show_type": "Show type:",
+  "dialog.source_context.host": "Host:",
+  "dialog.source_context.host_bio": "Bio:",
+  "dialog.source_context.guests": "Guests:",
+  "dialog.source_context.audience": "Audience:",
+  "dialog.source_context.episode_topic": "Episode topic:",
+  "dialog.source_context.platform_tone": "Platform tone:",
+  "dialog.source_context.notes": "Notes:",
+  "dialog.source_context.hint": "Context is fed to AI (chapters/titles/hotclips) to produce on-target outputs. All fields optional.",
+  "dialog.source_context.btn_save": "Save"
 }
