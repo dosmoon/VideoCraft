@@ -1146,13 +1146,89 @@ class VideoCraftHub:
                       command=lambda l=lang, s=is_source_row:
                           self._on_regenerate_subtitle(l, s),
                       ).pack(side="right", padx=2)
+            # [+] popup menu: spawn an analysis artifact under this subtitle.
+            tk.Button(row, text="+", relief="flat", bg="#e8e8e8",
+                      font=("", 9, "bold"), cursor="hand2",
+                      command=lambda l=lang, w=row:
+                          self._on_subtitle_analysis_menu(l, w),
+                      ).pack(side="right", padx=2)
 
             # Analysis artifacts (titles / chapters / hotclips / ...) as indented
             # sub-rows below the language row. Only existing artifacts are shown
-            # in P1; the [+ generate] affordance lands in P2.
+            # for now; missing ones are reachable via the [+] menu above.
             self._populate_analysis_rows(lang)
 
         self._subtitles_primary_btn.config(text=tr("hub.button.add_translation"), state="normal")
+
+    def _on_subtitle_analysis_menu(self, lang_iso: str, anchor: tk.Widget) -> None:
+        """Pop the [+] menu next to a subtitle row. Each item dispatches to
+        the corresponding analysis runner. Hotclips lives here too but is
+        disabled until P4."""
+        from core.subtitle_analysis import all_types
+
+        menu = tk.Menu(self.root, tearoff=0)
+        for t in all_types():
+            label = "+ " + tr(f"analysis.kind.{t.kind}")
+            if t.kind == "hotclips":
+                menu.add_command(label=label + "  (P4)", state="disabled")
+            else:
+                menu.add_command(
+                    label=label,
+                    command=lambda k=t.kind, l=lang_iso:
+                        self._invoke_analysis(l, k),
+                )
+        # Pop just below the anchor widget for predictable placement.
+        x = anchor.winfo_rootx()
+        y = anchor.winfo_rooty() + anchor.winfo_height()
+        menu.tk_popup(x, y)
+
+    def _invoke_analysis(self, lang_iso: str, kind: str) -> None:
+        """Run an analysis kind for a subtitle. Overwrites the existing
+        artifact (after confirmation) if present."""
+        from core.subtitle_analysis import analysis_path
+        from core.subtitle_analysis_runners import run as run_analysis
+        from core.ai.errors import AIError, Kind as AIKind
+        from ui.subtitles_progress_modal import SubtitlesProgressModal
+
+        srt_path = os.path.join(self.project.subtitles_dir, f"{lang_iso}.srt")
+        if not os.path.isfile(srt_path):
+            messagebox.showerror("VideoCraft",
+                                 tr("analysis.error.srt_missing"),
+                                 parent=self.root)
+            return
+
+        out_path = analysis_path(self.project.subtitles_dir, lang_iso, kind)
+        if os.path.isfile(out_path):
+            display = tr(f"analysis.kind.{kind}")
+            if not messagebox.askyesno(
+                    tr("analysis.confirm_overwrite.title"),
+                    tr("analysis.confirm_overwrite.message",
+                       kind=display, iso=lang_iso),
+                    default="no", parent=self.root):
+                return
+
+        def worker(progress_cb, cancel_token):
+            return run_analysis(kind, srt_path, self.project.subtitles_dir,
+                                lang_iso, progress_cb, cancel_token)
+
+        modal = SubtitlesProgressModal(
+            self.root, worker,
+            title=tr("analysis.modal.title", kind=tr(f"analysis.kind.{kind}")),
+        )
+        try:
+            modal.run()
+        except AIError as e:
+            if e.kind == AIKind.CANCELLED:
+                return
+            messagebox.showerror(tr("analysis.error.failed"),
+                                 str(e), parent=self.root)
+            return
+        except Exception as e:
+            messagebox.showerror(tr("analysis.error.failed"),
+                                 repr(e), parent=self.root)
+            return
+
+        self._refresh_subtitles_section()
 
     def _populate_analysis_rows(self, lang_iso: str) -> None:
         """Render one indented sub-row per existing analysis artifact for the

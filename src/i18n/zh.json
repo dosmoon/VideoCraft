@@ -1747,5 +1747,11 @@
   "analysis.kind.chapter_refined": "分章节精炼",
   "analysis.kind.hotclips": "热点片段",
   "analysis_preview.missing": "（产物尚未生成）",
-  "analysis_preview.read_failed": "读取失败: {error}"
+  "analysis_preview.read_failed": "读取失败: {error}",
+
+  "analysis.modal.title": "生成{kind}",
+  "analysis.confirm_overwrite.title": "覆盖确认",
+  "analysis.confirm_overwrite.message": "{iso} 已经有「{kind}」产物，重新生成会覆盖。确定继续吗？",
+  "analysis.error.srt_missing": "字幕文件不存在。",
+  "analysis.error.failed": "生成失败"
 }

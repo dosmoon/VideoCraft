@@ -1747,5 +1747,11 @@
   "analysis.kind.chapter_refined": "Chapter Refined",
   "analysis.kind.hotclips": "Hot Clips",
   "analysis_preview.missing": "(not generated yet)",
-  "analysis_preview.read_failed": "Read failed: {error}"
+  "analysis_preview.read_failed": "Read failed: {error}",
+
+  "analysis.modal.title": "Generate {kind}",
+  "analysis.confirm_overwrite.title": "Confirm overwrite",
+  "analysis.confirm_overwrite.message": "{iso} already has a \"{kind}\" artifact. Regenerating will overwrite it. Continue?",
+  "analysis.error.srt_missing": "Subtitle file not found.",
+  "analysis.error.failed": "Generation failed"
 }
