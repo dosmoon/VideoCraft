@@ -107,6 +107,9 @@ class ToolFrame(ttk.Frame):
             self._set_status_cb(status)
 
 
+PREVIEW_TAB_KEY = "__preview__"
+
+
 class TabBar(tk.Frame):
     """
     自定义横向 Tab 栏。每个 Tab 含彩色状态圆点 + 标题 + 关闭按钮。
@@ -119,7 +122,8 @@ class TabBar(tk.Frame):
         self._tabs: dict[str, dict] = {}    # key → {frame, dot, title_lbl}
         self._active_key: str | None = None
 
-    def add_tab(self, key: str, title: str, status: str = "idle") -> None:
+    def add_tab(self, key: str, title: str, status: str = "idle",
+                closable: bool = True) -> None:
         btn = tk.Frame(self, bg="#d0d0d0", cursor="hand2", padx=6, pady=0)
         btn.pack(side="left", padx=(4, 0), pady=3)
 
@@ -131,16 +135,18 @@ class TabBar(tk.Frame):
                        font=("Segoe UI", 9))
         lbl.pack(side="left", pady=4)
 
-        cls_btn = tk.Label(btn, text=" × ", bg="#d0d0d0",
-                           font=("Segoe UI", 10), cursor="hand2",
-                           fg="#666")
-        cls_btn.pack(side="left", pady=4)
+        cls_btn = None
+        if closable:
+            cls_btn = tk.Label(btn, text=" × ", bg="#d0d0d0",
+                               font=("Segoe UI", 10), cursor="hand2",
+                               fg="#666")
+            cls_btn.pack(side="left", pady=4)
+            cls_btn.bind("<Button-1>", lambda e, k=key: self._on_close(k))
+            cls_btn.bind("<Enter>",    lambda e, w=cls_btn: w.configure(fg="#c00"))
+            cls_btn.bind("<Leave>",    lambda e, w=cls_btn: w.configure(fg="#666"))
 
         for w in (btn, dot, lbl):
             w.bind("<Button-1>", lambda e, k=key: self._on_select(k))
-        cls_btn.bind("<Button-1>", lambda e, k=key: self._on_close(k))
-        cls_btn.bind("<Enter>",    lambda e, w=cls_btn: w.configure(fg="#c00"))
-        cls_btn.bind("<Leave>",    lambda e, w=cls_btn: w.configure(fg="#666"))
 
         self._tabs[key] = {"frame": btn, "dot": dot, "title": lbl,
                            "close": cls_btn}
@@ -259,9 +265,9 @@ class VideoCraftHub:
         self._tab_frames: dict[str, ToolFrame] = {}  # tool_key → ToolFrame
         self._tab_bar: TabBar | None = None
         self._content_area: tk.Frame | None = None   # Tab 内容切换区
-        self._content_placeholder: tk.Frame | None = None  # shown when no tab/preview
-        self._preview_frame: tk.Frame | None = None        # transient preview widget
-        self._preview_key: str | None = None               # identifies current preview
+        self._preview_tab: tk.Frame | None = None   # permanent tab-0 content host
+        self._preview_key: str | None = None        # identifies current preview content
+        self._suppress_tree_select: bool = False    # set during sidebar refresh
         self._log_frame: tk.Frame | None = None
         self._log_strip: tk.Frame | None = None
         self._log_expanded: bool = False
@@ -272,7 +278,6 @@ class VideoCraftHub:
         self._build_layout()
         self._refresh_project_tab()
         self.refresh_sidebar()
-        self._show_empty_content()  # no tab open initially
         self._schedule_auto_refresh()
 
         # Apply zoom + sash positions after widgets have been realized.
@@ -557,90 +562,69 @@ class VideoCraftHub:
         self._content = tk.Frame(self._pane, bg="white")
         self._pane.add(self._content, weight=1)
 
-        # Tab 栏（首次打开工具前隐藏）
+        # Tab bar is always packed — tab 0 (preview) is permanent.
         self._tab_bar = TabBar(self._content,
                                on_select=self._select_tab,
                                on_close=self._close_tab)
-        # 工具内容切换区
+        self._tab_bar.pack(side="top", fill="x")
+        # Tool/preview content switch area
         self._content_area = tk.Frame(self._content, bg="white")
+        self._content_area.pack(fill="both", expand=True)
+
+        # ── Permanent preview tab (key = PREVIEW_TAB_KEY, no close button) ──
+        self._preview_tab = tk.Frame(self._content_area, bg="white")
+        self._tab_frames[PREVIEW_TAB_KEY] = self._preview_tab
+        self._tab_bar.add_tab(PREVIEW_TAB_KEY, "项目", closable=False)
+        self._render_preview_placeholder()
+        self._select_tab(PREVIEW_TAB_KEY)
 
         self._build_logpanel()
 
-    # ── 内容区状态 ────────────────────────────────────────────────────────────
+    # ── Preview tab content ──────────────────────────────────────────────────
 
-    def _show_empty_content(self):
-        """No tab open: hide tab bar/content area, show a subtle hint placeholder.
-        With-project single state: the project is always loaded; this state
-        only means "user has no workbench tab open right now"."""
-        from i18n import tr
-        assert self._tab_bar is not None and self._content_area is not None
-        self._tab_bar.pack_forget()
-        self._content_area.pack_forget()
-        self._clear_preview()
-        if self._content_placeholder is None:
-            self._content_placeholder = tk.Frame(self._content, bg="white")
-            inner = tk.Frame(self._content_placeholder, bg="white")
-            inner.place(relx=0.5, rely=0.45, anchor="center")
-            tk.Label(inner, text=self.project.name, font=("", 18, "bold"),
-                     bg="white", fg="#333").pack(pady=(0, 8))
-            tk.Label(inner, text=tr("hub.placeholder.hint"),
-                     font=("", 10), bg="white", fg="#888",
-                     wraplength=500, justify="center").pack()
-        assert self._content_placeholder is not None
-        self._content_placeholder.pack(fill="both", expand=True)
-
-    def _clear_preview(self) -> None:
-        """Destroy whatever preview widget is currently mounted."""
-        if self._preview_frame is not None:
-            self._preview_frame.destroy()
-            self._preview_frame = None
+    def _clear_preview_tab(self) -> None:
+        """Destroy whatever's currently inside the preview tab frame."""
+        for child in self._preview_tab.winfo_children():
+            child.destroy()
         self._preview_key = None
 
-    def _show_preview_frame(self, frame: tk.Frame, key: str) -> None:
-        """Mount a preview widget in the content area (takes over from
-        placeholder/tabs until a tab is opened or another preview replaces it)."""
-        assert self._tab_bar is not None and self._content_area is not None
-        # Hide everything else
-        self._tab_bar.pack_forget()
-        self._content_area.pack_forget()
-        if self._content_placeholder is not None:
-            self._content_placeholder.pack_forget()
-        # Swap in new preview
-        if self._preview_frame is not None:
-            self._preview_frame.destroy()
-        self._preview_frame = frame
-        self._preview_key = key
-        self._preview_frame.pack(fill="both", expand=True)
+    def _render_preview_placeholder(self) -> None:
+        """Empty-state content for the preview tab (project name + hint)."""
+        from i18n import tr
+        self._clear_preview_tab()
+        inner = tk.Frame(self._preview_tab, bg="white")
+        inner.place(relx=0.5, rely=0.45, anchor="center")
+        tk.Label(inner, text=self.project.name, font=("", 18, "bold"),
+                 bg="white", fg="#333").pack(pady=(0, 8))
+        tk.Label(inner, text=tr("hub.placeholder.hint"),
+                 font=("", 10), bg="white", fg="#888",
+                 wraplength=500, justify="center").pack()
+        self._preview_key = "placeholder"
 
     def show_subtitle_preview(self, srt_path: str, lang_iso: str) -> None:
-        """Sidebar click handler: show SRT contents in the right pane."""
+        """Sidebar click handler: show SRT contents in the preview tab."""
         from ui.srt_preview_pane import build_srt_preview
         key = f"subtitle:{lang_iso}"
-        if self._preview_key == key and self._preview_frame is not None:
-            return  # already showing this one
-        frame = build_srt_preview(self._content, srt_path,
-                                  title=f"{lang_iso}.srt")
-        self._show_preview_frame(frame, key)
+        if self._preview_key != key:
+            self._clear_preview_tab()
+            frame = build_srt_preview(self._preview_tab, srt_path,
+                                      title=f"{lang_iso}.srt")
+            frame.pack(fill="both", expand=True)
+            self._preview_key = key
+        self._select_tab(PREVIEW_TAB_KEY)
 
     def show_source_preview(self) -> None:
-        """Sidebar click handler: show source/video.mp4 in the right pane."""
+        """Sidebar click handler: show source/video.mp4 in the preview tab."""
         if self.project.source_status() != "ready":
             return
         from ui.source_preview_pane import build_source_preview
         key = "source"
-        if self._preview_key == key and self._preview_frame is not None:
-            return
-        frame = build_source_preview(self._content, self.project)
-        self._show_preview_frame(frame, key)
-
-    def _show_tabs(self):
-        """Show tab bar + content area (a tool is now open)."""
-        assert self._tab_bar is not None and self._content_area is not None
-        if self._content_placeholder is not None:
-            self._content_placeholder.pack_forget()
-        self._clear_preview()
-        self._tab_bar.pack(side="top", fill="x")
-        self._content_area.pack(fill="both", expand=True)
+        if self._preview_key != key:
+            self._clear_preview_tab()
+            frame = build_source_preview(self._preview_tab, self.project)
+            frame.pack(fill="both", expand=True)
+            self._preview_key = key
+        self._select_tab(PREVIEW_TAB_KEY)
 
     def _select_tab(self, key: str):
         assert self._tab_bar is not None
@@ -651,8 +635,10 @@ class VideoCraftHub:
         self._tab_bar.set_active(key)
 
     def _close_tab(self, key: str):
-        """Close a tool tab; fall back to the empty content placeholder."""
+        """Close a tool tab; the permanent preview tab cannot be closed."""
         assert self._tab_bar is not None
+        if key == PREVIEW_TAB_KEY:
+            return
         if key in self._tab_frames:
             self._tab_frames[key].destroy()
             del self._tab_frames[key]
@@ -661,7 +647,7 @@ class VideoCraftHub:
         if nxt:
             self._select_tab(nxt)
         else:
-            self._show_empty_content()
+            self._select_tab(PREVIEW_TAB_KEY)
 
     # ── Project 操作 ──────────────────────────────────────────────────────────
 
@@ -1204,7 +1190,10 @@ class VideoCraftHub:
             state="normal" if (source_ready and subs_ready) else "disabled"
         )
 
-        # Repopulate tree
+        # Repopulate tree; suppress select callback so re-applying the prior
+        # selection at the end doesn't auto-reopen a workbench the user just
+        # closed.
+        self._suppress_tree_select = True
         prev_sel = (self._project_tree.selection()[0]
                     if self._project_tree.selection() else None)
         self._project_tree.delete(*self._project_tree.get_children())
@@ -1252,6 +1241,9 @@ class VideoCraftHub:
         if prev_sel and self._project_tree.exists(prev_sel):
             self._project_tree.selection_set(prev_sel)
             self._project_tree.see(prev_sel)
+        # Re-arm select handler on next event-loop tick so the now-pending
+        # <<TreeviewSelect>> from selection_set fires under suppression.
+        self.root.after(0, lambda: setattr(self, "_suppress_tree_select", False))
 
     # ── Derivative tree interactions ──────────────────────────────────────────
 
@@ -1269,14 +1261,18 @@ class VideoCraftHub:
         return (type_name, inst) if type_name and inst else None
 
     def _on_derivative_tree_select(self, _event=None):
-        pass  # no-op; we have no per-selection action right now
-
-    def _on_derivative_tree_double_click(self, _event=None):
+        """Single-click on a derivative instance → open / focus its workbench tab."""
+        if self._suppress_tree_select:
+            return
         info = self._selected_instance()
         if info is None:
             return
         type_name, instance_name = info
         self._open_workbench_for_type(type_name, instance_name)
+
+    def _on_derivative_tree_double_click(self, _event=None):
+        # Single-click already opens; keep this as a no-op alias.
+        self._on_derivative_tree_select()
 
     def _on_derivative_tree_right_click(self, event):
         item = self._project_tree.identify_row(event.y)
@@ -1700,7 +1696,6 @@ class VideoCraftHub:
         registry_key = tab_key or tool_key
         if registry_key in self._tab_registry:
             self._select_tab(registry_key)
-            self._show_tabs()
             return
         try:
             mod_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -1734,7 +1729,6 @@ class VideoCraftHub:
             self._tab_registry[registry_key] = registry_key
             self._tool_instances.append(app)
 
-            self._show_tabs()
             self._select_tab(registry_key)
         except Exception as e:
             messagebox.showerror("启动失败", str(e))
