@@ -161,8 +161,10 @@ _DEFAULT_ASR_PROVIDERS = {
         # CT2-supported type: float32 / float16 / int8_float16 / int8.
         "compute_type":    "auto",
         # word_timestamps: True → adds words[] to output (~10-20% slower).
-        # words[] empty when False (sentence-level segments[] still works).
-        "word_timestamps": False,
+        # Required by core/sentence_regroup.py to fix Whisper's mid-clause
+        # cue splits; default True so out-of-the-box transcripts are
+        # actually sentence-level (matches the segments[] contract).
+        "word_timestamps": True,
     },
 }
 

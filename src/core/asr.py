@@ -102,6 +102,23 @@ def transcribe_audio(
         cancel_token=cancel_token,
     )
 
+    # ── Sentence-level regrouping ──
+    # Whisper's native segments[] split at trained acoustic+length
+    # boundaries — mid-sentence breaks (with punctuation stranded on the
+    # next cue) are routine. When the provider supplied word-level
+    # timing, regroup into true sentence segments before SRT rendering.
+    # See core/sentence_regroup.py for the ported stable-ts algorithm.
+    # If the provider returned empty words[] (some Whisper backends do),
+    # silently keep the provider's original segments.
+    words = result.get("words") or []
+    if words and not speaker_labels:
+        # Speaker labels are attached to provider segments; regrouping
+        # would lose them. Skip regroup when diarization is on.
+        from core.sentence_regroup import regroup_words
+        regrouped = regroup_words(words)
+        if regrouped:
+            result["segments"] = regrouped
+
     # Resolve detected language and decide on output suffix rewrite.
     # Note: Whisper-family backends treat the `language` parameter as
     # "output in THIS language" (auto-translating if needed), NOT "the
