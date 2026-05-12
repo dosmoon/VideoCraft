@@ -714,6 +714,17 @@ class VideoCraftHub:
             command=self._on_source_button,
         )
         self._source_primary_btn.pack(side="left")
+        self._source_details_btn = tk.Button(
+            btn_row, text="详情", relief="flat", bg="#e8e8e8",
+            command=self._on_source_details,
+        )
+        # Packed conditionally in refresh — hidden when source is missing.
+
+    def _on_source_details(self) -> None:
+        from ui.source_details_dialog import show_source_details
+        action = show_source_details(self.root, self.project)
+        if action == "modify":
+            self._on_source_button()
 
     def _on_source_button(self) -> None:
         """Add (when missing) or Modify (when present)."""
@@ -1000,13 +1011,15 @@ class VideoCraftHub:
                 label += "\n   " + " · ".join(extras)
             self._source_status_var.set(label)
             self._source_primary_btn.config(text="修改")
+            self._source_details_btn.pack(side="left", padx=(4, 0))
         else:
             self._source_status_var.set("✗ 无")
             self._source_primary_btn.config(text="+ 添加源视频")
+            self._source_details_btn.pack_forget()
 
     def _refresh_subtitles_section(self) -> None:
         from core import lang_names
-        from core.subtitle_check import check_srt, SEV_ERROR, SEV_WARNING
+        from core.subtitle_check import check_srt
 
         # Rebuild language rows from scratch each refresh — simplest and the
         # widget count is tiny (1~3 rows in practice).
@@ -1045,42 +1058,57 @@ class VideoCraftHub:
             role = "源" if meta.source == lang else "翻译"
             srt_path = os.path.join(self.project.subtitles_dir, f"{lang}.srt")
 
-            # Quick check — milliseconds even for hour-long files.
             ref = ref_path if (lang != source_lang and ref_path
                               and os.path.isfile(ref_path)) else None
             check = check_srt(srt_path, expected_lang_iso=lang,
                               reference_srt_path=ref)
 
-            if check.has_errors:
-                icon = "✗"
-                color = "#c00"
-            elif check.has_warnings:
-                icon = "⚠"
-                color = "#a60"
+            # Worst-class drives the badge; advisory is silent in sidebar.
+            if check.hard_count > 0:
+                icon, color = "✗", "#c00"
+                badge = f"  · {check.hard_count} 处错误"
+            elif check.fixable_count > 0:
+                icon, color = "⚠", "#a60"
+                badge = ""  # fixable count appears on the action button
             else:
-                icon = "✓"
-                color = "#222"
+                icon, color = "✓", "#222"
+                badge = ""
 
             row = tk.Frame(self._subtitles_lang_box, bg="#f5f5f5")
             row.pack(fill="x", pady=1)
             tk.Label(row, text=icon, bg="#f5f5f5", fg=color, font=("", 9),
                      width=2
                      ).pack(side="left")
-            text = f"{role} ({lang_label}): {lang}.srt"
-            if check.issue_count > 0:
-                text += f"  · {check.issue_count} 处异常"
-            tk.Label(row, text=text, bg="#f5f5f5", fg=color, font=("", 9),
-                     anchor="w"
+            tk.Label(row, text=f"{role} ({lang_label}): {lang}.srt{badge}",
+                     bg="#f5f5f5", fg=color, font=("", 9), anchor="w",
                      ).pack(side="left", fill="x", expand=True)
-            if check.issue_count > 0:
-                tk.Button(row, text="详情", relief="flat", bg="#e8e8e8",
+
+            # Right side: [🔧 修 N] only when fixable AND no hard; [详情] always.
+            tk.Button(row, text="详情", relief="flat", bg="#e8e8e8",
+                      font=("", 8),
+                      command=lambda p=srt_path, l=lang, r=ref:
+                          self._on_show_check_dialog(p, l, r),
+                      ).pack(side="right", padx=2)
+            if check.hard_count == 0 and check.fixable_count > 0:
+                tk.Button(row, text=f"🔧 修 {check.fixable_count}",
+                          relief="flat", bg="#fff3cd", fg="#856404",
                           font=("", 8),
-                          command=lambda p=srt_path, l=lang, r=ref:
-                              self._on_show_check_dialog(p, l, r),
+                          command=lambda p=srt_path:
+                              self._on_quick_fix_subtitle(p),
                           ).pack(side="right", padx=2)
 
         self._subtitles_primary_btn.config(text="+ 添加翻译", state="normal")
         self._subtitles_secondary_btn.config(text="重新生成", state="normal")
+
+    def _on_quick_fix_subtitle(self, srt_path: str) -> None:
+        """Sidebar one-click 🔧 修 N — apply auto-fixes silently and refresh."""
+        from core.subtitle_check import apply_auto_fixes
+        try:
+            apply_auto_fixes(srt_path)
+        except Exception as e:
+            messagebox.showerror("清理失败", str(e), parent=self.root)
+            return
+        self._refresh_subtitles_section()
 
     def _on_show_check_dialog(
         self, srt_path: str, lang_iso: str, ref_path: str | None,

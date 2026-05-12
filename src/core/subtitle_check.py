@@ -41,10 +41,19 @@ def _read_srt(path: str) -> str:
 
 # ── Issue categories ─────────────────────────────────────────────────────────
 
-# Severities
+# Severities (legacy axis — kept for color/icon in the detail dialog)
 SEV_ERROR = "error"      # broken / unusable
 SEV_WARNING = "warning"  # suspicious / likely broken
 SEV_INFO = "info"        # noteworthy but acceptable
+
+# Severity classes drive sidebar UX:
+#   HARD     — blocks burn or makes SRT meaningless. Needs human intervention.
+#   FIXABLE  — auto-fixable via apply_auto_fixes (format residue today).
+#   ADVISORY — quality hints, doesn't block anything. Hidden in sidebar by
+#              default; only shown inside the details dialog.
+CLASS_HARD = "hard"
+CLASS_FIXABLE = "fixable"
+CLASS_ADVISORY = "advisory"
 
 # Categories
 CAT_EMPTY = "empty"
@@ -65,6 +74,7 @@ class SubtitleIssue:
     severity: str
     message: str
     auto_fixable: bool = False
+    severity_class: str = CLASS_ADVISORY  # filled by check_srt()
 
 
 @dataclass
@@ -85,8 +95,40 @@ class CheckResult:
     def issue_count(self) -> int:
         return len(self.issues)
 
+    @property
+    def hard_count(self) -> int:
+        return sum(1 for i in self.issues if i.severity_class == CLASS_HARD)
+
+    @property
+    def fixable_count(self) -> int:
+        return sum(1 for i in self.issues if i.severity_class == CLASS_FIXABLE)
+
+    @property
+    def advisory_count(self) -> int:
+        return sum(1 for i in self.issues if i.severity_class == CLASS_ADVISORY)
+
     def by_category(self, category: str) -> list[SubtitleIssue]:
         return [i for i in self.issues if i.category == category]
+
+    def by_class(self, cls: str) -> list[SubtitleIssue]:
+        return [i for i in self.issues if i.severity_class == cls]
+
+
+def _classify(category: str, severity: str, auto_fixable: bool) -> str:
+    """Map (category, severity, auto_fixable) → severity_class.
+
+    Rules:
+      - auto_fixable wins → FIXABLE (one-click cleanup path)
+      - parse / empty / timing / count_mismatch / lang_purity → HARD
+        (broken SRT or wrong-language file — blocks any sensible use)
+      - everything else → ADVISORY (length_ratio / duplicate / overlap)
+    """
+    if auto_fixable:
+        return CLASS_FIXABLE
+    if category in (CAT_PARSE, CAT_EMPTY, CAT_TIMING,
+                    CAT_COUNT_MISMATCH, CAT_LANG_PURITY):
+        return CLASS_HARD
+    return CLASS_ADVISORY
 
 
 # ── Format-residue patterns ──────────────────────────────────────────────────
@@ -316,6 +358,11 @@ def check_srt(
                     0, CAT_LANG_PURITY, SEV_ERROR,
                     f"目标语言纯度不足: {ratio:.0%} 字符属于 "
                     f"{expected_lang_iso} 字符集 (期望 ≥ {_PURITY_FLOOR_DEFAULT:.0%})"))
+
+    # Classify every issue in one pass.
+    for issue in result.issues:
+        issue.severity_class = _classify(
+            issue.category, issue.severity, issue.auto_fixable)
 
     return result
 
