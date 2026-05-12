@@ -36,7 +36,7 @@ import re
 
 _TERMINAL_PUNCT = set(".!?。！？")
 _SOFT_PUNCT     = set(",，")
-_GAP_THRESHOLD_S = 0.5
+_GAP_THRESHOLD_S = 0.5  # stable-ts default
 _COMMA_MIN_CHARS = 50
 _MAX_CHARS = 70
 
@@ -190,6 +190,94 @@ def _chunk_to_segment(words: list[dict], seg_id: int) -> dict:
     }
 
 
+# ── Segment-level fallback ───────────────────────────────────────────────────
+
+# Used when words[] is empty (some Whisper backends — including OpenAI's
+# segments-only mode, lemonfox in certain plans, aistack with backends
+# that lack cross-attention exports). Works on whatever the provider
+# already chose as segment boundaries, merging adjacent segments when
+# the split looks like an acoustic mid-sentence break.
+
+# Higher cap than word-level because we can't split mid-segment;
+# merging conservatively is safer than refusing to merge.
+_SEG_MAX_CHARS = 140
+_SEG_GAP_MERGE_S = 0.5  # merge when seg→seg gap is at most this
+
+
+def _seg_should_merge(prev: dict, nxt: dict) -> bool:
+    """True iff prev should absorb nxt because the boundary looks like a
+    mid-sentence acoustic split rather than a real sentence break."""
+    prev_text = (prev.get("text") or "").rstrip()
+    if not prev_text:
+        return False
+    last = prev_text[-1]
+    # Real terminator on the previous segment → keep separate.
+    if last in _TERMINAL_PUNCT:
+        nxt_first = (nxt.get("text") or "").lstrip()
+        if last == "." and _is_false_terminator(
+                prev_text.rsplit(None, 1)[-1] if prev_text.split() else prev_text,
+                nxt_first):
+            pass  # false terminator → fall through to merge
+        else:
+            return False
+    # Tight time gap = same utterance.
+    try:
+        gap = float(nxt["start"]) - float(prev["end"])
+    except (TypeError, KeyError, ValueError):
+        gap = 0.0
+    if gap > _SEG_GAP_MERGE_S:
+        return False
+    # Don't grow forever.
+    combined = len(prev_text) + 1 + len((nxt.get("text") or "").strip())
+    if combined > _SEG_MAX_CHARS:
+        return False
+    return True
+
+
+def regroup_segments(segments: list[dict]) -> list[dict]:
+    """Greedy segment-level merge for when word-level timing is missing.
+
+    Walks segments in order, absorbing each next segment into the
+    current one until the current's text ends in real terminal
+    punctuation OR a gap appears OR the length cap is hit.
+    """
+    if not segments:
+        return []
+    out: list[dict] = []
+    i = 0
+    while i < len(segments):
+        cur = dict(segments[i])  # shallow copy — we mutate text/end
+        cur["text"] = (cur.get("text") or "").strip()
+        j = i + 1
+        while j < len(segments):
+            nxt = segments[j]
+            if not _seg_should_merge(cur, nxt):
+                break
+            nxt_text = (nxt.get("text") or "").strip()
+            # Insert a space (Latin) or nothing (CJK) — easy heuristic:
+            # if either side ends/starts in CJK range, no space needed.
+            joiner = "" if _is_cjk_boundary(cur["text"], nxt_text) else " "
+            cur["text"] = cur["text"] + joiner + nxt_text
+            cur["end"] = nxt.get("end", cur["end"])
+            j += 1
+        cur["id"] = len(out) + 1
+        out.append(cur)
+        i = j
+    return out
+
+
+def _is_cjk_boundary(left: str, right: str) -> bool:
+    """True when a CJK char sits on either side of the join — no space."""
+    if not left or not right:
+        return False
+    def _cjk(ch: str) -> bool:
+        cp = ord(ch)
+        return (0x3040 <= cp <= 0x30FF        # kana
+                or 0x3400 <= cp <= 0x9FFF     # CJK unified
+                or 0xAC00 <= cp <= 0xD7AF)    # hangul
+    return _cjk(left[-1]) or _cjk(right[0])
+
+
 # ── Public entry ─────────────────────────────────────────────────────────────
 
 def regroup_words(words: list[dict]) -> list[dict]:
@@ -265,17 +353,32 @@ if __name__ == "__main__":
     ]
 
     segs = regroup_words(words)
-    print(f"input words: {len(words)}")
-    print(f"output segments: {len(segs)}")
+    print(f"[word-level] input words: {len(words)}")
+    print(f"[word-level] output segments: {len(segs)}")
     for s in segs:
         print(f"  {s['start']:.3f} → {s['end']:.3f}  {s['text']!r}")
-
-    # Expected: 1 segment, since there's no terminal punct until ".",
-    # no gap > 0.5s, no soft punct hit until "," at "step," (chars=23, < 50
-    # threshold), full text well under 70 chars → wait, ~90 chars total.
-    # So split_by_length kicks in. Let's verify:
     assert len(segs) >= 1
-    print("\nsmoke OK")
+    print("\nsmoke (word-level) OK")
+
+    # ── Segment-level fallback test (no words[] available) ──
+    # User's real case: cue 648 "You and China are the only two countries"
+    #                   cue 649 "in the world that could take it out."
+    # No terminal punct on prev, gap = 0 → should merge.
+    src_segs = [
+        {"id": 1, "start": 2293.01, "end": 2296.01,
+         "text": "You and China are the only two countries"},
+        {"id": 2, "start": 2296.01, "end": 2298.01,
+         "text": "in the world that could take it out."},
+        {"id": 3, "start": 2299.50, "end": 2302.00,
+         "text": "Next sentence after a real gap."},
+    ]
+    merged = regroup_segments(src_segs)
+    print(f"\n[segment-level] input: {len(src_segs)}, output: {len(merged)}")
+    for s in merged:
+        print(f"  {s['start']:.3f} → {s['end']:.3f}  {s['text']!r}")
+    assert len(merged) == 2  # first two merged, third kept (1.5s gap > 0.5)
+    assert "countries in the world" in merged[0]["text"]
+    print("smoke (segment-level) OK")
 
     # False-terminator test (only words that *end* with '.' enter the check):
     assert _is_false_terminator("Mr.", "Smith") is True

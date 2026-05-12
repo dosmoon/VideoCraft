@@ -105,19 +105,23 @@ def transcribe_audio(
     # ── Sentence-level regrouping ──
     # Whisper's native segments[] split at trained acoustic+length
     # boundaries — mid-sentence breaks (with punctuation stranded on the
-    # next cue) are routine. When the provider supplied word-level
-    # timing, regroup into true sentence segments before SRT rendering.
-    # See core/sentence_regroup.py for the ported stable-ts algorithm.
-    # If the provider returned empty words[] (some Whisper backends do),
-    # silently keep the provider's original segments.
-    words = result.get("words") or []
-    if words and not speaker_labels:
-        # Speaker labels are attached to provider segments; regrouping
-        # would lose them. Skip regroup when diarization is on.
-        from core.sentence_regroup import regroup_words
-        regrouped = regroup_words(words)
-        if regrouped:
-            result["segments"] = regrouped
+    # next cue) are routine. Two regroup paths:
+    #   - words[] present  → word-level pipeline (stable-ts default port)
+    #   - words[] missing  → segment-level greedy merge fallback
+    # Diarization (speaker_labels=True) skips regroup entirely since
+    # speaker tags are pinned to the provider's original segments.
+    if not speaker_labels:
+        from core.sentence_regroup import regroup_words, regroup_segments
+        words = result.get("words") or []
+        if words:
+            regrouped = regroup_words(words)
+            if regrouped:
+                result["segments"] = regrouped
+        else:
+            # No word timing — merge segments by terminal punct + gap heuristic.
+            merged = regroup_segments(result.get("segments") or [])
+            if merged:
+                result["segments"] = merged
 
     # Resolve detected language and decide on output suffix rewrite.
     # Note: Whisper-family backends treat the `language` parameter as
