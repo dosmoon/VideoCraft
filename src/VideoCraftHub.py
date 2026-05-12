@@ -621,7 +621,8 @@ class VideoCraftHub:
         key = "source"
         if self._preview_key != key:
             self._clear_preview_tab()
-            frame = build_source_preview(self._preview_tab, self.project)
+            frame = build_source_preview(self._preview_tab, self.project,
+                                          on_modify=self._on_source_button)
             frame.pack(fill="both", expand=True)
             self._preview_key = key
         self._select_tab(PREVIEW_TAB_KEY)
@@ -747,17 +748,6 @@ class VideoCraftHub:
             command=self._on_source_button,
         )
         self._source_primary_btn.pack(side="left")
-        self._source_details_btn = tk.Button(
-            btn_row, text="详情", relief="flat", bg="#e8e8e8",
-            command=self._on_source_details,
-        )
-        # Packed conditionally in refresh — hidden when source is missing.
-
-    def _on_source_details(self) -> None:
-        from ui.source_details_dialog import show_source_details
-        action = show_source_details(self.root, self.project)
-        if action == "modify":
-            self._on_source_button()
 
     def _on_source_button(self) -> None:
         """Add (when missing) or Modify (when present)."""
@@ -1020,12 +1010,10 @@ class VideoCraftHub:
                 label += "\n   " + " · ".join(extras)
             self._source_status_var.set(label)
             self._source_primary_btn.config(text="修改")
-            self._source_details_btn.pack(side="left", padx=(4, 0))
             self._source_status_lbl.configure(cursor="hand2")
         else:
             self._source_status_var.set("✗ 无")
             self._source_primary_btn.config(text="+ 添加源视频")
-            self._source_details_btn.pack_forget()
             self._source_status_lbl.configure(cursor="")
 
     def _refresh_subtitles_section(self) -> None:

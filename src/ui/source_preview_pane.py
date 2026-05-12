@@ -1,20 +1,25 @@
 """Source video preview pane.
 
-Embeds a WebView2 surface (via ui.web_preview.WebPreviewFrame) showing
-the project's source/video.mp4 with an HTML5 `<video>` element. Reuses
-the same child-process + SetParent infrastructure as clip_workbench.
+Right side of the preview tab. Layout:
 
-A thin HTML file is written into the project's .videocraft/cache/
-directory and loaded by URL — this lets the video src use absolute
-file:// references (load_html's about:blank base would block them).
+  +----------------------------------+--------------------+
+  |  WebView2 <video> player         |  metadata sidebar  |
+  |  (left, main area)               |  来源 / URL / ... |
+  |                                  |  [修改]  [浏览]    |
+  +----------------------------------+--------------------+
+
+Uses ui.web_preview.WebPreviewFrame (child-process WebView2 + SetParent)
+for the video; an inline metadata column replaces the old details dialog.
 """
 
 from __future__ import annotations
 
 import os
 import tkinter as tk
-from tkinter import ttk
+from datetime import datetime
+from tkinter import messagebox, ttk
 
+from core.project_schema import ORIGIN_LINK, ORIGIN_LOCAL
 from ui.web_preview import WebPreviewFrame
 
 
@@ -32,70 +37,153 @@ _HTML_TEMPLATE = """<!doctype html>
 """
 
 
+def _fmt_size(path: str) -> str:
+    try:
+        n = os.path.getsize(path)
+    except OSError:
+        return "—"
+    for unit in ("B", "KB", "MB", "GB"):
+        if n < 1024:
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1024
+    return f"{n:.1f} TB"
+
+
+def _fmt_mtime(path: str) -> str:
+    try:
+        ts = os.path.getmtime(path)
+    except OSError:
+        return "—"
+    return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M")
+
+
+def _fmt_duration(sec: float | None) -> str:
+    if sec is None or sec <= 0:
+        return "—"
+    s = int(sec)
+    h, rem = divmod(s, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:d}:{m:02d}:{s:02d}" if h else f"{m:d}:{s:02d}"
+
+
 def build_source_preview(
     parent: tk.Frame,
     project,
+    on_modify=None,
 ) -> tk.Frame:
-    """Build the source preview UI inside parent. Returns the outer Frame."""
+    """Build the source preview UI inside parent. on_modify is invoked when
+    the user clicks the [修改] button (Hub re-uses its source-add flow)."""
     outer = tk.Frame(parent, bg="white")
 
     src = project.meta.source
     video_path = project.source_video_path
+    ready = os.path.isfile(video_path) and os.path.getsize(video_path) > 0
 
-    # Header
-    header = tk.Frame(outer, bg="white")
-    header.pack(fill="x", padx=12, pady=(10, 6))
-    title = src.title or "video.mp4"
-    tk.Label(header, text=title, bg="white", fg="#222",
-             font=("Microsoft YaHei UI", 12, "bold"), anchor="w",
-             ).pack(side="left")
-    bits = []
-    if src.duration_sec:
-        sec = int(src.duration_sec)
-        h, rem = divmod(sec, 3600)
-        m, s = divmod(rem, 60)
-        bits.append(f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}")
-    if src.width and src.height:
-        bits.append(f"{src.width}×{src.height}")
-    if bits:
-        tk.Label(header, text="  ·  " + "  ·  ".join(bits),
-                 bg="white", fg="#888", font=("Microsoft YaHei UI", 9),
-                 ).pack(side="left")
+    # Two-column body: video left, metadata right.
+    body = tk.Frame(outer, bg="white")
+    body.pack(fill="both", expand=True, padx=12, pady=10)
 
-    ttk.Separator(outer, orient="horizontal").pack(fill="x", padx=12)
+    video_col = tk.Frame(body, bg="black")
+    video_col.pack(side="left", fill="both", expand=True)
 
-    # Body: WebView holding the <video> element.
-    body = tk.Frame(outer, bg="black")
-    body.pack(fill="both", expand=True, padx=12, pady=(8, 10))
+    meta_col = tk.Frame(body, bg="white", width=280)
+    meta_col.pack(side="right", fill="y", padx=(12, 0))
+    meta_col.pack_propagate(False)
 
-    if not os.path.isfile(video_path):
-        tk.Label(body, text="✗ 源视频缺失", bg="black", fg="#aaa",
+    # ── Video column ──
+    if not ready:
+        tk.Label(video_col, text="✗ 源视频缺失", bg="black", fg="#aaa",
                  font=("Microsoft YaHei UI", 11),
                  ).pack(expand=True)
-        return outer
+    else:
+        cache_dir = os.path.join(project.videocraft_dir, "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        html_path = os.path.join(cache_dir, "source_preview.html")
+        video_url = "file:///" + os.path.abspath(video_path).replace("\\", "/")
+        with open(html_path, "w", encoding="utf-8") as f:
+            f.write(_HTML_TEMPLATE.format(video_url=video_url))
+        initial_url = "file:///" + html_path.replace("\\", "/")
 
-    # Write a tiny HTML file into the project's cache dir so the WebView
-    # can load it via a file:// URL (about:blank can't reference file://
-    # media). The cache file is overwritten each call — single-use is fine.
-    cache_dir = os.path.join(project.videocraft_dir, "cache")
-    os.makedirs(cache_dir, exist_ok=True)
-    html_path = os.path.join(cache_dir, "source_preview.html")
-    video_url = "file:///" + os.path.abspath(video_path).replace("\\", "/")
-    with open(html_path, "w", encoding="utf-8") as f:
-        f.write(_HTML_TEMPLATE.format(video_url=video_url))
-    initial_url = "file:///" + html_path.replace("\\", "/")
+        web = WebPreviewFrame(video_col, initial_url=initial_url)
+        web.pack(fill="both", expand=True)
+        outer._web = web  # type: ignore[attr-defined]
 
-    web = WebPreviewFrame(body, initial_url=initial_url)
-    web.pack(fill="both", expand=True)
+        def _on_destroy(_e=None):
+            try:
+                web.destroy()
+            except Exception:
+                pass
+        outer.bind("<Destroy>", _on_destroy)
 
-    # Stash for clean shutdown when the pane is destroyed.
-    outer._web = web  # type: ignore[attr-defined]
+    # ── Metadata column ──
+    tk.Label(meta_col, text=src.title or "video.mp4",
+             bg="white", fg="#222",
+             font=("Microsoft YaHei UI", 12, "bold"),
+             anchor="w", wraplength=270, justify="left",
+             ).pack(fill="x", anchor="w")
 
-    def _on_destroy(_e=None):
+    status_txt = (f"✓ 已就绪  ·  {_fmt_size(video_path)}"
+                  if ready else "✗ 源视频缺失")
+    tk.Label(meta_col, text=status_txt,
+             bg="white", fg="#666", font=("Microsoft YaHei UI", 9),
+             anchor="w",
+             ).pack(fill="x", anchor="w", pady=(2, 0))
+
+    if ready:
+        tk.Label(meta_col, text=f"修改于 {_fmt_mtime(video_path)}",
+                 bg="white", fg="#888", font=("Microsoft YaHei UI", 9),
+                 anchor="w",
+                 ).pack(fill="x", anchor="w", pady=(0, 6))
+
+    ttk.Separator(meta_col, orient="horizontal").pack(fill="x", pady=(6, 8))
+
+    # Field rows
+    rows: list[tuple[str, str]] = []
+    if src.origin == ORIGIN_LINK:
+        rows.append(("来源", "链接"))
+        rows.append(("URL", src.url or "—"))
+    elif src.origin == ORIGIN_LOCAL:
+        rows.append(("来源", "本地文件"))
+        rows.append(("原始路径", src.imported_from or "—"))
+    else:
+        rows.append(("来源", src.origin or "—"))
+    if src.clip_range:
+        rows.append(("截取范围",
+                     f"{src.clip_range.start} → {src.clip_range.end}"))
+    else:
+        rows.append(("截取范围", "全片"))
+    rows.append(("时长", _fmt_duration(src.duration_sec)))
+    if src.width and src.height:
+        rows.append(("分辨率", f"{src.width} × {src.height}"))
+    else:
+        rows.append(("分辨率", "—"))
+    rows.append(("本地路径", video_path))
+
+    grid = tk.Frame(meta_col, bg="white")
+    grid.pack(fill="x", anchor="w")
+    for i, (label, value) in enumerate(rows):
+        tk.Label(grid, text=label, bg="white", fg="#666",
+                 font=("Microsoft YaHei UI", 9), anchor="nw",
+                 ).grid(row=i, column=0, sticky="nw", padx=(0, 10), pady=2)
+        tk.Label(grid, text=value, bg="white", fg="#222",
+                 font=("Microsoft YaHei UI", 9), anchor="nw",
+                 wraplength=170, justify="left",
+                 ).grid(row=i, column=1, sticky="nw", pady=2)
+    grid.columnconfigure(1, weight=1)
+
+    # Actions
+    actions = tk.Frame(meta_col, bg="white")
+    actions.pack(fill="x", anchor="w", pady=(12, 0))
+    if on_modify is not None:
+        tk.Button(actions, text="修改", relief="flat", bg="#e8e8e8",
+                  command=on_modify).pack(side="left")
+
+    def _on_open_folder():
         try:
-            web.destroy()
-        except Exception:
-            pass
-    outer.bind("<Destroy>", _on_destroy)
+            os.startfile(project.source_dir)
+        except OSError as e:
+            messagebox.showerror("无法打开文件夹", str(e), parent=outer)
+    tk.Button(actions, text="在资源管理器中显示", relief="flat", bg="#e8e8e8",
+              command=_on_open_folder).pack(side="left", padx=(6, 0))
 
     return outer
