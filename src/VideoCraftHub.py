@@ -602,13 +602,25 @@ class VideoCraftHub:
         self._preview_key = "placeholder"
 
     def show_subtitle_preview(self, srt_path: str, lang_iso: str) -> None:
-        """Sidebar click handler: show SRT contents in the preview tab."""
+        """Sidebar click handler: show SRT contents + inline issues."""
         from ui.srt_preview_pane import build_srt_preview
         key = f"subtitle:{lang_iso}"
         if self._preview_key != key:
             self._clear_preview_tab()
-            frame = build_srt_preview(self._preview_tab, srt_path,
-                                      title=f"{lang_iso}.srt")
+            meta = self.project.meta.language
+            source_lang = meta.source
+            ref_path = None
+            if source_lang and lang_iso != source_lang:
+                cand = os.path.join(self.project.subtitles_dir,
+                                     f"{source_lang}.srt")
+                if os.path.isfile(cand):
+                    ref_path = cand
+            frame = build_srt_preview(
+                self._preview_tab, srt_path,
+                lang_iso=lang_iso,
+                reference_srt_path=ref_path,
+                on_fixed=self._refresh_subtitles_section,
+            )
             frame.pack(fill="both", expand=True)
             self._preview_key = key
         self._select_tab(PREVIEW_TAB_KEY)
@@ -1085,12 +1097,7 @@ class VideoCraftHub:
                            self.show_subtitle_preview(p, l))
                 w.configure(cursor="hand2")
 
-            # Right side (packed right→left so visual order is [↻] [🔧] [详情]):
-            tk.Button(row, text="详情", relief="flat", bg="#e8e8e8",
-                      font=("", 8),
-                      command=lambda p=srt_path, l=lang, r=ref:
-                          self._on_show_check_dialog(p, l, r),
-                      ).pack(side="right", padx=2)
+            # Right side (packed right→left so visual order is [↻] [🔧]):
             if check.hard_count == 0 and check.fixable_count > 0:
                 tk.Button(row, text=f"🔧 修 {check.fixable_count}",
                           relief="flat", bg="#fff3cd", fg="#856404",
@@ -1150,19 +1157,6 @@ class VideoCraftHub:
         base = os.path.basename(srt_path)
         if base.endswith(".srt"):
             self.show_subtitle_preview(srt_path, base[:-4])
-
-    def _on_show_check_dialog(
-        self, srt_path: str, lang_iso: str, ref_path: str | None,
-    ) -> None:
-        from ui.subtitle_check_dialog import show_check_dialog
-        applied = show_check_dialog(
-            self.root, srt_path,
-            expected_lang_iso=lang_iso,
-            reference_srt_path=ref_path,
-        )
-        if applied:
-            self._refresh_subtitles_section()
-            self._refresh_preview_if_match(srt_path)
 
     def _refresh_derivatives_section(self) -> None:
         from core import derivative_types
