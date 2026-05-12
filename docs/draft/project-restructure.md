@@ -562,3 +562,22 @@ File → 退出     → 程序结束
   - 措辞中性,不出现具体站点名
   - 永久小字版权声明 + 首次免责弹窗
 - 待回看:实施 P0 之前重新通读本草案,看是否还有遗漏
+
+---
+
+## 11. 2026-05-12 实施差异 (UX 进化记)
+
+P0~P4.8 + P6 全部上线,此外 UX 在草案之上进一步演化,**实际形态以此节为准**:
+
+- **派生类型名字微调**: "双语字幕视频" → "字幕烧录" / Subtitle Burn(对应行为而非视频种类)
+- **Hub 右栏 = 永久 tab 0 (项目) + 可关闭工具 tabs**:点 sidebar 任意预览对象(source / SRT / 派生 output)都在 tab 0 inline 显示;点派生实例(单击)开工作台 tab。所有详情对话框删除,内容折进 tab 0 的预览面板(视频左+元数据右,SRT 左+问题列表右)
+- **底部日志面板**改为可折叠:24px 状态条 + ▲ 上拉按钮,默认收起
+- **字幕检测三档**(必须处理/自动修复/建议)+ sidebar 行内 [🔧 修 N] 一键修可修项 + 行内 [↻] 单条重生(替代"重新生成"全杀按钮)
+- **派生作品产物在 sidebar 树展开**:每实例下挂 `▶ output.mp4` + `📄 subtitles_<iso>.srt`(选了字幕就必产,屏幕适配后的版本)
+- **ASR 句子级 regroup** (`core/sentence_regroup.py`):port stable-ts 默认链;无 words[] 时段级 fallback 兜底
+- **字幕检测消息 + 预览面板 UI 全部走 tr()**(32 个 zh/en key 对)
+- **Tab 0 不可关闭** via `TabBar.add_tab(closable=False)`
+
+清理:`src/tools/project/project_workbench.py` (1500 行 manifest editor) + `Project.manifest_*` 全删;149 个 `tool.project_workbench.*` i18n key 移除。
+
+详见记忆 `project_create_milestone.md` (持续维护版).
