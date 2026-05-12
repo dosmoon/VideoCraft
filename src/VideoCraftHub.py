@@ -622,6 +622,17 @@ class VideoCraftHub:
                                   title=f"{lang_iso}.srt")
         self._show_preview_frame(frame, key)
 
+    def show_source_preview(self) -> None:
+        """Sidebar click handler: show source/video.mp4 in the right pane."""
+        if self.project.source_status() != "ready":
+            return
+        from ui.source_preview_pane import build_source_preview
+        key = "source"
+        if self._preview_key == key and self._preview_frame is not None:
+            return
+        frame = build_source_preview(self._content, self.project)
+        self._show_preview_frame(frame, key)
+
     def _show_tabs(self):
         """Show tab bar + content area (a tool is now open)."""
         assert self._tab_bar is not None and self._content_area is not None
@@ -740,6 +751,8 @@ class VideoCraftHub:
             anchor="w", justify="left", wraplength=280,
         )
         self._source_status_lbl.pack(fill="x", padx=4, pady=(0, 2))
+        self._source_status_lbl.bind(
+            "<Button-1>", lambda _e: self.show_source_preview())
 
         btn_row = tk.Frame(parent, bg="#f5f5f5")
         btn_row.pack(fill="x", padx=2, pady=(0, 4))
@@ -1046,10 +1059,12 @@ class VideoCraftHub:
             self._source_status_var.set(label)
             self._source_primary_btn.config(text="修改")
             self._source_details_btn.pack(side="left", padx=(4, 0))
+            self._source_status_lbl.configure(cursor="hand2")
         else:
             self._source_status_var.set("✗ 无")
             self._source_primary_btn.config(text="+ 添加源视频")
             self._source_details_btn.pack_forget()
+            self._source_status_lbl.configure(cursor="")
 
     def _refresh_subtitles_section(self) -> None:
         from core import lang_names
