@@ -66,7 +66,6 @@ TOOL_MAP = {
     "ai-console":       {"file": "tools/router/ai_console.py",       "class": "AIConsoleApp"},
     "prompt-console":   {"file": "tools/router/prompt_console.py",   "class": "PromptConsoleApp"},
     "model-manager":    {"file": "tools/models/manager_window.py",   "class": "ModelManagerApp"},
-    "project-workbench": {"file": "tools/project/project_workbench.py", "class": "ProjectWorkbenchApp"},
     "clip-script":       {"file": "tools/program/clip_workbench.py",     "class": "ClipWorkbenchApp"},
 }
 
@@ -523,7 +522,7 @@ class VideoCraftHub:
         self._sidebar_nb = ttk.Notebook(sidebar_frame)
         self._sidebar_nb.pack(fill="both", expand=True)
 
-        # ===== Project tab — manifest list (index 0 — primary entry point) =====
+        # ===== Project tab — Source / Subtitles / Derivatives dashboard (primary entry) =====
         prj_tab = tk.Frame(self._sidebar_nb, bg="#f5f5f5")
         self._sidebar_nb.add(prj_tab, text=tr("hub.sidebar.tab.project"))
         self._build_project_tab(prj_tab)
@@ -656,7 +655,7 @@ class VideoCraftHub:
             if entry["is_dir"]:
                 self._tree.insert(node, "end", tags=("_placeholder",))
 
-    # ── Sidebar: Project tab (manifest list) ────────────────────────────────
+    # ── Sidebar: Project tab (Source / Subtitles / Derivatives) ────────────
 
     def _build_project_tab(self, parent: tk.Frame) -> None:
         """Build the sidebar 'Project' tab as a 3-section dashboard:
@@ -1494,7 +1493,6 @@ class VideoCraftHub:
     def open_tool(
         self, key: str,
         initial_file: str | None = None,
-        initial_basename: str | None = None,
         project: "Project | None" = None,
         instance_name: str | None = None,
         tab_key: str | None = None,
@@ -1515,7 +1513,6 @@ class VideoCraftHub:
             self._open_in_tab(
                 file_path, cfg["class"], key,
                 initial_file=initial_file,
-                initial_basename=initial_basename,
                 project=project,
                 instance_name=instance_name,
                 tab_key=tab_key,
@@ -1541,7 +1538,6 @@ class VideoCraftHub:
     def _open_in_tab(
         self, file_path: str, class_name: str, tool_key: str,
         initial_file: str | None = None,
-        initial_basename: str | None = None,
         project: "Project | None" = None,
         instance_name: str | None = None,
         tab_key: str | None = None,
@@ -1567,19 +1563,11 @@ class VideoCraftHub:
             assert tab_bar is not None
             tf._set_status_cb = lambda s, k=registry_key: tab_bar.set_status(k, s)
 
-            # The workbench accepts initial_basename and benefits from being
-            # told about the active project upfront. Other tools just take
-            # initial_file (or nothing).
+            # Tools take an optional initial_file (legacy plumbing). Project-
+            # aware tools also take project / instance_name (see below).
             kwargs: dict = {}
             if initial_file is not None:
                 kwargs["initial_file"] = initial_file
-            if tool_key == "project-workbench":
-                if initial_basename is not None:
-                    kwargs["initial_basename"] = initial_basename
-                # Bootstrap the workbench with the Hub's active project so it
-                # doesn't have to discover one from initial_file.
-                if "initial_file" not in kwargs:
-                    kwargs["initial_file"] = self.project.folder
             # Project-aware tools: subtitle_tool is the first one wired here
             # (字幕视频 workbench). Others can opt in by accepting these kwargs.
             if tool_key == "subtitle" and project is not None:

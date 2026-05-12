@@ -1,8 +1,8 @@
 """Centralized YouTube download facade — single source of truth for yt-dlp.
 
-UI tools (legacy yt_dlp_tool, project_workbench manifest step1, future
-batch tools) all funnel through here so cross-cutting concerns — JS
-runtime injection, opt defaults, network presets — live in one place.
+UI tools (source_acquire, legacy yt_dlp_tool, future batch tools) all
+funnel through here so cross-cutting concerns — JS runtime injection,
+opt defaults, network presets — live in one place.
 
 Two public functions:
   - extract_info(url, *, flat=False, force_ipv4=False) -> dict
