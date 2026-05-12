@@ -260,8 +260,11 @@ class VideoCraftHub:
         self._tab_bar: TabBar | None = None
         self._content_area: tk.Frame | None = None   # Tab 内容切换区
         self._content_placeholder: tk.Frame | None = None  # shown when no tab open
-        self._vpane: ttk.PanedWindow | None = None
         self._log_frame: tk.Frame | None = None
+        self._log_strip: tk.Frame | None = None
+        self._log_expanded: bool = False
+        self._log_latest_var: tk.StringVar | None = None
+        self._log_toggle_btn: tk.Button | None = None
 
         self._build_menu()
         self._build_layout()
@@ -283,14 +286,9 @@ class VideoCraftHub:
             sidebar_w = int(self._layout_store.get("sidebar_width", 320))
             self._pane.sashpos(0, sidebar_w)
 
-            win_h = self.root.winfo_height()
-            log_h = int(self._layout_store.get("log_height", 90))
-            # Clamp log panel to at most half the window height so the tool
-            # area always has room even if the saved value was extreme.
-            log_h = max(60, min(log_h, win_h // 2))
-            target = max(100, win_h - log_h)
-            assert self._vpane is not None
-            self._vpane.sashpos(0, target)
+            # Log panel: collapsed by default; only show if user persisted expanded.
+            self._log_expanded = bool(self._layout_store.get("log_expanded", False))
+            self._apply_log_state()
 
             if self._layout_store.get("zoomed", True):
                 self.root.state("zoomed")
@@ -316,12 +314,6 @@ class VideoCraftHub:
                 # accurately before re-zooming.
                 self.root.state("normal")
                 self.root.update_idletasks()
-            assert self._vpane is not None
-            win_h = self.root.winfo_height()
-            raw_log_h = win_h - self._vpane.sashpos(0)
-            # Clamp log panel height to [60, 50% of window] so the tool area
-            # is never starved of vertical space on next launch.
-            log_h = max(60, min(raw_log_h, win_h // 2))
             try:
                 idx = self._sidebar_nb.index(self._sidebar_nb.select())
                 sidebar_tab = "resources" if idx == 1 else "project"
@@ -331,7 +323,7 @@ class VideoCraftHub:
                 "geometry":      self.root.geometry(),
                 "zoomed":        zoomed,
                 "sidebar_width": self._pane.sashpos(0),
-                "log_height":    log_h,
+                "log_expanded":  self._log_expanded,
                 "sidebar_tab":   sidebar_tab,
             }
             hub_layout.save_layout(payload)
@@ -501,13 +493,21 @@ class VideoCraftHub:
     # ── 布局 ──────────────────────────────────────────────────────────────────
 
     def _build_layout(self):
-        # Vertical PanedWindow: top = sidebar+content horizontal pane, bottom = log panel.
-        # This lets users drag the log panel taller / shorter and persist it.
-        self._vpane = ttk.PanedWindow(self.root, orient="vertical")
-        self._vpane.pack(fill="both", expand=True)
+        # Bottom strip = always-visible 1-line status bar (latest log + toggle).
+        # Log panel sits above the strip, expanded only when toggled open.
+        # Top container fills the rest. No PanedWindow on the vertical axis —
+        # the log expansion is a binary state, not a drag-sized region.
+        self._log_strip = tk.Frame(self.root, bg="#2d2d2d", height=24)
+        self._log_strip.pack(side="bottom", fill="x")
+        self._log_strip.pack_propagate(False)
 
-        top_container = tk.Frame(self._vpane, bg="white")
-        self._vpane.add(top_container, weight=1)
+        self._log_frame = tk.Frame(self.root, bd=1, relief="sunken", bg="#1e1e1e",
+                                   height=160)
+        self._log_frame.pack_propagate(False)
+        # Not packed yet — _toggle_log() controls visibility.
+
+        top_container = tk.Frame(self.root, bg="white")
+        top_container.pack(side="top", fill="both", expand=True)
 
         # Horizontal PanedWindow inside the top container: left sidebar + right content.
         self._pane = ttk.PanedWindow(top_container, orient="horizontal")
@@ -562,9 +562,6 @@ class VideoCraftHub:
         # 工具内容切换区
         self._content_area = tk.Frame(self._content, bg="white")
 
-        # Bottom log panel: lives as the second pane of vpane so it's draggable.
-        self._log_frame = tk.Frame(self._vpane, bd=1, relief="sunken", bg="#1e1e1e")
-        self._vpane.add(self._log_frame, weight=0)
         self._build_logpanel()
 
     # ── 内容区状态 ────────────────────────────────────────────────────────────
@@ -1459,40 +1456,89 @@ class VideoCraftHub:
     # ── 日志面板 ─────────────────────────────────────────────────────────────
 
     def _build_logpanel(self):
-        """Multi-line colored log panel, lives inside self._log_frame
-        (second child of the vertical PanedWindow so the user can drag it)."""
+        """Collapsible log: always-visible 1-line status strip at the bottom,
+        plus an expandable multi-line text area above it. Click the strip
+        (or the ▲ button) to toggle expansion."""
         from hub_logger import logger
         from i18n import tr
 
-        # Title bar
+        # ── Status strip (always visible, ~24px) ──
+        assert self._log_strip is not None
+        self._log_latest_var = tk.StringVar(value="")
+        latest_lbl = tk.Label(
+            self._log_strip, textvariable=self._log_latest_var,
+            bg="#2d2d2d", fg="#aaa", font=("Consolas", 9),
+            anchor="w", padx=8,
+        )
+        latest_lbl.pack(side="left", fill="x", expand=True)
+        # Whole strip is clickable → toggle.
+        for w in (self._log_strip, latest_lbl):
+            w.bind("<Button-1>", lambda _e: self._toggle_log())
+            w.configure(cursor="hand2")
+
+        self._log_toggle_btn = tk.Button(
+            self._log_strip, text="▲ 日志",
+            bg="#2d2d2d", fg="#888", relief="flat",
+            font=("", 9), cursor="hand2", padx=8,
+            command=self._toggle_log,
+        )
+        self._log_toggle_btn.pack(side="right")
+
+        # ── Expanded log panel (hidden by default) ──
+        assert self._log_frame is not None
         title_bar = tk.Frame(self._log_frame, bg="#2d2d2d")
         title_bar.pack(fill="x")
         tk.Label(title_bar, text=tr("hub.log.title"), bg="#2d2d2d", fg="#aaa",
                  font=("", 9), padx=6).pack(side="left")
+        tk.Button(title_bar, text="复制", bg="#2d2d2d", fg="#888",
+                  relief="flat", font=("", 8), cursor="hand2",
+                  command=self._copy_log).pack(side="right", padx=4, pady=1)
         tk.Button(title_bar, text=tr("hub.log.clear"), bg="#2d2d2d", fg="#888",
                   relief="flat", font=("", 8), cursor="hand2",
                   command=self._clear_log).pack(side="right", padx=4, pady=1)
 
-        # Log text area
         self._log_text = tk.Text(
             self._log_frame, bg="#1e1e1e", fg="#d4d4d4",
             font=("Consolas", 9), state="disabled",
             wrap="word", height=4, relief="flat",
             selectbackground="#264f78",
         )
-        vsb = tk.Scrollbar(self._log_frame, command=self._log_text.yview, bg="#2d2d2d")
+        vsb = tk.Scrollbar(self._log_frame, command=self._log_text.yview,
+                           bg="#2d2d2d")
         self._log_text.configure(yscrollcommand=vsb.set)
         vsb.pack(side="right", fill="y")
         self._log_text.pack(fill="both", expand=True, padx=2, pady=(0, 2))
 
-        # 颜色 tag
         self._log_text.tag_configure("ts",      foreground="#555")
         self._log_text.tag_configure("info",    foreground="#d4d4d4")
         self._log_text.tag_configure("warning", foreground="#f0a500")
         self._log_text.tag_configure("error",   foreground="#f44747")
 
-        # 注册 logger 回调
         logger.register_handler(self._on_log)
+
+    def _toggle_log(self) -> None:
+        """Expand or collapse the log panel."""
+        self._log_expanded = not self._log_expanded
+        self._apply_log_state()
+
+    def _apply_log_state(self) -> None:
+        assert self._log_frame is not None and self._log_toggle_btn is not None
+        if self._log_expanded:
+            # Insert above the status strip.
+            self._log_frame.pack(side="bottom", fill="both", expand=False,
+                                 before=self._log_strip)
+            self._log_toggle_btn.config(text="▼ 收起")
+        else:
+            self._log_frame.pack_forget()
+            self._log_toggle_btn.config(text="▲ 日志")
+
+    def _copy_log(self) -> None:
+        try:
+            text = self._log_text.get("1.0", "end-1c")
+        except tk.TclError:
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
 
     def _on_log(self, level: str, msg: str, ts: str):
         """logger 回调（可能来自任意线程），转到主线程追加。"""
@@ -1505,11 +1551,19 @@ class VideoCraftHub:
         self._log_text.insert("end", f"{prefix}  {msg}\n", level)
         self._log_text.configure(state="disabled")
         self._log_text.see("end")
+        # Mirror the latest line into the always-visible status strip.
+        if self._log_latest_var is not None:
+            single = msg.replace("\n", " ").strip()
+            if len(single) > 200:
+                single = single[:200] + "…"
+            self._log_latest_var.set(f"{prefix}  {single}")
 
     def _clear_log(self):
         self._log_text.configure(state="normal")
         self._log_text.delete("1.0", "end")
         self._log_text.configure(state="disabled")
+        if self._log_latest_var is not None:
+            self._log_latest_var.set("")
 
     def _update_status(self, msg: str):
         """进度回调（线程安全），写入日志面板。"""
