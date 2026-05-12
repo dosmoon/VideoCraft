@@ -31,10 +31,6 @@ from i18n import tr
 _TS_RE = re.compile(
     r"^\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}\s*$"
 )
-_TS_PARSE_RE = re.compile(
-    r"^(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*"
-    r"(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*$"
-)
 _IDX_RE = re.compile(r"^\d+\s*$")
 
 _SEV_ICON = {SEV_ERROR: "✗", SEV_WARNING: "⚠", SEV_INFO: "ⓘ"}
@@ -74,21 +70,12 @@ def build_srt_preview(
     lang_iso: str | None = None,
     reference_srt_path: str | None = None,
     on_fixed: Callable[[], None] | None = None,
-    jump_to_sec: float | None = None,
 ) -> tk.Frame:
-    """Build the preview UI inside parent. Returns the outer Frame.
-
-    The returned frame carries `_srt_pane` (the underlying pane object)
-    so callers that need to re-jump without rebuilding can call
-    `pane.jump_to_time(sec)` on it.
-    """
+    """Build the preview UI inside parent. Returns the outer Frame."""
     pane = _SrtPreviewPane(parent, srt_path,
                             lang_iso=lang_iso,
                             reference_srt_path=reference_srt_path,
                             on_fixed=on_fixed)
-    if jump_to_sec is not None:
-        pane.jump_to_time(jump_to_sec)
-    pane.frame._srt_pane = pane  # type: ignore[attr-defined]
     return pane.frame
 
 
@@ -109,10 +96,6 @@ class _SrtPreviewPane:
         # Maps 1-based cue index → 1-based Text line number where the cue's
         # number line lives, populated when SRT body is rendered.
         self._cue_line: dict[int, int] = {}
-        # Maps 1-based cue index → (start_sec, end_sec), populated alongside.
-        # Used by jump_to_time() so external callers (e.g. hotclip card click)
-        # can locate the cue containing a wall-clock timestamp.
-        self._cue_time: dict[int, tuple[float, float]] = {}
 
         self.frame = tk.Frame(parent, bg="white")
         self._build_ui()
@@ -219,7 +202,6 @@ class _SrtPreviewPane:
         self._text.config(state="normal")
         self._text.delete("1.0", "end")
         self._cue_line.clear()
-        self._cue_time.clear()
         try:
             with open(self.srt_path, "r", encoding="utf-8") as f:
                 raw = f.read()
@@ -232,31 +214,21 @@ class _SrtPreviewPane:
             return
 
         next_is_cue_index = True
-        current_cue_idx: int | None = None
         line_no = 1
         for line in raw.splitlines():
             if _IDX_RE.match(line):
                 if next_is_cue_index:
                     try:
-                        current_cue_idx = int(line.strip())
-                        self._cue_line[current_cue_idx] = line_no
+                        self._cue_line[int(line.strip())] = line_no
                     except ValueError:
-                        current_cue_idx = None
+                        pass
                     next_is_cue_index = False
                 self._text.insert("end", line + "\n", ("idx",))
             elif _TS_RE.match(line):
-                if current_cue_idx is not None:
-                    m = _TS_PARSE_RE.match(line)
-                    if m:
-                        h1, mn1, s1, ms1, h2, mn2, s2, ms2 = (int(g) for g in m.groups())
-                        start = h1 * 3600 + mn1 * 60 + s1 + ms1 / 1000.0
-                        end   = h2 * 3600 + mn2 * 60 + s2 + ms2 / 1000.0
-                        self._cue_time[current_cue_idx] = (start, end)
                 self._text.insert("end", line + "\n", ("ts",))
             elif line == "":
                 self._text.insert("end", "\n")
                 next_is_cue_index = True
-                current_cue_idx = None
             else:
                 self._text.insert("end", line + "\n")
             line_no += 1
@@ -342,24 +314,6 @@ class _SrtPreviewPane:
         lbl.bind("<Leave>", lambda _e, w=lbl: w.configure(bg="white"))
 
     # ── Interaction ──
-
-    def jump_to_time(self, sec: float) -> None:
-        """Find the cue containing `sec` (or the first cue starting at/after
-        it) and scroll to its line. No-op if the SRT had no parseable cues."""
-        if not self._cue_time:
-            return
-        target: int | None = None
-        for idx in sorted(self._cue_time.keys()):
-            start, end = self._cue_time[idx]
-            if start <= sec < end:
-                target = idx
-                break
-            if start >= sec:
-                target = idx
-                break
-        if target is None:
-            target = max(self._cue_time.keys())
-        self._jump_to_cue(target)
 
     def _jump_to_cue(self, cue_index: int) -> None:
         if cue_index <= 0:

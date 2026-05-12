@@ -301,6 +301,9 @@ def run_chapter_transcript(srt_path: str, subtitles_dir: str, lang_iso: str,
 # Chapters only do prompt-window slicing; they don't participate in final
 # ranking. All slice outputs merge into one pool, sorted by start time.
 
+# Schema validates the AI's response. `transcript` is NOT requested from AI
+# (would invite hallucination); it's injected post-call by slicing the source
+# SRT in run_hotclips and ends up in the written hotclips.json all the same.
 HOTCLIPS_SCHEMA = {
     "type": "object",
     "properties": {
@@ -342,6 +345,23 @@ def _srt_to_slice_text(subs: list, t_start_sec: float, t_end_sec: float) -> str:
         if text:
             out.append(f"[{ts}] {text}")
     return "\n".join(out)
+
+
+def _slice_transcript(subs: list, t_start_sec: float, t_end_sec: float) -> str:
+    """Plain-text transcript of cues within [start, end). Space-joined, no
+    timestamps. Used to inject ground-truth subtitle content into each
+    hotclip — AI doesn't return this (would invite paraphrase / hallucination)."""
+    parts = []
+    for sub in subs:
+        start = sub.start.total_seconds()
+        if start < t_start_sec:
+            continue
+        if t_end_sec > 0 and start >= t_end_sec:
+            break
+        text = sub.content.replace("\n", " ").strip()
+        if text:
+            parts.append(text)
+    return " ".join(parts)
 
 
 def _call_hotclips_ai(slice_text: str, ctx_block: str,
@@ -443,6 +463,15 @@ def run_hotclips(srt_path: str, subtitles_dir: str, lang_iso: str,
     def _start_sec(c):
         return _parse_time_str(c.get("start", ""))
     all_clips.sort(key=_start_sec)
+
+    # Inject ground-truth transcript per clip by slicing the source SRT.
+    # Done after AI returns so a hallucinated/paraphrased transcript can't
+    # sneak in via the model. Used by the card preview and (future) by the
+    # clip render layer to burn subtitles onto the rendered short videos.
+    for clip in all_clips:
+        start = _parse_time_str(clip.get("start", ""))
+        end = _parse_time_str(clip.get("end", ""))
+        clip["transcript"] = _slice_transcript(subs, start, end)
 
     _say(progress_cb, "transcribing", "正在写入产物...", 95)
     out_path = analysis_path(subtitles_dir, lang_iso, "hotclips")

@@ -1791,5 +1791,11 @@
   "clip_tool.progress_fmt": "{done}/{total}  ·  {label}",
   "clip_tool.error_line": "  #{index}: {error}",
   "clip_tool.done_ok": "已渲染 {n} 个切片。",
-  "clip_tool.done_with_errors": "完成: 成功 {rendered}, 失败 {errors}\n\n{detail}"
+  "clip_tool.done_with_errors": "完成: 成功 {rendered}, 失败 {errors}\n\n{detail}",
+
+  "hotclip.field.hook": "钩子",
+  "hotclip.field.why_viral": "传播力",
+  "hotclip.field.title": "标题",
+  "hotclip.field.hashtags": "标签",
+  "hotclip.field.transcript": "字幕原文"
 }

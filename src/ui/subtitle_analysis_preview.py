@@ -25,15 +25,8 @@ from i18n import tr
 def build_analysis_preview(
     parent: tk.Frame,
     artifact: AnalysisArtifact,
-    *,
-    on_clip_clicked=None,
 ) -> tk.Frame:
-    """Build the analysis preview UI inside parent. Returns the outer Frame.
-
-    `on_clip_clicked(clip_dict)` is invoked when the user clicks a hotclip
-    card; ignored for other analysis kinds. Hub uses it to switch tab 0
-    to the source SRT scrolled to the clip's start cue.
-    """
+    """Build the analysis preview UI inside parent. Returns the outer Frame."""
     outer = tk.Frame(parent, bg="white")
 
     # Header
@@ -69,7 +62,7 @@ def build_analysis_preview(
 
     try:
         if artifact.type.format == "json":
-            _render_json(body, artifact, on_clip_clicked=on_clip_clicked)
+            _render_json(body, artifact)
         else:
             _render_markdown(body, artifact)
     except Exception as e:
@@ -84,8 +77,7 @@ def build_analysis_preview(
 
 # ── Format-specific renderers ────────────────────────────────────────────────
 
-def _render_json(parent: tk.Frame, artifact: AnalysisArtifact,
-                 *, on_clip_clicked=None) -> None:
+def _render_json(parent: tk.Frame, artifact: AnalysisArtifact) -> None:
     with open(artifact.path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -95,7 +87,7 @@ def _render_json(parent: tk.Frame, artifact: AnalysisArtifact,
     elif kind == "chapters":
         _render_chapters(parent, data)
     elif kind == "hotclips":
-        _render_hotclips(parent, data, on_clip_clicked=on_clip_clicked)
+        _render_hotclips(parent, data)
     else:
         _render_raw_json(parent, data)
 
@@ -152,7 +144,7 @@ def _render_chapters(parent: tk.Frame, data) -> None:
                  ).pack(side="left", fill="x", expand=True)
 
 
-def _render_hotclips(parent: tk.Frame, data, *, on_clip_clicked=None) -> None:
+def _render_hotclips(parent: tk.Frame, data) -> None:
     clips = data.get("clips") if isinstance(data, dict) else data
     if not isinstance(clips, list):
         _render_raw_json(parent, data)
@@ -161,66 +153,82 @@ def _render_hotclips(parent: tk.Frame, data, *, on_clip_clicked=None) -> None:
     for i, c in enumerate(clips, 1):
         if not isinstance(c, dict):
             continue
-        card = tk.Frame(frame, bg="#fafafa", bd=1, relief="solid")
-        card.pack(fill="x", padx=4, pady=4)
-        head = tk.Frame(card, bg="#fafafa")
-        head.pack(fill="x", padx=8, pady=(6, 2))
-        score = c.get("score")
-        score_color = _score_color(score)
-        tk.Label(head, text=f"#{i}", bg="#fafafa", fg="#666",
+        _render_hotclip_card(frame, i, c)
+
+
+def _render_hotclip_card(parent: tk.Frame, index: int, c: dict) -> None:
+    """One hotclip card: header strip + label/value grid body.
+
+    Each value field is preceded by its localized field name so the user can
+    tell at a glance what they're looking at. Transcript (injected post-AI
+    from the source SRT) is rendered last and may be long — wraplength keeps
+    it readable without needing a sub-scrollbar.
+    """
+    card = tk.Frame(parent, bg="#fafafa", bd=1, relief="solid")
+    card.pack(fill="x", padx=4, pady=4)
+
+    # ── Header strip: index / timestamp / duration / score ──
+    head = tk.Frame(card, bg="#fafafa")
+    head.pack(fill="x", padx=8, pady=(6, 2))
+    score = c.get("score")
+    score_color = _score_color(score)
+    tk.Label(head, text=f"#{index}", bg="#fafafa", fg="#666",
+             font=("Microsoft YaHei UI", 10, "bold"),
+             ).pack(side="left", padx=(0, 8))
+    ts = f"{c.get('start', '')} → {c.get('end', '')}"
+    tk.Label(head, text=ts, bg="#fafafa", fg="#0078d4",
+             font=("Consolas", 9),
+             ).pack(side="left", padx=(0, 8))
+    dur = c.get("duration_sec")
+    if dur is not None:
+        tk.Label(head, text=f"{dur:.0f}s", bg="#fafafa", fg="#888",
+                 font=("Microsoft YaHei UI", 9),
+                 ).pack(side="left", padx=(0, 8))
+    if score is not None:
+        tk.Label(head, text=f"⭐ {score}", bg="#fafafa", fg=score_color,
                  font=("Microsoft YaHei UI", 10, "bold"),
-                 ).pack(side="left", padx=(0, 8))
-        ts = f"{c.get('start', '')} → {c.get('end', '')}"
-        tk.Label(head, text=ts, bg="#fafafa", fg="#0078d4",
-                 font=("Consolas", 9),
-                 ).pack(side="left", padx=(0, 8))
-        dur = c.get("duration_sec")
-        if dur is not None:
-            tk.Label(head, text=f"{dur:.0f}s", bg="#fafafa", fg="#888",
-                     font=("Microsoft YaHei UI", 9),
-                     ).pack(side="left", padx=(0, 8))
-        if score is not None:
-            tk.Label(head, text=f"⭐ {score}", bg="#fafafa", fg=score_color,
-                     font=("Microsoft YaHei UI", 10, "bold"),
-                     ).pack(side="right")
-        hook = c.get("hook") or ""
-        if hook:
-            tk.Label(card, text=hook, bg="#fafafa", fg="#222",
-                     font=("Microsoft YaHei UI", 10, "bold"),
-                     wraplength=560, justify="left", anchor="w",
-                     ).pack(fill="x", padx=8, pady=(2, 2))
-        why = c.get("why_viral") or ""
-        if why:
-            tk.Label(card, text=why, bg="#fafafa", fg="#666",
-                     font=("Microsoft YaHei UI", 9),
-                     wraplength=560, justify="left", anchor="w",
-                     ).pack(fill="x", padx=8, pady=(0, 4))
-        title = c.get("suggested_title") or ""
-        if title:
-            tk.Label(card, text="🏷 " + title, bg="#fafafa", fg="#222",
-                     font=("Microsoft YaHei UI", 9, "italic"),
-                     wraplength=560, justify="left", anchor="w",
-                     ).pack(fill="x", padx=8, pady=(0, 2))
-        hashtags = c.get("suggested_hashtags") or []
-        if isinstance(hashtags, list) and hashtags:
-            tk.Label(card, text="  ".join(str(t) for t in hashtags if t),
-                     bg="#fafafa", fg="#0070c0",
-                     font=("Microsoft YaHei UI", 9),
-                     wraplength=560, justify="left", anchor="w",
-                     ).pack(fill="x", padx=8, pady=(0, 6))
+                 ).pack(side="right")
 
-        # Make the whole card clickable: hover cursor + Button-1 dispatch.
-        if on_clip_clicked is not None:
-            _bind_clip_click(card, c, on_clip_clicked)
+    # ── Labeled grid body ──
+    body = tk.Frame(card, bg="#fafafa")
+    body.pack(fill="x", padx=8, pady=(2, 6))
+    body.columnconfigure(1, weight=1)
 
+    fields: list[tuple[str, str, dict]] = []
+    hook = (c.get("hook") or "").strip()
+    if hook:
+        fields.append(("hotclip.field.hook", hook,
+                       {"font": ("Microsoft YaHei UI", 10, "bold"), "fg": "#222"}))
+    why = (c.get("why_viral") or "").strip()
+    if why:
+        fields.append(("hotclip.field.why_viral", why,
+                       {"fg": "#666"}))
+    title = (c.get("suggested_title") or "").strip()
+    if title:
+        fields.append(("hotclip.field.title", title,
+                       {"font": ("Microsoft YaHei UI", 9, "italic"), "fg": "#222"}))
+    hashtags = c.get("suggested_hashtags") or []
+    if isinstance(hashtags, list) and hashtags:
+        fields.append(("hotclip.field.hashtags",
+                       "  ".join(str(t) for t in hashtags if t),
+                       {"fg": "#0070c0"}))
+    transcript = (c.get("transcript") or "").strip()
+    if transcript:
+        fields.append(("hotclip.field.transcript", transcript,
+                       {"fg": "#444",
+                        "font": ("Microsoft YaHei UI", 9)}))
 
-def _bind_clip_click(widget: tk.Widget, clip: dict, callback) -> None:
-    """Recursively bind Button-1 on a widget tree so clicks anywhere on a
-    hotclip card route to `callback(clip)`."""
-    widget.bind("<Button-1>", lambda _e, c=clip: callback(c))
-    widget.configure(cursor="hand2")
-    for child in widget.winfo_children():
-        _bind_clip_click(child, clip, callback)
+    for row, (label_key, value, value_opts) in enumerate(fields):
+        tk.Label(body, text=tr(label_key),
+                 bg="#fafafa", fg="#888", anchor="ne", width=10,
+                 font=("Microsoft YaHei UI", 9, "bold"),
+                 ).grid(row=row, column=0, sticky="ne", padx=(0, 8), pady=2)
+        value_font = value_opts.get("font", ("Microsoft YaHei UI", 9))
+        value_fg = value_opts.get("fg", "#222")
+        tk.Label(body, text=value, bg="#fafafa", fg=value_fg,
+                 font=value_font,
+                 wraplength=500, justify="left", anchor="w",
+                 ).grid(row=row, column=1, sticky="ew", pady=2)
 
 
 def _render_raw_json(parent: tk.Frame, data) -> None:

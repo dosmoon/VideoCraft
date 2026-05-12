@@ -1791,5 +1791,11 @@
   "clip_tool.progress_fmt": "{done}/{total}  ·  {label}",
   "clip_tool.error_line": "  #{index}: {error}",
   "clip_tool.done_ok": "Rendered {n} clip(s).",
-  "clip_tool.done_with_errors": "Done: {rendered} succeeded, {errors} failed\n\n{detail}"
+  "clip_tool.done_with_errors": "Done: {rendered} succeeded, {errors} failed\n\n{detail}",
+
+  "hotclip.field.hook": "Hook",
+  "hotclip.field.why_viral": "Why viral",
+  "hotclip.field.title": "Title",
+  "hotclip.field.hashtags": "Tags",
+  "hotclip.field.transcript": "Transcript"
 }
