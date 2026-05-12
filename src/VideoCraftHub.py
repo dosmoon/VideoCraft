@@ -259,7 +259,9 @@ class VideoCraftHub:
         self._tab_frames: dict[str, ToolFrame] = {}  # tool_key → ToolFrame
         self._tab_bar: TabBar | None = None
         self._content_area: tk.Frame | None = None   # Tab 内容切换区
-        self._content_placeholder: tk.Frame | None = None  # shown when no tab open
+        self._content_placeholder: tk.Frame | None = None  # shown when no tab/preview
+        self._preview_frame: tk.Frame | None = None        # transient preview widget
+        self._preview_key: str | None = None               # identifies current preview
         self._log_frame: tk.Frame | None = None
         self._log_strip: tk.Frame | None = None
         self._log_expanded: bool = False
@@ -574,6 +576,7 @@ class VideoCraftHub:
         assert self._tab_bar is not None and self._content_area is not None
         self._tab_bar.pack_forget()
         self._content_area.pack_forget()
+        self._clear_preview()
         if self._content_placeholder is None:
             self._content_placeholder = tk.Frame(self._content, bg="white")
             inner = tk.Frame(self._content_placeholder, bg="white")
@@ -586,11 +589,45 @@ class VideoCraftHub:
         assert self._content_placeholder is not None
         self._content_placeholder.pack(fill="both", expand=True)
 
+    def _clear_preview(self) -> None:
+        """Destroy whatever preview widget is currently mounted."""
+        if self._preview_frame is not None:
+            self._preview_frame.destroy()
+            self._preview_frame = None
+        self._preview_key = None
+
+    def _show_preview_frame(self, frame: tk.Frame, key: str) -> None:
+        """Mount a preview widget in the content area (takes over from
+        placeholder/tabs until a tab is opened or another preview replaces it)."""
+        assert self._tab_bar is not None and self._content_area is not None
+        # Hide everything else
+        self._tab_bar.pack_forget()
+        self._content_area.pack_forget()
+        if self._content_placeholder is not None:
+            self._content_placeholder.pack_forget()
+        # Swap in new preview
+        if self._preview_frame is not None:
+            self._preview_frame.destroy()
+        self._preview_frame = frame
+        self._preview_key = key
+        self._preview_frame.pack(fill="both", expand=True)
+
+    def show_subtitle_preview(self, srt_path: str, lang_iso: str) -> None:
+        """Sidebar click handler: show SRT contents in the right pane."""
+        from ui.srt_preview_pane import build_srt_preview
+        key = f"subtitle:{lang_iso}"
+        if self._preview_key == key and self._preview_frame is not None:
+            return  # already showing this one
+        frame = build_srt_preview(self._content, srt_path,
+                                  title=f"{lang_iso}.srt")
+        self._show_preview_frame(frame, key)
+
     def _show_tabs(self):
         """Show tab bar + content area (a tool is now open)."""
         assert self._tab_bar is not None and self._content_area is not None
         if self._content_placeholder is not None:
             self._content_placeholder.pack_forget()
+        self._clear_preview()
         self._tab_bar.pack(side="top", fill="x")
         self._content_area.pack(fill="both", expand=True)
 
@@ -1073,12 +1110,19 @@ class VideoCraftHub:
 
             row = tk.Frame(self._subtitles_lang_box, bg="#f5f5f5")
             row.pack(fill="x", pady=1)
-            tk.Label(row, text=icon, bg="#f5f5f5", fg=color, font=("", 9),
-                     width=2
-                     ).pack(side="left")
-            tk.Label(row, text=f"{role} ({lang_label}): {lang}.srt{badge}",
-                     bg="#f5f5f5", fg=color, font=("", 9), anchor="w",
-                     ).pack(side="left", fill="x", expand=True)
+            icon_lbl = tk.Label(row, text=icon, bg="#f5f5f5", fg=color,
+                                font=("", 9), width=2)
+            icon_lbl.pack(side="left")
+            text_lbl = tk.Label(row, text=f"{role} ({lang_label}): {lang}.srt{badge}",
+                                bg="#f5f5f5", fg=color, font=("", 9), anchor="w")
+            text_lbl.pack(side="left", fill="x", expand=True)
+
+            # Click anywhere on the row (label or icon) → SRT preview in right pane.
+            for w in (row, icon_lbl, text_lbl):
+                w.bind("<Button-1>",
+                       lambda _e, p=srt_path, l=lang:
+                           self.show_subtitle_preview(p, l))
+                w.configure(cursor="hand2")
 
             # Right side: [🔧 修 N] only when fixable AND no hard; [详情] always.
             tk.Button(row, text="详情", relief="flat", bg="#e8e8e8",
@@ -1106,6 +1150,17 @@ class VideoCraftHub:
             messagebox.showerror("清理失败", str(e), parent=self.root)
             return
         self._refresh_subtitles_section()
+        # Refresh preview if it was showing this file.
+        self._refresh_preview_if_match(srt_path)
+
+    def _refresh_preview_if_match(self, srt_path: str) -> None:
+        """Re-render SRT preview if it's currently showing srt_path."""
+        if not self._preview_key or not self._preview_key.startswith("subtitle:"):
+            return
+        # Re-derive lang from path basename to avoid stale state mismatch.
+        base = os.path.basename(srt_path)
+        if base.endswith(".srt"):
+            self.show_subtitle_preview(srt_path, base[:-4])
 
     def _on_show_check_dialog(
         self, srt_path: str, lang_iso: str, ref_path: str | None,
@@ -1118,6 +1173,7 @@ class VideoCraftHub:
         )
         if applied:
             self._refresh_subtitles_section()
+            self._refresh_preview_if_match(srt_path)
 
     def _refresh_derivatives_section(self) -> None:
         from core import derivative_types
