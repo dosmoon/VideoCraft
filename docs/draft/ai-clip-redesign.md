@@ -1,9 +1,19 @@
 # AI 切片重构设计稿
 
-**状态**：设计中（设计先于实现）
+**状态**：**P1~P4 全部落地（2026-05-12）**，设计与实现已对齐
 **日期**：2026-05-12
 **前身**：`docs/draft/program-script-clip.md`（Phase A~C 已上线，但 2026-05-11 从 derivative_types REGISTRY 摘下，相关代码进入 dead-code-ish 状态等待大幅简化）
 **触发**：5-12 重构后 sidebar 三段式落地，是时候把 AI 切片从「一个怪兽工作台」拆开重做
+
+## 落地 commit 链
+
+- P1 `44bd906` 字幕分析框架（数据模型 + sidebar 子节点 + 通用 tab 0 预览）
+- P2 `858ba70` 5 个 AI 复用 runner（titles/chapters/transcript/chapter_transcript/chapter_refined）
+- P3 `d13c360` 源上下文卡 `source/context.json` + 模态编辑 + AI prompt 注入
+- P4a `5615930` hotclips 分析器（新 prompt + 章节分窗策略）
+- P4b `5c8ea5a` clip 派生类型 + 工作台 + 渲染 pipeline
+- 修复 `b958cf4` sidebar 字幕段闪烁修复（snapshot-gate 刷新）
+- 重做 `bf99171` hotclip 卡片字段标签化 + 注入 `transcript` 字段 + 撤掉点击跳源 SRT
 
 ---
 
@@ -125,11 +135,14 @@
       "why_viral": "反共识开场 + 数据反差 + 留白结尾",
       "score": 8,
       "suggested_title": "美联储的通胀谎言",
-      "suggested_hashtags": ["#经济", "#美联储"]
+      "suggested_hashtags": ["#经济", "#美联储"],
+      "transcript": "你以为美联储真的能控制通胀？过去 40 年..."
     }
   ]
 }
 ```
+
+`transcript` 字段是**代码注入的非 AI 产物**：`run_hotclips` 在 AI 返回后，用 `_slice_transcript(subs, start, end)` 切源 SRT 把 `[start, end)` 内 cue 文本空格 join，写进 `clip["transcript"]`。理由：AI 出文本会改写/幻觉，源 SRT 是 ground truth，必须 deterministic。预览卡片直接显示这段；将来切片烧字幕也复用这同一份。
 
 **MVP 路线决策**：路线 A —— **AI 推荐，用户主选**。
 
@@ -371,6 +384,16 @@ derivatives/clip/default/
 - [ ] 端到端测试：1 小时访谈 → 热点候选 10 条 → 选 5 条 → 渲染 5 个竖屏短视频
 
 ---
+
+## 5.5 卡片 UI 实测调整（`bf99171`）
+
+最初设计 hotclip 卡片字段直接堆叠展示，点击卡片跳转源 SRT 高亮对应行。落地后发现：
+
+1. **跳源 SRT 高亮行数 bug** —— 实现里高亮固定 4 行（cue idx + timestamp + 1~2 text 行），但实际 cue 文本经常 ≥2 行被截断。修这个 bug 不如换 feature。
+2. **改成 inline transcript** —— 卡片直接展示字幕原文（注入字段），不再跳走。用户在 tab 0 一屏内能看清"AI 选的这段在讲什么"，省一次切预览的认知开销。
+3. **字段都加标签** —— 每个字段前加 i18n 标签（钩子 / 传播力 / 标题 / 标签 / 字幕原文），双列 grid 对齐。早期没标签时哪个是 hook 哪个是 why_viral 用户一眼分不清。
+
+旧的 `srt_preview_pane.jump_to_time` + `_cue_time` + `on_clip_clicked` 链路全删了（`bf99171` 同 commit 拆掉）。
 
 ## 6. 不做 / 不变 / 留待将来
 
