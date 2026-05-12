@@ -625,6 +625,29 @@ class VideoCraftHub:
             self._preview_key = key
         self._select_tab(PREVIEW_TAB_KEY)
 
+    def show_derivative_video_preview(self, video_path: str) -> None:
+        """Sidebar click handler: preview a derivative output video."""
+        if not os.path.isfile(video_path):
+            return
+        from ui.video_preview_pane import build_video_preview
+        key = f"video:{os.path.abspath(video_path)}"
+        if self._preview_key != key:
+            self._clear_preview_tab()
+            cache_dir = os.path.join(self.project.videocraft_dir, "cache")
+            # Pick a derived title: "<type>/<inst>/<filename>"
+            try:
+                rel = os.path.relpath(video_path, self.project.derivatives_dir)
+            except ValueError:
+                rel = os.path.basename(video_path)
+            frame = build_video_preview(
+                self._preview_tab, video_path,
+                cache_dir=cache_dir,
+                title=rel,
+            )
+            frame.pack(fill="both", expand=True)
+            self._preview_key = key
+        self._select_tab(PREVIEW_TAB_KEY)
+
     def show_source_preview(self) -> None:
         """Sidebar click handler: show source/video.mp4 in the preview tab."""
         if self.project.source_status() != "ready":
@@ -1195,10 +1218,12 @@ class VideoCraftHub:
                 tags=("group",),
             )
             for inst in instances:
+                inst_iid = f"{t.type_name}/{inst}"
                 self._project_tree.insert(
-                    group_iid, "end", iid=f"{t.type_name}/{inst}",
-                    text=f"  {inst}", tags=("instance",),
+                    group_iid, "end", iid=inst_iid,
+                    text=f"  {inst}", tags=("instance",), open=True,
                 )
+                self._populate_instance_artifacts(inst_iid, t.type_name, inst)
                 any_instance = True
 
         # Orphan types (forward-compat)
@@ -1211,10 +1236,12 @@ class VideoCraftHub:
                 text=f"  ({type_name})", tags=("group",),
             )
             for inst in instances:
+                inst_iid = f"{type_name}/{inst}"
                 self._project_tree.insert(
-                    group_iid, "end", iid=f"{type_name}/{inst}",
-                    text=f"  {inst}", tags=("instance",),
+                    group_iid, "end", iid=inst_iid,
+                    text=f"  {inst}", tags=("instance",), open=True,
                 )
+                self._populate_instance_artifacts(inst_iid, type_name, inst)
                 any_instance = True
 
         if not any_instance:
@@ -1242,10 +1269,80 @@ class VideoCraftHub:
         type_name, _, inst = iid.partition("/")
         return (type_name, inst) if type_name and inst else None
 
+    def _populate_instance_artifacts(
+        self, inst_iid: str, type_name: str, instance_name: str,
+    ) -> None:
+        """Insert child rows for shippable artifacts under a derivative
+        instance: output video first, then any sibling SRT files. Skips
+        silently if the instance hasn't produced anything yet."""
+        inst_dir = self.project.derivative_dir(type_name, instance_name)
+        if not os.path.isdir(inst_dir):
+            return
+        try:
+            entries = sorted(os.listdir(inst_dir))
+        except OSError:
+            return
+        # Output video first.
+        video_name = "output.mp4"
+        if video_name in entries:
+            self._project_tree.insert(
+                inst_iid, "end",
+                iid=f"{inst_iid}::artifact::{video_name}",
+                text=f"  ▶ {video_name}",
+                tags=("artifact_video",),
+            )
+        # Adapted SRTs (subtitles_<iso>.srt).
+        for name in entries:
+            if name.startswith("subtitles_") and name.endswith(".srt"):
+                self._project_tree.insert(
+                    inst_iid, "end",
+                    iid=f"{inst_iid}::artifact::{name}",
+                    text=f"  📄 {name}",
+                    tags=("artifact_srt",),
+                )
+
+    def _selected_artifact(self) -> tuple[str, str] | None:
+        """Returns (kind, abs_path) for an artifact row, or None.
+        kind ∈ {"video", "srt"}."""
+        sel = self._project_tree.selection()
+        if not sel:
+            return None
+        iid = sel[0]
+        tags = self._project_tree.item(iid, "tags")
+        if "artifact_video" not in tags and "artifact_srt" not in tags:
+            return None
+        # iid format: "<type>/<inst>::artifact::<filename>"
+        if "::artifact::" not in iid:
+            return None
+        inst_part, _, filename = iid.partition("::artifact::")
+        type_name, _, instance_name = inst_part.partition("/")
+        if not (type_name and instance_name and filename):
+            return None
+        inst_dir = self.project.derivative_dir(type_name, instance_name)
+        abs_path = os.path.join(inst_dir, filename)
+        kind = "video" if "artifact_video" in tags else "srt"
+        return (kind, abs_path)
+
     def _on_derivative_tree_select(self, _event=None):
-        """Single-click on a derivative instance → open / focus its workbench tab."""
+        """Sidebar tree single-click:
+          - instance row → open/focus its workbench tab
+          - artifact row → preview in the project tab"""
         if self._suppress_tree_select:
             return
+        # Artifact row?
+        art = self._selected_artifact()
+        if art is not None:
+            kind, path = art
+            if kind == "video":
+                self.show_derivative_video_preview(path)
+            elif kind == "srt":
+                base = os.path.basename(path)
+                # Strip "subtitles_" prefix to recover the language hint
+                # for the preview pane header (best-effort).
+                lang_hint = base.removeprefix("subtitles_").removesuffix(".srt")
+                self.show_subtitle_preview(path, lang_hint)
+            return
+        # Instance row?
         info = self._selected_instance()
         if info is None:
             return
@@ -1358,6 +1455,13 @@ class VideoCraftHub:
             if snapshot != self._last_snapshot:
                 self._last_snapshot = snapshot
                 self.refresh_sidebar()
+            # Project tab refresh: cheap (a few dir listings + subtitle
+            # checks are millisecond-level), and the project tab tree
+            # needs to pick up derivative artifacts written by the
+            # workbench tabs (output.mp4, subtitles_<iso>.srt) that
+            # land 1-2 levels below project root — out of reach of the
+            # top-level folder snapshot above.
+            self._refresh_project_tab()
         self.root.after(2000, self._schedule_auto_refresh)
 
     def _folder_snapshot(self, folder: str) -> set:

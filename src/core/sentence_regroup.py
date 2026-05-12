@@ -198,9 +198,13 @@ def _chunk_to_segment(words: list[dict], seg_id: int) -> dict:
 # already chose as segment boundaries, merging adjacent segments when
 # the split looks like an acoustic mid-sentence break.
 
-# Higher cap than word-level because we can't split mid-segment;
-# merging conservatively is safer than refusing to merge.
-_SEG_MAX_CHARS = 140
+# segments[] honors the "sentence-level" contract — length-based line
+# wrapping lives in the burn layer (post-translation), so the only job
+# of this cap is to break runaway chains when a speaker rambles with
+# no terminal punctuation for many cues. Natural English sentences in
+# news/interview transcripts often hit 200-250 chars; 300 leaves room
+# for those without catching pathological cases.
+_SEG_MAX_CHARS = 300
 _SEG_GAP_MERGE_S = 0.5  # merge when seg→seg gap is at most this
 
 

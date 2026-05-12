@@ -983,22 +983,59 @@ class SubtitleToolApp(ToolBase):
                                      tr("tool.subtitle.error.sub_not_found", name=name, path=p))
                 return
 
-        # 字幕分割
+        # ── Subtitle adaptation + export ──
+        # When a SRT is selected, we always export it next to output.mp4
+        # as a shippable deliverable (user can upload it to YouTube etc).
+        # If wrap-split is on, the exported file is the line-wrapped form
+        # adapted for screen display; otherwise it's a copy of the source.
+        # Naming: project mode → derivative_dir/subtitles_<iso>.srt
+        #         standalone   → next to source SRT with _split suffix
+        def _adapted_path(src_srt: str) -> str:
+            base = os.path.basename(src_srt)
+            stem, _ = os.path.splitext(base)
+            if self._project_mode:
+                inst_dir = self.project.derivative_dir(
+                    "bilingual_video", self.instance_name)
+                os.makedirs(inst_dir, exist_ok=True)
+                # Project SRTs are named by ISO (en.srt → subtitles_en.srt).
+                return os.path.join(inst_dir, f"subtitles_{stem}.srt")
+            # Standalone fallback (legacy): _split suffix next to source.
+            return src_srt.replace('.srt', '_split.srt')
+
+        def _write_adapted(src_srt: str, max_chars: int, is_chinese: bool,
+                            do_split: bool) -> str:
+            """Write the adapted SRT (split if requested, otherwise copy)
+            to the derivative folder and return its path."""
+            dst = _adapted_path(src_srt)
+            if do_split:
+                subs = process_srt_split(src_srt, max_chars, is_chinese)
+                with open(dst, 'w', encoding='utf-8') as f:
+                    f.write(srt.compose(subs))
+            else:
+                # Plain copy — user opted out of wrap, but still wants the
+                # file alongside the burn output for separate upload.
+                if os.path.abspath(dst) != os.path.abspath(src_srt):
+                    import shutil
+                    shutil.copy2(src_srt, dst)
+            return dst
+
         temp_sub1_path = sub1_path
         temp_sub2_path = sub2_path
         try:
-            if show_sub1 and self.split_sub1_var.get():
-                subs1 = process_srt_split(sub1_path, self.sub1_max_chars_var.get(),
-                                          self.sub1_is_chinese_var.get())
-                temp_sub1_path = sub1_path.replace('.srt', '_split.srt')
-                with open(temp_sub1_path, 'w', encoding='utf-8') as f:
-                    f.write(srt.compose(subs1))
-            if show_sub2 and self.split_sub2_var.get():
-                subs2 = process_srt_split(sub2_path, self.sub2_max_chars_var.get(),
-                                          self.sub2_is_chinese_var.get())
-                temp_sub2_path = sub2_path.replace('.srt', '_split.srt')
-                with open(temp_sub2_path, 'w', encoding='utf-8') as f:
-                    f.write(srt.compose(subs2))
+            if show_sub1:
+                temp_sub1_path = _write_adapted(
+                    sub1_path,
+                    self.sub1_max_chars_var.get(),
+                    self.sub1_is_chinese_var.get(),
+                    self.split_sub1_var.get(),
+                )
+            if show_sub2:
+                temp_sub2_path = _write_adapted(
+                    sub2_path,
+                    self.sub2_max_chars_var.get(),
+                    self.sub2_is_chinese_var.get(),
+                    self.split_sub2_var.get(),
+                )
         except Exception as e:
             messagebox.showerror(tr("tool.subtitle.error.split_failed_title"), str(e))
             return
