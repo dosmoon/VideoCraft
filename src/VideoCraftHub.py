@@ -837,11 +837,6 @@ class VideoCraftHub:
             command=self._on_subtitles_primary,
         )
         self._subtitles_primary_btn.pack(side="left")
-        self._subtitles_secondary_btn = tk.Button(
-            btn_row, relief="flat", bg="#e8e8e8",
-            command=self._on_subtitles_secondary,
-        )
-        self._subtitles_secondary_btn.pack(side="left", padx=(4, 0))
 
     def _on_subtitles_primary(self) -> None:
         """[+ 生成字幕] when no SRTs exist, else [+ 添加翻译]."""
@@ -851,51 +846,27 @@ class VideoCraftHub:
         else:
             self._invoke_translate()
 
-    def _on_subtitles_secondary(self) -> None:
-        """[重新生成]: confirm + nuke existing SRTs + re-run ASR."""
-        from ui.subtitles_dialogs import confirm_regenerate
-        if not confirm_regenerate(self.root):
-            return
-        # Wipe everything in subtitles/ then re-run ASR (and any prior
-        # translations are gone — user will re-add manually if wanted).
-        import os, shutil
-        for name in os.listdir(self.project.subtitles_dir):
-            path = os.path.join(self.project.subtitles_dir, name)
-            try:
-                if os.path.isfile(path):
-                    os.remove(path)
-                elif os.path.isdir(path):
-                    shutil.rmtree(path)
-            except OSError:
-                pass
-        # Reset language metadata
-        meta = self.project.meta
-        meta.language.source = None
-        meta.language.translated_to = []
-        self.project.update_meta(meta)
-        self._refresh_project_tab()
-        # Now run ASR fresh
-        self._invoke_asr()
-
     # ── Subtitle pipeline drivers ─────────────────────────────────────────────
 
-    def _invoke_asr(self) -> None:
-        """Show ASR dialog → run pipeline → refresh."""
+    def _invoke_asr(self, *, preset_lang_iso: str | None = "ASK") -> None:
+        """Run ASR. When preset_lang_iso == "ASK" (default), show the dialog.
+        Otherwise skip the dialog and use the provided ISO directly (used by
+        the per-row regenerate action which already knows the language)."""
         from ui.subtitles_dialogs import show_asr_dialog
         from ui.subtitles_progress_modal import SubtitlesProgressModal
         from core.subtitle_pipeline import run_asr
         from core.ai.errors import AIError, Kind
 
-        choice = show_asr_dialog(self.root)
-        if choice is None:
-            return
-
-        if choice["mode"] == "import":
-            # Pure file copy — no worker thread needed.
-            self._import_subtitle_file(choice["path"], choice["lang_iso"])
-            return
-
-        lang_iso = choice["lang_iso"]  # None = auto-detect
+        if preset_lang_iso == "ASK":
+            choice = show_asr_dialog(self.root)
+            if choice is None:
+                return
+            if choice["mode"] == "import":
+                self._import_subtitle_file(choice["path"], choice["lang_iso"])
+                return
+            lang_iso = choice["lang_iso"]  # None = auto-detect
+        else:
+            lang_iso = preset_lang_iso
 
         def worker(progress_cb, cancel_token):
             return run_asr(
@@ -922,8 +893,10 @@ class VideoCraftHub:
 
         self._refresh_project_tab()
 
-    def _invoke_translate(self) -> None:
-        """Show translate dialog → run pipeline → refresh."""
+    def _invoke_translate(self, *, preset_target_iso: str | None = None) -> None:
+        """Run translation. When preset_target_iso is None (default), show the
+        target picker. Otherwise skip the dialog and re-translate the given
+        ISO directly (used by per-row regenerate)."""
         from ui.subtitles_dialogs import show_translate_dialog
         from ui.subtitles_progress_modal import SubtitlesProgressModal
         from core.subtitle_pipeline import run_translate
@@ -937,11 +910,14 @@ class VideoCraftHub:
                 parent=self.root)
             return
 
-        target_iso = show_translate_dialog(
-            self.root, src_iso, meta.language.translated_to,
-        )
-        if target_iso is None:
-            return
+        if preset_target_iso is None:
+            target_iso = show_translate_dialog(
+                self.root, src_iso, meta.language.translated_to,
+            )
+            if target_iso is None:
+                return
+        else:
+            target_iso = preset_target_iso
 
         def worker(progress_cb, cancel_token):
             return run_translate(
@@ -1074,11 +1050,7 @@ class VideoCraftHub:
                 text="+ 生成字幕",
                 state="normal" if source_ready else "disabled",
             )
-            self._subtitles_secondary_btn.pack_forget()
             return
-
-        # Re-show secondary button (might be hidden from empty state)
-        self._subtitles_secondary_btn.pack(side="left", padx=(4, 0))
 
         # Reference SRT for length-ratio checks on translations
         source_lang = meta.source
@@ -1125,7 +1097,7 @@ class VideoCraftHub:
                            self.show_subtitle_preview(p, l))
                 w.configure(cursor="hand2")
 
-            # Right side: [🔧 修 N] only when fixable AND no hard; [详情] always.
+            # Right side (packed right→left so visual order is [↻] [🔧] [详情]):
             tk.Button(row, text="详情", relief="flat", bg="#e8e8e8",
                       font=("", 8),
                       command=lambda p=srt_path, l=lang, r=ref:
@@ -1138,9 +1110,37 @@ class VideoCraftHub:
                           command=lambda p=srt_path:
                               self._on_quick_fix_subtitle(p),
                           ).pack(side="right", padx=2)
+            is_source_row = (lang == source_lang)
+            tk.Button(row, text="↻", relief="flat", bg="#e8e8e8",
+                      font=("", 9), cursor="hand2",
+                      command=lambda l=lang, s=is_source_row:
+                          self._on_regenerate_subtitle(l, s),
+                      ).pack(side="right", padx=2)
 
         self._subtitles_primary_btn.config(text="+ 添加翻译", state="normal")
-        self._subtitles_secondary_btn.config(text="重新生成", state="normal")
+
+    def _on_regenerate_subtitle(self, lang_iso: str, is_source: bool) -> None:
+        """Per-row [↻]: re-run ASR for the source row or re-translate for a
+        translated row. Confirms before overwriting since the operation can
+        take minutes."""
+        from core import lang_names
+        try:
+            display = lang_names.friendly_name(lang_iso, "zh")
+        except Exception:
+            display = lang_iso
+        if is_source:
+            prompt = (f"将重新运行 ASR 生成「{display}」字幕，"
+                      f"现有 {lang_iso}.srt 会被覆盖。确定继续吗？")
+        else:
+            prompt = (f"将重新翻译生成「{display}」字幕，"
+                      f"现有 {lang_iso}.srt 会被覆盖。确定继续吗？")
+        if not messagebox.askyesno("重新生成字幕", prompt,
+                                    default="no", parent=self.root):
+            return
+        if is_source:
+            self._invoke_asr(preset_lang_iso=lang_iso)
+        else:
+            self._invoke_translate(preset_target_iso=lang_iso)
 
     def _on_quick_fix_subtitle(self, srt_path: str) -> None:
         """Sidebar one-click 🔧 修 N — apply auto-fixes silently and refresh."""
