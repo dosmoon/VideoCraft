@@ -28,6 +28,7 @@ copy when users switch UI to English for an EN-spoken project.
 
 from __future__ import annotations
 
+import os
 from typing import Iterable, Optional
 
 
@@ -258,8 +259,11 @@ def render_clip_index(
         dur = _fmt_dur(s.get("duration_sec") or 0)
         score = s.get("score")
         score_s = "—" if score is None else str(score)
-        mp4 = f"clip_{idx:03d}.mp4"
-        md  = f"clip_{idx:03d}.md"
+        # Prefer the sidecar's `filename` (records the hook-bearing
+        # name picked at render time). Fall back to the legacy
+        # clip_NNN.mp4 convention for older sidecars without it.
+        mp4 = (s.get("filename") or "").strip() or f"clip_{idx:03d}.mp4"
+        md = os.path.splitext(mp4)[0] + ".md"
         lines.append(f"| {idx:03d} | {t} | {dur} | {score_s} "
                      f"| [{mp4}]({mp4}) | [{md}]({md}) |")
 

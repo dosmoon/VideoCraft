@@ -743,6 +743,69 @@ class ClipToolApp(ToolBase):
     def _instance_dir(self) -> str:
         return self.project.derivative_dir("clip", self.instance_name)
 
+    # ── Clip file naming ─────────────────────────────────────────────────
+    #
+    # Clip basename is `clip_NNN` plus the hook text (when present),
+    # joined with `_`. The hook prefix means the user can scan the
+    # output folder by content rather than opening every .md. All file
+    # ops resolve via _existing_clip_files() so old `clip_NNN.mp4`
+    # outputs and new `clip_NNN_<hook>.mp4` ones coexist on disk.
+
+    @staticmethod
+    def _sanitize_filename_part(text: str, max_len: int = 30) -> str:
+        """Strip filesystem-invalid chars and trim. Returns "" if the
+        result is empty (caller falls back to the bare clip_NNN form)."""
+        import re
+        if not text:
+            return ""
+        text = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        text = text.rstrip('. ')
+        if len(text) > max_len:
+            text = text[:max_len].rstrip('. ')
+        return text
+
+    def _clip_basename(self, out_idx: int, src_idx: int) -> str:
+        """`clip_001_老黄笑场` (no extension). Falls back to `clip_001`
+        when hook is empty / fully stripped by sanitization."""
+        suffix = self._sanitize_filename_part(
+            self._effective_hook(src_idx) or "")
+        if suffix:
+            return f"clip_{out_idx:03d}_{suffix}"
+        return f"clip_{out_idx:03d}"
+
+    def _existing_clip_files(self, out_idx: int) -> list[str]:
+        """All on-disk files belonging to a given output index, across
+        legacy `clip_NNN.{mp4,json,md}` and current `clip_NNN_*.{...}`
+        naming. Used for conflict checks, deletion, and pre-render
+        cleanup when a hook change would otherwise leave stale pairs."""
+        inst = self._instance_dir()
+        prefix = f"clip_{out_idx:03d}"
+        out: list[str] = []
+        try:
+            for name in os.listdir(inst):
+                if not name.startswith(prefix):
+                    continue
+                # Accept `clip_NNN.<ext>` (exact) or `clip_NNN_<rest>.<ext>`.
+                tail = name[len(prefix):]
+                if tail and not (tail.startswith(".") or tail.startswith("_")):
+                    continue
+                if not (name.endswith(".mp4") or name.endswith(".json")
+                        or name.endswith(".md")):
+                    continue
+                out.append(os.path.join(inst, name))
+        except OSError:
+            pass
+        return out
+
+    def _find_clip_mp4(self, out_idx: int) -> Optional[str]:
+        """Locate the rendered .mp4 for an output index regardless of
+        naming scheme. Returns None if not on disk."""
+        for p in self._existing_clip_files(out_idx):
+            if p.endswith(".mp4"):
+                return p
+        return None
+
     def _candidate_count(self) -> int:
         return len(self._candidate_meta)
 
@@ -1725,9 +1788,9 @@ class ClipToolApp(ToolBase):
         os.makedirs(inst, exist_ok=True)
         existing: list[tuple[int, str]] = []   # (output_idx, file)
         for out_idx, _src_idx in enumerate(selected, 1):
-            fname = f"clip_{out_idx:03d}.mp4"
-            if os.path.exists(os.path.join(inst, fname)):
-                existing.append((out_idx, fname))
+            mp4 = self._find_clip_mp4(out_idx)
+            if mp4:
+                existing.append((out_idx, os.path.basename(mp4)))
         skip_indices: set[int] = set()
         if existing:
             action = self._prompt_conflict(existing)
@@ -1748,7 +1811,8 @@ class ClipToolApp(ToolBase):
             start, end = self._effective_start_end(src_idx)
             if end <= start:
                 continue
-            out_path = os.path.join(inst, f"clip_{out_idx:03d}.mp4")
+            base = self._clip_basename(out_idx, src_idx)
+            out_path = os.path.join(inst, base + ".mp4")
             requests.append((out_idx, src_idx, CompositionRequest(
                 source_video=video_path,
                 start_sec=start, end_sec=end,
@@ -1827,6 +1891,20 @@ class ClipToolApp(ToolBase):
                     lambda: self._on_render_progress(d - 1, t, oi, pct))
 
             try:
+                # If a previous render for this out_idx left files
+                # under a different hook (and thus a different
+                # basename), wipe them so we never end up with two
+                # paired sets for one logical clip.
+                new_base = os.path.basename(
+                    os.path.splitext(req.output_path)[0])
+                for stale in self._existing_clip_files(out_idx):
+                    if os.path.splitext(os.path.basename(stale))[0] == new_base:
+                        continue
+                    try:
+                        os.unlink(stale)
+                    except OSError:
+                        pass
+
                 result = render_composition(
                     req, on_progress=_on_pct,
                     cancel_check=lambda: self._cancel_flag)
@@ -1834,12 +1912,13 @@ class ClipToolApp(ToolBase):
                 self._write_sidecar(req, result, out_idx, src_idx)
                 self._write_publish_sidecar(req.output_path)
                 self._render_status[src_idx] = "done"
+                fname = os.path.basename(req.output_path)
                 self._rendered = [
                     r for r in self._rendered
-                    if r.get("file") != f"clip_{out_idx:03d}.mp4"
+                    if int(r.get("output_index") or -1) != out_idx
                 ]
                 self._rendered.insert(0, {
-                    "file": f"clip_{out_idx:03d}.mp4",
+                    "file": fname,
                     "source_clip_idx": src_idx,
                     "output_index": out_idx,
                     "duration_sec": result.duration_sec,
@@ -1903,6 +1982,7 @@ class ClipToolApp(ToolBase):
         sidecar = {
             "source_clip_idx": src_idx,
             "output_index":   out_idx,
+            "filename":       os.path.basename(req.output_path),
             "title":          self._effective_title(src_idx),
             "hashtags":       self._effective_tags(src_idx),
             "hook":           self._effective_hook(src_idx),
@@ -2003,8 +2083,8 @@ class ClipToolApp(ToolBase):
         if not row:
             return
         out_idx, _ = row
-        path = os.path.join(self._instance_dir(), f"clip_{out_idx:03d}.mp4")
-        if os.path.isfile(path):
+        path = self._find_clip_mp4(out_idx)
+        if path and os.path.isfile(path):
             os.startfile(path)
 
     def _on_act_open_folder(self) -> None:
@@ -2024,12 +2104,18 @@ class ClipToolApp(ToolBase):
         start, end = self._effective_start_end(src_idx)
         if end <= start:
             return
-        out_path = os.path.join(self._instance_dir(),
-                                  f"clip_{out_idx:03d}.mp4")
-        # Wipe old file so cancel-cleanup logic uniform
-        if os.path.exists(out_path):
-            try: os.unlink(out_path)
-            except OSError: pass
+        base = self._clip_basename(out_idx, src_idx)
+        out_path = os.path.join(self._instance_dir(), base + ".mp4")
+        # Wipe any prior paired files for this out_idx — hook may have
+        # changed, so basename may differ from the existing files. Same
+        # cleanup as the bulk-render path runs inside _render_worker;
+        # do it eagerly here too so a mid-render cancel can't leave us
+        # with both old and new naming side-by-side.
+        for stale in self._existing_clip_files(out_idx):
+            try:
+                os.unlink(stale)
+            except OSError:
+                pass
         self._read_form_into_style()
         req = CompositionRequest(
             source_video=video_path,
@@ -2055,22 +2141,20 @@ class ClipToolApp(ToolBase):
         if not row:
             return
         out_idx, _ = row
-        fname = f"clip_{out_idx:03d}.mp4"
+        mp4 = self._find_clip_mp4(out_idx)
+        display = os.path.basename(mp4) if mp4 else f"clip_{out_idx:03d}.mp4"
         if not messagebox.askyesno(
                 "VideoCraft",
-                tr("clip_tool.confirm_delete_output", file=fname),
+                tr("clip_tool.confirm_delete_output", file=display),
                 parent=self.master):
             return
-        inst = self._instance_dir()
-        for suffix in (".mp4", ".json"):
-            p = os.path.join(inst, f"clip_{out_idx:03d}{suffix}")
+        for p in self._existing_clip_files(out_idx):
             try:
-                if os.path.isfile(p):
-                    os.unlink(p)
+                os.unlink(p)
             except OSError:
                 pass
         self._rendered = [r for r in self._rendered
-                            if r.get("file") != fname]
+                            if int(r.get("output_index") or -1) != out_idx]
         self._save_all()
         self._refresh_render_tv()
 
