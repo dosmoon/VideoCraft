@@ -32,6 +32,13 @@ import tkinter as tk
 from typing import Callable
 
 user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
+
+user32.GetWindowThreadProcessId.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
+user32.GetWindowThreadProcessId.restype = wt.DWORD
+user32.AttachThreadInput.argtypes = [wt.DWORD, wt.DWORD, ctypes.c_bool]
+user32.AttachThreadInput.restype = ctypes.c_bool
+kernel32.GetCurrentThreadId.restype = wt.DWORD
 
 GWL_STYLE     = -16
 WS_CAPTION    = 0x00C00000
@@ -108,6 +115,7 @@ class WebPreviewFrame(tk.Frame):
         self._title = f"vcraft-webpreview-{os.getpid()}-{id(self):x}"
         self._stdout_thread: threading.Thread | None = None
         self._destroyed = False
+        self._attached_thread: int | None = None  # see _embed()
 
         self.bind("<Configure>", self._on_configure)
         # Defer spawn until the frame has a real HWND
@@ -126,6 +134,19 @@ class WebPreviewFrame(tk.Frame):
 
     def destroy(self) -> None:
         self._destroyed = True
+        # Detach BEFORE asking the child to quit so a still-living thread
+        # is on the other end of AttachThreadInput. Detaching against a
+        # gone thread is a no-op but logs noise on some Windows builds.
+        if self._attached_thread is not None:
+            try:
+                user32.AttachThreadInput(
+                    self._attached_thread,
+                    kernel32.GetCurrentThreadId(),
+                    False,
+                )
+            except Exception:
+                pass
+            self._attached_thread = None
         self._send({"cmd": "quit"})
         if self._child is not None:
             try:
@@ -185,6 +206,30 @@ class WebPreviewFrame(tk.Frame):
         user32.SetWindowLongW(wv_hwnd, GWL_STYLE, style)
         user32.SetParent(wv_hwnd, self.winfo_id())
         self._reposition()
+        self._attach_input_queue(wv_hwnd)
+
+    def _attach_input_queue(self, wv_hwnd: int) -> None:
+        """Merge the WebView's input queue into Tk's.
+
+        Without this, any Tk Entry / Text widget sharing a top-level
+        window with the embedded WebView cannot receive keyboard input:
+        Win32 keyboard focus is *per-thread*, and SetParent across
+        processes leaves the two threads with independent focus state.
+        Tk's SetFocus(entry_hwnd) silently doesn't propagate to the
+        active input thread (still the WebView's), so WM_KEYDOWN never
+        reaches the Entry.
+        AttachThreadInput merges the two queues so focus changes route
+        keystrokes to the actually-focused window across processes.
+        Trade-off: input handling becomes synchronous between threads;
+        a hung WebView blocks Tk input. Acceptable — a hung WebView is
+        a fatal condition for this UI anyway.
+        """
+        wv_thread = user32.GetWindowThreadProcessId(wv_hwnd, None)
+        tk_thread = kernel32.GetCurrentThreadId()
+        if wv_thread == 0 or wv_thread == tk_thread:
+            return
+        if user32.AttachThreadInput(wv_thread, tk_thread, True):
+            self._attached_thread = wv_thread
 
     def _reposition(self) -> None:
         if self._wv_hwnd is None:
