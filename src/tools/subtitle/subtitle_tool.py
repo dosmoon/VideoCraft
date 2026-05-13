@@ -108,6 +108,15 @@ class SubtitleToolApp(ToolBase):
         self.sub1_is_chinese_var = tk.BooleanVar(value=True)
         self.sub2_is_chinese_var = tk.BooleanVar(value=False)
 
+        # Normalized layout — Tk vars hold percent (0-100) for ergonomic
+        # spinbox display; _form_to_style divides by 100 to produce the
+        # CompositionStyle fractions consumed by both renderers.
+        self.sub_position_var          = tk.StringVar(value="bottom")
+        self.sub_block_margin_pct_var  = tk.DoubleVar(value=8.0)
+        self.sub_track_gap_pct_var     = tk.DoubleVar(value=12.0)
+        self.wm_margin_x_pct_var       = tk.DoubleVar(value=2.5)
+        self.wm_margin_y_pct_var       = tk.DoubleVar(value=2.5)
+
         self.encode_preset_var  = tk.StringVar(value="veryfast")
 
         # Live-preview plumbing.
@@ -299,6 +308,34 @@ class SubtitleToolApp(ToolBase):
                         variable=self.sub2_is_chinese_var
                         ).pack(side="left")
 
+        # ── Subtitle layout (normalized pct — single source of truth
+        #    shared by libass burn + WebView preview) ───────────────────
+        layout = ttk.LabelFrame(parent, text=tr("tool.subtitle.layout.frame_title"))
+        layout.pack(fill="x", padx=6, pady=4)
+
+        row = ttk.Frame(layout); row.pack(fill="x", padx=4, pady=2)
+        ttk.Label(row, text=tr("tool.subtitle.layout.anchor")).pack(side="left")
+        ttk.Radiobutton(row, text=tr("tool.subtitle.layout.bottom"),
+                        variable=self.sub_position_var, value="bottom"
+                        ).pack(side="left", padx=(8, 0))
+        ttk.Radiobutton(row, text=tr("tool.subtitle.layout.top"),
+                        variable=self.sub_position_var, value="top"
+                        ).pack(side="left", padx=(4, 0))
+
+        row = ttk.Frame(layout); row.pack(fill="x", padx=4, pady=2)
+        ttk.Label(row, text=tr("tool.subtitle.layout.block_margin")
+                  ).pack(side="left")
+        ttk.Spinbox(row, from_=0, to=30, increment=0.5, width=6, format="%.1f",
+                    textvariable=self.sub_block_margin_pct_var
+                    ).pack(side="left", padx=(4, 0))
+        ttk.Label(row, text="%").pack(side="left")
+        ttk.Label(row, text=tr("tool.subtitle.layout.track_gap")
+                  ).pack(side="left", padx=(16, 0))
+        ttk.Spinbox(row, from_=0, to=25, increment=0.5, width=6, format="%.1f",
+                    textvariable=self.sub_track_gap_pct_var
+                    ).pack(side="left", padx=(4, 0))
+        ttk.Label(row, text="%").pack(side="left")
+
         # ── Watermark ─────────────────────────────────────────────────────
         wm = ttk.LabelFrame(parent, text=tr("tool.subtitle.watermark.frame_title"))
         wm.pack(fill="x", padx=6, pady=4)
@@ -366,6 +403,21 @@ class SubtitleToolApp(ToolBase):
                     textvariable=self.watermark_txt_alpha_var
                     ).pack(side="left", padx=(4, 0))
 
+        # Watermark normalized margins from anchored corner.
+        row = ttk.Frame(wm); row.pack(fill="x", padx=4, pady=2)
+        ttk.Label(row, text=tr("tool.subtitle.watermark.margin_x")
+                  ).pack(side="left")
+        ttk.Spinbox(row, from_=0, to=10, increment=0.5, width=6, format="%.1f",
+                    textvariable=self.wm_margin_x_pct_var
+                    ).pack(side="left", padx=(4, 0))
+        ttk.Label(row, text="%").pack(side="left")
+        ttk.Label(row, text=tr("tool.subtitle.watermark.margin_y")
+                  ).pack(side="left", padx=(16, 0))
+        ttk.Spinbox(row, from_=0, to=10, increment=0.5, width=6, format="%.1f",
+                    textvariable=self.wm_margin_y_pct_var
+                    ).pack(side="left", padx=(4, 0))
+        ttk.Label(row, text="%").pack(side="left")
+
         # ── Encoder ───────────────────────────────────────────────────────
         enc = ttk.LabelFrame(parent, text=tr("tool.subtitle.encoder.frame_title"))
         enc.pack(fill="x", padx=6, pady=4)
@@ -400,11 +452,15 @@ class SubtitleToolApp(ToolBase):
             self.sub1_is_chinese_var,
             self.sub2_show_var, self.sub2_fontsize_var, self.sub2_color_var,
             self.sub2_is_chinese_var,
+            self.sub_position_var, self.sub_block_margin_pct_var,
+            self.sub_track_gap_pct_var,
             self.watermark_show_var, self.watermark_type_var,
             self.watermark_text_var, self.watermark_color_var,
             self.watermark_fontsize_var, self.watermark_txt_alpha_var,
             self.watermark_img_path_var, self.watermark_img_scale_var,
-            self.watermark_img_alpha_var, self.encode_preset_var,
+            self.watermark_img_alpha_var,
+            self.wm_margin_x_pct_var, self.wm_margin_y_pct_var,
+            self.encode_preset_var,
         ):
             var.trace_add("write", lambda *_a: self._schedule_preview_refresh())
 
@@ -966,7 +1022,9 @@ class SubtitleToolApp(ToolBase):
                     is_chinese=bool(self.sub2_is_chinese_var.get()),
                     auto_max_chars=True,
                 ),
-                position="bottom",
+                position=self.sub_position_var.get() or "bottom",
+                block_margin_pct=float(self.sub_block_margin_pct_var.get()) / 100.0,
+                track_gap_pct=float(self.sub_track_gap_pct_var.get()) / 100.0,
             ),
             watermark=WatermarkStyle(
                 enabled=bool(self.watermark_show_var.get()),
@@ -979,6 +1037,8 @@ class SubtitleToolApp(ToolBase):
                 image_scale=float(self.watermark_img_scale_var.get()),
                 image_opacity=int(self.watermark_img_alpha_var.get()),
                 position="top-right",
+                margin_x_pct=float(self.wm_margin_x_pct_var.get()) / 100.0,
+                margin_y_pct=float(self.wm_margin_y_pct_var.get()) / 100.0,
             ),
         )
 
@@ -1001,6 +1061,14 @@ class SubtitleToolApp(ToolBase):
             except tk.TclError:
                 pass
 
+        # Normalized layout fields (percent in the UI, fraction in the schema).
+        try:
+            self.sub_position_var.set(sub.position or "bottom")
+            self.sub_block_margin_pct_var.set(round(sub.block_margin_pct * 100.0, 1))
+            self.sub_track_gap_pct_var.set(round(sub.track_gap_pct * 100.0, 1))
+        except tk.TclError:
+            pass
+
         wm = style.watermark
         try:
             self.watermark_show_var.set(bool(wm.enabled))
@@ -1012,6 +1080,8 @@ class SubtitleToolApp(ToolBase):
             self.watermark_img_path_var.set(wm.image_path or "")
             self.watermark_img_scale_var.set(float(wm.image_scale))
             self.watermark_img_alpha_var.set(float(wm.image_opacity))
+            self.wm_margin_x_pct_var.set(round(wm.margin_x_pct * 100.0, 1))
+            self.wm_margin_y_pct_var.set(round(wm.margin_y_pct * 100.0, 1))
         except tk.TclError:
             pass
 
