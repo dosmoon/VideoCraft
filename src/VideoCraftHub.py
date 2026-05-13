@@ -1939,14 +1939,12 @@ class VideoCraftHub:
             tf._set_status_cb = lambda s, k=registry_key: tab_bar.set_status(k, s)
 
             # Tools take an optional initial_file (legacy plumbing). Project-
-            # aware tools also take project / instance_name (see below).
+            # only tools (clip, subtitle) don't accept initial_file.
             kwargs: dict = {}
-            # clip is project-only and does not accept initial_file.
-            if initial_file is not None and tool_key != "clip":
+            if initial_file is not None and tool_key not in ("clip", "subtitle"):
                 kwargs["initial_file"] = initial_file
-            # Project-aware tools: subtitle_tool is the first one wired here
-            # (字幕视频 workbench). Others can opt in by accepting these kwargs.
-            if tool_key in ("subtitle", "clip") and project is not None:
+            # Project-only tools must receive project + instance_name.
+            if tool_key in ("subtitle", "clip"):
                 kwargs["project"] = project
                 kwargs["instance_name"] = instance_name
             app = cls(tf, **kwargs) if kwargs else cls(tf)
