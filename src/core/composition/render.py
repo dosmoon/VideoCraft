@@ -27,8 +27,8 @@ from core.subtitle_ops import (
     escape_ffmpeg_path, hex_color_to_ass, read_srt, process_srt_split,
 )
 
-from .style import CompositionStyle, SubtitleStyle, WatermarkStyle, \
-    HookOutroStyle, compute_subtitle_max_chars
+from .style import CompositionStyle, SubtitleStyle, SubtitleLineStyle, \
+    WatermarkStyle, HookOutroStyle, compute_subtitle_max_chars
 from .fonts import (
     hook_outro_font_path, y_expr_for_position, ass_alignment_for_position,
 )
@@ -44,16 +44,17 @@ ProgressCallback = Callable[[str, int], None]   # (stage, percent 0-100)
 class CompositionRequest:
     """All inputs needed for one render_composition() call.
 
-    Built by the consumer (e.g. AI Clip workbench) from a hotclip entry +
-    the user's current CompositionStyle + the project's source video and
-    subtitle paths.
+    Built by the consumer (e.g. AI Clip workbench, subtitle burn) from a
+    hotclip entry / SRT pair + the user's current CompositionStyle + the
+    project's source video.
     """
     source_video: str
     start_sec: float
     end_sec: float
     output_path: str
     style: CompositionStyle
-    source_srt: Optional[str] = None    # primary subtitle; None = no burn
+    source_srt: Optional[str] = None    # primary subtitle (sub1); None = no burn
+    source_srt_secondary: Optional[str] = None    # secondary subtitle (sub2); None = no burn
     hook_text: str = ""                 # rendered as top overlay during hook window
     outro_text: str = ""                # rendered as bottom overlay during outro window
     crop_rect: Optional[dict] = None    # {x,y,w,h} normalized; None = center crop
@@ -241,22 +242,45 @@ def _drawtext_filter(text: str, *, role: str, ho: HookOutroStyle,
     return ":".join(parts)
 
 
-def _build_subtitle_force_style(subtitle: SubtitleStyle) -> str:
-    """ASS force_style string for ffmpeg's subtitles= filter. Stage 1 only
-    renders sub1; sub2 is a schema placeholder."""
-    sub1 = subtitle.sub1
-    font_name = "Microsoft YaHei" if sub1.is_chinese else "Arial"
-    margin_v = 60       # at 1080 short edge
+def _build_subtitle_force_style(line: SubtitleLineStyle,
+                                  subtitle: SubtitleStyle,
+                                  *, margin_v: int) -> str:
+    """ASS force_style string for one subtitle track."""
+    font_name = "Microsoft YaHei" if line.is_chinese else "Arial"
     return (f"Fontname={font_name},"
-            f"Fontsize={sub1.fontsize},"
-            f"PrimaryColour={hex_color_to_ass(sub1.color)},"
+            f"Fontsize={line.fontsize},"
+            f"PrimaryColour={hex_color_to_ass(line.color)},"
             f"OutlineColour={hex_color_to_ass(subtitle.stroke_color)},"
             f"BorderStyle=1,"
             f"Outline={max(0, int(subtitle.stroke_width))},"
             f"Shadow=0,"
-            f"Bold={1 if sub1.bold else 0},"
+            f"Bold={1 if line.bold else 0},"
             f"Alignment={ass_alignment_for_position(subtitle.position)},"
             f"MarginV={margin_v}")
+
+
+def _track_margins(subtitle: SubtitleStyle) -> tuple[int, int]:
+    """Vertical MarginV for (sub1, sub2) so the two tracks stack without
+    overlapping. Output-pixel space at 1080 short edge.
+
+    sub1 is the primary (typically source-language) track and sits visually
+    closer to the frame center than sub2 (translation). For position=top,
+    sub1 anchors near the top and sub2 drops below; for bottom, sub1 sits
+    above and sub2 anchors near the edge. position=middle uses Alignment=5
+    where MarginV is ignored, so stacking is not supported there — the two
+    tracks will overlap; callers should use top/bottom for bilingual work.
+
+    The 4.0× fontsize gap is empirical: libass with no PlayResY uses video
+    height as its coordinate space, so script-pixel MarginV ≈ output px,
+    and one rendered line is ~fontsize×4.0 px tall at 1080 short edge.
+    """
+    base = 60
+    pos = subtitle.position
+    if pos == "top":
+        return (base, base + int(subtitle.sub1.fontsize * 4.0))
+    if pos == "bottom":
+        return (base + int(subtitle.sub2.fontsize * 4.0), base)
+    return (base, base)
 
 
 def _hex_to_drawtext_rgba(hex_color: str, alpha: float) -> str:
@@ -373,31 +397,37 @@ def render_composition(
     os.makedirs(os.path.dirname(os.path.abspath(req.output_path)) or ".",
                 exist_ok=True)
 
-    # ── Slice the input SRT to this window (rebased to 0) ─────────────────
-    tmp_srt_path: str | None = None
-    if req.source_srt and os.path.exists(req.source_srt):
+    # ── Slice each track's SRT to this window (rebased to 0) ──────────────
+    def _prepare_track_srt(src_path: str | None, line: SubtitleLineStyle,
+                            tag: str) -> str | None:
+        if not (src_path and os.path.exists(src_path) and line.enabled):
+            return None
         try:
-            cues = _load_cues(req.source_srt)
-            sub1 = style.subtitle.sub1
-            if sub1.auto_max_chars:
+            cues = _load_cues(src_path)
+            if line.auto_max_chars:
                 max_chars = compute_subtitle_max_chars(
-                    style.aspect, sub1.fontsize, sub1.is_chinese)
+                    style.aspect, line.fontsize, line.is_chinese)
             else:
-                max_chars = max(8, sub1.manual_max_chars)
-            tmp_srt_path = os.path.join(
+                max_chars = max(8, line.manual_max_chars)
+            out = os.path.join(
                 tempfile.gettempdir(),
-                f"composition-{int(req.start_sec*1000)}-{os.getpid()}.srt"
+                f"composition-{tag}-{int(req.start_sec*1000)}-{os.getpid()}.srt"
             )
-            _slice_srt_for_clip(cues, req.start_sec, req.end_sec, tmp_srt_path)
+            _slice_srt_for_clip(cues, req.start_sec, req.end_sec, out)
             try:
                 split_subs = process_srt_split(
-                    tmp_srt_path, max_chars, is_chinese=sub1.is_chinese)
-                with open(tmp_srt_path, "w", encoding="utf-8") as f:
+                    out, max_chars, is_chinese=line.is_chinese)
+                with open(out, "w", encoding="utf-8") as f:
                     f.write(_srt.compose(split_subs))
             except Exception:
                 pass    # leave un-split on failure; better than no subs
+            return out
         except Exception:
-            tmp_srt_path = None
+            return None
+
+    tmp_srt_path = _prepare_track_srt(req.source_srt, style.subtitle.sub1, "sub1")
+    tmp_srt2_path = _prepare_track_srt(
+        req.source_srt_secondary, style.subtitle.sub2, "sub2")
 
     # ── Build filter_complex ───────────────────────────────────────────────
     parts: list[str] = []
@@ -409,15 +439,28 @@ def render_composition(
                  f"setsar=1[v0]")
     cur = "[v0]"
 
-    burn_subs = (style.subtitle.sub1.enabled and tmp_srt_path
-                 and os.path.exists(tmp_srt_path)
-                 and os.path.getsize(tmp_srt_path) > 0)
-    if burn_subs:
+    margin_v1, margin_v2 = _track_margins(style.subtitle)
+    burn1 = (style.subtitle.sub1.enabled and tmp_srt_path
+             and os.path.exists(tmp_srt_path)
+             and os.path.getsize(tmp_srt_path) > 0)
+    if burn1:
         srt_ff = escape_ffmpeg_path(tmp_srt_path)
-        force_style = _build_subtitle_force_style(style.subtitle)
+        force_style = _build_subtitle_force_style(
+            style.subtitle.sub1, style.subtitle, margin_v=margin_v1)
         parts.append(f"{cur}subtitles=filename='{srt_ff}':"
                      f"force_style='{force_style}'[v1]")
         cur = "[v1]"
+
+    burn2 = (style.subtitle.sub2.enabled and tmp_srt2_path
+             and os.path.exists(tmp_srt2_path)
+             and os.path.getsize(tmp_srt2_path) > 0)
+    if burn2:
+        srt2_ff = escape_ffmpeg_path(tmp_srt2_path)
+        force_style = _build_subtitle_force_style(
+            style.subtitle.sub2, style.subtitle, margin_v=margin_v2)
+        parts.append(f"{cur}subtitles=filename='{srt2_ff}':"
+                     f"force_style='{force_style}'[v1b]")
+        cur = "[v1b]"
 
     img_wm_nodes, cur = _build_image_watermark_chain(
         style.watermark, target_w, cur)
@@ -488,11 +531,12 @@ def render_composition(
                         on_progress("encoding", pct)
         proc.wait()
     finally:
-        if tmp_srt_path and os.path.exists(tmp_srt_path):
-            try:
-                os.unlink(tmp_srt_path)
-            except OSError:
-                pass
+        for p in (tmp_srt_path, tmp_srt2_path):
+            if p and os.path.exists(p):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
         for p in tmp_text_files:
             try:
                 if os.path.exists(p):
