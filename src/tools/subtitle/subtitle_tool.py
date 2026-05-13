@@ -14,7 +14,6 @@ import sys
 import subprocess
 import threading
 import time
-import re
 import json
 import srt
 from datetime import timedelta, datetime
@@ -23,13 +22,7 @@ from hub_logger import logger
 
 # ── 纯工具函数（从 core 导入）───────────────────────────────────────────────
 
-from core.subtitle_ops import (
-    split_subtitle,
-    process_srt_split,
-    escape_ffmpeg_path,
-    hex_color_to_ass,
-    hex_color_to_drawtext,
-)
+from core.subtitle_ops import process_srt_split
 
 
 def _infer_lang_tag(srt_path: str) -> str:
@@ -74,6 +67,21 @@ def get_video_resolution(video_path):
     except Exception as e:
         logger.error(f"ffprobe failed to read resolution ({os.path.basename(video_path)}): {e}")
     return None, None
+
+
+def _probe_video_duration(video_path: str) -> float:
+    """Probe video duration in seconds. Returns 0.0 if ffprobe fails."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", video_path],
+            capture_output=True, encoding="utf-8", errors="replace", timeout=15,
+        )
+        if out.returncode == 0:
+            return float(out.stdout.strip())
+    except Exception as e:
+        logger.error(f"ffprobe failed to read duration ({os.path.basename(video_path)}): {e}")
+    return 0.0
 
 
 # ── 主界面 class ─────────────────────────────────────────────────────────────
@@ -1100,26 +1108,8 @@ class SubtitleToolApp(ToolBase):
             messagebox.showerror(tr("tool.subtitle.error.split_failed_title"), str(e))
             return
 
-        # 路径处理
+        # Resolve absolute paths + output destination.
         video_path_abs = os.path.abspath(video_path)
-        sub1_path_ff   = escape_ffmpeg_path(temp_sub1_path) if show_sub1 else None
-        sub2_path_ff   = escape_ffmpeg_path(temp_sub2_path) if show_sub2 else None
-
-        # 字幕样式
-        font1 = "Microsoft YaHei"
-        fontsize1 = self.sub1_fontsize_var.get()
-        color1    = hex_color_to_ass(self.sub1_color_var.get())
-        style1 = (f"Fontname={font1},Fontsize={fontsize1},PrimaryColour={color1},"
-                  f"OutlineColour=&H00000000&,BorderStyle=1,Outline=2,Shadow=0,"
-                  f"Bold=1,Alignment=2,MarginV=100")
-
-        font2 = "Microsoft YaHei"
-        fontsize2 = self.sub2_fontsize_var.get()
-        color2    = hex_color_to_ass(self.sub2_color_var.get())
-        style2 = (f"Fontname={font2},Fontsize={fontsize2},PrimaryColour={color2},"
-                  f"OutlineColour=&H00000000&,BorderStyle=1,Outline=2,Shadow=0,"
-                  f"Bold=0,Alignment=2,MarginV=50")
-
         output_path = self.entry_output.get().strip()
         if not output_path:
             output_path = _compute_default_output_path(
@@ -1127,7 +1117,6 @@ class SubtitleToolApp(ToolBase):
                 sub1_path if show_sub1 else None,
                 sub2_path if show_sub2 else None,
             )
-        # Normalize to absolute and verify parent directory exists.
         output_path = os.path.abspath(output_path)
         out_dir = os.path.dirname(output_path)
         if out_dir and not os.path.isdir(out_dir):
@@ -1135,133 +1124,87 @@ class SubtitleToolApp(ToolBase):
                                  tr("tool.subtitle.error.output_dir_missing", dir=out_dir))
             return
 
-        width, height = get_video_resolution(video_path_abs)
+        # Build the CompositionRequest from Tk vars. Bilingual burn runs the
+        # composition engine in passthrough mode so source resolution/aspect
+        # are preserved verbatim (no crop, no resize, no aspect coercion).
+        from core.composition import (
+            CompositionStyle, OutputGeometry, SubtitleStyle, SubtitleLineStyle,
+            WatermarkStyle, CompositionRequest, render_composition,
+        )
 
-        # 水印
-        show_watermark           = self.watermark_show_var.get()
-        wm_type                  = self.watermark_type_var.get()
-        use_img_wm               = show_watermark and wm_type == "image"
-        use_txt_wm               = show_watermark and wm_type == "text"
-        show_date                = self.watermark_show_date_var.get()
-        watermark_text           = self.watermark_text_var.get()
-        watermark_color          = self.watermark_color_var.get()
-        watermark_fontsize_base  = self.watermark_fontsize_var.get()
-        watermark_ff_color       = hex_color_to_drawtext(watermark_color)
-        txt_alpha                = round(self.watermark_txt_alpha_var.get() / 100, 2)
-        img_alpha                = round(self.watermark_img_alpha_var.get() / 100, 2)
-        watermark_fontsize       = int((height / 1080) * watermark_fontsize_base) if height else watermark_fontsize_base
-        img_path                 = self.watermark_img_path_var.get()
-        img_scale                = self.watermark_img_scale_var.get()
-        img_exists               = use_img_wm and os.path.exists(img_path)
+        # When the user opts out of wrap-split (split_subN=False), we want
+        # both the shipped sidecar and the burned subtitles to pass through
+        # the original cue text unchanged. The shipped sidecar is already a
+        # plain copy in that case (see _write_adapted); for the burn path
+        # we set manual_max_chars=99999 so composition's process_srt_split
+        # becomes effectively a no-op.
+        def _mc(split_on: bool, n: int) -> int:
+            return int(n) if split_on else 99999
 
-        date_ff_color            = hex_color_to_drawtext(self.watermark_date_color_var.get())
-        date_fontsize_base       = self.watermark_date_fontsize_var.get()
-        date_fontsize            = int((height / 1080) * date_fontsize_base) if height else date_fontsize_base
-        date_alpha               = round(self.watermark_date_alpha_var.get() / 100, 2)
+        encode_preset = self.encode_preset_var.get()
+        style = CompositionStyle(
+            output=OutputGeometry(mode="passthrough"),
+            encode_preset=encode_preset,
+            subtitle=SubtitleStyle(
+                sub1=SubtitleLineStyle(
+                    enabled=show_sub1,
+                    fontsize=int(self.sub1_fontsize_var.get()),
+                    color=self.sub1_color_var.get(),
+                    bold=True,
+                    is_chinese=bool(self.sub1_is_chinese_var.get()),
+                    auto_max_chars=False,
+                    manual_max_chars=_mc(self.split_sub1_var.get(),
+                                          self.sub1_max_chars_var.get()),
+                ),
+                sub2=SubtitleLineStyle(
+                    enabled=show_sub2,
+                    fontsize=int(self.sub2_fontsize_var.get()),
+                    color=self.sub2_color_var.get(),
+                    bold=False,
+                    is_chinese=bool(self.sub2_is_chinese_var.get()),
+                    auto_max_chars=False,
+                    manual_max_chars=_mc(self.split_sub2_var.get(),
+                                          self.sub2_max_chars_var.get()),
+                ),
+                position="bottom",
+            ),
+            watermark=WatermarkStyle(
+                enabled=bool(self.watermark_show_var.get()),
+                type=self.watermark_type_var.get(),
+                text=self.watermark_text_var.get(),
+                text_fontsize=int(self.watermark_fontsize_var.get()),
+                text_color=self.watermark_color_var.get(),
+                text_opacity=int(self.watermark_txt_alpha_var.get()),
+                image_path=self.watermark_img_path_var.get(),
+                image_scale=float(self.watermark_img_scale_var.get()),
+                image_opacity=int(self.watermark_img_alpha_var.get()),
+                position="top-right",
+            ),
+        )
 
-        # 文字水印 drawtext 片段
-        def _txt_drawtext(y_expr="30"):
-            return (f"drawtext=text='{watermark_text}':"
-                    f"fontcolor={watermark_ff_color}@{txt_alpha}:"
-                    f"fontsize={watermark_fontsize}:font='Microsoft YaHei':"
-                    f"x=w-tw-30:y={y_expr}:borderw=2:bordercolor=black")
+        # Resolve duration. self.video_duration is populated when the user
+        # selects a video; fall back to a probe if it didn't take.
+        duration = float(self.video_duration or 0.0)
+        if duration <= 0:
+            duration = _probe_video_duration(video_path_abs)
+        if duration <= 0:
+            messagebox.showerror(tr("dialog.common.error"),
+                                 tr("tool.subtitle.warning.no_ffprobe"))
+            return
 
-        # 日期 drawtext 片段（独立颜色/字号/透明度）
-        def _date_drawtext(y_val):
-            return (f"drawtext=text='{self.watermark_date_var.get()}':"
-                    f"fontcolor={date_ff_color}@{date_alpha}:"
-                    f"fontsize={date_fontsize}:font='Microsoft YaHei':"
-                    f"x=w-tw-30:y={y_val}:borderw=2:bordercolor=black")
+        req = CompositionRequest(
+            source_video=video_path_abs,
+            start_sec=0.0,
+            end_sec=duration,
+            output_path=output_path,
+            style=style,
+            source_srt=temp_sub1_path if show_sub1 else None,
+            source_srt_secondary=temp_sub2_path if show_sub2 else None,
+        )
 
-        use_filter_complex = img_exists
-
-        # 精确计算日期 y 坐标（在主水印下方）
-        if use_filter_complex:
-            # 图片模式：用 PIL 读取图片实际尺寸计算缩放后高度
-            try:
-                from PIL import Image as _PILImg
-                with _PILImg.open(img_path) as _im:
-                    _orig_w, _orig_h = _im.size
-                img_w_px = int((width or 1920) * img_scale)
-                img_h_px = int(img_w_px * _orig_h / _orig_w)
-            except Exception:
-                img_w_px = int((width or 1920) * img_scale)
-                img_h_px = img_w_px  # 无法读取时假设正方形
-            date_y = 30 + img_h_px + 8
-        else:
-            # 文字模式：基于水印文字字号
-            img_w_px = int((width or 1920) * img_scale)
-            date_y = 30 + watermark_fontsize + 8
-
-        if use_filter_complex:
-            # ── filter_complex 路径（有图片水印）────────────────────────────
-            img_path_ff = img_path.replace("\\", "/").replace(":", "\\:")
-            fc_parts = []
-            cur = "[0:v]"
-
-            # 字幕滤镜
-            if show_sub2 and sub2_path_ff:
-                fc_parts.append(f"{cur}subtitles=filename='{sub2_path_ff}':force_style='{style2}'[s2]")
-                cur = "[s2]"
-            if show_sub1 and sub1_path_ff:
-                fc_parts.append(f"{cur}subtitles=filename='{sub1_path_ff}':force_style='{style1}'[s1]")
-                cur = "[s1]"
-
-            # 图片水印源（含独立透明度）
-            fc_parts.append(
-                f"movie='{img_path_ff}',scale={img_w_px}:-1,"
-                f"format=rgba,colorchannelmixer=aa={img_alpha}[wm]"
-            )
-
-            # overlay 链：图片叠加，日期独立追加
-            overlay_chain = f"{cur}[wm]overlay=W-w-30:30"
-            if show_date:
-                overlay_chain += "," + _date_drawtext(date_y)
-            overlay_chain += "[out]"
-            fc_parts.append(overlay_chain)
-
-            filter_complex = ";".join(fc_parts)
-            vf = None
-        else:
-            # ── -vf 路径（文字水印或无水印）─────────────────────────────────
-            filter_complex = None
-            vf_filters = []
-            if show_sub2 and sub2_path_ff:
-                vf_filters.append(f"subtitles=filename='{sub2_path_ff}':force_style='{style2}'")
-            if show_sub1 and sub1_path_ff:
-                vf_filters.append(f"subtitles=filename='{sub1_path_ff}':force_style='{style1}'")
-            if use_txt_wm and watermark_text.strip():
-                vf_filters.append(_txt_drawtext("30"))
-            if show_date:
-                vf_filters.append(_date_drawtext(date_y))
-            vf = ",".join(vf_filters)
-
-        # 缓冲区
-        if width and height:
-            pixels = width * height
-            if pixels >= 3840 * 2160:   bufsize = maxrate = '150M'
-            elif pixels >= 2560 * 1440: bufsize = maxrate = '80M'
-            elif pixels >= 1920 * 1080: bufsize = maxrate = '50M'
-            else:                        bufsize = maxrate = '30M'
-        else:
-            bufsize = maxrate = '100M'
-
-        crf_map = {'ultrafast': '28', 'superfast': '26', 'veryfast': '25',
-                   'faster': '24', 'fast': '23', 'medium': '23'}
-        preset = self.encode_preset_var.get()
-        crf    = crf_map.get(preset, '25')
-
-        cmd = ['ffmpeg', '-y', '-i', video_path_abs]
-        if use_filter_complex and filter_complex:
-            cmd += ['-filter_complex', filter_complex, '-map', '[out]', '-map', '0:a?']
-        elif vf:
-            cmd += ['-vf', vf]
-        cmd += [
-            '-c:v', 'libx264', '-preset', preset, '-crf', crf,
-            '-threads', '0', '-bufsize', bufsize, '-maxrate', maxrate,
-            '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '192k',
-            '-movflags', '+faststart', output_path
-        ]
+        crf_map = {'ultrafast': 28, 'superfast': 26, 'veryfast': 25,
+                   'faster': 24, 'fast': 23, 'medium': 23}
+        crf = crf_map.get(encode_preset, 25)
 
         self.processing = True
         self.btn_merge.config(state=tk.DISABLED)
@@ -1271,57 +1214,36 @@ class SubtitleToolApp(ToolBase):
         self.set_busy()
 
         threading.Thread(
-            target=self._run_ffmpeg,
-            args=(cmd, output_path, temp_sub1_path, temp_sub2_path, sub1_path, sub2_path),
+            target=self._run_composition,
+            args=(req, crf, render_composition, output_path),
             daemon=True
         ).start()
 
-    def _run_ffmpeg(self, cmd, output_path, temp_sub1, temp_sub2, orig_sub1, orig_sub2):
+    def _run_composition(self, req, crf, render_fn, output_path):
+        """Drive composition.render_composition from a worker thread and
+        bridge its (stage, pct) progress callback to the Tk progress bar."""
         start_time = time.time()
+
+        def on_progress(stage, pct):
+            if pct < 0 or pct > 100:
+                return
+            elapsed = time.time() - start_time
+            remaining = ((elapsed / pct) * (100 - pct)) if pct > 0 else 0.0
+            self.master.after(0, self._update_progress, pct, elapsed, remaining)
+
         try:
-            process = subprocess.Popen(cmd, stderr=subprocess.PIPE, text=True, encoding='utf-8', errors='replace')
-            duration_pattern = re.compile(r'Duration: (\d+):(\d+):(\d+\.\d+)')
-            time_pattern     = re.compile(r'time=(\d+):(\d+):(\d+\.\d+)')
-            total_duration   = self.video_duration if self.video_duration > 0 else None
-
-            while True:
-                line = process.stderr.readline()
-                if not line:
-                    break
-                line = line.strip()
-                if total_duration is None:
-                    m = duration_pattern.search(line)
-                    if m:
-                        h, mi, s = map(float, m.groups())
-                        total_duration = h * 3600 + mi * 60 + s
-                m = time_pattern.search(line)
-                if m:
-                    h, mi, s = map(float, m.groups())
-                    current_time = h * 3600 + mi * 60 + s
-                    if total_duration and total_duration > 0:
-                        progress  = (current_time / total_duration) * 100
-                        elapsed   = time.time() - start_time
-                        remaining = (elapsed / current_time) * (total_duration - current_time) if current_time > 0 else 0
-                        self.master.after(0, self._update_progress, progress, elapsed, remaining)
-
-            process.wait()
-            if process.returncode == 0:
-                # Clean up temp split SRTs
-                for tmp, orig in [(temp_sub1, orig_sub1), (temp_sub2, orig_sub2)]:
-                    if tmp != orig and os.path.exists(tmp):
-                        try:
-                            os.remove(tmp)
-                        except Exception as cleanup_e:
-                            logger.error(f"Failed to clean up temp subtitle {tmp}: {cleanup_e}")
-                logger.info(f"Subtitle burn complete → {os.path.basename(output_path)}")
-                # Project-mode: record burned_at so the sidebar can show a
-                # "已烧录" hint and future-you can find this output again.
-                self._mark_instance_burned()
-                self._write_publish_sidecar()
-                self.set_done()
-            else:
-                self.set_error(tr("tool.subtitle.error.burn_ffmpeg", code=process.returncode))
+            render_fn(req, on_progress=on_progress, crf=crf)
+            logger.info(f"Subtitle burn complete → {os.path.basename(output_path)}")
+            # Project-mode: record burned_at so the sidebar can show a
+            # "已烧录" hint and future-you can find this output again.
+            self._mark_instance_burned()
+            self._write_publish_sidecar()
+            self.set_done()
+        except InterruptedError:
+            self.set_error(tr("tool.subtitle.error.burn_generic",
+                              e="cancelled"))
         except Exception as e:
+            logger.exception("Subtitle burn failed")
             self.set_error(tr("tool.subtitle.error.burn_generic", e=e))
         finally:
             self.processing = False
