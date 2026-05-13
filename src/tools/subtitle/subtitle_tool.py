@@ -40,6 +40,24 @@ def _probe_video_duration(video_path: str) -> float:
     return 0.0
 
 
+def _probe_video_resolution(video_path: str) -> tuple[int, int]:
+    """Probe (width, height). Returns (0, 0) on failure. Used to derive
+    the effective aspect for passthrough renders/previews."""
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "v:0",
+             "-show_entries", "stream=width,height", "-of", "csv=p=0",
+             video_path],
+            capture_output=True, encoding="utf-8", errors="replace", timeout=10,
+        )
+        if out.returncode == 0:
+            w, h = out.stdout.strip().split(",")
+            return (int(w), int(h))
+    except Exception as e:
+        logger.error(f"ffprobe failed to read resolution ({os.path.basename(video_path)}): {e}")
+    return (0, 0)
+
+
 # ── 主界面 class ─────────────────────────────────────────────────────────────
 
 class SubtitleToolApp(ToolBase):
@@ -65,6 +83,8 @@ class SubtitleToolApp(ToolBase):
 
         # 状态变量
         self.video_duration = 0.0
+        self._src_w = 0
+        self._src_h = 0
         self.processing = False
 
         # Tk 变量
@@ -172,6 +192,9 @@ class SubtitleToolApp(ToolBase):
         self._preview = CompositionPreview(
             preview_outer, width=480, height=540)
         self._preview.widget.pack(fill="both", expand=True, padx=4, pady=4)
+        # Bilingual burn doesn't crop — kill the crop-rect drag UI clip
+        # uses for global crop. Subtitles/watermark still render on top.
+        self._preview.enable_crop_drag(False)
 
         # ── Bottom: progress + burn ───────────────────────────────────────
         bottom = tk.Frame(main)
@@ -411,36 +434,45 @@ class SubtitleToolApp(ToolBase):
             200, self._push_preview)
 
     def _push_preview(self) -> None:
-        """Snapshot current form → CompositionStyle, push to WebView.
-        Also pushes the primary SRT cue list when one is selected so the
-        preview overlays the real subtitle text under playhead, not a
-        placeholder."""
+        """Snapshot current form → CompositionStyle, push to WebView. Both
+        SRT cue streams flow through core.composition.prepare_subtitle_cues
+        so what the preview overlays matches the burn output exactly
+        (max_chars wrap applied at the cue level, never visual wrapping
+        in the JS layer)."""
         self._preview_refresh_after = None
         if self._preview is None:
             return
+        style = self._form_to_style()
         try:
-            self._preview.set_style(self._form_to_style())
+            self._preview.set_style(style)
         except Exception as e:
             logger.debug(f"Preview style push failed: {e}")
             return
-        # Cues from the primary SRT (snapshot path). Secondary track is
-        # placeholder-only in the WebView preview — that's a v0 limitation.
-        sub1 = self.entry_sub1.get().strip()
-        cues: list[dict] = []
-        if sub1 and os.path.isfile(sub1):
-            try:
-                import srt as _srt
-                with open(sub1, encoding="utf-8") as f:
-                    cues = [{"start": c.start.total_seconds(),
-                             "end": c.end.total_seconds(),
-                             "text": c.content}
-                            for c in _srt.parse(f.read())]
-            except Exception:
-                cues = []
+
+        # Effective aspect/short_edge for the cue-wrap budget. Passthrough
+        # uses the probed source dims so wrap budgets scale with the real
+        # output canvas (e.g. wider for 4K landscape than for 9:16 1080).
+        if style.output.mode == "passthrough" and self._src_w and self._src_h:
+            eff_aspect = f"{self._src_w}:{self._src_h}"
+            eff_short_edge = min(self._src_w, self._src_h)
+        else:
+            eff_aspect = style.output.aspect
+            eff_short_edge = style.output.short_edge
+
+        from core.composition import prepare_subtitle_cues
+        sub1_path = self.entry_sub1.get().strip()
+        sub2_path = self.entry_sub2.get().strip()
+        sub1_cues = prepare_subtitle_cues(
+            sub1_path, style.subtitle.sub1,
+            aspect=eff_aspect, short_edge=eff_short_edge)
+        sub2_cues = prepare_subtitle_cues(
+            sub2_path, style.subtitle.sub2,
+            aspect=eff_aspect, short_edge=eff_short_edge)
         try:
-            self._preview.set_cues(cues)
-        except Exception:
-            pass
+            self._preview.set_cues(sub1_cues)
+            self._preview.set_cues_secondary(sub2_cues)
+        except Exception as e:
+            logger.debug(f"Preview cues push failed: {e}")
 
     # ── 图片水印辅助 ────────────────────────────────────────────────────────
 
@@ -558,9 +590,12 @@ class SubtitleToolApp(ToolBase):
         # Restore SRT selections + style params from instance config.json.
         self._load_instance_config()
 
-        # Probe duration so the top bar shows it (and the burn fast-path
-        # doesn't have to re-probe).
+        # Probe duration + resolution so the top bar shows duration and the
+        # preview/burn passthrough path knows the effective aspect (= source
+        # dims) without re-probing per refresh.
         self.video_duration = _probe_video_duration(self.project.source_video_path)
+        self._src_w, self._src_h = _probe_video_resolution(
+            self.project.source_video_path)
         if self.video_duration > 0:
             hms = time.strftime('%H:%M:%S', time.gmtime(self.video_duration))
             self.label_duration.config(

@@ -30,6 +30,7 @@ from .render import (
     CompositionRequest,
     CompositionResult,
     render_composition,
+    prepare_subtitle_cues,
 )
 from .text_layout import (
     wrap_overlay_text,
@@ -50,6 +51,7 @@ __all__ = [
     "CompositionRequest",
     "CompositionResult",
     "render_composition",
+    "prepare_subtitle_cues",
     "wrap_overlay_text",
     "wrap_hook_outro",
     "target_width_for_aspect",

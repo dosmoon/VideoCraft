@@ -154,6 +154,11 @@ class CompositionPreview:
     def set_style(self, style: CompositionStyle) -> None:
         payload = style_to_web_dict(style)
         aspect = payload.pop("aspect")
+        mode = payload.pop("output_mode", "reframe")
+        # Push mode first so subsequent setAspect lands in the right
+        # interpretation. In passthrough the JS ignores the aspect value
+        # and uses the video element's natural dims instead.
+        self._call_js(f"window.vc.setOutputMode({json.dumps(mode)})")
         self._call_js(f"window.vc.setAspect({aspect[0]}, {aspect[1]})")
         self._call_js(f"window.vc.setStyle({json.dumps(payload, ensure_ascii=False)})")
 
@@ -176,10 +181,22 @@ class CompositionPreview:
         self._call_js(f"window.vc.setClipMeta({json.dumps(meta, ensure_ascii=False)})")
 
     def set_cues(self, cues: list[dict]) -> None:
-        """Push the real SRT cue list for the current clip window.
-        Each cue: {start: float, end: float, text: str}. When set, the page
-        renders real text per playhead; clear with set_cues([])."""
+        """Push the primary (sub1) cue list for the current clip window.
+        Each cue: {start: float, end: float, text: str}. Pass [] to
+        clear and fall back to the placeholder text from style.subtitle.sub1.
+
+        Callers should obtain `cues` from core.composition.prepare_subtitle_cues
+        so the cue list reflects the same slice + max_chars wrap the
+        ffmpeg burn will produce — preview ≡ render."""
         self._call_js(f"window.vc.setCues({json.dumps(cues, ensure_ascii=False)})")
+
+    def set_cues_secondary(self, cues: list[dict]) -> None:
+        """Push the secondary (sub2) cue list. Same shape and same source
+        (prepare_subtitle_cues) as set_cues; drives the sub2 overlay.
+        Without this call sub2 falls back to placeholder text — useful for
+        clip-style previews, wrong for bilingual burn where both tracks
+        carry real cues."""
+        self._call_js(f"window.vc.setCuesSecondary({json.dumps(cues, ensure_ascii=False)})")
 
     def set_crop(self, rect: Optional[dict]) -> None:
         """Set the crop rect explicitly. None = recenter at current aspect."""

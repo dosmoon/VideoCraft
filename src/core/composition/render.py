@@ -138,24 +138,58 @@ def _target_dims_for_aspect(aspect_ratio: tuple[int, int],
     return ((w + 1) // 2 * 2, (h + 1) // 2 * 2)
 
 
-# ── SRT slicing (per-clip rebased to t=0) ──────────────────────────────────
+# ── SRT slicing + wrapping (shared between render and preview) ──────────────
 
 def _load_cues(srt_path: str) -> list[_srt.Subtitle]:
     return list(_srt.parse(read_srt(srt_path)))
 
 
-def _slice_srt_for_clip(cues: list[_srt.Subtitle],
-                         start_sec: float, end_sec: float,
-                         out_path: str) -> str:
-    """Write a sub-SRT for [start_sec, end_sec] with timestamps rebased to 0."""
+def _slice_and_wrap_cues(
+    srt_path: str,
+    line: SubtitleLineStyle,
+    *,
+    aspect: str,
+    short_edge: int,
+    start_sec: float = 0.0,
+    end_sec: Optional[float] = None,
+) -> list[_srt.Subtitle]:
+    """Load + optionally slice [start, end] + max_chars-wrap a SRT file.
+
+    Single source of truth for the cue list both the ffmpeg burn and the
+    preview WebView consume. process_srt_split policy lives here and only
+    here, so a new consumer can't accidentally bypass it.
+
+    When start_sec=0 and end_sec=None the result keeps original absolute
+    timestamps (preview / full-video burn use case). Otherwise the window
+    is sliced AND rebased so the first cue starts at 0 (clip burn use
+    case — required because ffmpeg `-ss start` shifts the clip's t=0).
+
+    Returns [] on any failure / when the line is disabled.
+    """
+    if not (line.enabled and srt_path and os.path.isfile(srt_path)):
+        return []
+    try:
+        cues = _load_cues(srt_path)
+    except Exception:
+        return []
+
+    if line.auto_max_chars:
+        max_chars = compute_subtitle_max_chars(
+            aspect, line.fontsize, line.is_chinese, short_edge=short_edge)
+    else:
+        max_chars = max(8, line.manual_max_chars)
+
+    # Slice + rebase only when a window was requested.
+    rebase = start_sec > 0.0 or end_sec is not None
+    eff_end = end_sec if end_sec is not None else float("inf")
     sliced: list[_srt.Subtitle] = []
     for cue in cues:
         cs = cue.start.total_seconds()
         ce = cue.end.total_seconds()
-        if ce <= start_sec or cs >= end_sec:
+        if ce <= start_sec or cs >= eff_end:
             continue
-        new_start = max(0.0, cs - start_sec)
-        new_end = min(end_sec - start_sec, ce - start_sec)
+        new_start = max(start_sec, cs) - (start_sec if rebase else 0.0)
+        new_end = min(eff_end, ce) - (start_sec if rebase else 0.0)
         if new_end <= new_start:
             continue
         sliced.append(_srt.Subtitle(
@@ -164,10 +198,50 @@ def _slice_srt_for_clip(cues: list[_srt.Subtitle],
             end=timedelta(seconds=new_end),
             content=cue.content,
         ))
-    os.makedirs(os.path.dirname(os.path.abspath(out_path)) or ".", exist_ok=True)
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write(_srt.compose(sliced) if sliced else "")
-    return out_path
+    if not sliced:
+        return []
+
+    # Run through process_srt_split via a temp file (it takes a path,
+    # not a list — refactoring that signature is out of scope).
+    tmp = os.path.join(tempfile.gettempdir(),
+                        f"composition-wrap-{os.getpid()}-{id(sliced)}.srt")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(_srt.compose(sliced))
+        return list(process_srt_split(
+            tmp, max_chars, is_chinese=line.is_chinese))
+    except Exception:
+        return sliced
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def prepare_subtitle_cues(
+    srt_path: str,
+    line: SubtitleLineStyle,
+    *,
+    aspect: str,
+    short_edge: int,
+    start_sec: float = 0.0,
+    end_sec: Optional[float] = None,
+) -> list[dict]:
+    """Public preview-side helper: same slice+wrap logic the ffmpeg render
+    runs, but returns a JSON-friendly cue dict list instead of writing a
+    file. Use this from any preview consumer so what the user sees in
+    the WebView lines up with the burn output (max_chars enforced, long
+    cues split into shorter time-windowed cues, never visual wrap).
+
+    Returns [{start, end, text}, ...]; empty list on failure / disabled.
+    """
+    return [{"start": s.start.total_seconds(),
+             "end": s.end.total_seconds(),
+             "text": s.content}
+            for s in _slice_and_wrap_cues(
+                srt_path, line, aspect=aspect, short_edge=short_edge,
+                start_sec=start_sec, end_sec=end_sec)]
 
 
 # ── drawtext / subtitle filter strings ─────────────────────────────────────
@@ -593,35 +667,28 @@ def render_composition(
     os.makedirs(os.path.dirname(os.path.abspath(req.output_path)) or ".",
                 exist_ok=True)
 
-    # ── Slice each track's SRT to this window (rebased to 0) ──────────────
+    # ── Slice each track's SRT to this window (rebased to 0), then
+    #    write the wrapped cues to a temp file for libass. The split
+    #    policy lives in _slice_and_wrap_cues — never duplicated here.
     effective_aspect_str = f"{effective_aspect[0]}:{effective_aspect[1]}"
 
     def _prepare_track_srt(src_path: str | None, line: SubtitleLineStyle,
                             tag: str) -> str | None:
-        if not (src_path and os.path.exists(src_path) and line.enabled):
+        subs = _slice_and_wrap_cues(
+            src_path or "", line,
+            aspect=effective_aspect_str,
+            short_edge=effective_short_edge,
+            start_sec=req.start_sec, end_sec=req.end_sec)
+        if not subs:
             return None
+        out = os.path.join(
+            tempfile.gettempdir(),
+            f"composition-{tag}-{int(req.start_sec*1000)}-{os.getpid()}.srt")
         try:
-            cues = _load_cues(src_path)
-            if line.auto_max_chars:
-                max_chars = compute_subtitle_max_chars(
-                    effective_aspect_str, line.fontsize, line.is_chinese,
-                    short_edge=effective_short_edge)
-            else:
-                max_chars = max(8, line.manual_max_chars)
-            out = os.path.join(
-                tempfile.gettempdir(),
-                f"composition-{tag}-{int(req.start_sec*1000)}-{os.getpid()}.srt"
-            )
-            _slice_srt_for_clip(cues, req.start_sec, req.end_sec, out)
-            try:
-                split_subs = process_srt_split(
-                    out, max_chars, is_chinese=line.is_chinese)
-                with open(out, "w", encoding="utf-8") as f:
-                    f.write(_srt.compose(split_subs))
-            except Exception:
-                pass    # leave un-split on failure; better than no subs
+            with open(out, "w", encoding="utf-8") as f:
+                f.write(_srt.compose(subs))
             return out
-        except Exception:
+        except OSError:
             return None
 
     tmp_srt_path = _prepare_track_srt(req.source_srt, style.subtitle.sub1, "sub1")
