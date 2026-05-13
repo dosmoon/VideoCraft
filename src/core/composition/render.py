@@ -187,7 +187,7 @@ def _escape_drawtext(text: str) -> str:
 
 def _drawtext_filter(text: str, *, role: str, ho: HookOutroStyle,
                       duration: float, aspect_ratio: tuple[int, int],
-                      tmp_files: list[str]) -> str:
+                      tmp_files: list[str], short_edge: int = 1080) -> str:
     """Build a drawtext snippet for hook (first hook_duration_sec) or outro
     (last outro_duration_sec). role ∈ {'hook', 'outro'}.
 
@@ -197,12 +197,16 @@ def _drawtext_filter(text: str, *, role: str, ho: HookOutroStyle,
     `textfile=` parameter. `text=` doesn't reliably accept newlines, so
     going through a file is the only escape-safe path. The temp file is
     appended to tmp_files for the caller to clean up after ffmpeg returns.
+
+    `short_edge` lets passthrough renders pass the actual source short
+    edge so wrap budgets scale with the real frame width.
     """
     if not text:
         return ""
 
     font_path = hook_outro_font_path(ho.font)
-    lines = wrap_hook_outro(text, aspect_ratio, font_path, ho.size)
+    lines = wrap_hook_outro(text, aspect_ratio, font_path, ho.size,
+                              short_edge=short_edge)
     if not lines:
         return ""
     wrapped = "\n".join(lines)
@@ -381,6 +385,7 @@ class _RenderCtx:
     target_h: int
     duration: float
     aspect: tuple[int, int]
+    short_edge: int
     style: CompositionStyle
     tmp_files: list[str]
     _label_seq: int = 0
@@ -453,7 +458,7 @@ def _renderer_hook_text(job: _OverlayJob, prev_label: str,
     snippet = _drawtext_filter(
         job.data["text"], role="hook", ho=ctx.style.hook_outro,
         duration=ctx.duration, aspect_ratio=ctx.aspect,
-        tmp_files=ctx.tmp_files)
+        tmp_files=ctx.tmp_files, short_edge=ctx.short_edge)
     if not snippet:
         return [], prev_label
     out_label = ctx.next_label()
@@ -465,7 +470,7 @@ def _renderer_outro_text(job: _OverlayJob, prev_label: str,
     snippet = _drawtext_filter(
         job.data["text"], role="outro", ho=ctx.style.hook_outro,
         duration=ctx.duration, aspect_ratio=ctx.aspect,
-        tmp_files=ctx.tmp_files)
+        tmp_files=ctx.tmp_files, short_edge=ctx.short_edge)
     if not snippet:
         return [], prev_label
     out_label = ctx.next_label()
@@ -553,15 +558,31 @@ def render_composition(
     cancel_check returns True mid-render.
     """
     style = req.style
-    target_w, target_h = _target_dims_for_aspect(style.aspect_ratio())
 
     src_w, src_h = _probe_resolution(req.source_video)
     if src_w == 0 or src_h == 0:
         raise RuntimeError(f"Cannot probe video resolution: {req.source_video}")
 
-    rect = req.crop_rect or _center_crop_rect(
-        src_w, src_h, aspect_ratio=style.aspect_ratio())
-    cw, ch, cx, cy = _crop_rect_to_pixels(rect, src_w, src_h)
+    # Resolve effective output geometry. In passthrough mode the canvas
+    # matches the source verbatim (no crop, no scale); in reframe mode
+    # the canvas is derived from style.output.aspect + short_edge and the
+    # source is center-cropped (or per-request crop_rect) to fit.
+    if style.output.mode == "passthrough":
+        target_w, target_h = src_w, src_h
+        effective_aspect = (src_w, src_h)
+        effective_short_edge = min(src_w, src_h)
+        rect = None
+        cw = ch = cx = cy = 0    # unused
+    else:
+        target_w, target_h = _target_dims_for_aspect(
+            style.output.aspect_ratio(),
+            short_edge=style.output.short_edge,
+        )
+        effective_aspect = style.output.aspect_ratio()
+        effective_short_edge = style.output.short_edge
+        rect = req.crop_rect or _center_crop_rect(
+            src_w, src_h, aspect_ratio=style.output.aspect_ratio())
+        cw, ch, cx, cy = _crop_rect_to_pixels(rect, src_w, src_h)
 
     duration = max(0.0, req.end_sec - req.start_sec)
     if duration <= 0:
@@ -573,6 +594,8 @@ def render_composition(
                 exist_ok=True)
 
     # ── Slice each track's SRT to this window (rebased to 0) ──────────────
+    effective_aspect_str = f"{effective_aspect[0]}:{effective_aspect[1]}"
+
     def _prepare_track_srt(src_path: str | None, line: SubtitleLineStyle,
                             tag: str) -> str | None:
         if not (src_path and os.path.exists(src_path) and line.enabled):
@@ -581,7 +604,8 @@ def render_composition(
             cues = _load_cues(src_path)
             if line.auto_max_chars:
                 max_chars = compute_subtitle_max_chars(
-                    style.aspect, line.fontsize, line.is_chinese)
+                    effective_aspect_str, line.fontsize, line.is_chinese,
+                    short_edge=effective_short_edge)
             else:
                 max_chars = max(8, line.manual_max_chars)
             out = os.path.join(
@@ -606,17 +630,22 @@ def render_composition(
 
     # ── Build filter_complex via overlay dispatch ─────────────────────────
     parts: list[str] = []
-    parts.append(f"[0:v]crop={cw}:{ch}:{cx}:{cy},"
-                 f"scale={target_w}:{target_h}:"
-                 f"force_original_aspect_ratio=decrease,"
-                 f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:color=black,"
-                 f"setsar=1[v0]")
+    if style.output.mode == "passthrough":
+        # Source frame is the output frame — just normalize SAR.
+        parts.append("[0:v]setsar=1[v0]")
+    else:
+        parts.append(f"[0:v]crop={cw}:{ch}:{cx}:{cy},"
+                     f"scale={target_w}:{target_h}:"
+                     f"force_original_aspect_ratio=decrease,"
+                     f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:color=black,"
+                     f"setsar=1[v0]")
     cur = "[v0]"
 
     tmp_text_files: list[str] = []
     ctx = _RenderCtx(
         target_w=target_w, target_h=target_h,
-        duration=duration, aspect=style.aspect_ratio(),
+        duration=duration, aspect=effective_aspect,
+        short_edge=effective_short_edge,
         style=style, tmp_files=tmp_text_files,
     )
 

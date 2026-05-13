@@ -112,9 +112,11 @@ def target_width_for_aspect(aspect_ratio: tuple[int, int],
 
 
 def wrap_hook_outro(text: str, aspect_ratio: tuple[int, int],
-                     font_path: Optional[str], font_size_px: int) -> list[str]:
+                     font_path: Optional[str], font_size_px: int,
+                     *, short_edge: int = 1080) -> list[str]:
     """Convention: hook/outro overlays wrap to 88% of the target frame
     width (6% safe margin each side). Single source for both render and
-    preview."""
-    target_w = target_width_for_aspect(aspect_ratio)
+    preview. Pass `short_edge` to override the default 1080 (e.g. for
+    passthrough renders preserving source resolution)."""
+    target_w = target_width_for_aspect(aspect_ratio, short_edge)
     return wrap_overlay_text(text, target_w * 0.88, font_path, font_size_px)

@@ -82,6 +82,38 @@ class HookOutroStyle:
     outro_duration_sec: float = 5.0
 
 
+# ── Output geometry ─────────────────────────────────────────────────────────
+
+@dataclass
+class OutputGeometry:
+    """How source frames map to the output canvas.
+
+    Two modes:
+    - `reframe`: crop the source to `aspect` then scale to `short_edge`.
+      Clip derivative uses this — short-form vertical output at 1080p.
+    - `passthrough`: keep source dimensions verbatim, skip crop/scale/pad.
+      Bilingual subtitle burn uses this — preserve 4K, 4:3, anything.
+
+    For passthrough, the `aspect` and `short_edge` fields are ignored at
+    render time (effective values are derived from the probed source).
+    They're persisted anyway so toggling back to reframe restores the
+    user's last reframe choice.
+    """
+    mode: str = "reframe"             # "reframe" | "passthrough"
+    aspect: str = "9:16"              # reframe-only: "9:16"|"16:9"|"1:1"|"4:5"
+    short_edge: int = 1080            # reframe-only: output short edge (px)
+
+    def aspect_ratio(self) -> tuple[int, int]:
+        """Parse aspect string into (width_ratio, height_ratio).
+        For passthrough mode the caller should use probed source dims
+        instead — this only reflects the persisted reframe choice."""
+        try:
+            w, h = self.aspect.split(":", 1)
+            return (max(1, int(w)), max(1, int(h)))
+        except (ValueError, AttributeError):
+            return (9, 16)
+
+
 # ── Top-level CompositionStyle ─────────────────────────────────────────────
 
 @dataclass
@@ -94,7 +126,7 @@ class CompositionStyle:
     classes are not yet defined — the dict slot reserves the schema seat
     so news_desk derivatives can grow into it without breaking presets.
     """
-    aspect: str = "9:16"              # "9:16" | "16:9" | "1:1" | "4:5"
+    output: OutputGeometry = field(default_factory=OutputGeometry)
     encode_preset: str = "veryfast"   # ffmpeg x264 preset
     subtitle: SubtitleStyle = field(default_factory=SubtitleStyle)
     watermark: WatermarkStyle = field(default_factory=WatermarkStyle)
@@ -102,19 +134,18 @@ class CompositionStyle:
     overlay_styles: dict = field(default_factory=dict)
 
     def aspect_ratio(self) -> tuple[int, int]:
-        """Parse aspect string into (width_ratio, height_ratio)."""
-        try:
-            w, h = self.aspect.split(":", 1)
-            return (max(1, int(w)), max(1, int(h)))
-        except (ValueError, AttributeError):
-            return (9, 16)
+        """Delegate to output. Kept on the top-level style for
+        ergonomic access by consumers that haven't been updated to read
+        `style.output.aspect_ratio()` directly."""
+        return self.output.aspect_ratio()
 
 
 # ── Auto max-chars per subtitle line ────────────────────────────────────────
 
 def compute_subtitle_max_chars(aspect: str, fontsize: int, is_chinese: bool,
                                  *, density: float = 1.0,
-                                 font_path: str | None = None) -> int:
+                                 font_path: str | None = None,
+                                 short_edge: int = 1080) -> int:
     """How many chars per line before the subtitle visually overflows when
     burned via ffmpeg's `subtitles=` (libass) filter.
 
@@ -122,8 +153,12 @@ def compute_subtitle_max_chars(aspect: str, fontsize: int, is_chinese: bool,
     video is 1080-class, so a `Fontsize=24` style is actually rendered at
     roughly 24×(1080/384)≈4.7x its nominal pixel size. The empirical scale
     factor was reverse-engineered from the legacy LAYOUT_DEFAULTS table.
+
+    `short_edge` defaults to 1080 (clip / standard reframe output). For
+    passthrough renders preserving source resolution (e.g. 4K bilingual
+    burn) the caller passes the actual source short edge so wrap budgets
+    scale with the real frame width.
     """
-    short_edge = 1080
     try:
         w_str, h_str = aspect.split(":", 1)
         w_ratio, h_ratio = max(1, int(w_str)), max(1, int(h_str))

@@ -286,7 +286,7 @@ class ClipToolApp(ToolBase):
         # Aspect + encode
         ae = ttk.LabelFrame(parent, text=tr("clip_tool.section_output"))
         ae.pack(fill="x", padx=6, pady=4)
-        self._aspect_var = tk.StringVar(value=self._current_style.aspect)
+        self._aspect_var = tk.StringVar(value=self._current_style.output.aspect)
         row = ttk.Frame(ae); row.pack(fill="x", padx=4, pady=2)
         ttk.Label(row, text=tr("clip_tool.aspect")).pack(side="left")
         for val in ("9:16", "16:9", "1:1", "4:5"):
@@ -1232,7 +1232,8 @@ class ClipToolApp(ToolBase):
         sub1 = self._current_style.subtitle.sub1
         if sub1.auto_max_chars:
             max_chars = compute_subtitle_max_chars(
-                self._current_style.aspect, sub1.fontsize, sub1.is_chinese)
+                self._current_style.output.aspect, sub1.fontsize, sub1.is_chinese,
+                short_edge=self._current_style.output.short_edge)
         else:
             max_chars = max(8, sub1.manual_max_chars)
         out: list[dict] = []
@@ -1481,7 +1482,7 @@ class ClipToolApp(ToolBase):
         self._suspend_traces = True
         try:
             s = self._current_style
-            self._aspect_var.set(s.aspect)
+            self._aspect_var.set(s.output.aspect)
             self._encode_preset_var.set(s.encode_preset)
             sub = s.subtitle
             self._sub1_enabled.set(sub.sub1.enabled)
@@ -1531,8 +1532,13 @@ class ClipToolApp(ToolBase):
             SubtitleStyle, SubtitleLineStyle, WatermarkStyle,
             HookOutroStyle,
         )
+        from core.composition.style import OutputGeometry
         self._current_style = CompositionStyle(
-            aspect=self._aspect_var.get(),
+            output=OutputGeometry(
+                mode=self._current_style.output.mode,
+                aspect=self._aspect_var.get(),
+                short_edge=self._current_style.output.short_edge,
+            ),
             encode_preset=self._encode_preset_var.get(),
             subtitle=SubtitleStyle(
                 sub1=SubtitleLineStyle(

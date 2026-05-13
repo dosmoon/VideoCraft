@@ -79,6 +79,7 @@ def style_to_web_dict(style: CompositionStyle) -> dict:
             "outro_duration_sec": ho.outro_duration_sec,
         },
         "aspect": style.aspect_ratio(),   # [w, h] tuple → JSON array
+        "output_mode": style.output.mode,
     }
 
 

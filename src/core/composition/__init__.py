@@ -17,6 +17,7 @@ Future: derivatives/news_desk.
 
 from .style import (
     CompositionStyle,
+    OutputGeometry,
     SubtitleStyle,
     SubtitleLineStyle,
     WatermarkStyle,
@@ -38,6 +39,7 @@ from .text_layout import (
 
 __all__ = [
     "CompositionStyle",
+    "OutputGeometry",
     "SubtitleStyle",
     "SubtitleLineStyle",
     "WatermarkStyle",

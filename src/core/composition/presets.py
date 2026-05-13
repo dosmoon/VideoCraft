@@ -27,7 +27,7 @@ from typing import Optional
 from core import user_data
 
 from .style import (
-    CompositionStyle, HookOutroStyle, SubtitleLineStyle,
+    CompositionStyle, HookOutroStyle, OutputGeometry, SubtitleLineStyle,
     SubtitleStyle, WatermarkStyle,
 )
 
@@ -77,12 +77,15 @@ def _subtitle_from_dict(d: dict) -> SubtitleStyle:
 
 
 def composition_style_from_dict(d: dict) -> CompositionStyle:
-    """Strict converter. Drops top-level extras (e.g. legacy `background`)
-    but rejects subtitle entries that don't carry sub1/sub2 sub-dicts."""
+    """Strict converter. Drops top-level extras (e.g. legacy `background`,
+    `aspect`, `bgm`) but rejects subtitle entries that don't carry
+    sub1/sub2 sub-dicts. Presets missing the `output` block fall back to
+    OutputGeometry defaults (reframe 9:16 / 1080)."""
     if not isinstance(d, dict):
         raise PresetSchemaError("preset entry is not a dict")
     return CompositionStyle(
-        aspect=str(d.get("aspect", "9:16")),
+        output=OutputGeometry(**_filter_kwargs(
+            d.get("output") or {}, OutputGeometry)),
         encode_preset=str(d.get("encode_preset", "veryfast")),
         subtitle=_subtitle_from_dict(d.get("subtitle") or {}),
         watermark=WatermarkStyle(**_filter_kwargs(
@@ -112,7 +115,7 @@ def hook_outro_to_dict(style: HookOutroStyle) -> dict:
 BUILTIN_PROJECT_PRESETS: dict[str, CompositionStyle] = {
     BUILTIN_DEFAULT_PROJECT: CompositionStyle(),
     "TikTok / Reels / Shorts (9:16 单语中文)": CompositionStyle(
-        aspect="9:16",
+        output=OutputGeometry(mode="reframe", aspect="9:16"),
         subtitle=SubtitleStyle(
             sub1=SubtitleLineStyle(
                 enabled=True, fontsize=28, color="#FFFF00",
@@ -122,7 +125,7 @@ BUILTIN_PROJECT_PRESETS: dict[str, CompositionStyle] = {
         ),
     ),
     "YouTube 横屏 (16:9 单语中文)": CompositionStyle(
-        aspect="16:9",
+        output=OutputGeometry(mode="reframe", aspect="16:9"),
         subtitle=SubtitleStyle(
             sub1=SubtitleLineStyle(
                 enabled=True, fontsize=30, color="#FFFF00",
@@ -132,7 +135,7 @@ BUILTIN_PROJECT_PRESETS: dict[str, CompositionStyle] = {
         ),
     ),
     "Instagram / 小红书 (1:1 中文)": CompositionStyle(
-        aspect="1:1",
+        output=OutputGeometry(mode="reframe", aspect="1:1"),
         subtitle=SubtitleStyle(
             sub1=SubtitleLineStyle(
                 enabled=True, fontsize=26, color="#FFFF00",
