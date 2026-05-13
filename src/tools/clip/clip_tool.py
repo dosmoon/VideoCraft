@@ -1830,8 +1830,9 @@ class ClipToolApp(ToolBase):
                 result = render_composition(
                     req, on_progress=_on_pct,
                     cancel_check=lambda: self._cancel_flag)
-                # Sidecar JSON
+                # Sidecar JSON + publish markdown
                 self._write_sidecar(req, result, out_idx, src_idx)
+                self._write_publish_sidecar(req.output_path)
                 self._render_status[src_idx] = "done"
                 self._rendered = [
                     r for r in self._rendered
@@ -1898,6 +1899,7 @@ class ClipToolApp(ToolBase):
     def _write_sidecar(self, req: CompositionRequest, result,
                          out_idx: int, src_idx: int) -> None:
         sidecar_path = os.path.splitext(req.output_path)[0] + ".json"
+        meta = self._candidate_meta[src_idx]
         sidecar = {
             "source_clip_idx": src_idx,
             "output_index":   out_idx,
@@ -1905,10 +1907,12 @@ class ClipToolApp(ToolBase):
             "hashtags":       self._effective_tags(src_idx),
             "hook":           self._effective_hook(src_idx),
             "outro":          self._effective_outro(src_idx),
+            "transcript":     meta.get("transcript") or "",
+            "why_viral":      meta.get("why_viral") or "",
             "duration_sec":   result.duration_sec,
             "start_sec":      req.start_sec,
             "end_sec":        req.end_sec,
-            "score":          self._candidate_meta[src_idx].get("score"),
+            "score":          meta.get("score"),
             "rendered_at":    datetime.now(timezone.utc).isoformat(timespec="seconds"),
         }
         try:
@@ -1916,6 +1920,53 @@ class ClipToolApp(ToolBase):
                 json.dump(sidecar, f, ensure_ascii=False, indent=2)
         except OSError:
             pass
+
+    def _write_publish_sidecar(self, output_path: str) -> None:
+        """Render clip_NNN.md (publish copy for one clip) + rewrite the
+        instance's index.md. Best-effort — the video and JSON are
+        already on disk; .md files are nice-to-have.
+        """
+        try:
+            from core.publish_sidecar import (
+                render_clip_publish,
+                render_clip_index,
+                collect_clip_sidecars,
+            )
+            inst_dir = os.path.dirname(output_path)
+            json_path = os.path.splitext(output_path)[0] + ".json"
+            if not os.path.isfile(json_path):
+                return
+            with open(json_path, "r", encoding="utf-8") as f:
+                sidecar = json.load(f)
+
+            lang_iso = (self.project.meta.language.source or "zh")
+            project_title = self.project.meta.source.title
+
+            # Per-clip publish.md
+            md_path = os.path.splitext(output_path)[0] + ".md"
+            md = render_clip_publish(
+                project_title=project_title,
+                sidecar=sidecar,
+                lang_iso=lang_iso,
+            )
+            with open(md_path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(md)
+
+            # Instance index.md — rescan all clip_*.json so deleted/
+            # re-rendered clips stay in sync without bespoke state.
+            sidecars = collect_clip_sidecars(inst_dir)
+            index_md = render_clip_index(
+                project_title=project_title,
+                instance_name=self.instance_name,
+                sidecars=sidecars,
+                rendered_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
+                lang_iso=lang_iso,
+            )
+            with open(os.path.join(inst_dir, "index.md"),
+                      "w", encoding="utf-8", newline="\n") as f:
+                f.write(index_md)
+        except Exception as e:
+            logger.warning(f"clip publish.md write skipped: {e}")
 
     def _set_failure_reason(self, src_idx: int, reason: str) -> None:
         # Store last failure text alongside status so the context menu can show it

@@ -779,6 +779,66 @@ class SubtitleToolApp(ToolBase):
         except OSError:
             pass
 
+    def _write_publish_sidecar(self) -> None:
+        """Render publish.md next to output.mp4 so the user has a
+        copy-paste-ready YouTube description + chapter block.
+
+        Best-effort: video is already on disk, sidecar is nice-to-have,
+        any failure is swallowed and logged.
+        """
+        if not self._project_mode:
+            return
+        try:
+            from core.publish_sidecar import render_bilingual_publish
+
+            cfg_path = self._instance_config_path()
+            inst_dir = os.path.dirname(cfg_path)
+            cfg: dict = {}
+            if os.path.isfile(cfg_path):
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+
+            primary_srt = (cfg.get("primary_srt") or "").strip()
+            lang_iso = os.path.splitext(primary_srt)[0] if primary_srt else \
+                (self.project.meta.language.source or "zh")
+
+            # Pull chapters from the source project's chapters.json
+            # if it exists; absence means the user hasn't generated one
+            # — publish.md then renders without a chapter block.
+            chapters: list[dict] = []
+            ch_path = os.path.join(
+                self.project.subtitles_dir,
+                f"{lang_iso}.chapters.json")
+            if os.path.isfile(ch_path):
+                try:
+                    with open(ch_path, "r", encoding="utf-8") as f:
+                        ch_data = json.load(f)
+                    chapters = list(ch_data.get("chapters") or [])
+                except (OSError, json.JSONDecodeError):
+                    pass
+
+            # Adapted SRTs sit in the instance dir as subtitles_*.srt.
+            try:
+                adapted = sorted(
+                    n for n in os.listdir(inst_dir)
+                    if n.startswith("subtitles_") and n.endswith(".srt"))
+            except OSError:
+                adapted = []
+
+            md = render_bilingual_publish(
+                project_title=self.project.meta.source.title,
+                source_url=self.project.meta.source.url,
+                chapters=chapters,
+                adapted_srts=adapted,
+                burned_at=cfg.get("burned_at", ""),
+                lang_iso=lang_iso,
+            )
+            out_path = os.path.join(inst_dir, "publish.md")
+            with open(out_path, "w", encoding="utf-8", newline="\n") as f:
+                f.write(md)
+        except Exception as e:
+            logger.warning(f"publish.md write skipped: {e}")
+
     # ── 颜色选择 ────────────────────────────────────────────────────────────
 
     def _choose_watermark_color(self):
@@ -1257,6 +1317,7 @@ class SubtitleToolApp(ToolBase):
                 # Project-mode: record burned_at so the sidebar can show a
                 # "已烧录" hint and future-you can find this output again.
                 self._mark_instance_burned()
+                self._write_publish_sidecar()
                 self.set_done()
             else:
                 self.set_error(tr("tool.subtitle.error.burn_ffmpeg", code=process.returncode))
