@@ -63,9 +63,6 @@ REGISTRY: list[Operation] = [
     Operation("语音转字幕...",
               "tool",  [".mp4", ".mkv", ".avi", ".mov", ".mp3", ".wav"],
               tool_key="speech2text"),
-    Operation("烧录字幕...",
-              "tool",  [".mp4", ".mkv", ".avi", ".mov"],
-              tool_key="subtitle"),
     Operation("分段工作台...",
               "tool",  [".mp4", ".mkv", ".avi", ".mov"],
               tool_key="split-workbench"),
@@ -77,9 +74,6 @@ REGISTRY: list[Operation] = [
     Operation("翻译字幕...",
               "tool",  [".srt"],
               tool_key="translate"),
-    Operation("烧录到视频...",
-              "tool",  [".srt"],
-              tool_key="subtitle"),
 
     # ── 音频文件 ──
     Operation("语音转字幕...",

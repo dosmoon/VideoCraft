@@ -404,8 +404,6 @@ class VideoCraftHub:
         # Video
         vid_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label=tr("menu.video"), menu=vid_menu)
-        vid_menu.add_command(label=tr("menu.video.subtitle_burn"),
-                             command=lambda: self.open_tool("subtitle"))
         vid_menu.add_command(label=tr("menu.video.word_subtitle"),
                              command=lambda: self.open_tool("word-subtitle"))
         vid_menu.add_command(label=tr("menu.video.split_workbench"),

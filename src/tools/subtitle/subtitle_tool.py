@@ -25,50 +25,6 @@ from hub_logger import logger
 from core.subtitle_ops import process_srt_split
 
 
-def _infer_lang_tag(srt_path: str) -> str:
-    """从 SRT 文件名末尾推断语言码（如 video_en.srt → 'en'），推断失败返回 'sub'。"""
-    if not srt_path:
-        return "sub"
-    base = os.path.splitext(os.path.basename(srt_path))[0]
-    parts = base.rsplit("_", 1)
-    if len(parts) == 2 and 1 <= len(parts[1]) <= 5 and parts[1].replace("-", "").isalpha():
-        return parts[1]
-    return "sub"
-
-
-def _compute_default_output_path(video_path: str, sub1_path: str = None, sub2_path: str = None) -> str:
-    """Default output path: same dir as input video, name = Video_<lang>+<lang>.mp4.
-
-    The base name is literal "Video" (per user preference) rather than the
-    source video stem, so presets and downstream tooling can expect a
-    predictable filename. Duplicate or failed language tags are collapsed.
-    """
-    out_dir = os.path.dirname(os.path.abspath(video_path)) if video_path else ""
-    tags: list = []
-    for p in (sub1_path, sub2_path):
-        if not p:
-            continue
-        tag = _infer_lang_tag(p)
-        if tag and tag not in tags:
-            tags.append(tag)
-    name = "Video_" + "+".join(tags) + ".mp4" if tags else "Video.mp4"
-    return os.path.join(out_dir, name) if out_dir else name
-
-
-def get_video_resolution(video_path):
-    """获取视频分辨率"""
-    try:
-        cmd = ['ffprobe', '-v', 'error', '-select_streams', 'v:0',
-               '-show_entries', 'stream=width,height', '-of', 'csv=p=0', video_path]
-        result = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=10)
-        if result.returncode == 0:
-            width, height = map(int, result.stdout.strip().split(','))
-            return width, height
-    except Exception as e:
-        logger.error(f"ffprobe failed to read resolution ({os.path.basename(video_path)}): {e}")
-    return None, None
-
-
 def _probe_video_duration(video_path: str) -> float:
     """Probe video duration in seconds. Returns 0.0 if ffprobe fails."""
     try:
@@ -89,58 +45,23 @@ def _probe_video_duration(video_path: str) -> float:
 class SubtitleToolApp(ToolBase):
     """双语字幕烧录工具 — Toplevel 内嵌版。"""
 
-    # Maps preset-file key → the Tk variable attribute name on self.
-    # Keep in sync with presets.BUILTIN_DEFAULT_PARAMS. watermark_date is
-    # intentionally excluded: it always resets to today on open.
-    _PARAM_VARS = {
-        "watermark_text":          "watermark_text_var",
-        "watermark_txt_alpha":     "watermark_txt_alpha_var",
-        "watermark_color":         "watermark_color_var",
-        "watermark_fontsize":      "watermark_fontsize_var",
-        "watermark_show":          "watermark_show_var",
-        "watermark_show_date":     "watermark_show_date_var",
-        "watermark_date_color":    "watermark_date_color_var",
-        "watermark_date_fontsize": "watermark_date_fontsize_var",
-        "watermark_date_alpha":    "watermark_date_alpha_var",
-        "watermark_type":          "watermark_type_var",
-        "watermark_img_path":      "watermark_img_path_var",
-        "watermark_img_scale":     "watermark_img_scale_var",
-        "watermark_img_alpha":     "watermark_img_alpha_var",
-        "sub1_fontsize":   "sub1_fontsize_var",
-        "sub1_color":      "sub1_color_var",
-        "sub1_show":       "sub1_show_var",
-        "sub2_fontsize":   "sub2_fontsize_var",
-        "sub2_color":      "sub2_color_var",
-        "sub2_show":       "sub2_show_var",
-        "split_sub1":      "split_sub1_var",
-        "sub1_max_chars":  "sub1_max_chars_var",
-        "sub1_is_chinese": "sub1_is_chinese_var",
-        "split_sub2":      "split_sub2_var",
-        "sub2_max_chars":  "sub2_max_chars_var",
-        "sub2_is_chinese": "sub2_is_chinese_var",
-        "orientation":     "orientation_var",
-        "encode_preset":   "encode_preset_var",
-        "auto_output":     "auto_output_var",
-    }
+    def __init__(self, master, project, instance_name):
+        """Project-mode-only entry point. Both `project` (Project) and
+        `instance_name` (str) are required — bilingual burn is a project
+        derivative, never a standalone tool, since the 2026-05 milestone.
+        Per-instance state lives under
+        <project>/derivatives/bilingual_video/<instance>/."""
+        if project is None or not instance_name:
+            raise ValueError(
+                "SubtitleToolApp requires both project and instance_name; "
+                "standalone mode is no longer supported.")
 
-    def __init__(self, master, initial_file=None, project=None,
-                 instance_name=None):
-        """Standalone mode: master + optional initial_file (legacy behavior).
-
-        Project mode: pass `project` (Project) + `instance_name` (str). The
-        tool then locks source / output paths to project canonical positions,
-        replaces the SRT file pickers with project-subtitle pickers, and
-        persists per-instance config under
-        <project>/derivatives/bilingual_video/<instance>/config.json.
-        """
         self.master = master
         master.title(tr("tool.subtitle.title"))
         master.geometry("900x650")
 
-        # Project-mode plumbing (None in standalone mode).
         self.project = project
         self.instance_name = instance_name
-        self._project_mode = (project is not None and instance_name is not None)
 
         # 状态变量
         self.video_duration = 0.0
@@ -152,11 +73,6 @@ class SubtitleToolApp(ToolBase):
         self.watermark_color_var         = tk.StringVar(value="#00ffff")
         self.watermark_fontsize_var      = tk.IntVar(value=48)
         self.watermark_show_var          = tk.BooleanVar(value=True)
-        self.watermark_show_date_var     = tk.BooleanVar(value=False)
-        self.watermark_date_var          = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
-        self.watermark_date_color_var    = tk.StringVar(value="#505050")
-        self.watermark_date_fontsize_var = tk.IntVar(value=36)
-        self.watermark_date_alpha_var    = tk.DoubleVar(value=80.0)   # 日期透明度
         # 图片/文字水印（单选）: "image" | "text"
         self.watermark_type_var          = tk.StringVar(value="image")
         self.watermark_img_path_var      = tk.StringVar(value=self._default_watermark_path())
@@ -179,7 +95,6 @@ class SubtitleToolApp(ToolBase):
 
         self.orientation_var    = tk.StringVar(value="horizontal")
         self.encode_preset_var  = tk.StringVar(value="veryfast")
-        self.auto_output_var    = tk.BooleanVar(value=True)
 
         self._build_ui()
         self._update_split_settings()
@@ -199,21 +114,9 @@ class SubtitleToolApp(ToolBase):
         # Persist once so the file exists on first run.
         comp_presets.save_biliburn_store(self._preset_store)
 
-        if initial_file and os.path.exists(initial_file):
-            ext = os.path.splitext(initial_file)[1].lower()
-            if ext == ".srt":
-                self.entry_sub1.delete(0, tk.END)
-                self.entry_sub1.insert(0, initial_file)
-            elif ext in (".mp4", ".mkv", ".avi", ".mov"):
-                self.entry_video.delete(0, tk.END)
-                self.entry_video.insert(0, initial_file)
-            self._maybe_update_output_path()
-
         # Apply project-mode constraints (source/output lock, SRT picker
-        # redirect, config restore) AFTER all base UI + presets are set up so
-        # we override whatever standalone-mode initialization put in place.
-        if self._project_mode:
-            self._enter_project_mode()
+        # redirect, config restore) AFTER all base UI + presets are set up.
+        self._enter_project_mode()
 
     def _build_ui(self):
         root = self.master
@@ -249,7 +152,6 @@ class SubtitleToolApp(ToolBase):
         frame_out_actions = tk.Frame(root)
         frame_out_actions.grid(row=2, column=2, padx=10, pady=(2, 10), sticky="w")
         tk.Button(frame_out_actions, text=tr("tool.subtitle.browse"), command=self._select_output).pack(side=tk.LEFT)
-        tk.Checkbutton(frame_out_actions, text=tr("tool.subtitle.output.auto"), variable=self.auto_output_var).pack(side=tk.LEFT, padx=(4, 0))
 
         # 屏幕方向设置
         frame_orientation = tk.LabelFrame(root, text=tr("tool.subtitle.orientation.frame_title"), padx=10, pady=5)
@@ -351,22 +253,6 @@ class SubtitleToolApp(ToolBase):
         tk.Scale(frame_watermark, from_=0, to=100, orient=tk.HORIZONTAL,
                  variable=self.watermark_txt_alpha_var, length=80).grid(row=1, column=8, padx=3)
 
-        # Row 2：日期（独立字号 + 颜色 + 透明度）
-        tk.Checkbutton(frame_watermark, text=tr("tool.subtitle.watermark.show_date"),
-                       variable=self.watermark_show_date_var).grid(row=2, column=0, sticky="e", padx=5)
-        tk.Entry(frame_watermark, textvariable=self.watermark_date_var,
-                 width=12).grid(row=2, column=1, sticky="w", padx=4)
-        tk.Label(frame_watermark, text=tr("tool.subtitle.sub.fontsize")).grid(row=2, column=2, sticky="e")
-        tk.Spinbox(frame_watermark, from_=10, to=100, width=4,
-                   textvariable=self.watermark_date_fontsize_var).grid(row=2, column=3, padx=2)
-        tk.Label(frame_watermark, text=tr("tool.subtitle.sub.color")).grid(row=2, column=4, sticky="e")
-        tk.Entry(frame_watermark, textvariable=self.watermark_date_color_var, width=9).grid(row=2, column=5, padx=2)
-        tk.Button(frame_watermark, text=tr("tool.subtitle.sub.choose"),
-                  command=self._choose_date_color).grid(row=2, column=6, padx=2)
-        tk.Label(frame_watermark, text=tr("tool.subtitle.watermark.alpha")).grid(row=2, column=7, sticky="e")
-        tk.Scale(frame_watermark, from_=0, to=100, orient=tk.HORIZONTAL,
-                 variable=self.watermark_date_alpha_var, length=80).grid(row=2, column=8, padx=3)
-
         # Progress row: three compact time labels + progress bar + merge button,
         # all on a single row to save vertical space.
         frame_progress = tk.Frame(root)
@@ -441,159 +327,43 @@ class SubtitleToolApp(ToolBase):
     # ── 文件选择 ────────────────────────────────────────────────────────────
 
     def _select_video(self):
-        if self._project_mode:
-            # Source video is locked to the project. "Browse" just opens the
-            # source folder so the user can verify the file.
-            try:
-                os.startfile(os.path.dirname(self.project.source_video_path))
-            except OSError:
-                pass
-            return
-        file_path = filedialog.askopenfilename(
-            title=tr("tool.subtitle.dialog.select_video"),
-            filetypes=[(tr("tool.subtitle.filter.video"), "*.mp4 *.avi *.mov *.mkv"),
-                       (tr("tool.subtitle.filter.all_files"), "*.*")]
-        )
-        if not file_path:
-            return
-        self.entry_video.delete(0, tk.END)
-        self.entry_video.insert(0, file_path)
-        self._maybe_update_output_path()
-        # 获取视频时长
+        """Source video is locked to the project. "Browse" opens the source
+        folder so the user can verify which file the project points at."""
         try:
-            subprocess.run(['ffprobe', '-version'], capture_output=True, check=True, timeout=5)
-        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
-            messagebox.showerror(tr("dialog.common.error"), tr("tool.subtitle.warning.no_ffprobe"))
-            self.video_duration = 0.0
-            self.label_duration.config(text=tr("tool.subtitle.progress.duration_no_ffmpeg"))
-            return
-
-        try:
-            cmd = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration',
-                   '-of', 'default=noprint_wrappers=1:nokey=1', file_path]
-            result = subprocess.run(cmd, capture_output=True, encoding="utf-8", errors="replace", timeout=10)
-            if result.returncode != 0:
-                cmd2 = ['ffprobe', '-i', file_path, '-v', 'quiet',
-                        '-print_format', 'json', '-show_format']
-                result2 = subprocess.run(cmd2, capture_output=True, encoding="utf-8", errors="replace", timeout=10)
-                if result2.returncode == 0:
-                    duration_str = json.loads(result2.stdout)['format']['duration']
-                else:
-                    raise Exception(f"ffprobe failed: {result.stderr.strip()}")
-            else:
-                duration_str = result.stdout.strip()
-            self.video_duration = float(duration_str)
-            hms = time.strftime('%H:%M:%S', time.gmtime(self.video_duration))
-            self.label_duration.config(text=tr("tool.subtitle.progress.duration_fmt", hms=hms))
-        except subprocess.TimeoutExpired:
-            self.video_duration = 0.0
-            self.label_duration.config(text=tr("tool.subtitle.progress.duration_timeout"))
-            messagebox.showwarning(tr("dialog.common.warning"), tr("tool.subtitle.warning.duration_timeout"))
-        except Exception as e:
-            self.video_duration = 0.0
-            self.label_duration.config(text=tr("tool.subtitle.progress.duration_unknown"))
-            messagebox.showwarning(tr("dialog.common.warning"),
-                                   tr("tool.subtitle.warning.duration_failed", e=e))
+            os.startfile(os.path.dirname(self.project.source_video_path))
+        except OSError:
+            pass
 
     def _select_subtitle1(self):
-        if self._project_mode:
-            picked = self._pick_project_subtitle(tr("subtitle_tool.project.pick_primary"))
-            if picked:
-                snap = self._ensure_srt_snapshot(picked) or picked
-                self.entry_sub1.delete(0, tk.END)
-                self.entry_sub1.insert(0, snap)
-                self._save_instance_config()
-            return
-        path = filedialog.askopenfilename(
-            title=tr("tool.subtitle.dialog.select_sub1"),
-            filetypes=[(tr("tool.subtitle.filter.srt"), "*.srt"),
-                       (tr("tool.subtitle.filter.all_files"), "*.*")]
-        )
-        if path:
+        picked = self._pick_project_subtitle(tr("subtitle_tool.project.pick_primary"))
+        if picked:
+            snap = self._ensure_srt_snapshot(picked) or picked
             self.entry_sub1.delete(0, tk.END)
-            self.entry_sub1.insert(0, path)
-            self._maybe_update_output_path()
+            self.entry_sub1.insert(0, snap)
+            self._save_instance_config()
 
     def _select_subtitle2(self):
-        if self._project_mode:
-            picked = self._pick_project_subtitle(tr("subtitle_tool.project.pick_secondary"))
-            if picked:
-                snap = self._ensure_srt_snapshot(picked) or picked
-                self.entry_sub2.delete(0, tk.END)
-                self.entry_sub2.insert(0, snap)
-                self._save_instance_config()
-            return
-        path = filedialog.askopenfilename(
-            title=tr("tool.subtitle.dialog.select_sub2"),
-            filetypes=[(tr("tool.subtitle.filter.srt"), "*.srt"),
-                       (tr("tool.subtitle.filter.all_files"), "*.*")]
-        )
-        if path:
+        picked = self._pick_project_subtitle(tr("subtitle_tool.project.pick_secondary"))
+        if picked:
+            snap = self._ensure_srt_snapshot(picked) or picked
             self.entry_sub2.delete(0, tk.END)
-            self.entry_sub2.insert(0, path)
-            self._maybe_update_output_path()
+            self.entry_sub2.insert(0, snap)
+            self._save_instance_config()
 
     def _select_output(self):
-        if self._project_mode:
-            # Output is locked under derivatives/. "Browse" opens the folder.
-            try:
-                os.makedirs(os.path.dirname(self.entry_output.get()), exist_ok=True)
-                os.startfile(os.path.dirname(self.entry_output.get()))
-            except OSError:
-                pass
-            return
-        video = self.entry_video.get()
-        current = self.entry_output.get().strip()
-        if current:
-            init_dir = os.path.dirname(current) or os.path.dirname(video) or os.getcwd()
-            init_name = os.path.basename(current)
-        else:
-            default = _compute_default_output_path(
-                video, self.entry_sub1.get() or None, self.entry_sub2.get() or None
-            )
-            init_dir = os.path.dirname(default) or os.getcwd()
-            init_name = os.path.basename(default)
-        path = filedialog.asksaveasfilename(
-            title=tr("tool.subtitle.dialog.select_output"),
-            defaultextension=".mp4",
-            filetypes=[(tr("tool.subtitle.filter.mp4"), "*.mp4"),
-                       (tr("tool.subtitle.filter.all_files"), "*.*")],
-            initialdir=init_dir,
-            initialfile=init_name,
-        )
-        if path:
-            self.entry_output.delete(0, tk.END)
-            self.entry_output.insert(0, path)
-            # Manual choice implies the user wants to fix the name.
-            self.auto_output_var.set(False)
-
-    def _maybe_update_output_path(self):
-        """Regenerate entry_output from current video/subtitle paths when auto is on."""
-        if self._project_mode:
-            # Project mode: output is locked to derivatives/<type>/<inst>/output.mp4.
-            return
-        if not self.auto_output_var.get():
-            return
-        video = self.entry_video.get()
-        if not video:
-            return
-        path = _compute_default_output_path(
-            video,
-            self.entry_sub1.get() or None if hasattr(self, "entry_sub1") else None,
-            self.entry_sub2.get() or None if hasattr(self, "entry_sub2") else None,
-        )
-        self.entry_output.delete(0, tk.END)
-        self.entry_output.insert(0, path)
+        """Output is locked under derivatives/<type>/<inst>/output.mp4.
+        The "Browse" button opens the folder so the user can confirm."""
+        try:
+            os.makedirs(os.path.dirname(self.entry_output.get()), exist_ok=True)
+            os.startfile(os.path.dirname(self.entry_output.get()))
+        except OSError:
+            pass
 
     # ── Project mode ────────────────────────────────────────────────────────
 
     def _enter_project_mode(self) -> None:
         """Lock paths to project canonical locations + restore prior config.
-
-        Called from __init__ after the standalone UI is fully built.
-        Modifies titles, entry contents, and entry states; redirects picker
-        button callbacks via the `if self._project_mode:` branches above.
-        """
+        Called from __init__ after the base UI is built."""
         # Window title shows the derivative type + instance for clarity.
         from core import derivative_types
         type_disp = derivative_types.display_name("bilingual_video")
@@ -610,7 +380,6 @@ class SubtitleToolApp(ToolBase):
             "bilingual_video", self.instance_name)
         os.makedirs(inst_dir, exist_ok=True)
         output_path = os.path.join(inst_dir, "output.mp4")
-        self.auto_output_var.set(False)
         self.entry_output.config(state="normal")
         self.entry_output.delete(0, tk.END)
         self.entry_output.insert(0, output_path)
@@ -833,8 +602,6 @@ class SubtitleToolApp(ToolBase):
         config.json. The selected SRT entry holds the snapshot path
         (source-subtitles.<iso>.srt); we save just the iso so the
         snapshot path can be re-derived without hard-coding it."""
-        if not self._project_mode:
-            return
         sub1 = self.entry_sub1.get().strip()
         sub2 = self.entry_sub2.get().strip()
         from core.composition.presets import composition_style_to_dict
@@ -863,8 +630,6 @@ class SubtitleToolApp(ToolBase):
 
     def _mark_instance_burned(self) -> None:
         """Stamp burned_at into config.json after a successful burn."""
-        if not self._project_mode:
-            return
         path = self._instance_config_path()
         cfg: dict = {}
         if os.path.isfile(path):
@@ -889,8 +654,6 @@ class SubtitleToolApp(ToolBase):
         Best-effort: video is already on disk, sidecar is nice-to-have,
         any failure is swallowed and logged.
         """
-        if not self._project_mode:
-            return
         try:
             from core.publish_sidecar import render_bilingual_publish
 
@@ -948,11 +711,6 @@ class SubtitleToolApp(ToolBase):
         color = colorchooser.askcolor(title=tr("tool.subtitle.dialog.choose_watermark_color"))
         if color and color[1]:
             self.watermark_color_var.set(color[1])
-
-    def _choose_date_color(self):
-        color = colorchooser.askcolor(title=tr("tool.subtitle.dialog.choose_date_color"))
-        if color and color[1]:
-            self.watermark_date_color_var.set(color[1])
 
     def _choose_sub1_color(self):
         color = colorchooser.askcolor(title=tr("tool.subtitle.dialog.choose_sub1_color"))
@@ -1295,19 +1053,20 @@ class SubtitleToolApp(ToolBase):
         # as a shippable deliverable (user can upload it to YouTube etc).
         # If wrap-split is on, the exported file is the line-wrapped form
         # adapted for screen display; otherwise it's a copy of the source.
-        # Naming: project mode → derivative_dir/subtitles_<iso>.srt
-        #         standalone   → next to source SRT with _split suffix
+        # Shippable sidecar SRT lands at derivative_dir/subtitles_<iso>.srt
+        # so the user can upload it alongside output.mp4 to YouTube etc.
+        # When the SRT is a snapshot (source-subtitles.<iso>.srt) we strip
+        # that prefix so the deliverable is named by language alone.
         def _adapted_path(src_srt: str) -> str:
             base = os.path.basename(src_srt)
             stem, _ = os.path.splitext(base)
-            if self._project_mode:
-                inst_dir = self.project.derivative_dir(
-                    "bilingual_video", self.instance_name)
-                os.makedirs(inst_dir, exist_ok=True)
-                # Project SRTs are named by ISO (en.srt → subtitles_en.srt).
-                return os.path.join(inst_dir, f"subtitles_{stem}.srt")
-            # Standalone fallback (legacy): _split suffix next to source.
-            return src_srt.replace('.srt', '_split.srt')
+            prefix = "source-subtitles."
+            if stem.startswith(prefix):
+                stem = stem[len(prefix):]
+            inst_dir = self.project.derivative_dir(
+                "bilingual_video", self.instance_name)
+            os.makedirs(inst_dir, exist_ok=True)
+            return os.path.join(inst_dir, f"subtitles_{stem}.srt")
 
         def _write_adapted(src_srt: str, max_chars: int, is_chinese: bool,
                             do_split: bool) -> str:
@@ -1347,16 +1106,15 @@ class SubtitleToolApp(ToolBase):
             messagebox.showerror(tr("tool.subtitle.error.split_failed_title"), str(e))
             return
 
-        # Resolve absolute paths + output destination.
+        # Resolve absolute paths. Output is locked to the instance dir by
+        # _enter_project_mode; entry_output is readonly so it can't be
+        # blanked, but guard anyway.
         video_path_abs = os.path.abspath(video_path)
-        output_path = self.entry_output.get().strip()
+        output_path = os.path.abspath(self.entry_output.get().strip())
         if not output_path:
-            output_path = _compute_default_output_path(
-                video_path_abs,
-                sub1_path if show_sub1 else None,
-                sub2_path if show_sub2 else None,
-            )
-        output_path = os.path.abspath(output_path)
+            messagebox.showerror(tr("dialog.common.error"),
+                                 tr("tool.subtitle.error.output_dir_missing", dir=""))
+            return
         out_dir = os.path.dirname(output_path)
         if out_dir and not os.path.isdir(out_dir):
             messagebox.showerror(tr("dialog.common.error"),
@@ -1443,12 +1201,3 @@ class SubtitleToolApp(ToolBase):
         finally:
             self.processing = False
             self.master.after(0, lambda: self.btn_merge.config(state=tk.NORMAL))
-
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    initial = None
-    if len(sys.argv) > 1 and os.path.exists(sys.argv[1]):
-        initial = sys.argv[1]
-    app = SubtitleToolApp(root, initial_file=initial)
-    root.mainloop()
