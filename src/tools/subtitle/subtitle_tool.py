@@ -93,14 +93,15 @@ class SubtitleToolApp(ToolBase):
         self.sub2_max_chars_var = tk.IntVar(value=50)
         self.sub2_is_chinese_var = tk.BooleanVar(value=False)
 
-        self.orientation_var    = tk.StringVar(value="horizontal")
         self.encode_preset_var  = tk.StringVar(value="veryfast")
 
-        self._build_ui()
-        self._update_split_settings()
+        # Live-preview plumbing.
+        self._preview = None
+        self._preview_refresh_after = None
 
-        # Load preset store and apply last-used preset (after Tk vars exist,
-        # after _update_split_settings so preset values are authoritative).
+        self._build_ui()
+
+        # Load preset store and apply last-used preset (after Tk vars exist).
         self._preset_store = comp_presets.load_biliburn_store()
         last_name = comp_presets.get_last_used_biliburn(self._preset_store)
         last_style = comp_presets.get_biliburn_preset(
@@ -119,160 +120,327 @@ class SubtitleToolApp(ToolBase):
         self._enter_project_mode()
 
     def _build_ui(self):
+        """Single-page workbench (aligned with clip tab1):
+          - top: source video + duration
+          - middle: PanedWindow [ scrollable style form | live WebView preview ]
+          - bottom: progress labels + bar + 开始烧录 button.
+        """
         root = self.master
+        main = tk.Frame(root)
+        main.pack(fill="both", expand=True)
+        main.columnconfigure(0, weight=1)
+        main.rowconfigure(1, weight=1)
 
-        # 预设栏
-        frame_preset = tk.LabelFrame(root, text=tr("tool.subtitle.preset.frame_title"), padx=10, pady=5)
-        frame_preset.grid(row=0, column=0, columnspan=3, padx=15, pady=(10, 2), sticky="we")
-        tk.Label(frame_preset, text=tr("tool.subtitle.preset.current_label")).grid(row=0, column=0, padx=(0, 5))
-        self.preset_combo = ttk.Combobox(frame_preset, width=24, state="readonly")
-        self.preset_combo.grid(row=0, column=1, padx=2)
+        # ── Top: source video info ────────────────────────────────────────
+        top = tk.Frame(main)
+        top.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        tk.Label(top, text=tr("tool.subtitle.video.label")
+                 ).pack(side="left")
+        self.entry_video = tk.Entry(top, width=50, state="readonly",
+                                      readonlybackground="white")
+        self.entry_video.pack(side="left", fill="x", expand=True, padx=(4, 4))
+        tk.Button(top, text=tr("tool.subtitle.browse"),
+                  command=self._select_video).pack(side="left")
+        self.label_duration = tk.Label(
+            top, text=tr("tool.subtitle.progress.duration_unknown"),
+            fg="#666")
+        self.label_duration.pack(side="left", padx=(12, 0))
+
+        # ── Middle: form | preview ────────────────────────────────────────
+        pw = ttk.PanedWindow(main, orient="horizontal")
+        pw.grid(row=1, column=0, sticky="nsew", padx=4, pady=(0, 4))
+        form_outer = ttk.Frame(pw)
+        preview_outer = ttk.Frame(pw)
+        pw.add(form_outer, weight=3)
+        pw.add(preview_outer, weight=4)
+
+        canvas = tk.Canvas(form_outer, highlightthickness=0)
+        sb = ttk.Scrollbar(form_outer, orient="vertical",
+                           command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=sb.set)
+        canvas.pack(side="left", fill="both", expand=True)
+        sb.pack(side="right", fill="y")
+        inner.bind("<Configure>",
+                   lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>",
+                    lambda e: canvas.itemconfigure(inner_id, width=e.width))
+        self._build_form(inner)
+
+        from core.composition.preview import CompositionPreview
+        self._preview = CompositionPreview(
+            preview_outer, width=480, height=540)
+        self._preview.widget.pack(fill="both", expand=True, padx=4, pady=4)
+
+        # ── Bottom: progress + burn ───────────────────────────────────────
+        bottom = tk.Frame(main)
+        bottom.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
+        self.label_elapsed = tk.Label(
+            bottom, text=tr("tool.subtitle.progress.elapsed_zero"),
+            width=14, anchor="w")
+        self.label_elapsed.pack(side="left")
+        self.label_remaining = tk.Label(
+            bottom, text=tr("tool.subtitle.progress.remaining_unknown"),
+            width=14, anchor="w")
+        self.label_remaining.pack(side="left", padx=(8, 0))
+        self.progress_bar = ttk.Progressbar(
+            bottom, orient=tk.HORIZONTAL, mode='determinate')
+        self.progress_bar.pack(side="left", padx=12, fill="x", expand=True)
+        self.btn_merge = tk.Button(
+            bottom, text=tr("tool.subtitle.action.start"),
+            width=18, command=self._merge_videos)
+        self.btn_merge.pack(side="right")
+
+    def _build_form(self, parent: ttk.Frame) -> None:
+        # ── Preset ────────────────────────────────────────────────────────
+        preset = ttk.LabelFrame(parent, text=tr("tool.subtitle.preset.frame_title"))
+        preset.pack(fill="x", padx=6, pady=(6, 4))
+        self.preset_combo = ttk.Combobox(preset, width=30, state="readonly")
+        self.preset_combo.grid(row=0, column=0, columnspan=4,
+                                 padx=4, pady=4, sticky="ew")
         self.preset_combo.bind("<<ComboboxSelected>>", self._on_preset_selected)
-        self.btn_preset_save = tk.Button(frame_preset, text=tr("tool.subtitle.preset.save"), width=6,
-                                         command=self._on_preset_save)
-        self.btn_preset_save.grid(row=0, column=2, padx=3)
-        tk.Button(frame_preset, text=tr("tool.subtitle.preset.save_as"), width=8,
-                  command=self._on_preset_save_as).grid(row=0, column=3, padx=3)
-        self.btn_preset_delete = tk.Button(frame_preset, text=tr("tool.subtitle.preset.delete"), width=6,
-                                           command=self._on_preset_delete)
-        self.btn_preset_delete.grid(row=0, column=4, padx=3)
-        tk.Button(frame_preset, text=tr("tool.subtitle.preset.reset_default"), width=10,
-                  command=self._on_preset_reset_default).grid(row=0, column=5, padx=3)
+        self.btn_preset_save = ttk.Button(
+            preset, text=tr("tool.subtitle.preset.save"),
+            command=self._on_preset_save)
+        self.btn_preset_save.grid(row=1, column=0, padx=2, pady=2, sticky="ew")
+        ttk.Button(preset, text=tr("tool.subtitle.preset.save_as"),
+                   command=self._on_preset_save_as).grid(
+                       row=1, column=1, padx=2, pady=2, sticky="ew")
+        self.btn_preset_delete = ttk.Button(
+            preset, text=tr("tool.subtitle.preset.delete"),
+            command=self._on_preset_delete)
+        self.btn_preset_delete.grid(row=1, column=2, padx=2, pady=2, sticky="ew")
+        ttk.Button(preset, text=tr("tool.subtitle.preset.reset_default"),
+                   command=self._on_preset_reset_default).grid(
+                       row=1, column=3, padx=2, pady=2, sticky="ew")
+        for c in range(4):
+            preset.columnconfigure(c, weight=1)
 
-        # 视频文件
-        tk.Label(root, text=tr("tool.subtitle.video.label")).grid(row=1, column=0, padx=10, pady=(15, 2), sticky="e")
-        self.entry_video = tk.Entry(root, width=55)
-        self.entry_video.grid(row=1, column=1, padx=5, pady=(15, 2))
-        tk.Button(root, text=tr("tool.subtitle.browse"), command=self._select_video).grid(row=1, column=2, padx=10, pady=(15, 2))
+        # ── Subtitles (paths) ─────────────────────────────────────────────
+        srts = ttk.LabelFrame(parent, text=tr("tool.subtitle.sub1.frame_title"))
+        srts.pack(fill="x", padx=6, pady=4)
+        row = ttk.Frame(srts); row.pack(fill="x", padx=4, pady=2)
+        self.entry_sub1 = tk.Entry(row)
+        self.entry_sub1.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        ttk.Button(row, text=tr("tool.subtitle.browse"),
+                   command=self._select_subtitle1).pack(side="left")
 
-        # 输出文件
-        tk.Label(root, text=tr("tool.subtitle.output.label")).grid(row=2, column=0, padx=10, pady=(2, 10), sticky="e")
-        self.entry_output = tk.Entry(root, width=55)
-        self.entry_output.grid(row=2, column=1, padx=5, pady=(2, 10))
-        frame_out_actions = tk.Frame(root)
-        frame_out_actions.grid(row=2, column=2, padx=10, pady=(2, 10), sticky="w")
-        tk.Button(frame_out_actions, text=tr("tool.subtitle.browse"), command=self._select_output).pack(side=tk.LEFT)
+        row = ttk.Frame(srts); row.pack(fill="x", padx=4, pady=2)
+        ttk.Checkbutton(row, text=tr("tool.subtitle.sub.show"),
+                        variable=self.sub1_show_var).pack(side="left")
+        ttk.Label(row, text=tr("tool.subtitle.sub.fontsize")
+                  ).pack(side="left", padx=(8, 0))
+        ttk.Spinbox(row, from_=10, to=60, width=4,
+                    textvariable=self.sub1_fontsize_var
+                    ).pack(side="left", padx=(4, 0))
+        ttk.Label(row, text=tr("tool.subtitle.sub.color")
+                  ).pack(side="left", padx=(8, 0))
+        ttk.Entry(row, width=8, textvariable=self.sub1_color_var
+                  ).pack(side="left", padx=(4, 0))
+        ttk.Button(row, text=tr("tool.subtitle.sub.choose"),
+                   command=self._choose_sub1_color
+                   ).pack(side="left", padx=(2, 0))
 
-        # 屏幕方向设置
-        frame_orientation = tk.LabelFrame(root, text=tr("tool.subtitle.orientation.frame_title"), padx=10, pady=5)
-        frame_orientation.grid(row=3, column=0, columnspan=3, padx=15, pady=5, sticky="we")
+        row = ttk.Frame(srts); row.pack(fill="x", padx=4, pady=2)
+        ttk.Checkbutton(row, text=tr("tool.subtitle.sub.split"),
+                        variable=self.split_sub1_var).pack(side="left")
+        ttk.Label(row, text=tr("tool.subtitle.sub.max_chars")
+                  ).pack(side="left", padx=(8, 0))
+        ttk.Spinbox(row, from_=10, to=100, width=4,
+                    textvariable=self.sub1_max_chars_var
+                    ).pack(side="left", padx=(4, 0))
+        ttk.Checkbutton(row, text=tr("tool.subtitle.sub.is_chinese"),
+                        variable=self.sub1_is_chinese_var
+                        ).pack(side="left", padx=(8, 0))
 
-        tk.Radiobutton(frame_orientation, text=tr("tool.subtitle.orientation.horizontal"), variable=self.orientation_var,
-                       value="horizontal", command=self._update_split_settings).grid(row=0, column=0, padx=20)
-        tk.Radiobutton(frame_orientation, text=tr("tool.subtitle.orientation.vertical"), variable=self.orientation_var,
-                       value="vertical", command=self._update_split_settings).grid(row=0, column=1, padx=20)
-        tk.Radiobutton(frame_orientation, text=tr("tool.subtitle.orientation.square"), variable=self.orientation_var,
-                       value="square", command=self._update_split_settings).grid(row=0, column=2, padx=20)
+        srt2 = ttk.LabelFrame(parent, text=tr("tool.subtitle.sub2.frame_title"))
+        srt2.pack(fill="x", padx=6, pady=4)
+        row = ttk.Frame(srt2); row.pack(fill="x", padx=4, pady=2)
+        self.entry_sub2 = tk.Entry(row)
+        self.entry_sub2.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        ttk.Button(row, text=tr("tool.subtitle.browse"),
+                   command=self._select_subtitle2).pack(side="left")
 
-        tk.Label(frame_orientation, text=tr("tool.subtitle.orientation.encode_label")).grid(row=0, column=3, padx=(40, 5), sticky="e")
-        encode_preset_combo = ttk.Combobox(
-            frame_orientation, textvariable=self.encode_preset_var,
-            values=["ultrafast", "superfast", "veryfast", "faster", "fast", "medium"],
-            width=12, state="readonly")
-        encode_preset_combo.grid(row=0, column=4, padx=5)
-        tk.Label(frame_orientation, text=tr("tool.subtitle.orientation.encode_hint"),
-                 font=("Arial", 8), fg="gray").grid(row=0, column=5, padx=5)
+        row = ttk.Frame(srt2); row.pack(fill="x", padx=4, pady=2)
+        ttk.Checkbutton(row, text=tr("tool.subtitle.sub.show"),
+                        variable=self.sub2_show_var).pack(side="left")
+        ttk.Label(row, text=tr("tool.subtitle.sub.fontsize")
+                  ).pack(side="left", padx=(8, 0))
+        ttk.Spinbox(row, from_=10, to=60, width=4,
+                    textvariable=self.sub2_fontsize_var
+                    ).pack(side="left", padx=(4, 0))
+        ttk.Label(row, text=tr("tool.subtitle.sub.color")
+                  ).pack(side="left", padx=(8, 0))
+        ttk.Entry(row, width=8, textvariable=self.sub2_color_var
+                  ).pack(side="left", padx=(4, 0))
+        ttk.Button(row, text=tr("tool.subtitle.sub.choose"),
+                   command=self._choose_sub2_color
+                   ).pack(side="left", padx=(2, 0))
 
-        # 字幕1（中文）
-        frame_sub1 = tk.LabelFrame(root, text=tr("tool.subtitle.sub1.frame_title"), padx=5, pady=5)
-        frame_sub1.grid(row=4, column=0, columnspan=3, padx=10, pady=5, sticky="we")
-        self.entry_sub1 = tk.Entry(frame_sub1, width=35)
-        self.entry_sub1.grid(row=0, column=0, padx=5)
-        tk.Button(frame_sub1, text=tr("tool.subtitle.browse"), command=self._select_subtitle1).grid(row=0, column=1, padx=5)
-        tk.Label(frame_sub1, text=tr("tool.subtitle.sub.fontsize")).grid(row=0, column=2, padx=2)
-        tk.Spinbox(frame_sub1, from_=10, to=60, width=4, textvariable=self.sub1_fontsize_var).grid(row=0, column=3, padx=2)
-        tk.Label(frame_sub1, text=tr("tool.subtitle.sub.color")).grid(row=0, column=4, padx=2)
-        tk.Entry(frame_sub1, width=8, textvariable=self.sub1_color_var).grid(row=0, column=5, padx=2)
-        tk.Button(frame_sub1, text=tr("tool.subtitle.sub.choose"), command=self._choose_sub1_color).grid(row=0, column=6, padx=2)
-        tk.Checkbutton(frame_sub1, text=tr("tool.subtitle.sub.show"), variable=self.sub1_show_var).grid(row=0, column=7, padx=5)
+        row = ttk.Frame(srt2); row.pack(fill="x", padx=4, pady=2)
+        ttk.Checkbutton(row, text=tr("tool.subtitle.sub.split"),
+                        variable=self.split_sub2_var).pack(side="left")
+        ttk.Label(row, text=tr("tool.subtitle.sub.max_chars")
+                  ).pack(side="left", padx=(8, 0))
+        ttk.Spinbox(row, from_=10, to=100, width=4,
+                    textvariable=self.sub2_max_chars_var
+                    ).pack(side="left", padx=(4, 0))
+        ttk.Checkbutton(row, text=tr("tool.subtitle.sub.is_chinese"),
+                        variable=self.sub2_is_chinese_var
+                        ).pack(side="left", padx=(8, 0))
 
-        tk.Checkbutton(frame_sub1, text=tr("tool.subtitle.sub.split"), variable=self.split_sub1_var).grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        tk.Label(frame_sub1, text=tr("tool.subtitle.sub.max_chars")).grid(row=1, column=1, padx=2)
-        tk.Spinbox(frame_sub1, from_=10, to=100, width=4, textvariable=self.sub1_max_chars_var).grid(row=1, column=2, padx=2)
-        tk.Checkbutton(frame_sub1, text=tr("tool.subtitle.sub.is_chinese"), variable=self.sub1_is_chinese_var).grid(row=1, column=3, padx=5)
+        # ── Watermark ─────────────────────────────────────────────────────
+        wm = ttk.LabelFrame(parent, text=tr("tool.subtitle.watermark.frame_title"))
+        wm.pack(fill="x", padx=6, pady=4)
 
-        # 字幕2（英文）
-        frame_sub2 = tk.LabelFrame(root, text=tr("tool.subtitle.sub2.frame_title"), padx=5, pady=5)
-        frame_sub2.grid(row=5, column=0, columnspan=3, padx=10, pady=5, sticky="we")
-        self.entry_sub2 = tk.Entry(frame_sub2, width=35)
-        self.entry_sub2.grid(row=0, column=0, padx=5)
-        tk.Button(frame_sub2, text=tr("tool.subtitle.browse"), command=self._select_subtitle2).grid(row=0, column=1, padx=5)
-        tk.Label(frame_sub2, text=tr("tool.subtitle.sub.fontsize")).grid(row=0, column=2, padx=2)
-        tk.Spinbox(frame_sub2, from_=10, to=60, width=4, textvariable=self.sub2_fontsize_var).grid(row=0, column=3, padx=2)
-        tk.Label(frame_sub2, text=tr("tool.subtitle.sub.color")).grid(row=0, column=4, padx=2)
-        tk.Entry(frame_sub2, width=8, textvariable=self.sub2_color_var).grid(row=0, column=5, padx=2)
-        tk.Button(frame_sub2, text=tr("tool.subtitle.sub.choose"), command=self._choose_sub2_color).grid(row=0, column=6, padx=2)
-        tk.Checkbutton(frame_sub2, text=tr("tool.subtitle.sub.show"), variable=self.sub2_show_var).grid(row=0, column=7, padx=5)
+        # Enable + type radios
+        row = ttk.Frame(wm); row.pack(fill="x", padx=4, pady=2)
+        ttk.Checkbutton(row, text=tr("tool.subtitle.sub.show"),
+                        variable=self.watermark_show_var).pack(side="left")
+        ttk.Radiobutton(row, text=tr("tool.subtitle.watermark.image_radio"),
+                        variable=self.watermark_type_var, value="image"
+                        ).pack(side="left", padx=(12, 4))
+        ttk.Radiobutton(row, text=tr("tool.subtitle.watermark.text_radio"),
+                        variable=self.watermark_type_var, value="text"
+                        ).pack(side="left")
 
-        tk.Checkbutton(frame_sub2, text=tr("tool.subtitle.sub.split"), variable=self.split_sub2_var).grid(row=1, column=0, padx=5, pady=5, sticky="w")
-        tk.Label(frame_sub2, text=tr("tool.subtitle.sub.max_chars")).grid(row=1, column=1, padx=2)
-        tk.Spinbox(frame_sub2, from_=10, to=100, width=4, textvariable=self.sub2_max_chars_var).grid(row=1, column=2, padx=2)
-        tk.Checkbutton(frame_sub2, text=tr("tool.subtitle.sub.is_chinese"), variable=self.sub2_is_chinese_var).grid(row=1, column=3, padx=5)
-
-        # 水印设置
-        frame_watermark = tk.LabelFrame(root, text=tr("tool.subtitle.watermark.frame_title"), padx=10, pady=5)
-        frame_watermark.grid(row=6, column=0, columnspan=3, padx=15, pady=5, sticky="we")
-
-        # Row 0：图片水印（单选）
-        tk.Radiobutton(frame_watermark, text=tr("tool.subtitle.watermark.image_radio"),
-                       variable=self.watermark_type_var, value="image").grid(row=0, column=0, sticky="e")
+        # Image controls
+        row = ttk.Frame(wm); row.pack(fill="x", padx=4, pady=2)
         wm_img_files = self._scan_watermark_images()
         wm_img_names = [os.path.basename(f) for f in wm_img_files]
-        self._wm_img_combo = ttk.Combobox(frame_watermark, values=wm_img_names, width=16, state="readonly")
+        self._wm_img_combo = ttk.Combobox(
+            row, values=wm_img_names, width=18, state="readonly")
         cur_name = os.path.basename(self.watermark_img_path_var.get())
         if cur_name in wm_img_names:
             self._wm_img_combo.set(cur_name)
         elif wm_img_names:
             self._wm_img_combo.set(wm_img_names[0])
         self._wm_img_combo.bind("<<ComboboxSelected>>", self._on_wm_img_selected)
-        self._wm_img_combo.grid(row=0, column=1, padx=4)
-        tk.Button(frame_watermark, text=tr("tool.subtitle.browse"), command=self._select_watermark_image).grid(row=0, column=2, padx=3)
-        tk.Label(frame_watermark, text=tr("tool.subtitle.watermark.scale")).grid(row=0, column=3, sticky="e")
-        tk.Spinbox(frame_watermark, from_=0.05, to=0.5, increment=0.05, width=5, format="%.2f",
-                   textvariable=self.watermark_img_scale_var).grid(row=0, column=4, padx=2)
-        tk.Label(frame_watermark, text=tr("tool.subtitle.watermark.alpha")).grid(row=0, column=5, sticky="e")
-        tk.Scale(frame_watermark, from_=0, to=100, orient=tk.HORIZONTAL,
-                 variable=self.watermark_img_alpha_var, length=80).grid(row=0, column=6, padx=3)
-        tk.Checkbutton(frame_watermark, text=tr("tool.subtitle.sub.show"),
-                       variable=self.watermark_show_var).grid(row=0, column=7, padx=5)
+        self._wm_img_combo.pack(side="left", padx=(0, 4))
+        ttk.Button(row, text=tr("tool.subtitle.browse"),
+                   command=self._select_watermark_image).pack(side="left")
+        ttk.Label(row, text=tr("tool.subtitle.watermark.scale")
+                  ).pack(side="left", padx=(8, 0))
+        ttk.Spinbox(row, from_=0.05, to=0.5, increment=0.05, width=5,
+                    format="%.2f",
+                    textvariable=self.watermark_img_scale_var
+                    ).pack(side="left", padx=(4, 0))
+        ttk.Label(row, text=tr("tool.subtitle.watermark.alpha")
+                  ).pack(side="left", padx=(8, 0))
+        ttk.Spinbox(row, from_=0, to=100, width=5,
+                    textvariable=self.watermark_img_alpha_var
+                    ).pack(side="left", padx=(4, 0))
 
-        # Row 1：文字水印（单选）
-        tk.Radiobutton(frame_watermark, text=tr("tool.subtitle.watermark.text_radio"),
-                       variable=self.watermark_type_var, value="text").grid(row=1, column=0, sticky="e")
-        ttk.Combobox(frame_watermark, textvariable=self.watermark_text_var, width=20,
+        # Text controls
+        row = ttk.Frame(wm); row.pack(fill="x", padx=4, pady=2)
+        ttk.Combobox(row, textvariable=self.watermark_text_var,
                      values=["字幕By老猿@OldApeTalk", "字幕制作By 老猿",
-                             "@VideoCraftNews"]).grid(row=1, column=1, padx=4)
-        tk.Label(frame_watermark, text=tr("tool.subtitle.sub.fontsize")).grid(row=1, column=2, sticky="e")
-        tk.Spinbox(frame_watermark, from_=10, to=100, width=4,
-                   textvariable=self.watermark_fontsize_var).grid(row=1, column=3, padx=2)
-        tk.Label(frame_watermark, text=tr("tool.subtitle.sub.color")).grid(row=1, column=4, sticky="e")
-        tk.Entry(frame_watermark, textvariable=self.watermark_color_var, width=9).grid(row=1, column=5, padx=2)
-        tk.Button(frame_watermark, text=tr("tool.subtitle.sub.choose"),
-                  command=self._choose_watermark_color).grid(row=1, column=6, padx=2)
-        tk.Label(frame_watermark, text=tr("tool.subtitle.watermark.alpha")).grid(row=1, column=7, sticky="e")
-        tk.Scale(frame_watermark, from_=0, to=100, orient=tk.HORIZONTAL,
-                 variable=self.watermark_txt_alpha_var, length=80).grid(row=1, column=8, padx=3)
+                             "@VideoCraftNews"]
+                     ).pack(side="left", fill="x", expand=True, padx=(0, 4))
 
-        # Progress row: three compact time labels + progress bar + merge button,
-        # all on a single row to save vertical space.
-        frame_progress = tk.Frame(root)
-        frame_progress.grid(row=7, column=0, columnspan=3, padx=15, pady=10, sticky="we")
-        frame_progress.columnconfigure(3, weight=1)   # progress_bar column stretches
+        row = ttk.Frame(wm); row.pack(fill="x", padx=4, pady=2)
+        ttk.Label(row, text=tr("tool.subtitle.sub.fontsize")).pack(side="left")
+        ttk.Spinbox(row, from_=10, to=100, width=4,
+                    textvariable=self.watermark_fontsize_var
+                    ).pack(side="left", padx=(4, 0))
+        ttk.Label(row, text=tr("tool.subtitle.sub.color")
+                  ).pack(side="left", padx=(8, 0))
+        ttk.Entry(row, textvariable=self.watermark_color_var, width=8
+                  ).pack(side="left", padx=(4, 0))
+        ttk.Button(row, text=tr("tool.subtitle.sub.choose"),
+                   command=self._choose_watermark_color
+                   ).pack(side="left", padx=(2, 0))
+        ttk.Label(row, text=tr("tool.subtitle.watermark.alpha")
+                  ).pack(side="left", padx=(8, 0))
+        ttk.Spinbox(row, from_=0, to=100, width=5,
+                    textvariable=self.watermark_txt_alpha_var
+                    ).pack(side="left", padx=(4, 0))
 
-        self.label_duration  = tk.Label(frame_progress, text=tr("tool.subtitle.progress.duration_unknown"), width=14, anchor="w")
-        self.label_duration.grid(row=0, column=0, padx=(0, 4))
-        self.label_elapsed   = tk.Label(frame_progress, text=tr("tool.subtitle.progress.elapsed_zero"), width=14, anchor="w")
-        self.label_elapsed.grid(row=0, column=1, padx=(0, 4))
-        self.label_remaining = tk.Label(frame_progress, text=tr("tool.subtitle.progress.remaining_unknown"), width=14, anchor="w")
-        self.label_remaining.grid(row=0, column=2, padx=(0, 8))
+        # ── Encoder ───────────────────────────────────────────────────────
+        enc = ttk.LabelFrame(parent, text=tr("tool.subtitle.encoder.frame_title"))
+        enc.pack(fill="x", padx=6, pady=4)
+        row = ttk.Frame(enc); row.pack(fill="x", padx=4, pady=2)
+        ttk.Label(row, text=tr("tool.subtitle.orientation.encode_label")
+                  ).pack(side="left")
+        ttk.Combobox(row, textvariable=self.encode_preset_var,
+                     values=("ultrafast", "superfast", "veryfast",
+                             "faster", "fast", "medium"),
+                     state="readonly", width=12
+                     ).pack(side="left", padx=(4, 0))
+        ttk.Label(row, text=tr("tool.subtitle.orientation.encode_hint"),
+                  foreground="gray").pack(side="left", padx=(8, 0))
 
-        self.progress_bar = ttk.Progressbar(frame_progress, orient=tk.HORIZONTAL,
-                                            mode='determinate')
-        self.progress_bar.grid(row=0, column=3, sticky="we", padx=(0, 8))
+        # ── Output (readonly) ─────────────────────────────────────────────
+        out = ttk.LabelFrame(parent, text=tr("tool.subtitle.output.label"))
+        out.pack(fill="x", padx=6, pady=4)
+        row = ttk.Frame(out); row.pack(fill="x", padx=4, pady=2)
+        self.entry_output = tk.Entry(row, state="readonly",
+                                       readonlybackground="white")
+        self.entry_output.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        ttk.Button(row, text=tr("tool.subtitle.browse"),
+                   command=self._select_output).pack(side="left")
 
-        self.btn_merge = tk.Button(frame_progress, text=tr("tool.subtitle.action.start"),
-                                   width=18, command=self._merge_videos)
-        self.btn_merge.grid(row=0, column=4)
+        self._wire_preview_traces()
+
+    def _wire_preview_traces(self) -> None:
+        """trace_add every form var that affects the preview render so
+        edits get pushed into the WebView with a 200ms debounce."""
+        for var in (
+            self.sub1_show_var, self.sub1_fontsize_var, self.sub1_color_var,
+            self.sub1_is_chinese_var, self.split_sub1_var, self.sub1_max_chars_var,
+            self.sub2_show_var, self.sub2_fontsize_var, self.sub2_color_var,
+            self.sub2_is_chinese_var, self.split_sub2_var, self.sub2_max_chars_var,
+            self.watermark_show_var, self.watermark_type_var,
+            self.watermark_text_var, self.watermark_color_var,
+            self.watermark_fontsize_var, self.watermark_txt_alpha_var,
+            self.watermark_img_path_var, self.watermark_img_scale_var,
+            self.watermark_img_alpha_var, self.encode_preset_var,
+        ):
+            var.trace_add("write", lambda *_a: self._schedule_preview_refresh())
+
+    def _schedule_preview_refresh(self) -> None:
+        """Debounce form edits — coalesce a burst of var changes into one
+        preview rebuild after 200ms idle."""
+        if self._preview_refresh_after is not None:
+            try:
+                self.master.after_cancel(self._preview_refresh_after)
+            except Exception:
+                pass
+        self._preview_refresh_after = self.master.after(
+            200, self._push_preview)
+
+    def _push_preview(self) -> None:
+        """Snapshot current form → CompositionStyle, push to WebView.
+        Also pushes the primary SRT cue list when one is selected so the
+        preview overlays the real subtitle text under playhead, not a
+        placeholder."""
+        self._preview_refresh_after = None
+        if self._preview is None:
+            return
+        try:
+            self._preview.set_style(self._form_to_style())
+        except Exception as e:
+            logger.debug(f"Preview style push failed: {e}")
+            return
+        # Cues from the primary SRT (snapshot path). Secondary track is
+        # placeholder-only in the WebView preview — that's a v0 limitation.
+        sub1 = self.entry_sub1.get().strip()
+        cues: list[dict] = []
+        if sub1 and os.path.isfile(sub1):
+            try:
+                import srt as _srt
+                with open(sub1, encoding="utf-8") as f:
+                    cues = [{"start": c.start.total_seconds(),
+                             "end": c.end.total_seconds(),
+                             "text": c.content}
+                            for c in _srt.parse(f.read())]
+            except Exception:
+                cues = []
+        try:
+            self._preview.set_cues(cues)
+        except Exception:
+            pass
 
     # ── 图片水印辅助 ────────────────────────────────────────────────────────
 
@@ -341,6 +509,7 @@ class SubtitleToolApp(ToolBase):
             self.entry_sub1.delete(0, tk.END)
             self.entry_sub1.insert(0, snap)
             self._save_instance_config()
+            self._schedule_preview_refresh()
 
     def _select_subtitle2(self):
         picked = self._pick_project_subtitle(tr("subtitle_tool.project.pick_secondary"))
@@ -349,6 +518,7 @@ class SubtitleToolApp(ToolBase):
             self.entry_sub2.delete(0, tk.END)
             self.entry_sub2.insert(0, snap)
             self._save_instance_config()
+            self._schedule_preview_refresh()
 
     def _select_output(self):
         """Output is locked under derivatives/<type>/<inst>/output.mp4.
@@ -387,6 +557,23 @@ class SubtitleToolApp(ToolBase):
 
         # Restore SRT selections + style params from instance config.json.
         self._load_instance_config()
+
+        # Probe duration so the top bar shows it (and the burn fast-path
+        # doesn't have to re-probe).
+        self.video_duration = _probe_video_duration(self.project.source_video_path)
+        if self.video_duration > 0:
+            hms = time.strftime('%H:%M:%S', time.gmtime(self.video_duration))
+            self.label_duration.config(
+                text=tr("tool.subtitle.progress.duration_fmt", hms=hms))
+
+        # Point the live WebView preview at the source video and push the
+        # current style + cues so the user sees their preset choices land.
+        if self._preview is not None:
+            try:
+                self._preview.set_source(self.project.source_video_path, 0.0, 0.0)
+            except Exception as e:
+                logger.debug(f"Preview set_source failed: {e}")
+            self._push_preview()
 
     def _pick_project_subtitle(self, title: str) -> str | None:
         """Modal combobox dialog showing <project>/subtitles/*.srt.
@@ -979,24 +1166,6 @@ class SubtitleToolApp(ToolBase):
             self._apply_style(style)
 
     # ── 辅助 ────────────────────────────────────────────────────────────────
-
-    def _update_split_settings(self):
-        ori = self.orientation_var.get()
-        if ori == "horizontal":
-            self.sub1_max_chars_var.set(20)
-            self.sub2_max_chars_var.set(50)
-            self.sub1_fontsize_var.set(24)
-            self.sub2_fontsize_var.set(24)
-        elif ori == "square":
-            self.sub1_max_chars_var.set(10)
-            self.sub2_max_chars_var.set(25)
-            self.sub1_fontsize_var.set(20)
-            self.sub2_fontsize_var.set(16)
-        else:  # vertical
-            self.sub1_max_chars_var.set(10)
-            self.sub2_max_chars_var.set(25)
-            self.sub1_fontsize_var.set(14)
-            self.sub2_fontsize_var.set(12)
 
     def _update_progress(self, progress, elapsed, remaining):
         self.progress_bar['value'] = progress
