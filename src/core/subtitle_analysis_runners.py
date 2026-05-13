@@ -16,12 +16,16 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import srt
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
 from core.io_utils import atomic_write_text, atomic_write_json
+from core.chapters_io import (
+    normalize_chapters,
+    parse_time_str as _parse_time_str,
+    fmt_time_str as _fmt_time_str,
+)
 from core.subtitle_pipeline import ProgressInfo
 from core.ai.cancellation import CancellationToken
 from core.subtitle_ops import read_srt
@@ -41,29 +45,9 @@ def _say(progress_cb, phase: str, status: str, percent: float | None = None) -> 
 
 
 # ── Chapter timestamp helpers ────────────────────────────────────────────────
-
-_TS_RE = re.compile(r"^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.\d+)?$")
-
-
-def _parse_time_str(ts: str) -> float:
-    """Parse mm:ss or HH:MM:SS into seconds. 0.0 on failure."""
-    ts = ts.strip()
-    m = _TS_RE.match(ts)
-    if not m:
-        return 0.0
-    h = int(m.group(1) or 0)
-    mn = int(m.group(2))
-    s = int(m.group(3))
-    return h * 3600 + mn * 60 + s
-
-
-def _fmt_time_str(sec: float) -> str:
-    """Format seconds as HH:MM:SS."""
-    sec = max(0, int(sec))
-    h, rem = divmod(sec, 3600)
-    m, s = divmod(rem, 60)
-    return f"{h:02d}:{m:02d}:{s:02d}"
-
+#
+# parse/fmt helpers live in core.chapters_io and are re-imported above so
+# this module's existing callers keep their names.
 
 def _srt_end_seconds(srt_path: str) -> float:
     """Return the end timestamp of the last cue in seconds, or 0.0."""
@@ -76,59 +60,25 @@ def _srt_end_seconds(srt_path: str) -> float:
     return subs[-1].end.total_seconds()
 
 
-def _intro_chapter_title(lang_iso: str) -> str:
-    """Localized title for the auto-inserted 00:00 intro chapter.
-
-    Core layer does not consume tr(); pick a sensible label from the
-    language tag the AI already produced chapters in.
-    """
-    code = (lang_iso or "").lower().split("-")[0]
-    if code.startswith("zh"):
-        return "开始"
-    return "Intro"
-
-
 def _derive_chapters(pack_segments: list[dict], srt_path: str,
                      lang_iso: str) -> list[dict]:
-    """Pack 'segments' carry only `time_str` (chapter start). Derive `end`
-    from the next chapter's start, with the last chapter ending at the
-    SRT's final cue end.
+    """Map an AI 'segments' payload to the normalized chapter list.
 
-    YouTube requires the first chapter to start at 00:00. The LLM's first
-    chapter is the first spoken segment, which often sits a few seconds in
-    (silent intro, music sting). If the first AI chapter does not start at
-    zero, prepend a synthetic intro chapter covering [00:00, first_start).
+    Each segment carries `time_str` (start) and `title`. End timestamps
+    and the synthetic 00:00 intro (when first start > 0) are produced
+    by `normalize_chapters`, which is also the UI save-path's
+    normalizer — so AI-generated and user-edited chapters cannot
+    drift apart.
     """
-    starts = []
+    items = []
     for seg in pack_segments:
-        t = seg.get("time_str", "").strip()
+        t = (seg.get("time_str") or "").strip()
         if not t:
             continue
-        starts.append((seg, _parse_time_str(t)))
-    if not starts:
+        items.append({"start": t, "title": (seg.get("title") or "").strip()})
+    if not items:
         return []
-    last_end = _srt_end_seconds(srt_path)
-    out = []
-    for i, (seg, start_sec) in enumerate(starts):
-        if i + 1 < len(starts):
-            end_sec = starts[i + 1][1]
-        else:
-            end_sec = max(last_end, start_sec)
-        out.append({
-            "start":    _fmt_time_str(start_sec),
-            "end":      _fmt_time_str(end_sec),
-            "title":    seg.get("title", "").strip(),
-            "duration_sec": max(0.0, end_sec - start_sec),
-        })
-    if out and out[0]["start"] != "00:00:00":
-        first_start_sec = _parse_time_str(out[0]["start"])
-        out.insert(0, {
-            "start":    "00:00:00",
-            "end":      out[0]["start"],
-            "title":    _intro_chapter_title(lang_iso),
-            "duration_sec": max(0.0, first_start_sec),
-        })
-    return out
+    return normalize_chapters(items, _srt_end_seconds(srt_path), lang_iso)
 
 
 # ── Pack-derived runners (titles / chapters / chapter_refined) ───────────────
