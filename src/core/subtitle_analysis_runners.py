@@ -87,10 +87,28 @@ def _srt_end_seconds(srt_path: str) -> float:
     return subs[-1].end.total_seconds()
 
 
-def _derive_chapters(pack_segments: list[dict], srt_path: str) -> list[dict]:
+def _intro_chapter_title(lang_iso: str) -> str:
+    """Localized title for the auto-inserted 00:00 intro chapter.
+
+    Core layer does not consume tr(); pick a sensible label from the
+    language tag the AI already produced chapters in.
+    """
+    code = (lang_iso or "").lower().split("-")[0]
+    if code.startswith("zh"):
+        return "开始"
+    return "Intro"
+
+
+def _derive_chapters(pack_segments: list[dict], srt_path: str,
+                     lang_iso: str) -> list[dict]:
     """Pack 'segments' carry only `time_str` (chapter start). Derive `end`
     from the next chapter's start, with the last chapter ending at the
     SRT's final cue end.
+
+    YouTube requires the first chapter to start at 00:00. The LLM's first
+    chapter is the first spoken segment, which often sits a few seconds in
+    (silent intro, music sting). If the first AI chapter does not start at
+    zero, prepend a synthetic intro chapter covering [00:00, first_start).
     """
     starts = []
     for seg in pack_segments:
@@ -112,6 +130,14 @@ def _derive_chapters(pack_segments: list[dict], srt_path: str) -> list[dict]:
             "end":      _fmt_time_str(end_sec),
             "title":    seg.get("title", "").strip(),
             "duration_sec": max(0.0, end_sec - start_sec),
+        })
+    if out and out[0]["start"] != "00:00:00":
+        first_start_sec = _parse_time_str(out[0]["start"])
+        out.insert(0, {
+            "start":    "00:00:00",
+            "end":      out[0]["start"],
+            "title":    _intro_chapter_title(lang_iso),
+            "duration_sec": max(0.0, first_start_sec),
         })
     return out
 
@@ -166,7 +192,7 @@ def _persist_pack(pack: dict, srt_path: str, subtitles_dir: str, lang_iso: str,
 
     titles = pack.get("titles") or []
     segments = pack.get("segments") or []
-    chapters = _derive_chapters(segments, srt_path)
+    chapters = _derive_chapters(segments, srt_path, lang_iso)
 
     titles_path = analysis_path(subtitles_dir, lang_iso, "titles")
     chapters_path = analysis_path(subtitles_dir, lang_iso, "chapters")
