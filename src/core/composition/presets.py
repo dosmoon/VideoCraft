@@ -27,7 +27,7 @@ from typing import Optional
 from core import user_data
 
 from .style import (
-    BgmConfig, CompositionStyle, HookOutroStyle, SubtitleLineStyle,
+    CompositionStyle, HookOutroStyle, SubtitleLineStyle,
     SubtitleStyle, WatermarkStyle,
 )
 
@@ -89,7 +89,7 @@ def composition_style_from_dict(d: dict) -> CompositionStyle:
             d.get("watermark") or {}, WatermarkStyle)),
         hook_outro=HookOutroStyle(**_filter_kwargs(
             d.get("hook_outro") or {}, HookOutroStyle)),
-        bgm=BgmConfig(**_filter_kwargs(d.get("bgm") or {}, BgmConfig)),
+        overlay_styles=dict(d.get("overlay_styles") or {}),
     )
 
 

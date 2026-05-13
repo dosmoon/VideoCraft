@@ -1,9 +1,10 @@
 """CompositionStyle schema — pure dataclasses, no migration shims.
 
 The single source of truth for "how should the output video look": aspect,
-subtitle layout, watermark, hook/outro card, BGM. Consumed by render.py
-(ffmpeg side) and preview.py (WebView side); both layers see the exact
-same field set.
+subtitle layout, watermark, hook/outro card, plus a reusable `overlay_styles`
+class library for future news-desk style elements (lower-thirds, chapter
+cards, etc.). Consumed by render.py (ffmpeg side) and preview.py (WebView
+side); both layers see the exact same field set.
 
 Schema is intentionally flat and unversioned. We don't carry compatibility
 code for the old ClipProjectConfig — JSON that doesn't match the current
@@ -81,26 +82,24 @@ class HookOutroStyle:
     outro_duration_sec: float = 5.0
 
 
-# ── BGM (placeholder, not wired to render yet) ─────────────────────────────
-
-@dataclass
-class BgmConfig:
-    path: str = ""
-    volume: int = 50                  # 0-100; not yet wired
-
-
 # ── Top-level CompositionStyle ─────────────────────────────────────────────
 
 @dataclass
 class CompositionStyle:
     """Project-level output style — one CompositionStyle drives one clip
-    (or batch of clips) through the render pipeline."""
+    (or batch of clips) through the render pipeline.
+
+    `overlay_styles` is the named class library for future overlay kinds
+    (lower-third, chapter-card, ticker, breaking-news bug, ...). Concrete
+    classes are not yet defined — the dict slot reserves the schema seat
+    so news_desk derivatives can grow into it without breaking presets.
+    """
     aspect: str = "9:16"              # "9:16" | "16:9" | "1:1" | "4:5"
     encode_preset: str = "veryfast"   # ffmpeg x264 preset
     subtitle: SubtitleStyle = field(default_factory=SubtitleStyle)
     watermark: WatermarkStyle = field(default_factory=WatermarkStyle)
     hook_outro: HookOutroStyle = field(default_factory=HookOutroStyle)
-    bgm: BgmConfig = field(default_factory=BgmConfig)
+    overlay_styles: dict = field(default_factory=dict)
 
     def aspect_ratio(self) -> tuple[int, int]:
         """Parse aspect string into (width_ratio, height_ratio)."""

@@ -469,22 +469,6 @@ class ClipToolApp(ToolBase):
                      textvariable=self._ho_outro_duration,
                      width=5).pack(side="left", padx=(4, 0))
 
-        # BGM (placeholder)
-        bgm = ttk.LabelFrame(parent, text=tr("clip_tool.section_bgm"))
-        bgm.pack(fill="x", padx=6, pady=4)
-        self._bgm_path = tk.StringVar(value=self._current_style.bgm.path)
-        self._bgm_volume = tk.IntVar(value=self._current_style.bgm.volume)
-        row = ttk.Frame(bgm); row.pack(fill="x", padx=4, pady=2)
-        ttk.Label(row, text=tr("clip_tool.bgm_path")).pack(side="left")
-        ttk.Entry(row, textvariable=self._bgm_path,
-                  width=24).pack(side="left", padx=(4, 0), fill="x", expand=True)
-        row = ttk.Frame(bgm); row.pack(fill="x", padx=4, pady=2)
-        ttk.Label(row, text=tr("clip_tool.bgm_volume")).pack(side="left")
-        ttk.Spinbox(row, from_=0, to=100, textvariable=self._bgm_volume,
-                     width=4).pack(side="left", padx=(4, 0))
-        tk.Label(bgm, text=tr("clip_tool.bgm_note"),
-                 fg="#888", anchor="w").pack(fill="x", padx=4, pady=(2, 4))
-
         self._wire_traces()
 
     def _color_picker(self, parent: tk.Misc, var: tk.StringVar) -> None:
@@ -519,7 +503,6 @@ class ClipToolApp(ToolBase):
             self._ho_stroke_color, self._ho_stroke_width, self._ho_box_padding,
             self._ho_hook_position, self._ho_outro_position,
             self._ho_hook_duration, self._ho_outro_duration,
-            self._bgm_path, self._bgm_volume,
         ):
             var.trace_add("write", lambda *_a: self._on_form_changed())
 
@@ -1538,8 +1521,6 @@ class ClipToolApp(ToolBase):
             self._ho_outro_position.set(h.outro_position)
             self._ho_hook_duration.set(h.hook_duration_sec)
             self._ho_outro_duration.set(h.outro_duration_sec)
-            self._bgm_path.set(s.bgm.path)
-            self._bgm_volume.set(s.bgm.volume)
         finally:
             self._suspend_traces = False
         self._schedule_style_preview_refresh()
@@ -1548,7 +1529,7 @@ class ClipToolApp(ToolBase):
     def _read_form_into_style(self) -> None:
         from core.composition import (
             SubtitleStyle, SubtitleLineStyle, WatermarkStyle,
-            HookOutroStyle, BgmConfig,
+            HookOutroStyle,
         )
         self._current_style = CompositionStyle(
             aspect=self._aspect_var.get(),
@@ -1598,10 +1579,7 @@ class ClipToolApp(ToolBase):
                 hook_duration_sec=float(self._ho_hook_duration.get()),
                 outro_duration_sec=float(self._ho_outro_duration.get()),
             ),
-            bgm=BgmConfig(
-                path=self._bgm_path.get(),
-                volume=int(self._bgm_volume.get()),
-            ),
+            overlay_styles=dict(self._current_style.overlay_styles),
         )
 
     def _on_form_changed(self) -> None:

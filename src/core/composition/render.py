@@ -1,14 +1,19 @@
 """ffmpeg + libass + drawtext render pipeline.
 
-One call to ffmpeg per output clip, all overlays composed via a single
-filter_complex chain. The shape:
+One call to ffmpeg per output clip. All overlays — subtitle tracks,
+watermark, hook/outro text, plus any user-provided OverlaySpec entries —
+flow through a single dispatch table:
 
-    [0:v] crop → scale+pad → subtitles(libass) → image-wm → text-wm
-            + hook drawtext + outro drawtext → [vout]
+    [0:v] crop → scale+pad → <overlay 1> → <overlay 2> → ... → [vout]
 
-Stage 1 scope deliberately matches the old export_clip — same crop logic,
-same libass force_style, same drawtext escapes. Per-word karaoke,
-smart-crop face_center, and BGM mixing are not in this layer yet.
+The named style sections (style.subtitle / style.watermark /
+style.hook_outro + req.hook_text / req.outro_text) are converted to
+internal _OverlayJob records by _named_overlay_jobs(); future news_desk
+overlay kinds (chapter_card / lower_third / ...) drop in as additional
+registered renderers without touching the main loop.
+
+Per-word karaoke, smart-crop face_center, and audio mixing are not in
+this layer yet.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ import os
 import re
 import subprocess
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Callable, Optional
 
@@ -29,6 +34,7 @@ from core.subtitle_ops import (
 
 from .style import CompositionStyle, SubtitleStyle, SubtitleLineStyle, \
     WatermarkStyle, HookOutroStyle, compute_subtitle_max_chars
+from .overlays import OverlaySpec
 from .fonts import (
     hook_outro_font_path, y_expr_for_position, ass_alignment_for_position,
 )
@@ -58,6 +64,7 @@ class CompositionRequest:
     hook_text: str = ""                 # rendered as top overlay during hook window
     outro_text: str = ""                # rendered as bottom overlay during outro window
     crop_rect: Optional[dict] = None    # {x,y,w,h} normalized; None = center crop
+    overlays: list = field(default_factory=list)    # list[OverlaySpec] — future news_desk overlays
 
 
 @dataclass
@@ -338,7 +345,9 @@ def _build_text_watermark_drawtext(watermark: WatermarkStyle,
 
 def _build_image_watermark_chain(watermark: WatermarkStyle,
                                     target_w: int,
-                                    prev_label: str
+                                    prev_label: str,
+                                    src_label: str,
+                                    out_label: str,
                                     ) -> tuple[list[str], str]:
     """Image watermark needs a `movie` source + overlay pair (drawtext can't
     render external images). Returns (extra_nodes, new_chain_head)."""
@@ -357,9 +366,175 @@ def _build_image_watermark_chain(watermark: WatermarkStyle,
     y = f"H-h-{margin}" if pos.startswith("bottom") else f"{margin}"
     return ([
         f"movie='{img_ff}',scale={wm_w}:-1,"
-        f"format=rgba,colorchannelmixer=aa={opacity:.3f}[vcwm]",
-        f"{prev_label}[vcwm]overlay={x}:{y}[vcvw]",
-    ], "[vcvw]")
+        f"format=rgba,colorchannelmixer=aa={opacity:.3f}{src_label}",
+        f"{prev_label}{src_label}overlay={x}:{y}{out_label}",
+    ], out_label)
+
+
+# ── Overlay dispatch — converts named style sections + req.overlays into
+#    a unified job list, then runs registered renderers to extend the
+#    filter_complex chain. New overlay kinds plug in via register_renderer.
+
+@dataclass
+class _RenderCtx:
+    target_w: int
+    target_h: int
+    duration: float
+    aspect: tuple[int, int]
+    style: CompositionStyle
+    tmp_files: list[str]
+    _label_seq: int = 0
+
+    def next_label(self) -> str:
+        self._label_seq += 1
+        return f"[ovl{self._label_seq}]"
+
+
+@dataclass
+class _OverlayJob:
+    """Internal render job — discriminated by `kind`, dispatched to a
+    registered renderer. `data` carries kind-specific inputs (already
+    resolved against style + request)."""
+    kind: str
+    z_order: int = 100
+    data: dict = field(default_factory=dict)
+
+
+# Renderer signature: (job, prev_label, ctx) → (filter_complex_parts, new_label)
+_OverlayRenderer = Callable[[_OverlayJob, str, _RenderCtx],
+                              tuple[list[str], str]]
+
+_OVERLAY_RENDERERS: dict[str, _OverlayRenderer] = {}
+
+
+def register_overlay_renderer(kind: str, fn: _OverlayRenderer) -> None:
+    """Register a renderer for an overlay kind. Future news_desk kinds
+    (chapter_card, lower_third, ...) call this from their own module."""
+    _OVERLAY_RENDERERS[kind] = fn
+
+
+# ── Built-in renderers (named overlays) ─────────────────────────────────────
+
+def _renderer_subtitle_libass(job: _OverlayJob, prev_label: str,
+                                ctx: _RenderCtx) -> tuple[list[str], str]:
+    srt_path = job.data.get("srt_path")
+    force_style = job.data.get("force_style")
+    if not (srt_path and os.path.exists(srt_path)
+            and os.path.getsize(srt_path) > 0):
+        return [], prev_label
+    srt_ff = escape_ffmpeg_path(srt_path)
+    out_label = ctx.next_label()
+    return ([f"{prev_label}subtitles=filename='{srt_ff}':"
+             f"force_style='{force_style}'{out_label}"],
+            out_label)
+
+
+def _renderer_image_watermark(job: _OverlayJob, prev_label: str,
+                                ctx: _RenderCtx) -> tuple[list[str], str]:
+    wm: WatermarkStyle = job.data["watermark"]
+    src_label = ctx.next_label()
+    out_label = ctx.next_label()
+    return _build_image_watermark_chain(
+        wm, ctx.target_w, prev_label, src_label, out_label)
+
+
+def _renderer_text_watermark(job: _OverlayJob, prev_label: str,
+                               ctx: _RenderCtx) -> tuple[list[str], str]:
+    wm: WatermarkStyle = job.data["watermark"]
+    snippet = _build_text_watermark_drawtext(wm, ctx.target_w, ctx.tmp_files)
+    if not snippet:
+        return [], prev_label
+    out_label = ctx.next_label()
+    return [f"{prev_label}{snippet}{out_label}"], out_label
+
+
+def _renderer_hook_text(job: _OverlayJob, prev_label: str,
+                          ctx: _RenderCtx) -> tuple[list[str], str]:
+    snippet = _drawtext_filter(
+        job.data["text"], role="hook", ho=ctx.style.hook_outro,
+        duration=ctx.duration, aspect_ratio=ctx.aspect,
+        tmp_files=ctx.tmp_files)
+    if not snippet:
+        return [], prev_label
+    out_label = ctx.next_label()
+    return [f"{prev_label}{snippet}{out_label}"], out_label
+
+
+def _renderer_outro_text(job: _OverlayJob, prev_label: str,
+                           ctx: _RenderCtx) -> tuple[list[str], str]:
+    snippet = _drawtext_filter(
+        job.data["text"], role="outro", ho=ctx.style.hook_outro,
+        duration=ctx.duration, aspect_ratio=ctx.aspect,
+        tmp_files=ctx.tmp_files)
+    if not snippet:
+        return [], prev_label
+    out_label = ctx.next_label()
+    return [f"{prev_label}{snippet}{out_label}"], out_label
+
+
+register_overlay_renderer("subtitle_libass", _renderer_subtitle_libass)
+register_overlay_renderer("image_watermark", _renderer_image_watermark)
+register_overlay_renderer("text_watermark",  _renderer_text_watermark)
+register_overlay_renderer("hook_text",       _renderer_hook_text)
+register_overlay_renderer("outro_text",      _renderer_outro_text)
+
+
+def _named_overlay_jobs(req: CompositionRequest,
+                          sub1_srt: Optional[str],
+                          sub2_srt: Optional[str]) -> list[_OverlayJob]:
+    """Convert the named style sections + req.hook_text/outro_text into
+    _OverlayJob records. z_order chosen so the visible stacking matches
+    the legacy hand-coded order: subtitles → image_wm → text_wm → hook/outro.
+    """
+    style = req.style
+    jobs: list[_OverlayJob] = []
+
+    # Subtitle tracks.
+    margin_v1, margin_v2 = _track_margins(style.subtitle)
+    if style.subtitle.sub1.enabled and sub1_srt:
+        jobs.append(_OverlayJob(kind="subtitle_libass", z_order=10, data={
+            "srt_path": sub1_srt,
+            "force_style": _build_subtitle_force_style(
+                style.subtitle.sub1, style.subtitle, margin_v=margin_v1),
+        }))
+    if style.subtitle.sub2.enabled and sub2_srt:
+        jobs.append(_OverlayJob(kind="subtitle_libass", z_order=11, data={
+            "srt_path": sub2_srt,
+            "force_style": _build_subtitle_force_style(
+                style.subtitle.sub2, style.subtitle, margin_v=margin_v2),
+        }))
+
+    # Watermark — image or text (mutually exclusive).
+    if style.watermark.enabled:
+        if style.watermark.type == "image":
+            jobs.append(_OverlayJob(kind="image_watermark", z_order=20,
+                                      data={"watermark": style.watermark}))
+        else:
+            jobs.append(_OverlayJob(kind="text_watermark", z_order=21,
+                                      data={"watermark": style.watermark}))
+
+    # Hook + Outro card.
+    if req.hook_text:
+        jobs.append(_OverlayJob(kind="hook_text", z_order=30,
+                                  data={"text": req.hook_text}))
+    if req.outro_text:
+        jobs.append(_OverlayJob(kind="outro_text", z_order=31,
+                                  data={"text": req.outro_text}))
+
+    # User-supplied overlays (future news_desk kinds). z_order from spec,
+    # defaulting to 100 so they stack above the named overlays unless the
+    # caller explicitly orders them in between.
+    for spec in req.overlays:
+        if not isinstance(spec, OverlaySpec):
+            continue
+        jobs.append(_OverlayJob(
+            kind=spec.kind,
+            z_order=spec.z_order,
+            data={"spec": spec},
+        ))
+
+    jobs.sort(key=lambda j: j.z_order)
+    return jobs
 
 
 # ── Public entry point ─────────────────────────────────────────────────────
@@ -429,64 +604,33 @@ def render_composition(
     tmp_srt2_path = _prepare_track_srt(
         req.source_srt_secondary, style.subtitle.sub2, "sub2")
 
-    # ── Build filter_complex ───────────────────────────────────────────────
+    # ── Build filter_complex via overlay dispatch ─────────────────────────
     parts: list[str] = []
-    cur = "[0:v]"
-    parts.append(f"{cur}crop={cw}:{ch}:{cx}:{cy},"
+    parts.append(f"[0:v]crop={cw}:{ch}:{cx}:{cy},"
                  f"scale={target_w}:{target_h}:"
                  f"force_original_aspect_ratio=decrease,"
                  f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2:color=black,"
                  f"setsar=1[v0]")
     cur = "[v0]"
 
-    margin_v1, margin_v2 = _track_margins(style.subtitle)
-    burn1 = (style.subtitle.sub1.enabled and tmp_srt_path
-             and os.path.exists(tmp_srt_path)
-             and os.path.getsize(tmp_srt_path) > 0)
-    if burn1:
-        srt_ff = escape_ffmpeg_path(tmp_srt_path)
-        force_style = _build_subtitle_force_style(
-            style.subtitle.sub1, style.subtitle, margin_v=margin_v1)
-        parts.append(f"{cur}subtitles=filename='{srt_ff}':"
-                     f"force_style='{force_style}'[v1]")
-        cur = "[v1]"
-
-    burn2 = (style.subtitle.sub2.enabled and tmp_srt2_path
-             and os.path.exists(tmp_srt2_path)
-             and os.path.getsize(tmp_srt2_path) > 0)
-    if burn2:
-        srt2_ff = escape_ffmpeg_path(tmp_srt2_path)
-        force_style = _build_subtitle_force_style(
-            style.subtitle.sub2, style.subtitle, margin_v=margin_v2)
-        parts.append(f"{cur}subtitles=filename='{srt2_ff}':"
-                     f"force_style='{force_style}'[v1b]")
-        cur = "[v1b]"
-
-    img_wm_nodes, cur = _build_image_watermark_chain(
-        style.watermark, target_w, cur)
-    parts.extend(img_wm_nodes)
-
     tmp_text_files: list[str] = []
-    overlay_filters: list[str] = []
-    text_wm = _build_text_watermark_drawtext(
-        style.watermark, target_w, tmp_text_files)
-    if text_wm:
-        overlay_filters.append(text_wm)
-    ho = style.hook_outro
-    aspect = style.aspect_ratio()
-    if req.hook_text:
-        overlay_filters.append(_drawtext_filter(
-            req.hook_text, role="hook", ho=ho, duration=duration,
-            aspect_ratio=aspect, tmp_files=tmp_text_files))
-    if req.outro_text:
-        overlay_filters.append(_drawtext_filter(
-            req.outro_text, role="outro", ho=ho, duration=duration,
-            aspect_ratio=aspect, tmp_files=tmp_text_files))
-    if overlay_filters:
-        parts.append(f"{cur}{','.join(overlay_filters)}[vout]")
-    else:
-        parts.append(f"{cur}null[vout]")
+    ctx = _RenderCtx(
+        target_w=target_w, target_h=target_h,
+        duration=duration, aspect=style.aspect_ratio(),
+        style=style, tmp_files=tmp_text_files,
+    )
 
+    jobs = _named_overlay_jobs(req, tmp_srt_path, tmp_srt2_path)
+    for job in jobs:
+        renderer = _OVERLAY_RENDERERS.get(job.kind)
+        if renderer is None:
+            # Unknown kind (e.g. future news_desk overlay with no renderer
+            # registered yet) — skip silently rather than fail the render.
+            continue
+        extra, cur = renderer(job, cur, ctx)
+        parts.extend(extra)
+
+    parts.append(f"{cur}null[vout]")
     filter_complex = ";".join(parts)
 
     # ── Invoke ffmpeg ──────────────────────────────────────────────────────
