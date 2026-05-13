@@ -19,8 +19,9 @@ import os
 import re
 import srt
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Callable, Optional
 
+from core.io_utils import atomic_write_text, atomic_write_json
 from core.subtitle_pipeline import ProgressInfo
 from core.ai.cancellation import CancellationToken
 from core.subtitle_ops import read_srt
@@ -31,18 +32,6 @@ from core.source_context import read_context as _read_context
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def _atomic_write_text(path: str, text: str) -> None:
-    """Write text to path via a temp file + rename to avoid partial files."""
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-        f.write(text)
-    os.replace(tmp, path)
-
-
-def _atomic_write_json(path: str, data: Any) -> None:
-    _atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
 
 
 def _say(progress_cb, phase: str, status: str, percent: float | None = None) -> None:
@@ -198,14 +187,14 @@ def _persist_pack(pack: dict, srt_path: str, subtitles_dir: str, lang_iso: str,
     chapters_path = analysis_path(subtitles_dir, lang_iso, "chapters")
     refined_path = analysis_path(subtitles_dir, lang_iso, "chapter_refined")
 
-    _atomic_write_json(titles_path, {
+    atomic_write_json(titles_path, {
         "schema_version": 1,
         "generated_at": _now_iso(),
         "source_subtitle": f"{lang_iso}.srt",
         "titles": [str(t).strip() for t in titles if t],
     })
 
-    _atomic_write_json(chapters_path, {
+    atomic_write_json(chapters_path, {
         "schema_version": 1,
         "generated_at": _now_iso(),
         "source_subtitle": f"{lang_iso}.srt",
@@ -218,7 +207,7 @@ def _persist_pack(pack: dict, srt_path: str, subtitles_dir: str, lang_iso: str,
         md_lines.append("")
         md_lines.append(str(seg.get("refined", "")).strip())
         md_lines.append("")
-    _atomic_write_text(refined_path, "\n".join(md_lines))
+    atomic_write_text(refined_path, "\n".join(md_lines))
 
     return {
         "titles": titles_path,
@@ -263,7 +252,7 @@ def run_transcript(srt_path: str, subtitles_dir: str, lang_iso: str,
     text = extract_all_subtitles(srt_path)
     path = analysis_path(subtitles_dir, lang_iso, "transcript")
     header = f"# 全文文字稿 ({lang_iso})\n\n"
-    _atomic_write_text(path, header + text + "\n")
+    atomic_write_text(path, header + text + "\n")
     return {"path": path, "kind": "transcript"}
 
 
@@ -314,7 +303,7 @@ def run_chapter_transcript(srt_path: str, subtitles_dir: str, lang_iso: str,
         else:
             lines.append("（此章节内无字幕）")
         lines.append("")
-    _atomic_write_text(out_path, "\n".join(lines))
+    atomic_write_text(out_path, "\n".join(lines))
     return {"path": out_path, "kind": "chapter_transcript"}
 
 
@@ -503,7 +492,7 @@ def run_hotclips(srt_path: str, subtitles_dir: str, lang_iso: str,
 
     _say(progress_cb, "transcribing", "正在写入产物...", 95)
     out_path = analysis_path(subtitles_dir, lang_iso, "hotclips")
-    _atomic_write_json(out_path, {
+    atomic_write_json(out_path, {
         "schema_version": 1,
         "generated_at": _now_iso(),
         "source_subtitle": f"{lang_iso}.srt",
