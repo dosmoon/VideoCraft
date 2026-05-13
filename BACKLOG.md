@@ -101,6 +101,7 @@
 | 🟡 P2 | [ ] | 合成视频高级功能 | 音效叠加、多层视频叠加（类视频编辑工具），如背景音乐、B-roll 覆盖等 |
 | 🟡 P2 | [ ] | AI 智能排版融合 | 将 AI 能力融入合成视频流程，如自动字幕排版、智能场景切换建议等 |
 | 🟡 P2 | [ ] | CLI / AI 对话驱动视频合成 | 通过 AI 对话方式调用既有素材与工具合成视频，类 agent 驱动的视频生产线 |
+| 🟡 P2 | [ ] | 视频引擎选型监控:WebView+ffmpeg 局限性观察 | 当前 composition core 走"WebView2 + Canvas 做预览,ffmpeg drawtext/libass 做渲染"路线,预览/渲染一致性靠"单源 Python 预处理 + 两端各自实现"保证。已知局限:(a) 字体/字距预览端 CSS 跟 libass 真实渲染始终有差异,只能"标定 delta"不能根除;(b) drawtext 不支持原生换行、box=1 只能矩形、无圆角/弧形/动效;(c) ffmpeg filter_complex 字符串拼接易踩坑(% 字面量 / 转义 / textfile 兜底等),已经修过几轮;(d) 复杂叠加(多层动画、关键帧曲线、复合滤镜)只能拼字符串,可维护性下降。**观察点**:随着 composition v0.2/v0.3 引入 karaoke / smart-crop / 动画 / 多 track / brand kit,如果哪一项"原则上 ffmpeg 做不到"或"做出来跟预览始终对不齐"成为反复出现的瓶颈,启动开发自有渲染/合成引擎不可怕——可选路线含:Skia/Cairo + 自家 codec 调度 / Bun + canvas + nodejs codecs / Rust + wgpu。**触发标准**:同一类一致性 bug 反复修第 3 次,或某类视觉效果"无法在 ffmpeg 表达"挡了视频质量飞跃。**当前不做**:先用现有方案推进 composition v0.2/v0.3,验证瓶颈是不是真实存在 |
 
 ---
 
