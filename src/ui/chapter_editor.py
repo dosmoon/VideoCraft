@@ -130,6 +130,8 @@ class ChapterEditor(tk.Frame):
         vsb.pack(side="right", fill="y")
         self._tree.pack(side="left", fill="both", expand=True)
         self._tree.bind("<<TreeviewSelect>>", self._on_select)
+        self._tree.bind("<Double-1>", self._on_double_click)
+        self._title_editor: Optional[tk.Entry] = None
 
         # Right: video + controls
         right = tk.Frame(paned, bg="white")
@@ -219,6 +221,59 @@ class ChapterEditor(tk.Frame):
         self._start_entry.configure(state="disabled" if is_first else "normal")
         self._seek_to_str(start_str)
         self._refresh_button_states()
+
+    # ── Title inline edit ────────────────────────────────────────────────
+
+    def _on_double_click(self, event) -> None:
+        """Double-click on the title cell opens an overlay Entry."""
+        region = self._tree.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+        col = self._tree.identify_column(event.x)
+        if col != "#2":  # title column
+            return
+        row_id = self._tree.identify_row(event.y)
+        if not row_id:
+            return
+        idx = int(row_id)
+        bbox = self._tree.bbox(row_id, col)
+        if not bbox:
+            return
+        x, y, w, h = bbox
+        current_title = self._working[idx].get("title", "")
+        self._close_title_editor()
+        entry = tk.Entry(self._tree, font=("Microsoft YaHei UI", 10),
+                         borderwidth=0, highlightthickness=1,
+                         highlightcolor="#0078d4")
+        entry.insert(0, current_title)
+        entry.select_range(0, "end")
+        entry.place(x=x, y=y, width=w, height=h)
+        entry.focus_set()
+        self._title_editor = entry
+        self._title_editor_idx = idx
+
+        def commit(_e=None):
+            new_val = entry.get().strip()
+            self._close_title_editor()
+            if new_val != current_title:
+                self._working[idx]["title"] = new_val
+                self._tree.set(row_id, "title", new_val)
+                self._refresh_button_states()
+
+        def cancel(_e=None):
+            self._close_title_editor()
+
+        entry.bind("<Return>", commit)
+        entry.bind("<FocusOut>", commit)
+        entry.bind("<Escape>", cancel)
+
+    def _close_title_editor(self) -> None:
+        if self._title_editor is not None:
+            try:
+                self._title_editor.destroy()
+            except Exception:
+                pass
+            self._title_editor = None
 
     # ── WebView messages ─────────────────────────────────────────────────
 
