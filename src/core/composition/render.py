@@ -346,25 +346,30 @@ def _build_subtitle_force_style(line: SubtitleLineStyle,
 
 def _track_margins(subtitle: SubtitleStyle) -> tuple[int, int]:
     """Vertical MarginV for (sub1, sub2) so the two tracks stack without
-    overlapping. Output-pixel space at 1080 short edge.
+    overlapping. ASS script-pixel space — libass scales by output_h/PlayResY
+    (empirically ~4.7× at 1080 output, see compute_subtitle_max_chars).
 
-    sub1 is the primary (typically source-language) track and sits visually
-    closer to the frame center than sub2 (translation). For position=top,
-    sub1 anchors near the top and sub2 drops below; for bottom, sub1 sits
-    above and sub2 anchors near the edge. position=middle uses Alignment=5
-    where MarginV is ignored, so stacking is not supported there — the two
-    tracks will overlap; callers should use top/bottom for bilingual work.
+    sub1 is the primary track and sits visually above sub2 (translation).
+    For position=top, sub1 anchors near the top edge with sub2 below;
+    for bottom, sub2 anchors near the bottom edge with sub1 above.
+    position=middle uses Alignment=5 where MarginV is ignored, so stacking
+    isn't supported there — callers should use top/bottom for bilingual.
 
-    The 4.0× fontsize gap is empirical: libass with no PlayResY uses video
-    height as its coordinate space, so script-pixel MarginV ≈ output px,
-    and one rendered line is ~fontsize×4.0 px tall at 1080 short edge.
+    Empirical calibration: with base=25, fontsize×0.7 stacking, the
+    output positions roughly match what the JS WebView preview shows
+    (subtitle block bottom-anchored at ~88-92% of frame height, sub1 a
+    line height above sub2). The fontsize×0.7 reflects that libass'
+    rendered line height ≈ fontsize × line_spacing_factor / scale ≈
+    fontsize × 1.2 / ~4.7 × 4.7 ≈ ~fontsize × 0.7 in script-pixel space.
+    Earlier values (4.0× gap, 60 base) put sub1 in the middle of the
+    frame at 1080p output — way off.
     """
-    base = 60
+    base = 25
     pos = subtitle.position
     if pos == "top":
-        return (base, base + int(subtitle.sub1.fontsize * 4.0))
+        return (base, base + int(subtitle.sub1.fontsize * 0.7))
     if pos == "bottom":
-        return (base + int(subtitle.sub2.fontsize * 4.0), base)
+        return (base + int(subtitle.sub2.fontsize * 0.7), base)
     return (base, base)
 
 
