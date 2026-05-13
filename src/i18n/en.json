@@ -1884,5 +1884,10 @@
   "chapter_editor.btn_save": "💾 Save",
   "chapter_editor.btn_undo": "↺ Undo",
   "chapter_editor.saved": "Saved",
-  "chapter_editor.save_failed_title": "Save failed"
+  "chapter_editor.save_failed_title": "Save failed",
+  "chapter_editor.btn_add_at": "➕ Add at {t}",
+  "chapter_editor.btn_delete": "🗑 Delete",
+  "chapter_editor.menu_delete": "Delete chapter",
+  "chapter_editor.new_default": "New chapter",
+  "chapter_editor.cant_delete_first": "First chapter (00:00) cannot be deleted manually"
 }

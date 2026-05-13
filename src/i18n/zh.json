@@ -1884,5 +1884,10 @@
   "chapter_editor.btn_save": "💾 保存",
   "chapter_editor.btn_undo": "↺ 撤销",
   "chapter_editor.saved": "已保存",
-  "chapter_editor.save_failed_title": "保存失败"
+  "chapter_editor.save_failed_title": "保存失败",
+  "chapter_editor.btn_add_at": "➕ 在 {t} 处新增",
+  "chapter_editor.btn_delete": "🗑 删除",
+  "chapter_editor.menu_delete": "删除章节",
+  "chapter_editor.new_default": "新章节",
+  "chapter_editor.cant_delete_first": "首章 (00:00) 不可手动删除"
 }

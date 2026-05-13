@@ -131,7 +131,14 @@ class ChapterEditor(tk.Frame):
         self._tree.pack(side="left", fill="both", expand=True)
         self._tree.bind("<<TreeviewSelect>>", self._on_select)
         self._tree.bind("<Double-1>", self._on_double_click)
+        self._tree.bind("<Delete>", lambda _e: self._on_delete_chapter())
+        self._tree.bind("<Button-3>", self._on_right_click)
         self._title_editor: Optional[tk.Entry] = None
+
+        self._tree_menu = tk.Menu(self._tree, tearoff=0)
+        self._tree_menu.add_command(
+            label=tr("chapter_editor.menu_delete"),
+            command=self._on_delete_chapter)
 
         # Right: video + controls
         right = tk.Frame(paned, bg="white")
@@ -186,6 +193,23 @@ class ChapterEditor(tk.Frame):
                                    command=self._on_undo)
         self._undo_btn.grid(row=0, column=4, sticky="w")
 
+        # Second row: add / delete
+        ctrl2 = tk.Frame(right, bg="white")
+        ctrl2.pack(fill="x", pady=(0, 4), padx=8)
+
+        self._add_btn = tk.Button(
+            ctrl2, text=tr("chapter_editor.btn_add_at", t="0s"),
+            relief="flat", bg="#e8e8e8", padx=10,
+            command=self._on_add_chapter)
+        self._add_btn.pack(side="left", padx=(0, 6))
+
+        self._del_btn = tk.Button(
+            ctrl2, text=tr("chapter_editor.btn_delete"),
+            relief="flat", bg="#e8e8e8", padx=10,
+            state="disabled",
+            command=self._on_delete_chapter)
+        self._del_btn.pack(side="left")
+
         self._status = tk.Label(right, text="", bg="white", fg="#888",
                                 font=("Microsoft YaHei UI", 9),
                                 anchor="w")
@@ -235,7 +259,12 @@ class ChapterEditor(tk.Frame):
         row_id = self._tree.identify_row(event.y)
         if not row_id:
             return
+        self._open_title_editor(row_id)
+
+    def _open_title_editor(self, row_id: str) -> None:
+        """Place a transient Entry over the title cell for inline edit."""
         idx = int(row_id)
+        col = "#2"
         bbox = self._tree.bbox(row_id, col)
         if not bbox:
             return
@@ -284,6 +313,8 @@ class ChapterEditor(tk.Frame):
             t = int(data.get("t") or 0)
             self._current_video_sec = t
             self._set_cur_btn.configure(text=f"🎯 {t}s")
+            self._add_btn.configure(
+                text=tr("chapter_editor.btn_add_at", t=f"{t}s"))
 
     def _seek_to_str(self, ts: str) -> None:
         sec = parse_time_str(ts)
@@ -348,12 +379,63 @@ class ChapterEditor(tk.Frame):
             state="normal" if dirty else "disabled")
         self._undo_btn.configure(
             state="normal" if dirty else "disabled")
-        # "Set from current" requires a row selected AND that row not
-        # being the locked first chapter.
-        can_set = (self._selected is not None
+        # "Set from current" and "Delete" both require a non-first row
+        # selected (first row is the locked 00:00 chapter).
+        can_act = (self._selected is not None
                    and self._selected != 0)
         self._set_cur_btn.configure(
-            state="normal" if can_set else "disabled")
+            state="normal" if can_act else "disabled")
+        self._del_btn.configure(
+            state="normal" if can_act else "disabled")
+
+    # ── Add / delete ─────────────────────────────────────────────────────
+
+    def _on_add_chapter(self) -> None:
+        """Insert a chapter at the video's current playback second.
+
+        Order is irrelevant in working set — save normalization sorts
+        before writing. We append and select; user tweaks title inline.
+        """
+        sec = self._current_video_sec
+        new_ch = {
+            "start": fmt_time_str(sec),
+            "title": tr("chapter_editor.new_default"),
+        }
+        self._working.append(new_ch)
+        new_iid = str(len(self._working) - 1)
+        self._reload_tree()
+        self._tree.selection_set(new_iid)
+        self._tree.focus(new_iid)
+        self._tree.see(new_iid)
+        self._on_select()
+        # Open title editor on the new row after Tk paints the row.
+        self.after(50, lambda: self._open_title_editor(new_iid))
+
+    def _on_delete_chapter(self) -> None:
+        if self._selected is None:
+            return
+        if self._selected == 0:
+            self._flash_status(tr("chapter_editor.cant_delete_first"))
+            return
+        del self._working[self._selected]
+        self._reload_tree()
+
+    def _on_right_click(self, event) -> None:
+        row_id = self._tree.identify_row(event.y)
+        if not row_id:
+            return
+        self._tree.selection_set(row_id)
+        self._tree.focus(row_id)
+        self._on_select()
+        # Disable the menu item for the locked first chapter so right-
+        # click affordance matches the toolbar's disabled state.
+        state = "disabled" if int(row_id) == 0 else "normal"
+        self._tree_menu.entryconfigure(0, state=state)
+        self._tree_menu.post(event.x_root, event.y_root)
+
+    def _flash_status(self, text: str, ms: int = 2000) -> None:
+        self._status.configure(text=text)
+        self.after(ms, lambda: self._status.configure(text=""))
 
     def _on_save(self) -> None:
         try:
@@ -370,8 +452,7 @@ class ChapterEditor(tk.Frame):
         self._baseline = copy.deepcopy(normalized)
         self._working = copy.deepcopy(normalized)
         self._reload_tree()
-        self._status.configure(text=tr("chapter_editor.saved"))
-        self.after(2000, lambda: self._status.configure(text=""))
+        self._flash_status(tr("chapter_editor.saved"))
         if self._on_saved is not None:
             try:
                 self._on_saved()
