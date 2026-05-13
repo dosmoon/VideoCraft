@@ -12,14 +12,10 @@ an entry to SCHEMAS. Tasks not in SCHEMAS are treated as text-only.
 from __future__ import annotations
 
 from core.srt_ops import SUBTITLE_PACK_SCHEMA
-from core.program.clip import RANK_SCHEMA, PEAKS_SCHEMA, PACKAGE_SCHEMA
 
 
 SCHEMAS: dict[str, dict] = {
-    "subtitle.pack":       SUBTITLE_PACK_SCHEMA,
-    "clip.rank-chapters":  RANK_SCHEMA,
-    "clip.find-peaks":     PEAKS_SCHEMA,
-    "clip.package":        PACKAGE_SCHEMA,
+    "subtitle.pack": SUBTITLE_PACK_SCHEMA,
 }
 
 

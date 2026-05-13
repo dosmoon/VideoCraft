@@ -199,6 +199,10 @@ def _render_hotclip_card(parent: tk.Frame, index: int, c: dict) -> None:
     if hook:
         fields.append(("hotclip.field.hook", hook,
                        {"font": ("Microsoft YaHei UI", 10, "bold"), "fg": "#222"}))
+    outro = (c.get("outro") or "").strip()
+    if outro:
+        fields.append(("hotclip.field.outro", outro,
+                       {"fg": "#444"}))
     why = (c.get("why_viral") or "").strip()
     if why:
         fields.append(("hotclip.field.why_viral", why,

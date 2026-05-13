@@ -68,7 +68,6 @@ TOOL_MAP = {
     "ai-console":       {"file": "tools/router/ai_console.py",       "class": "AIConsoleApp"},
     "prompt-console":   {"file": "tools/router/prompt_console.py",   "class": "PromptConsoleApp"},
     "model-manager":    {"file": "tools/models/manager_window.py",   "class": "ModelManagerApp"},
-    "clip-script":       {"file": "tools/program/clip_workbench.py",     "class": "ClipWorkbenchApp"},
 }
 
 # ── Tab 状态颜色 ──────────────────────────────────────────────────────────────
@@ -1941,7 +1940,8 @@ class VideoCraftHub:
             # Tools take an optional initial_file (legacy plumbing). Project-
             # aware tools also take project / instance_name (see below).
             kwargs: dict = {}
-            if initial_file is not None:
+            # clip is project-only and does not accept initial_file.
+            if initial_file is not None and tool_key != "clip":
                 kwargs["initial_file"] = initial_file
             # Project-aware tools: subtitle_tool is the first one wired here
             # (字幕视频 workbench). Others can opt in by accepting these kwargs.

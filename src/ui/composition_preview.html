@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>VideoCraft – clip preview</title>
+<title>VideoCraft – composition preview</title>
 <style>
   html, body { margin: 0; padding: 0; background: #1a1a1a; color: #ddd;
                font-family: -apple-system, "Segoe UI", sans-serif;
@@ -12,10 +12,11 @@
   .video-wrap { position: relative; flex: 1; min-height: 0;
                 display: flex; align-items: center; justify-content: center; }
   video { max-width: 100%; max-height: 100%; display: block; background: #000; }
-  canvas { position: absolute; pointer-events: none;
-           cursor: grab; }
+  canvas { position: absolute; pointer-events: none; cursor: grab; }
   canvas.draggable { pointer-events: auto; }
-  .empty { color: #666; font-size: 14px; }
+  .empty { color: #666; font-size: 14px;
+           position: absolute; left: 50%; top: 50%;
+           transform: translate(-50%, -50%); }
   .err { position: absolute; left: 8px; top: 8px;
          background: rgba(180,30,30,0.85); color: #fff;
          padding: 4px 8px; font: 12px Consolas, monospace; }
@@ -26,8 +27,8 @@
   <div class="video-wrap" id="vwrap">
     <video id="vid" controls playsinline></video>
     <canvas id="canvas"></canvas>
+    <div class="empty" id="emptyMsg">no clip loaded</div>
   </div>
-  <div class="empty" id="emptyMsg" style="display:none">no clip loaded</div>
 </div>
 
 <script>
@@ -37,16 +38,12 @@ const ctx    = canvas.getContext('2d');
 const stage  = document.getElementById('stage');
 const empty  = document.getElementById('emptyMsg');
 
-// Crop rect in normalized [0..1] coords. {x,y,w,h}
+// Crop rect in normalized [0..1] source-video coords. {x,y,w,h}
 let rect = { x: 0, y: 0, w: 1, h: 1 };
-let aspectRatio = 9 / 16;        // width / height of crop rect in source pixels
-let clipStart = 0, clipEnd = 0;  // playback bounds within the source video
-let vSrcW = 0, vSrcH = 0;        // source video pixel size (set on metadata)
+let aspectRatio = 9 / 16;
+let clipStart = 0, clipEnd = 0;
+let vSrcW = 0, vSrcH = 0;
 
-// Style state mirrors ClipProjectConfig schema. Sent from Python via
-// vc.setStyle(...). Used by drawSubtitles / drawWatermark / drawHookOutro
-// to render placeholder text inside the crop region — purely a layout
-// preview.
 let styleState = {
   subtitle: {
     position: "bottom",
@@ -64,50 +61,34 @@ let styleState = {
     position: "top-right",
   },
   hookOutro: {
-    size: 48,
-    color: "#FFFFFF",
-    bg_color: "#000000",
-    bg_opacity: 70,
-    stroke_color: "#000000",
-    stroke_width: 3,
-    box_padding: 10,
-    hook_position: "upper-third",
-    outro_position: "lower-third",
-    hook_duration_sec: 5.0,
-    outro_duration_sec: 5.0,
+    size: 48, color: "#FFFFFF",
+    bg_color: "#000000", bg_opacity: 70,
+    stroke_color: "#000000", stroke_width: 3, box_padding: 10,
+    hook_position: "upper-third", outro_position: "lower-third",
+    hook_duration_sec: 5.0, outro_duration_sec: 5.0,
   },
 };
 
-// Per-clip text state — independent of styleState because hook/outro text
-// changes per clip while the visual style is project-level.
 let clipMeta = { hook: "", outro: "" };
+// Real SRT cues in *source-video* timeline: [{start, end, text}]. Empty
+// means render placeholder text from styleState.subtitle.sub*.text.
+let cues = [];
 
-// Output dimensions are derived from the project aspect at a 1080-class
-// short edge (matches Python's _target_dims_for_aspect). The crop region
-// maps to the output frame, so we scale font sizes by ch / target_h.
 const SHORT_EDGE = 1080;
+const ASS_RENDER_SCALE = 4.7;
 
 function targetDims() {
   if (aspectRatio < 1.0) {
-    // vertical (w/h < 1) — short edge is width, long edge is height
     return { tw: SHORT_EDGE, th: Math.round(SHORT_EDGE / aspectRatio) };
   }
   return { tw: Math.round(SHORT_EDGE * aspectRatio), th: SHORT_EDGE };
 }
 
-// libass renders an SRT against PlayResX≈384 while the output is ~1080
-// wide → effective glyph width ≈ 4.7× the nominal Fontsize. Mirrors
-// ASS_RENDER_SCALE in core/program/clip.py so preview char-fit matches
-// the burn pipeline.
-const ASS_RENDER_SCALE = 4.7;
-
-// ── public JS API (called from Python via evaluate_js) ──────────────────
+// ── public JS API ──────────────────────────────────────────────────────
 
 window.vc = {
   setSource(url, startSec, endSec) {
-    if (vid.src !== url) {
-      vid.src = url;
-    }
+    if (vid.src !== url) vid.src = url;
     clipStart = startSec || 0;
     clipEnd   = endSec   || 0;
     vid.currentTime = clipStart;
@@ -125,12 +106,8 @@ window.vc = {
     drawOverlay();
   },
   setCrop(r) {
-    if (!r || r.w == null || r.h == null) {
-      // null → reset to centered max-fit at current aspect
-      resetCropCenter();
-    } else {
-      rect = { x: r.x, y: r.y, w: r.w, h: r.h };
-    }
+    if (!r || r.w == null || r.h == null) resetCropCenter();
+    else rect = { x: r.x, y: r.y, w: r.w, h: r.h };
     drawOverlay();
   },
   setStyle(s) {
@@ -148,6 +125,17 @@ window.vc = {
     }
     drawOverlay();
   },
+  setCues(arr) {
+    cues = Array.isArray(arr) ? arr.filter(c =>
+        c && typeof c.text === 'string' &&
+        typeof c.start === 'number' && typeof c.end === 'number') : [];
+    drawOverlay();
+  },
+  enableCropDrag(on) {
+    cropDragEnabled = !!on;
+    canvas.style.cursor = cropDragEnabled ? 'grab' : 'default';
+    drawOverlay();
+  },
   clear() {
     vid.removeAttribute('src');
     vid.load();
@@ -155,11 +143,15 @@ window.vc = {
   },
 };
 
+// Drag-enable flag — Python toggles this per preview instance (style tab =
+// global crop, clip tab = per-clip crop). When false, all canvas pointer
+// events are ignored.
+let cropDragEnabled = true;
+
 // ── crop math ────────────────────────────────────────────────────────────
 
 function fitRectToAspect() {
   if (!vSrcW || !vSrcH) return;
-  // Largest centered crop at aspectRatio that fits the source.
   const cur = vSrcW / vSrcH;
   if (cur > aspectRatio) {
     const newW = vSrcH * aspectRatio;
@@ -169,22 +161,13 @@ function fitRectToAspect() {
     rect = { x: 0, y: (vSrcH - newH) / 2 / vSrcH, w: 1, h: newH / vSrcH };
   }
 }
-
 function resetCropCenter() { fitRectToAspect(); }
-
 function clampRect() {
-  // Keep aspect, keep within [0,1]^2.
   if (!vSrcW || !vSrcH) return;
-  // Re-derive w,h from aspect anchored at current center, fit to source.
-  // Width-led:
   let w = rect.w;
   let h = (w * vSrcW) / aspectRatio / vSrcH;
-  if (h > 1) {
-    h = 1;
-    w = (h * vSrcH * aspectRatio) / vSrcW;
-  }
-  rect.w = w;
-  rect.h = h;
+  if (h > 1) { h = 1; w = (h * vSrcH * aspectRatio) / vSrcW; }
+  rect.w = w; rect.h = h;
   rect.x = Math.max(0, Math.min(1 - rect.w, rect.x));
   rect.y = Math.max(0, Math.min(1 - rect.h, rect.y));
 }
@@ -192,18 +175,14 @@ function clampRect() {
 // ── canvas overlay sizing & drawing ──────────────────────────────────────
 
 function syncCanvasToVideo() {
-  // Place the canvas exactly over the rendered <video> rect (which letter-
-  // boxes inside vwrap because of object-fit semantics).
   const wrapR = document.getElementById('vwrap').getBoundingClientRect();
   const vidR  = vid.getBoundingClientRect();
-  // Position canvas relative to wrap
   canvas.style.left   = (vidR.left - wrapR.left) + 'px';
   canvas.style.top    = (vidR.top  - wrapR.top)  + 'px';
   canvas.style.width  = vidR.width  + 'px';
   canvas.style.height = vidR.height + 'px';
-  // Set bitmap size to source pixels for crisp lines
   if (vSrcW && vSrcH) {
-    if (canvas.width !== vSrcW)  canvas.width  = vSrcW;
+    if (canvas.width  !== vSrcW) canvas.width  = vSrcW;
     if (canvas.height !== vSrcH) canvas.height = vSrcH;
   }
 }
@@ -213,7 +192,7 @@ function drawOverlay() {
   if (!vSrcW || !vSrcH) return;
   clampRect();
   ctx.clearRect(0, 0, vSrcW, vSrcH);
-  // Dim outside
+  // Dim outside crop
   ctx.fillStyle = 'rgba(0,0,0,0.45)';
   ctx.fillRect(0, 0, vSrcW, vSrcH);
   ctx.clearRect(rect.x*vSrcW, rect.y*vSrcH, rect.w*vSrcW, rect.h*vSrcH);
@@ -230,8 +209,6 @@ function drawOverlay() {
   ctx.moveTo(rect.x*vSrcW, (rect.y+rect.h/2)*vSrcH);
   ctx.lineTo((rect.x+rect.w)*vSrcW, (rect.y+rect.h/2)*vSrcH);
   ctx.stroke();
-  // Subtitles + watermark + hook/outro live INSIDE the crop region (they
-  // get burned into the output frame, which is the cropped + scaled view).
   drawSubtitles();
   drawWatermark();
   drawHookOutro();
@@ -244,52 +221,55 @@ function cropBox() {
   };
 }
 
-// Subtitle font px on canvas. cfg.fontsize is the libass-style nominal
-// value; actual rendered glyph in the output is ~4.7× that (PlayResX
-// scaling). Translate to source/canvas pixels by `ch / target_h`.
 function subtitleFontPx(configSize) {
   const { ch } = cropBox();
   const { th } = targetDims();
   return Math.max(8, configSize * ASS_RENDER_SCALE * (ch / th));
 }
-
-// Hook/outro/watermark font px on canvas. ffmpeg drawtext uses real
-// output pixels (no PlayResX scaling), so just `ch / target_h`.
 function drawtextFontPx(configSize) {
   const { ch } = cropBox();
   const { th } = targetDims();
   return Math.max(8, configSize * (ch / th));
 }
 
+function pickActiveCue() {
+  // Pick the cue whose [start, end] brackets the playhead. Cues are in
+  // source-video timeline. Returns the cue text, or null.
+  if (cues.length === 0) return null;
+  const t = vid.currentTime || 0;
+  for (const c of cues) {
+    if (t >= c.start && t < c.end) return c.text;
+  }
+  return null;
+}
+
 function drawSubtitles() {
   const sub = styleState.subtitle;
   if (!sub) return;
   const { ox, oy, cw, ch } = cropBox();
+  // Cues pushed from Python are PRE-SPLIT into short single-line entries
+  // (mirrors how libass + the burn pipeline handle long lines: split into
+  // more cues with their own timing, never wrap visually). So we render one
+  // line per active cue — no JS-side wrapping needed.
+  const liveText = pickActiveCue();
   const lines = [];
-  if (sub.sub1 && sub.sub1.enabled) lines.push(sub.sub1);
+  if (sub.sub1 && sub.sub1.enabled) {
+    lines.push({...sub.sub1, text: liveText != null ? liveText : sub.sub1.text});
+  }
   if (sub.sub2 && sub.sub2.enabled) lines.push(sub.sub2);
   if (lines.length === 0) return;
 
-  // Vertical position of the BOTTOM-most subtitle line baseline
-  let baseY;
-  if (sub.position === "top") {
-    baseY = oy + ch * 0.10 + subtitleFontPx(lines[0].fontsize);
-  } else if (sub.position === "middle") {
-    baseY = oy + ch * 0.50;
-  } else {
-    baseY = oy + ch * 0.92;
-  }
-
-  // Stack from bottom up: lines[0] above lines[1] would feel wrong; per
-  // burn convention sub1 is above sub2. So the first declared line is the
-  // upper one, the second is below it.
   const lineSpacing = 1.25;
-  // Compute total stacked height to anchor by the chosen position
-  const totalH = lines.reduce((acc, l) => acc + subtitleFontPx(l.fontsize) * lineSpacing, 0);
+  const totalH = lines.reduce(
+    (acc, l) => acc + subtitleFontPx(l.fontsize) * lineSpacing, 0);
+
   let y;
-  if (sub.position === "top") y = oy + ch * 0.10 + subtitleFontPx(lines[0].fontsize);
-  else if (sub.position === "middle") y = oy + ch * 0.50 - totalH / 2 + subtitleFontPx(lines[0].fontsize);
-  else y = oy + ch * 0.92 - totalH + subtitleFontPx(lines[0].fontsize);
+  if (sub.position === "top")
+    y = oy + ch * 0.10 + subtitleFontPx(lines[0].fontsize);
+  else if (sub.position === "middle")
+    y = oy + ch * 0.50 - totalH / 2 + subtitleFontPx(lines[0].fontsize);
+  else
+    y = oy + ch * 0.92 - totalH + subtitleFontPx(lines[0].fontsize);
 
   for (const line of lines) {
     const px = subtitleFontPx(line.fontsize);
@@ -297,7 +277,6 @@ function drawSubtitles() {
     ctx.font = `${weight}${px}px sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "alphabetic";
-    // Stroke
     if (sub.stroke_width > 0) {
       ctx.strokeStyle = sub.stroke_color || "#000";
       ctx.lineWidth = (sub.stroke_width || 2) * (px / 24);
@@ -311,8 +290,6 @@ function drawSubtitles() {
 }
 
 function _hoYForPosition(pos, oy, ch, textHeight) {
-  // Mirror _y_expr_for_position in Python — but here we resolve to a
-  // concrete pixel y for canvas drawing within the crop region.
   switch (pos) {
     case "top":          return oy + ch * 0.08;
     case "upper-third":  return oy + ch * 0.25;
@@ -323,16 +300,35 @@ function _hoYForPosition(pos, oy, ch, textHeight) {
   }
 }
 
+// Wrap `text` to lines that each fit within `maxWidth` (canvas measure).
+// CJK-friendly: tries to break at spaces first, then falls back to char-
+// by-char so a long Chinese run-on doesn't render as a single overflowing
+// line. Returns string[].
+function wrapTextToWidth(text, maxWidth) {
+  if (!text) return [];
+  if (ctx.measureText(text).width <= maxWidth) return [text];
+  const lines = [];
+  let buf = "";
+  for (const ch of text) {
+    const candidate = buf + ch;
+    if (ctx.measureText(candidate).width > maxWidth && buf) {
+      lines.push(buf);
+      buf = ch;
+    } else {
+      buf = candidate;
+    }
+  }
+  if (buf) lines.push(buf);
+  return lines;
+}
+
 function drawHookOutro() {
   const ho = styleState.hookOutro;
   if (!ho) return;
   const { ox, oy, cw, ch } = cropBox();
 
-  // Decide which (if any) text to render based on the live playhead. We
-  // sit inside the source video's timeline, so the hook window is
-  // [clipStart, clipStart + hook_duration_sec] and the outro window is
-  // [clipEnd - outro_duration_sec, clipEnd]. When both windows are zero
-  // (no clip loaded) we render nothing.
+  // Hook window: [clipStart, clipStart + hook_duration_sec]
+  // Outro window: [clipEnd - outro_duration_sec, clipEnd]
   const t = vid.currentTime || 0;
   let text = "";
   let position = ho.hook_position;
@@ -340,16 +336,12 @@ function drawHookOutro() {
     const hookEnd  = clipStart + (ho.hook_duration_sec  || 0);
     const outroStart = clipEnd - (ho.outro_duration_sec || 0);
     if (clipMeta.hook && t >= clipStart && t < hookEnd) {
-      text = clipMeta.hook;
-      position = ho.hook_position;
+      text = clipMeta.hook; position = ho.hook_position;
     } else if (clipMeta.outro && t >= outroStart && t <= clipEnd) {
-      text = clipMeta.outro;
-      position = ho.outro_position;
+      text = clipMeta.outro; position = ho.outro_position;
     }
-  } else {
-    // No clip range yet — show hook as a static layout placeholder so
-    // user can iterate on style.
-    if (clipMeta.hook) { text = clipMeta.hook; position = ho.hook_position; }
+  } else if (clipMeta.hook) {
+    text = clipMeta.hook; position = ho.hook_position;
   }
   if (!text) return;
 
@@ -358,34 +350,45 @@ function drawHookOutro() {
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
 
-  const textWidth = ctx.measureText(text).width;
-  const textHeight = px;  // approx; works visually
-  const cx = ox + cw / 2;
-  const baselineY = _hoYForPosition(position, oy, ch, textHeight) + textHeight;
+  // Wrap long hook text to fit inside the crop. Leave ~6% margin each side
+  // so the background box never touches the crop border.
+  const padding = (ho.box_padding || 10) * (px / 24);
+  const maxTextWidth = Math.max(40, cw * 0.88 - padding * 2);
+  const lines = wrapTextToWidth(text, maxTextWidth);
+  const lineHeight = px * 1.15;
+  const totalTextHeight = lines.length * lineHeight;
+  const widestLine = lines.reduce(
+    (m, l) => Math.max(m, ctx.measureText(l).width), 0);
 
-  // Optional background box
+  const cx = ox + cw / 2;
+  // _hoYForPosition gives the TOP of the text block; shift down by the
+  // baseline for the first line.
+  const topY = _hoYForPosition(position, oy, ch, totalTextHeight);
+  const firstBaselineY = topY + lineHeight - (lineHeight - px) / 2;
+
   const bgOpacity = (ho.bg_opacity || 0) / 100.0;
   if (bgOpacity > 0) {
-    const padding = (ho.box_padding || 10) * (px / 24);
-    const boxX = cx - textWidth / 2 - padding;
-    const boxY = baselineY - textHeight - padding;
-    const boxW = textWidth + padding * 2;
-    const boxH = textHeight + padding * 1.6;
+    const boxX = cx - widestLine / 2 - padding;
+    const boxY = topY - padding * 0.4;
+    const boxW = widestLine + padding * 2;
+    const boxH = totalTextHeight + padding * 1.2;
     ctx.fillStyle = ho.bg_color || "#000";
     ctx.globalAlpha = bgOpacity;
     ctx.fillRect(boxX, boxY, boxW, boxH);
     ctx.globalAlpha = 1;
   }
 
-  // Stroke + fill
-  if ((ho.stroke_width || 0) > 0) {
-    ctx.strokeStyle = ho.stroke_color || "#000";
-    ctx.lineWidth = ho.stroke_width * (px / 24);
-    ctx.lineJoin = "round";
-    ctx.strokeText(text, cx, baselineY);
+  for (let i = 0; i < lines.length; i++) {
+    const ly = firstBaselineY + i * lineHeight;
+    if ((ho.stroke_width || 0) > 0) {
+      ctx.strokeStyle = ho.stroke_color || "#000";
+      ctx.lineWidth = ho.stroke_width * (px / 24);
+      ctx.lineJoin = "round";
+      ctx.strokeText(lines[i], cx, ly);
+    }
+    ctx.fillStyle = ho.color || "#FFF";
+    ctx.fillText(lines[i], cx, ly);
   }
-  ctx.fillStyle = ho.color || "#FFF";
-  ctx.fillText(text, cx, baselineY);
 }
 
 function drawWatermark() {
@@ -395,7 +398,6 @@ function drawWatermark() {
   const margin = Math.max(10, cw * 0.025);
   const right  = wm.position && wm.position.endsWith("right");
   const bottom = wm.position && wm.position.startsWith("bottom");
-
   if (wm.type === "text") {
     const px = drawtextFontPx(wm.text_fontsize || 36);
     ctx.font = `bold ${px}px sans-serif`;
@@ -404,17 +406,14 @@ function drawWatermark() {
     const tx = right ? (ox + cw - margin) : (ox + margin);
     const ty = bottom ? (oy + ch - margin) : (oy + margin);
     ctx.globalAlpha = (wm.text_opacity != null ? wm.text_opacity : 70) / 100;
-    // Text shadow for visibility against any background
     ctx.fillStyle = "rgba(0,0,0,0.5)";
     ctx.fillText(wm.text || "@channel", tx + 2, ty + 2);
     ctx.fillStyle = wm.text_color || "#FFFFFF";
     ctx.fillText(wm.text || "@channel", tx, ty);
     ctx.globalAlpha = 1;
   } else {
-    // Image watermark — draw a placeholder box (we don't load the image
-    // here, just show where it would land and how big it would be).
     const ww = (wm.image_scale || 0.15) * cw;
-    const wh = ww * 0.6;  // arbitrary aspect for placeholder
+    const wh = ww * 0.6;
     const wx = right  ? (ox + cw - margin - ww) : (ox + margin);
     const wy = bottom ? (oy + ch - margin - wh) : (oy + margin);
     ctx.globalAlpha = (wm.image_opacity != null ? wm.image_opacity : 100) / 100;
@@ -432,24 +431,20 @@ function drawWatermark() {
   }
 }
 
-// ── interaction ──────────────────────────────────────────────────────────
+// ── interaction (crop rect drag) ─────────────────────────────────────────
 
 function pointInRect(nx, ny) {
   return nx >= rect.x && nx <= rect.x+rect.w
       && ny >= rect.y && ny <= rect.y+rect.h;
 }
 
-// Native <video controls> reserves ~50px at the bottom for the transport
-// bar (play/pause/seek/volume). Don't capture pointer events in that strip
-// even when the crop rect covers it, otherwise the buttons are unclickable.
 const CONTROLS_RESERVE_PX = 50;
-
 function isInControlsStrip(clientY, rect) {
   return (clientY - rect.top) > (rect.height - CONTROLS_RESERVE_PX);
 }
 
 stage.addEventListener('mousemove', e => {
-  // Translate cursor to normalized video coords
+  if (!cropDragEnabled) return;
   const r = canvas.getBoundingClientRect();
   if (r.width <= 0 || r.height <= 0) return;
   const nx = (e.clientX - r.left) / r.width;
@@ -464,6 +459,7 @@ stage.addEventListener('mousemove', e => {
 
 let dragging = false, dragOff = {x:0, y:0};
 canvas.addEventListener('mousedown', e => {
+  if (!cropDragEnabled) return;
   const r = canvas.getBoundingClientRect();
   const nx = (e.clientX - r.left) / r.width;
   const ny = (e.clientY - r.top)  / r.height;
@@ -508,19 +504,16 @@ vid.addEventListener('loadedmetadata', () => {
 
 vid.addEventListener('timeupdate', () => {
   if (clipEnd > 0 && vid.currentTime >= clipEnd) {
-    vid.currentTime = clipEnd - 0.05;
-    vid.pause();
+    // Loop the clip window so users get a continuous preview without
+    // having to scrub manually.
+    vid.currentTime = clipStart;
   } else if (clipStart > 0 && vid.currentTime < clipStart) {
     vid.currentTime = clipStart;
   }
-  // Re-draw so hook/outro show/hide tracks the playhead smoothly
-  // (browsers fire timeupdate ~4x/sec — same cadence as our setInterval
-  // fallback, but actually pegged to the video clock).
   drawOverlay();
 });
 
 window.addEventListener('resize', drawOverlay);
-// Periodic redraw catches font load / first paint hiccups
 setInterval(drawOverlay, 250);
 </script>
 </body>

@@ -124,47 +124,6 @@ DEFAULTS: dict[str, str] = {
         "】"
     ),
 
-    # ── Clip script (Phase B) ────────────────────────────────────────────
-    # Inline copies are intentionally short — the on-disk prompts/clip.*.md
-    # files are the editable source of truth (richer text). These constants
-    # exist for the "Reset to default" code path; if a user nukes the .md
-    # file and clicks Reset, they get this minimal but functional version.
-
-    "clip.rank-chapters": (
-        "你是短视频剪辑师。给定一组视频章节（标题 + 该章节完整原文段落），"
-        "对每个章节打 0-100 分，判断它是否适合剪成 30-60 秒短视频。\n\n"
-        "评分维度：钩子强度 / 观点密度 / 情绪冲突 / 独立可看懂。\n"
-        "60 分以下不推荐；30 分以下基本不要切（开场/转场/客套）。\n"
-        "评分必须给 reason，一句话 30 字内，要具体不要空话。\n\n"
-        "输入章节列表（每个 chapter 含 idx / title / paragraphs 原文）：\n"
-        "{chapter_list}\n\n"
-        "输出严格遵循 JSON Schema。输出语言 = 输入语言。"
-        "必须包含每一个 chapter，不漏不重。"
-    ),
-
-    "clip.find-peaks": (
-        "你是短视频剪辑师。在给定章节字幕里找 1-3 个 30-90 秒精彩切点，"
-        "强烈偏好 40-60 秒。\n\n"
-        "下面是该章节的字幕，每行用 [#序号] 标记 cue 编号，[HH:MM:SS] "
-        "标记起始时间：\n{chapter_paragraphs}\n\n"
-        "判断维度：完整性（有头有尾不切半句）/ 金句靠前 / 避开铺垫 / "
-        "独立可看懂。同章节内多个切点不要重叠。\n\n"
-        "返回每个切点的 start_id 和 end_id（即 [#序号] 的整数编号），"
-        "不要返回秒数。外层会用编号取精确字幕边界。\n"
-        "评分给 reason 40 字内。无亮点可返回空数组。"
-    ),
-
-    "clip.package": (
-        "你是短视频包装文案师。为切片生成 4 件套：\n"
-        "- hook（≤15 中文字/≤8 英词）：开场钩子，前 5s 显示在顶部\n"
-        "- outro（≤20 字/≤12 词）：CTA 或总结，后 5s 显示在底部\n"
-        "- title（≤30 字/≤15 词）：发布标题，不烧到画面\n"
-        "- hashtags：3-5 个相关标签（带 # 前缀）\n\n"
-        "切片字幕原文:\n{clip_excerpt}\n\n"
-        "完全基于上面这段切片字幕生成文案，**只看这段**，不要泛化、不要"
-        "套用上下文。禁止编造原片没说过的事实。输出语言 = 输入语言。"
-    ),
-
     "subtitle.pack": (
         "# 一次性生成视频标题、时间戳分段与精炼描述\n"
         "\n"
@@ -203,6 +162,9 @@ DEFAULTS: dict[str, str] = {
         "- start / end：HH:MM:SS 时间戳\n"
         "- duration_sec：整数秒\n"
         "- hook：开场一句钩子文案（≤30 字 / ≤15 词），用于片头吸引点击\n"
+        "- outro：结尾一句 CTA 或总结文案（≤25 字 / ≤12 词），"
+        "用于片尾收束并引导互动；要贴合本条切片内容，不要套用万能"
+        "「关注三连」之类的空话\n"
         "- why_viral：一句话说明为什么这段有传播力\n"
         "- score：1~10 综合评分（10 = 极强），考虑 hook 强度、信息密度、"
         "情绪起伏、完整性\n"
@@ -230,9 +192,6 @@ PLACEHOLDERS: dict[str, list[str]] = {
     "subtitle.pack":     ["{subtitle_content}"],
     "subtitle.hotclips": ["{subtitle_content}", "{desired_count}",
                           "{target_min_sec}", "{target_max_sec}"],
-    "clip.rank-chapters": ["{chapter_list}"],
-    "clip.find-peaks":   ["{chapter_paragraphs}"],
-    "clip.package":      ["{clip_excerpt}"],
 }
 
 
