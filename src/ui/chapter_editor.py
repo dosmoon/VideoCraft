@@ -40,23 +40,62 @@ from i18n import tr
 from ui.web_preview import WebPreviewFrame
 
 
+# Cues are baked into the page as a JSON array, so the browser can
+# render subtitles without a separate VTT fetch (file:// pages cannot
+# load <track src=file://...> due to Chromium's local-file CORS rules).
 _VIDEO_HTML = """<!doctype html>
 <html><head><meta charset="utf-8">
 <style>
-  html, body {{ margin:0; padding:0; background:#000; height:100%; }}
+  html, body {{ margin:0; padding:0; background:#000; height:100%;
+                position:relative; overflow:hidden; }}
   body {{ display:flex; align-items:center; justify-content:center; }}
   video {{ width:100%; height:100%; object-fit:contain; }}
+  #cap {{
+    position: fixed; left: 0; right: 0; bottom: 60px;
+    text-align: center; color: #fff;
+    font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
+    font-size: 20px; font-weight: 600; line-height: 1.35;
+    text-shadow: 1px 1px 0 #000, -1px -1px 0 #000,
+                 1px -1px 0 #000, -1px 1px 0 #000,
+                 0 0 6px rgba(0,0,0,0.85);
+    padding: 0 24px; pointer-events: none;
+    white-space: pre-wrap;
+  }}
 </style></head>
 <body>
   <video id="v" controls preload="metadata" src="{video_url}"></video>
+  <div id="cap"></div>
   <script>
+    var cues = {cues_json};
     var v = document.getElementById('v');
+    var cap = document.getElementById('cap');
     var last = -1;
+    var lastIdx = -1;
+    // Cues are sorted by start; advance an index pointer instead of
+    // scanning the whole list every tick.
+    function findCue(t) {{
+      // Forward seek
+      while (lastIdx + 1 < cues.length && cues[lastIdx + 1].s <= t) {{
+        lastIdx++;
+      }}
+      // Backward seek (user scrubbed)
+      while (lastIdx >= 0 && cues[lastIdx].s > t) {{
+        lastIdx--;
+      }}
+      if (lastIdx >= 0 && cues[lastIdx].e > t) return cues[lastIdx].t;
+      return "";
+    }}
     v.addEventListener('timeupdate', function() {{
-      var t = Math.floor(v.currentTime);
-      if (t === last) return;
-      last = t;
-      try {{ window.pywebview.api.notify({{type:'time', t:t}}); }} catch(e) {{}}
+      var t = v.currentTime;
+      cap.textContent = findCue(t);
+      var sec = Math.floor(t);
+      if (sec === last) return;
+      last = sec;
+      try {{ window.pywebview.api.notify({{type:'time', t:sec}}); }} catch(e) {{}}
+    }});
+    v.addEventListener('seeked', function() {{
+      lastIdx = -1; // force re-search after a scrub
+      cap.textContent = findCue(v.currentTime);
     }});
   </script>
 </body></html>
@@ -114,21 +153,18 @@ class ChapterEditor(tk.Frame):
         paned = ttk.PanedWindow(self, orient="horizontal")
         paned.pack(fill="both", expand=True)
 
-        # Left: chapter list (top) + per-chapter subtitle view (bottom)
-        left = ttk.PanedWindow(paned, orient="vertical")
+        # Left: chapter list
+        left = tk.Frame(paned, bg="white")
         paned.add(left, weight=2)
 
-        tree_frame = tk.Frame(left, bg="white")
-        left.add(tree_frame, weight=1)
-
         cols = ("start", "title")
-        self._tree = ttk.Treeview(tree_frame, columns=cols, show="headings",
+        self._tree = ttk.Treeview(left, columns=cols, show="headings",
                                   selectmode="browse")
         self._tree.heading("start", text=tr("chapter_editor.col_start"))
         self._tree.heading("title", text=tr("chapter_editor.col_title"))
         self._tree.column("start", width=90, anchor="w", stretch=False)
         self._tree.column("title", width=200, anchor="w", stretch=True)
-        vsb = ttk.Scrollbar(tree_frame, orient="vertical",
+        vsb = ttk.Scrollbar(left, orient="vertical",
                             command=self._tree.yview)
         self._tree.configure(yscrollcommand=vsb.set)
         vsb.pack(side="right", fill="y")
@@ -144,25 +180,6 @@ class ChapterEditor(tk.Frame):
             label=tr("chapter_editor.menu_delete"),
             command=self._on_delete_chapter)
 
-        # Per-chapter subtitles (read-only). Loaded lazily on first
-        # chapter select to avoid parsing the SRT before it's needed.
-        subs_frame = tk.Frame(left, bg="white")
-        left.add(subs_frame, weight=2)
-        sub_vsb = ttk.Scrollbar(subs_frame, orient="vertical")
-        self._subs_text = tk.Text(
-            subs_frame, wrap="word", bg="#fafafa", fg="#222",
-            font=("Microsoft YaHei UI", 10), relief="flat",
-            padx=8, pady=6, yscrollcommand=sub_vsb.set,
-            state="disabled", cursor="arrow",
-        )
-        sub_vsb.config(command=self._subs_text.yview)
-        sub_vsb.pack(side="right", fill="y")
-        self._subs_text.pack(side="left", fill="both", expand=True)
-        self._subs_text.tag_configure("ts", foreground="#0078d4",
-                                      font=("Consolas", 9))
-        self._set_subs_text(tr("chapter_editor.subs_no_selection"))
-        self._subs_cues = None  # lazy-parsed list of srt.Subtitle
-
         # Right: video + controls
         right = tk.Frame(paned, bg="white")
         paned.add(right, weight=3)
@@ -175,8 +192,10 @@ class ChapterEditor(tk.Frame):
         html_path = os.path.join(cache_dir, "chapter_editor_preview.html")
         video_url = "file:///" + os.path.abspath(
             self._source_video).replace("\\", "/")
+        cues_json = self._build_cues_json()
         with open(html_path, "w", encoding="utf-8") as f:
-            f.write(_VIDEO_HTML.format(video_url=video_url))
+            f.write(_VIDEO_HTML.format(video_url=video_url,
+                                       cues_json=cues_json))
         initial_url = "file:///" + html_path.replace("\\", "/")
         self._web = WebPreviewFrame(video_box, initial_url=initial_url,
                                     on_message=self._on_web_message)
@@ -249,7 +268,6 @@ class ChapterEditor(tk.Frame):
         self._selected = None
         self._start_var.set("")
         self._start_entry.configure(state="disabled")
-        self._set_subs_text(tr("chapter_editor.subs_no_selection"))
         self._refresh_button_states()
 
     def _on_select(self, _e=None) -> None:
@@ -268,69 +286,32 @@ class ChapterEditor(tk.Frame):
         is_first = idx == 0
         self._start_entry.configure(state="disabled" if is_first else "normal")
         self._seek_to_str(start_str)
-        self._render_chapter_subs(idx)
         self._refresh_button_states()
 
-    # ── Subtitle pane ────────────────────────────────────────────────────
+    # ── Subtitle overlay ─────────────────────────────────────────────────
 
-    def _ensure_subs_loaded(self) -> None:
-        """Parse the SRT once on first chapter selection."""
-        if self._subs_cues is not None:
-            return
+    def _build_cues_json(self) -> str:
+        """Parse the SRT once and emit a JSON literal of cues for the
+        in-page subtitle overlay. Shape: [{s, e, t}] sorted by start."""
         try:
+            import json as _json
             import srt as _srt
             from core.subtitle_ops import read_srt
-            self._subs_cues = list(_srt.parse(read_srt(self._srt_path)))
-        except Exception as e:
-            self._subs_cues = []
-            self._set_subs_text(
-                tr("chapter_editor.subs_load_failed", err=str(e)))
-
-    def _chapter_end_sec(self, start_sec: float) -> float:
-        """End of the chapter that starts at `start_sec`, computed live
-        from the working set (which may be unsorted after user edits)."""
-        later = sorted(parse_time_str(c.get("start", ""))
-                       for c in self._working)
-        for s in later:
-            if s > start_sec:
-                return s
-        return self._srt_end_sec
-
-    def _render_chapter_subs(self, idx: int) -> None:
-        self._ensure_subs_loaded()
-        if not self._subs_cues:
-            return  # error placeholder already set
-        ch = self._working[idx]
-        start_sec = parse_time_str(ch.get("start", ""))
-        end_sec = self._chapter_end_sec(start_sec)
-
-        self._subs_text.configure(state="normal")
-        self._subs_text.delete("1.0", "end")
-        any_cue = False
-        for cue in self._subs_cues:
-            cue_start = cue.start.total_seconds()
-            if cue_start < start_sec:
-                continue
-            if cue_start >= end_sec:
-                break
-            ts = str(cue.start)[:8]
+            cues = list(_srt.parse(read_srt(self._srt_path)))
+        except Exception:
+            return "[]"
+        out = []
+        for cue in cues:
             text = cue.content.replace("\n", " ").strip()
             if not text:
                 continue
-            ts_index = self._subs_text.index("end-1c")
-            self._subs_text.insert("end", f"[{ts}] ", ("ts",))
-            self._subs_text.insert("end", text + "\n")
-            any_cue = True
-        if not any_cue:
-            self._subs_text.insert("end",
-                                   tr("chapter_editor.subs_empty"))
-        self._subs_text.configure(state="disabled")
-
-    def _set_subs_text(self, text: str) -> None:
-        self._subs_text.configure(state="normal")
-        self._subs_text.delete("1.0", "end")
-        self._subs_text.insert("end", text)
-        self._subs_text.configure(state="disabled")
+            out.append({
+                "s": cue.start.total_seconds(),
+                "e": cue.end.total_seconds(),
+                "t": text,
+            })
+        out.sort(key=lambda c: c["s"])
+        return _json.dumps(out, ensure_ascii=False)
 
     # ── Title inline edit ────────────────────────────────────────────────
 
