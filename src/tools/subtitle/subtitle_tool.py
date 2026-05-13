@@ -496,8 +496,9 @@ class SubtitleToolApp(ToolBase):
         if self._project_mode:
             picked = self._pick_project_subtitle(tr("subtitle_tool.project.pick_primary"))
             if picked:
+                snap = self._ensure_srt_snapshot(picked) or picked
                 self.entry_sub1.delete(0, tk.END)
-                self.entry_sub1.insert(0, picked)
+                self.entry_sub1.insert(0, snap)
                 self._save_instance_config()
             return
         path = filedialog.askopenfilename(
@@ -514,8 +515,9 @@ class SubtitleToolApp(ToolBase):
         if self._project_mode:
             picked = self._pick_project_subtitle(tr("subtitle_tool.project.pick_secondary"))
             if picked:
+                snap = self._ensure_srt_snapshot(picked) or picked
                 self.entry_sub2.delete(0, tk.END)
-                self.entry_sub2.insert(0, picked)
+                self.entry_sub2.insert(0, snap)
                 self._save_instance_config()
             return
         path = filedialog.askopenfilename(
@@ -702,13 +704,72 @@ class SubtitleToolApp(ToolBase):
         win.wait_window()
         return chosen[0]
 
-    def _instance_config_path(self) -> str:
-        inst_dir = self.project.derivative_dir(
+    def _instance_dir(self) -> str:
+        return self.project.derivative_dir(
             "bilingual_video", self.instance_name)
-        return os.path.join(inst_dir, "config.json")
+
+    def _instance_config_path(self) -> str:
+        return os.path.join(self._instance_dir(), "config.json")
+
+    # ── SRT snapshot (per-instance immutable source) ─────────────────────
+    #
+    # Per the derivative snapshot principle: when the user picks an SRT we
+    # immediately copy it into the instance dir as source-subtitles.<iso>.srt.
+    # From that point on the workbench reads ONLY from the snapshot, so
+    # upstream regeneration in <project>/subtitles/ cannot affect already-
+    # rendered outputs or the burned subtitle text for this instance.
+
+    def _srt_snapshot_path(self, iso: str) -> str:
+        return os.path.join(self._instance_dir(), f"source-subtitles.{iso}.srt")
+
+    def _ensure_srt_snapshot(self, upstream_srt: str | None) -> str | None:
+        """Copy <project>/subtitles/<iso>.srt → instance snapshot path
+        if not already present. Returns the snapshot path, or None when
+        the iso can't be derived / upstream is missing / copy fails.
+
+        Idempotent: existing snapshot is left untouched. To force a
+        re-snapshot the user must delete the instance dir."""
+        if not upstream_srt:
+            return None
+        iso = os.path.splitext(os.path.basename(upstream_srt))[0]
+        if not iso:
+            return None
+        snap = self._srt_snapshot_path(iso)
+        if os.path.isfile(snap):
+            return snap
+        if not os.path.isfile(upstream_srt):
+            return None
+        try:
+            os.makedirs(self._instance_dir(), exist_ok=True)
+            import shutil
+            shutil.copy2(upstream_srt, snap)
+            return snap
+        except OSError as e:
+            logger.warning(f"Failed to snapshot SRT {upstream_srt} → {snap}: {e}")
+            return None
+
+    def _extract_srt_iso(self, srt_path: str) -> str | None:
+        """Derive the ISO code from either a snapshot path
+        (source-subtitles.<iso>.srt) or a plain upstream/standalone SRT
+        (<iso>.srt). Returns None when neither shape matches."""
+        if not srt_path:
+            return None
+        fn = os.path.basename(srt_path)
+        prefix = "source-subtitles."
+        if fn.startswith(prefix) and fn.endswith(".srt"):
+            iso = fn[len(prefix):-4]
+            return iso or None
+        if fn.endswith(".srt"):
+            iso = fn[:-4]
+            return iso or None
+        return None
 
     def _load_instance_config(self) -> None:
-        """Restore SRT selections + style params from the instance's config.json."""
+        """Restore SRT selections + style params from the instance's
+        config.json. Snapshot is the authoritative SRT — when the config
+        references one (or carries the legacy upstream filename), we
+        resolve the iso, lazy-backfill the snapshot from upstream if
+        missing, then put the snapshot path into the entry field."""
         path = self._instance_config_path()
         if not os.path.isfile(path):
             return
@@ -718,19 +779,34 @@ class SubtitleToolApp(ToolBase):
         except (OSError, json.JSONDecodeError):
             return
 
-        # SRT selections (stored as filenames relative to subtitles/)
-        primary = cfg.get("primary_srt")
-        if primary:
-            p = os.path.join(self.project.subtitles_dir, primary)
-            if os.path.isfile(p):
-                self.entry_sub1.delete(0, tk.END)
-                self.entry_sub1.insert(0, p)
-        secondary = cfg.get("secondary_srt")
-        if secondary:
-            p = os.path.join(self.project.subtitles_dir, secondary)
-            if os.path.isfile(p):
-                self.entry_sub2.delete(0, tk.END)
-                self.entry_sub2.insert(0, p)
+        def _resolve_and_fill(entry, iso: str | None) -> None:
+            if not iso:
+                return
+            snap = self._srt_snapshot_path(iso)
+            if not os.path.isfile(snap):
+                # Lazy backfill: pre-snapshot-principle instances (and
+                # instances whose dir got cleaned) get a one-shot copy
+                # from upstream on first re-open.
+                upstream = os.path.join(self.project.subtitles_dir,
+                                          f"{iso}.srt")
+                self._ensure_srt_snapshot(upstream)
+            chosen = snap if os.path.isfile(snap) else None
+            if chosen:
+                entry.delete(0, tk.END)
+                entry.insert(0, chosen)
+
+        # New schema: primary_srt_iso / secondary_srt_iso store the iso
+        # directly. Legacy schema stored primary_srt = "<iso>.srt" (the
+        # upstream filename) — extract iso and treat the same way.
+        primary_iso = cfg.get("primary_srt_iso")
+        if primary_iso is None and cfg.get("primary_srt"):
+            primary_iso = os.path.splitext(cfg["primary_srt"])[0] or None
+        _resolve_and_fill(self.entry_sub1, primary_iso)
+
+        secondary_iso = cfg.get("secondary_srt_iso")
+        if secondary_iso is None and cfg.get("secondary_srt"):
+            secondary_iso = os.path.splitext(cfg["secondary_srt"])[0] or None
+        _resolve_and_fill(self.entry_sub2, secondary_iso)
 
         # Style params (uses _PARAM_VARS map)
         params = cfg.get("params")
@@ -738,15 +814,18 @@ class SubtitleToolApp(ToolBase):
             self._apply_params(params)
 
     def _save_instance_config(self) -> None:
-        """Snapshot SRT selections + style params to the instance's config.json."""
+        """Persist SRT iso choices + style params to the instance's
+        config.json. The selected SRT entry holds the snapshot path
+        (source-subtitles.<iso>.srt); we save just the iso so the
+        snapshot path can be re-derived without hard-coding it."""
         if not self._project_mode:
             return
         sub1 = self.entry_sub1.get().strip()
         sub2 = self.entry_sub2.get().strip()
         cfg = {
-            "schema_version": 1,
-            "primary_srt": os.path.basename(sub1) if sub1 else None,
-            "secondary_srt": os.path.basename(sub2) if sub2 else None,
+            "schema_version": 2,
+            "primary_srt_iso": self._extract_srt_iso(sub1),
+            "secondary_srt_iso": self._extract_srt_iso(sub2),
             "params": self._collect_params(),
         }
         # Preserve burned_at if it already exists.
@@ -806,9 +885,9 @@ class SubtitleToolApp(ToolBase):
                 with open(cfg_path, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
 
-            primary_srt = (cfg.get("primary_srt") or "").strip()
-            lang_iso = os.path.splitext(primary_srt)[0] if primary_srt else \
-                (self.project.meta.language.source or "zh")
+            lang_iso = (cfg.get("primary_srt_iso") or "").strip() \
+                or os.path.splitext((cfg.get("primary_srt") or "").strip())[0] \
+                or (self.project.meta.language.source or "zh")
 
             # Pull chapters from the source project's chapters.json
             # if it exists; absence means the user hasn't generated one
