@@ -103,8 +103,6 @@
   "tool.subtitle.sub.color": "Color:",
   "tool.subtitle.sub.choose": "Pick",
   "tool.subtitle.sub.show": "Show",
-  "tool.subtitle.sub.split": "Split subtitles",
-  "tool.subtitle.sub.max_chars": "Max chars:",
   "tool.subtitle.sub.is_chinese": "Chinese",
   "tool.subtitle.sub1_name": "Subtitle 1",
   "tool.subtitle.sub2_name": "Subtitle 2",

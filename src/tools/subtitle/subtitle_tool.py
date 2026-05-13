@@ -22,7 +22,6 @@ from hub_logger import logger
 
 # ── 纯工具函数（从 core 导入）───────────────────────────────────────────────
 
-from core.subtitle_ops import process_srt_split
 
 
 def _probe_video_duration(video_path: str) -> float:
@@ -106,11 +105,7 @@ class SubtitleToolApp(ToolBase):
         self.sub2_color_var     = tk.StringVar(value="#FFFFFF")
         self.sub2_show_var      = tk.BooleanVar(value=True)
 
-        self.split_sub1_var     = tk.BooleanVar(value=True)
-        self.sub1_max_chars_var = tk.IntVar(value=20)
         self.sub1_is_chinese_var = tk.BooleanVar(value=True)
-        self.split_sub2_var     = tk.BooleanVar(value=True)
-        self.sub2_max_chars_var = tk.IntVar(value=50)
         self.sub2_is_chinese_var = tk.BooleanVar(value=False)
 
         self.encode_preset_var  = tk.StringVar(value="veryfast")
@@ -144,16 +139,40 @@ class SubtitleToolApp(ToolBase):
           - top: source video + duration
           - middle: PanedWindow [ scrollable style form | live WebView preview ]
           - bottom: progress labels + bar + 开始烧录 button.
+
+        Pack order matters: bottom is packed FIRST with side='bottom' so
+        the burn button is guaranteed visible even when the middle pane
+        would otherwise grow past the available height.
         """
         root = self.master
         main = tk.Frame(root)
         main.pack(fill="both", expand=True)
-        main.columnconfigure(0, weight=1)
-        main.rowconfigure(1, weight=1)
+
+        # ── Bottom: progress + burn (pack first so it reserves space) ─────
+        bottom = tk.Frame(main)
+        bottom.pack(side="bottom", fill="x", padx=8, pady=(4, 8))
+        self.btn_merge = tk.Button(
+            bottom, text=tr("tool.subtitle.action.start"),
+            width=20, height=2, command=self._merge_videos,
+            bg="#2563eb", fg="white", activebackground="#1e40af",
+            activeforeground="white", relief="flat",
+            font=("Microsoft YaHei UI", 10, "bold"))
+        self.btn_merge.pack(side="right", padx=(8, 0))
+        self.label_elapsed = tk.Label(
+            bottom, text=tr("tool.subtitle.progress.elapsed_zero"),
+            width=14, anchor="w")
+        self.label_elapsed.pack(side="left")
+        self.label_remaining = tk.Label(
+            bottom, text=tr("tool.subtitle.progress.remaining_unknown"),
+            width=14, anchor="w")
+        self.label_remaining.pack(side="left", padx=(8, 0))
+        self.progress_bar = ttk.Progressbar(
+            bottom, orient=tk.HORIZONTAL, mode='determinate')
+        self.progress_bar.pack(side="left", padx=12, fill="x", expand=True)
 
         # ── Top: source video info ────────────────────────────────────────
         top = tk.Frame(main)
-        top.grid(row=0, column=0, sticky="ew", padx=8, pady=(8, 4))
+        top.pack(side="top", fill="x", padx=8, pady=(8, 4))
         tk.Label(top, text=tr("tool.subtitle.video.label")
                  ).pack(side="left")
         self.entry_video = tk.Entry(top, width=50, state="readonly",
@@ -166,9 +185,9 @@ class SubtitleToolApp(ToolBase):
             fg="#666")
         self.label_duration.pack(side="left", padx=(12, 0))
 
-        # ── Middle: form | preview ────────────────────────────────────────
+        # ── Middle: form | preview (fills remaining space) ────────────────
         pw = ttk.PanedWindow(main, orient="horizontal")
-        pw.grid(row=1, column=0, sticky="nsew", padx=4, pady=(0, 4))
+        pw.pack(side="top", fill="both", expand=True, padx=4, pady=(0, 4))
         form_outer = ttk.Frame(pw)
         preview_outer = ttk.Frame(pw)
         pw.add(form_outer, weight=3)
@@ -195,25 +214,6 @@ class SubtitleToolApp(ToolBase):
         # Bilingual burn doesn't crop — kill the crop-rect drag UI clip
         # uses for global crop. Subtitles/watermark still render on top.
         self._preview.enable_crop_drag(False)
-
-        # ── Bottom: progress + burn ───────────────────────────────────────
-        bottom = tk.Frame(main)
-        bottom.grid(row=2, column=0, sticky="ew", padx=8, pady=(0, 8))
-        self.label_elapsed = tk.Label(
-            bottom, text=tr("tool.subtitle.progress.elapsed_zero"),
-            width=14, anchor="w")
-        self.label_elapsed.pack(side="left")
-        self.label_remaining = tk.Label(
-            bottom, text=tr("tool.subtitle.progress.remaining_unknown"),
-            width=14, anchor="w")
-        self.label_remaining.pack(side="left", padx=(8, 0))
-        self.progress_bar = ttk.Progressbar(
-            bottom, orient=tk.HORIZONTAL, mode='determinate')
-        self.progress_bar.pack(side="left", padx=12, fill="x", expand=True)
-        self.btn_merge = tk.Button(
-            bottom, text=tr("tool.subtitle.action.start"),
-            width=18, command=self._merge_videos)
-        self.btn_merge.pack(side="right")
 
     def _build_form(self, parent: ttk.Frame) -> None:
         # ── Preset ────────────────────────────────────────────────────────
@@ -266,16 +266,9 @@ class SubtitleToolApp(ToolBase):
                    ).pack(side="left", padx=(2, 0))
 
         row = ttk.Frame(srts); row.pack(fill="x", padx=4, pady=2)
-        ttk.Checkbutton(row, text=tr("tool.subtitle.sub.split"),
-                        variable=self.split_sub1_var).pack(side="left")
-        ttk.Label(row, text=tr("tool.subtitle.sub.max_chars")
-                  ).pack(side="left", padx=(8, 0))
-        ttk.Spinbox(row, from_=10, to=100, width=4,
-                    textvariable=self.sub1_max_chars_var
-                    ).pack(side="left", padx=(4, 0))
         ttk.Checkbutton(row, text=tr("tool.subtitle.sub.is_chinese"),
                         variable=self.sub1_is_chinese_var
-                        ).pack(side="left", padx=(8, 0))
+                        ).pack(side="left")
 
         srt2 = ttk.LabelFrame(parent, text=tr("tool.subtitle.sub2.frame_title"))
         srt2.pack(fill="x", padx=6, pady=4)
@@ -302,16 +295,9 @@ class SubtitleToolApp(ToolBase):
                    ).pack(side="left", padx=(2, 0))
 
         row = ttk.Frame(srt2); row.pack(fill="x", padx=4, pady=2)
-        ttk.Checkbutton(row, text=tr("tool.subtitle.sub.split"),
-                        variable=self.split_sub2_var).pack(side="left")
-        ttk.Label(row, text=tr("tool.subtitle.sub.max_chars")
-                  ).pack(side="left", padx=(8, 0))
-        ttk.Spinbox(row, from_=10, to=100, width=4,
-                    textvariable=self.sub2_max_chars_var
-                    ).pack(side="left", padx=(4, 0))
         ttk.Checkbutton(row, text=tr("tool.subtitle.sub.is_chinese"),
                         variable=self.sub2_is_chinese_var
-                        ).pack(side="left", padx=(8, 0))
+                        ).pack(side="left")
 
         # ── Watermark ─────────────────────────────────────────────────────
         wm = ttk.LabelFrame(parent, text=tr("tool.subtitle.watermark.frame_title"))
@@ -411,9 +397,9 @@ class SubtitleToolApp(ToolBase):
         edits get pushed into the WebView with a 200ms debounce."""
         for var in (
             self.sub1_show_var, self.sub1_fontsize_var, self.sub1_color_var,
-            self.sub1_is_chinese_var, self.split_sub1_var, self.sub1_max_chars_var,
+            self.sub1_is_chinese_var,
             self.sub2_show_var, self.sub2_fontsize_var, self.sub2_color_var,
-            self.sub2_is_chinese_var, self.split_sub2_var, self.sub2_max_chars_var,
+            self.sub2_is_chinese_var,
             self.watermark_show_var, self.watermark_type_var,
             self.watermark_text_var, self.watermark_color_var,
             self.watermark_fontsize_var, self.watermark_txt_alpha_var,
@@ -949,21 +935,17 @@ class SubtitleToolApp(ToolBase):
     # The bilingual burn preset and per-instance config both store a
     # CompositionStyle dict — same shape clip uses, just always passthrough
     # mode. _form_to_style() snapshots Tk vars to a CompositionStyle,
-    # _apply_style() pushes one back into the Tk vars. The split_subN
-    # checkbox is encoded into manual_max_chars: 99999 sentinel means
-    # "wrap off", any smaller number is the user's wrap width.
-
-    _NO_WRAP_SENTINEL = 99999
+    # _apply_style() pushes one back into the Tk vars.
+    # Subtitle line-wrap budget is always auto-computed from aspect +
+    # fontsize + is_chinese (via compute_subtitle_max_chars). No manual
+    # override anymore — the UI used to expose split toggle + max_chars
+    # spinbox, but with auto enabled the user never needed to touch it.
 
     def _form_to_style(self) -> 'CompositionStyle':
         from core.composition import (
             CompositionStyle, OutputGeometry, SubtitleStyle,
             SubtitleLineStyle, WatermarkStyle,
         )
-
-        def _mc(split_on: bool, n: int) -> int:
-            return int(n) if split_on else self._NO_WRAP_SENTINEL
-
         return CompositionStyle(
             output=OutputGeometry(mode="passthrough"),
             encode_preset=self.encode_preset_var.get(),
@@ -974,9 +956,7 @@ class SubtitleToolApp(ToolBase):
                     color=self.sub1_color_var.get(),
                     bold=True,
                     is_chinese=bool(self.sub1_is_chinese_var.get()),
-                    auto_max_chars=False,
-                    manual_max_chars=_mc(self.split_sub1_var.get(),
-                                          self.sub1_max_chars_var.get()),
+                    auto_max_chars=True,
                 ),
                 sub2=SubtitleLineStyle(
                     enabled=bool(self.sub2_show_var.get()),
@@ -984,9 +964,7 @@ class SubtitleToolApp(ToolBase):
                     color=self.sub2_color_var.get(),
                     bold=False,
                     is_chinese=bool(self.sub2_is_chinese_var.get()),
-                    auto_max_chars=False,
-                    manual_max_chars=_mc(self.split_sub2_var.get(),
-                                          self.sub2_max_chars_var.get()),
+                    auto_max_chars=True,
                 ),
                 position="bottom",
             ),
@@ -1005,30 +983,21 @@ class SubtitleToolApp(ToolBase):
         )
 
     def _apply_style(self, style: 'CompositionStyle') -> None:
-        """Push a CompositionStyle into the Tk vars. Style fields that
-        don't have a UI control are skipped."""
+        """Push a CompositionStyle into the Tk vars. Wrap-related fields
+        (auto_max_chars / manual_max_chars) are dropped on the floor —
+        the UI doesn't expose them; auto computes from fontsize/is_chinese."""
         sub = style.subtitle
-        for src, show, fsize, color, is_cn, split, mc in (
+        for src, show, fsize, color, is_cn in (
             (sub.sub1, self.sub1_show_var, self.sub1_fontsize_var,
-             self.sub1_color_var, self.sub1_is_chinese_var,
-             self.split_sub1_var, self.sub1_max_chars_var),
+             self.sub1_color_var, self.sub1_is_chinese_var),
             (sub.sub2, self.sub2_show_var, self.sub2_fontsize_var,
-             self.sub2_color_var, self.sub2_is_chinese_var,
-             self.split_sub2_var, self.sub2_max_chars_var),
+             self.sub2_color_var, self.sub2_is_chinese_var),
         ):
             try:
                 show.set(bool(src.enabled))
                 fsize.set(int(src.fontsize))
                 color.set(src.color)
                 is_cn.set(bool(src.is_chinese))
-                if src.manual_max_chars >= self._NO_WRAP_SENTINEL:
-                    split.set(False)
-                    # Don't clobber the spinbox value — leave whatever
-                    # was there so re-toggling wrap reveals a sensible
-                    # number rather than 99999.
-                else:
-                    split.set(True)
-                    mc.set(int(src.manual_max_chars))
             except tk.TclError:
                 pass
 
@@ -1062,15 +1031,12 @@ class SubtitleToolApp(ToolBase):
     def _legacy_flat_to_style(self, flat: dict) -> 'CompositionStyle':
         """Convert a pre-S4 burn_presets-flat-dict params payload into a
         CompositionStyle. Used only on lazy load of legacy instance
-        config.json files."""
+        config.json files. The legacy split/max_chars fields are
+        discarded — auto wrap is the only behavior now."""
         from core.composition import (
             CompositionStyle, OutputGeometry, SubtitleStyle,
             SubtitleLineStyle, WatermarkStyle,
         )
-
-        def _mc(split_on: bool, n: int) -> int:
-            return int(n) if split_on else self._NO_WRAP_SENTINEL
-
         return CompositionStyle(
             output=OutputGeometry(mode="passthrough"),
             encode_preset=str(flat.get("encode_preset", "veryfast")),
@@ -1081,10 +1047,7 @@ class SubtitleToolApp(ToolBase):
                     color=str(flat.get("sub1_color", "#FFFF00")),
                     bold=True,
                     is_chinese=bool(flat.get("sub1_is_chinese", True)),
-                    auto_max_chars=False,
-                    manual_max_chars=_mc(
-                        bool(flat.get("split_sub1", True)),
-                        int(flat.get("sub1_max_chars", 20))),
+                    auto_max_chars=True,
                 ),
                 sub2=SubtitleLineStyle(
                     enabled=bool(flat.get("sub2_show", True)),
@@ -1092,10 +1055,7 @@ class SubtitleToolApp(ToolBase):
                     color=str(flat.get("sub2_color", "#FFFFFF")),
                     bold=False,
                     is_chinese=bool(flat.get("sub2_is_chinese", False)),
-                    auto_max_chars=False,
-                    manual_max_chars=_mc(
-                        bool(flat.get("split_sub2", True)),
-                        int(flat.get("sub2_max_chars", 50))),
+                    auto_max_chars=True,
                 ),
                 position="bottom",
             ),
@@ -1272,22 +1232,41 @@ class SubtitleToolApp(ToolBase):
             os.makedirs(inst_dir, exist_ok=True)
             return os.path.join(inst_dir, f"subtitles_{stem}.srt")
 
-        def _write_adapted(src_srt: str, max_chars: int, is_chinese: bool,
-                            do_split: bool) -> str:
-            """Write the adapted SRT (split if requested, otherwise copy)
-            to the derivative folder and return its path."""
+        # _write_adapted produces the shippable sidecar by routing the
+        # source SRT through prepare_subtitle_cues — same auto-wrap the
+        # burn applies. One core helper, two consumers (sidecar + render),
+        # zero policy drift.
+        from core.composition import prepare_subtitle_cues
+        from core.composition.style import SubtitleLineStyle as _SLS
+
+        def _write_adapted(src_srt: str, line: _SLS,
+                            aspect: str, short_edge: int) -> str:
             dst = _adapted_path(src_srt)
-            if do_split:
-                subs = process_srt_split(src_srt, max_chars, is_chinese)
-                with open(dst, 'w', encoding='utf-8') as f:
-                    f.write(srt.compose(subs))
-            else:
-                # Plain copy — user opted out of wrap, but still wants the
-                # file alongside the burn output for separate upload.
+            cues = prepare_subtitle_cues(
+                src_srt, line, aspect=aspect, short_edge=short_edge)
+            if not cues:
+                # Fall back to a plain copy so the sidecar still ships.
                 if os.path.abspath(dst) != os.path.abspath(src_srt):
                     import shutil
                     shutil.copy2(src_srt, dst)
+                return dst
+            from datetime import timedelta
+            subs = [srt.Subtitle(
+                        index=i + 1,
+                        start=timedelta(seconds=c["start"]),
+                        end=timedelta(seconds=c["end"]),
+                        content=c["text"])
+                    for i, c in enumerate(cues)]
+            with open(dst, 'w', encoding='utf-8') as f:
+                f.write(srt.compose(subs))
             return dst
+
+        # Effective aspect/short_edge for the auto-wrap budget — passthrough
+        # uses probed source dims.
+        _eff_aspect = (f"{self._src_w}:{self._src_h}"
+                        if (self._src_w and self._src_h) else "16:9")
+        _eff_short_edge = (min(self._src_w, self._src_h)
+                            if (self._src_w and self._src_h) else 1080)
 
         temp_sub1_path = sub1_path
         temp_sub2_path = sub2_path
@@ -1295,17 +1274,17 @@ class SubtitleToolApp(ToolBase):
             if show_sub1:
                 temp_sub1_path = _write_adapted(
                     sub1_path,
-                    self.sub1_max_chars_var.get(),
-                    self.sub1_is_chinese_var.get(),
-                    self.split_sub1_var.get(),
-                )
+                    _SLS(enabled=True, fontsize=int(self.sub1_fontsize_var.get()),
+                          is_chinese=bool(self.sub1_is_chinese_var.get()),
+                          auto_max_chars=True),
+                    _eff_aspect, _eff_short_edge)
             if show_sub2:
                 temp_sub2_path = _write_adapted(
                     sub2_path,
-                    self.sub2_max_chars_var.get(),
-                    self.sub2_is_chinese_var.get(),
-                    self.split_sub2_var.get(),
-                )
+                    _SLS(enabled=True, fontsize=int(self.sub2_fontsize_var.get()),
+                          is_chinese=bool(self.sub2_is_chinese_var.get()),
+                          auto_max_chars=True),
+                    _eff_aspect, _eff_short_edge)
         except Exception as e:
             messagebox.showerror(tr("tool.subtitle.error.split_failed_title"), str(e))
             return

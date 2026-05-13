@@ -103,8 +103,6 @@
   "tool.subtitle.sub.color": "颜色:",
   "tool.subtitle.sub.choose": "选择",
   "tool.subtitle.sub.show": "显示",
-  "tool.subtitle.sub.split": "分割字幕",
-  "tool.subtitle.sub.max_chars": "最大字符:",
   "tool.subtitle.sub.is_chinese": "中文",
   "tool.subtitle.sub1_name": "字幕1",
   "tool.subtitle.sub2_name": "字幕2",
