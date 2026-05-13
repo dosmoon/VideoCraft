@@ -35,6 +35,7 @@ from core.subtitle_ops import (
 from .style import CompositionStyle, SubtitleStyle, SubtitleLineStyle, \
     WatermarkStyle, HookOutroStyle, compute_subtitle_max_chars
 from .overlays import OverlaySpec
+from .layout import libass_margin_v, pixel_offset
 from .fonts import (
     hook_outro_font_path, y_expr_for_position, ass_alignment_for_position,
 )
@@ -345,32 +346,24 @@ def _build_subtitle_force_style(line: SubtitleLineStyle,
 
 
 def _track_margins(subtitle: SubtitleStyle) -> tuple[int, int]:
-    """Vertical MarginV for (sub1, sub2) so the two tracks stack without
-    overlapping. ASS script-pixel space — libass scales by output_h/PlayResY
-    (empirically ~4.7× at 1080 output, see compute_subtitle_max_chars).
+    """Vertical MarginV for (sub1, sub2) derived from the normalized
+    layout fields on SubtitleStyle. The JS preview reads the SAME
+    block_margin_pct + track_gap_pct via core.composition.layout, so the
+    two renderers stay aligned by construction — no magic-number drift.
 
     sub1 is the primary track and sits visually above sub2 (translation).
-    For position=top, sub1 anchors near the top edge with sub2 below;
-    for bottom, sub2 anchors near the bottom edge with sub1 above.
-    position=middle uses Alignment=5 where MarginV is ignored, so stacking
-    isn't supported there — callers should use top/bottom for bilingual.
-
-    Empirical calibration: with base=25, fontsize×0.7 stacking, the
-    output positions roughly match what the JS WebView preview shows
-    (subtitle block bottom-anchored at ~88-92% of frame height, sub1 a
-    line height above sub2). The fontsize×0.7 reflects that libass'
-    rendered line height ≈ fontsize × line_spacing_factor / scale ≈
-    fontsize × 1.2 / ~4.7 × 4.7 ≈ ~fontsize × 0.7 in script-pixel space.
-    Earlier values (4.0× gap, 60 base) put sub1 in the middle of the
-    frame at 1080p output — way off.
-    """
-    base = 25
+    position=top: sub1 outer (near top edge), sub2 inner (below sub1).
+    position=bottom: sub2 outer (near bottom edge), sub1 inner (above sub2).
+    position=middle: libass Alignment=5 ignores MarginV — stacking not
+    supported; callers should use top/bottom for bilingual."""
+    outer = libass_margin_v(subtitle.block_margin_pct)
+    inner = libass_margin_v(subtitle.block_margin_pct + subtitle.track_gap_pct)
     pos = subtitle.position
     if pos == "top":
-        return (base, base + int(subtitle.sub1.fontsize * 0.7))
+        return (outer, inner)
     if pos == "bottom":
-        return (base + int(subtitle.sub2.fontsize * 0.7), base)
-    return (base, base)
+        return (inner, outer)
+    return (outer, outer)
 
 
 def _hex_to_drawtext_rgba(hex_color: str, alpha: float) -> str:
@@ -383,6 +376,7 @@ def _hex_to_drawtext_rgba(hex_color: str, alpha: float) -> str:
 
 def _build_text_watermark_drawtext(watermark: WatermarkStyle,
                                       target_w: int,
+                                      target_h: int,
                                       tmp_files: list[str]) -> str:
     """Text-mode watermark via textfile so long strings wrap consistently
     with the preview. Wraps at 40% of target width — watermarks should be
@@ -412,10 +406,11 @@ def _build_text_watermark_drawtext(watermark: WatermarkStyle,
         return ""
     tmp_files.append(tmp_path)
 
-    margin = max(20, int(target_w * 0.025))
+    margin_x = pixel_offset(watermark.margin_x_pct, target_w)
+    margin_y = pixel_offset(watermark.margin_y_pct, target_h)
     pos = watermark.position or "top-right"
-    x = f"w-text_w-{margin}" if pos.endswith("right") else f"{margin}"
-    y = f"h-text_h-{margin}" if pos.startswith("bottom") else f"{margin}"
+    x = f"w-text_w-{margin_x}" if pos.endswith("right") else f"{margin_x}"
+    y = f"h-text_h-{margin_y}" if pos.startswith("bottom") else f"{margin_y}"
     opacity = max(0.0, min(1.0, (watermark.text_opacity or 70) / 100.0))
     textfile_ff = tmp_path.replace("\\", "/").replace(":", "\\:")
     return (f"drawtext=textfile='{textfile_ff}':"
@@ -428,6 +423,7 @@ def _build_text_watermark_drawtext(watermark: WatermarkStyle,
 
 def _build_image_watermark_chain(watermark: WatermarkStyle,
                                     target_w: int,
+                                    target_h: int,
                                     prev_label: str,
                                     src_label: str,
                                     out_label: str,
@@ -443,10 +439,11 @@ def _build_image_watermark_chain(watermark: WatermarkStyle,
     wm_w = max(1, int(target_w * max(0.01, watermark.image_scale or 0.15)))
     opacity = max(0.0, min(1.0, (watermark.image_opacity or 100) / 100.0))
     pos = watermark.position or "top-right"
-    margin = max(20, int(target_w * 0.025))
+    margin_x = pixel_offset(watermark.margin_x_pct, target_w)
+    margin_y = pixel_offset(watermark.margin_y_pct, target_h)
     # overlay W/H = main video dims, w/h = overlay dims
-    x = f"W-w-{margin}" if pos.endswith("right") else f"{margin}"
-    y = f"H-h-{margin}" if pos.startswith("bottom") else f"{margin}"
+    x = f"W-w-{margin_x}" if pos.endswith("right") else f"{margin_x}"
+    y = f"H-h-{margin_y}" if pos.startswith("bottom") else f"{margin_y}"
     return ([
         f"movie='{img_ff}',scale={wm_w}:-1,"
         f"format=rgba,colorchannelmixer=aa={opacity:.3f}{src_label}",
@@ -519,13 +516,14 @@ def _renderer_image_watermark(job: _OverlayJob, prev_label: str,
     src_label = ctx.next_label()
     out_label = ctx.next_label()
     return _build_image_watermark_chain(
-        wm, ctx.target_w, prev_label, src_label, out_label)
+        wm, ctx.target_w, ctx.target_h, prev_label, src_label, out_label)
 
 
 def _renderer_text_watermark(job: _OverlayJob, prev_label: str,
                                ctx: _RenderCtx) -> tuple[list[str], str]:
     wm: WatermarkStyle = job.data["watermark"]
-    snippet = _build_text_watermark_drawtext(wm, ctx.target_w, ctx.tmp_files)
+    snippet = _build_text_watermark_drawtext(
+        wm, ctx.target_w, ctx.target_h, ctx.tmp_files)
     if not snippet:
         return [], prev_label
     out_label = ctx.next_label()

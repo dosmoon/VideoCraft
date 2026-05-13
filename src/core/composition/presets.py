@@ -75,6 +75,8 @@ def _subtitle_from_dict(d: dict) -> SubtitleStyle:
         stroke_color=str(d.get("stroke_color", "#000000")),
         stroke_width=int(d.get("stroke_width", 2)),
         position=str(d.get("position", "bottom")),
+        block_margin_pct=float(d.get("block_margin_pct", 0.08)),
+        track_gap_pct=float(d.get("track_gap_pct", 0.12)),
     )
 
 

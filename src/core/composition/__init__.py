@@ -26,6 +26,11 @@ from .style import (
     effective_max_chars,
 )
 from .overlays import OverlaySpec
+from .layout import (
+    libass_margin_v, pixel_offset,
+    subtitle_baseline_y_from_canvas_top,
+    LIBASS_DEFAULT_PLAY_RES_Y,
+)
 from .render import (
     CompositionRequest,
     CompositionResult,
@@ -46,6 +51,10 @@ __all__ = [
     "WatermarkStyle",
     "HookOutroStyle",
     "OverlaySpec",
+    "libass_margin_v",
+    "pixel_offset",
+    "subtitle_baseline_y_from_canvas_top",
+    "LIBASS_DEFAULT_PLAY_RES_Y",
     "compute_subtitle_max_chars",
     "effective_max_chars",
     "CompositionRequest",

@@ -42,7 +42,12 @@ class SubtitleStyle:
         bold=False, is_chinese=False))
     stroke_color: str = "#000000"
     stroke_width: int = 2
-    position: str = "bottom"          # "top" | "middle" | "bottom"
+    position: str = "bottom"          # "top" | "middle" | "bottom" (anchor edge)
+    # Normalized layout — fraction of frame height. Both libass and the
+    # WebView preview consume these via core.composition.layout helpers,
+    # so visual positions match across engines.
+    block_margin_pct: float = 0.08    # outer track baseline distance from anchored edge
+    track_gap_pct: float = 0.12       # baseline gap between sub1 and sub2
 
 
 # ── Watermark ───────────────────────────────────────────────────────────────
@@ -62,6 +67,11 @@ class WatermarkStyle:
     text_opacity: int = 70
     # Common
     position: str = "top-right"       # top-left | top-right | bottom-left | bottom-right
+    # Normalized margin from the anchored corner — fraction of frame dim.
+    # Both renderers consume via core.composition.layout.pixel_offset so
+    # the visual gap from the corner matches across engines.
+    margin_x_pct: float = 0.025
+    margin_y_pct: float = 0.025
 
 
 # ── Hook / Outro card ───────────────────────────────────────────────────────

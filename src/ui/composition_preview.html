@@ -49,6 +49,8 @@ let styleState = {
     position: "bottom",
     stroke_color: "#000000",
     stroke_width: 2,
+    block_margin_pct: 0.08,
+    track_gap_pct: 0.12,
     sub1: { enabled: true, fontsize: 24, color: "#FFFF00", bold: true,
             text: "字幕预览第一行 sub1" },
     sub2: { enabled: false, fontsize: 24, color: "#FFFFFF", bold: false,
@@ -59,6 +61,8 @@ let styleState = {
     text_fontsize: 36, text_color: "#FFFFFF", text_opacity: 70,
     image_scale: 0.15, image_opacity: 100,
     position: "top-right",
+    margin_x_pct: 0.025,
+    margin_y_pct: 0.025,
   },
   hookOutro: {
     size: 48, color: "#FFFFFF",
@@ -279,6 +283,18 @@ function pickActiveCueFrom(arr) {
   return null;
 }
 
+// Layout math — mirrors core/composition/layout.py. Same normalized
+// pct values from styleState drive baseline positions on both renderers.
+function subtitleBaselineY(blockMarginPct, trackGapPct, isInnerTrack,
+                            anchor, oy, ch) {
+  // outer track sits at blockMarginPct from anchored edge;
+  // inner track one trackGapPct closer to frame center.
+  const extra = isInnerTrack ? trackGapPct : 0.0;
+  const pct = blockMarginPct + extra;
+  if (anchor === "top") return oy + ch * pct;
+  return oy + ch * (1.0 - pct);  // bottom (default)
+}
+
 function drawSubtitles() {
   const sub = styleState.subtitle;
   if (!sub) return;
@@ -291,28 +307,34 @@ function drawSubtitles() {
   // stream is empty the placeholder text from styleState falls through.
   const live1 = pickActiveCueFrom(cues);
   const live2 = pickActiveCueFrom(cues2);
-  const lines = [];
-  if (sub.sub1 && sub.sub1.enabled) {
-    lines.push({...sub.sub1, text: live1 != null ? live1 : sub.sub1.text});
-  }
-  if (sub.sub2 && sub.sub2.enabled) {
-    lines.push({...sub.sub2, text: live2 != null ? live2 : sub.sub2.text});
-  }
-  if (lines.length === 0) return;
+  const sub1 = sub.sub1 && sub.sub1.enabled
+    ? { ...sub.sub1, text: live1 != null ? live1 : sub.sub1.text }
+    : null;
+  const sub2 = sub.sub2 && sub.sub2.enabled
+    ? { ...sub.sub2, text: live2 != null ? live2 : sub.sub2.text }
+    : null;
+  if (!sub1 && !sub2) return;
 
-  const lineSpacing = 1.25;
-  const totalH = lines.reduce(
-    (acc, l) => acc + subtitleFontPx(l.fontsize) * lineSpacing, 0);
+  const blockPct = (typeof sub.block_margin_pct === "number")
+                     ? sub.block_margin_pct : 0.08;
+  const gapPct   = (typeof sub.track_gap_pct === "number")
+                     ? sub.track_gap_pct : 0.12;
+  const anchor   = sub.position || "bottom";
 
-  let y;
-  if (sub.position === "top")
-    y = oy + ch * 0.10 + subtitleFontPx(lines[0].fontsize);
-  else if (sub.position === "middle")
-    y = oy + ch * 0.50 - totalH / 2 + subtitleFontPx(lines[0].fontsize);
-  else
-    y = oy + ch * 0.92 - totalH + subtitleFontPx(lines[0].fontsize);
-
-  for (const line of lines) {
+  // At bottom anchor: sub2 is the outer track (near edge), sub1 inner.
+  // At top anchor:    sub1 is the outer track, sub2 inner.
+  // Middle anchor is intentionally unsupported for stacking — both
+  // tracks would overlap; fall back to a centered approximation.
+  for (const line of [sub1, sub2]) {
+    if (!line) continue;
+    let y;
+    if (anchor === "middle") {
+      const offset = (line === sub1) ? -gapPct/2 : gapPct/2;
+      y = oy + ch * (0.5 + offset);
+    } else {
+      const isOuter = (anchor === "top") ? (line === sub1) : (line === sub2);
+      y = subtitleBaselineY(blockPct, gapPct, !isOuter, anchor, oy, ch);
+    }
     const px = subtitleFontPx(line.fontsize);
     const weight = line.bold ? "bold " : "";
     ctx.font = `${weight}${px}px sans-serif`;
@@ -326,7 +348,6 @@ function drawSubtitles() {
     }
     ctx.fillStyle = line.color || "#FFF";
     ctx.fillText(line.text || "", ox + cw / 2, y);
-    y += px * lineSpacing;
   }
 }
 
@@ -444,11 +465,18 @@ function drawHookOutro() {
   }
 }
 
+function pixelOffsetFromPct(pct, dim) {
+  return Math.max(8, Math.floor((pct || 0) * dim));
+}
+
 function drawWatermark() {
   const wm = styleState.watermark;
   if (!wm || !wm.enabled) return;
   const { ox, oy, cw, ch } = cropBox();
-  const margin = Math.max(10, cw * 0.025);
+  // Mirrors core.composition.layout.pixel_offset: normalized margins,
+  // each axis against its own frame dimension.
+  const marginX = pixelOffsetFromPct(wm.margin_x_pct != null ? wm.margin_x_pct : 0.025, cw);
+  const marginY = pixelOffsetFromPct(wm.margin_y_pct != null ? wm.margin_y_pct : 0.025, ch);
   const right  = wm.position && wm.position.endsWith("right");
   const bottom = wm.position && wm.position.startsWith("bottom");
   if (wm.type === "text") {
@@ -456,8 +484,8 @@ function drawWatermark() {
     ctx.font = `bold ${px}px sans-serif`;
     ctx.textAlign = right ? "right" : "left";
     ctx.textBaseline = bottom ? "bottom" : "top";
-    const tx = right ? (ox + cw - margin) : (ox + margin);
-    const ty = bottom ? (oy + ch - margin) : (oy + margin);
+    const tx = right ? (ox + cw - marginX) : (ox + marginX);
+    const ty = bottom ? (oy + ch - marginY) : (oy + marginY);
     ctx.globalAlpha = (wm.text_opacity != null ? wm.text_opacity : 70) / 100;
     ctx.fillStyle = "rgba(0,0,0,0.5)";
     ctx.fillText(wm.text || "@channel", tx + 2, ty + 2);
@@ -467,8 +495,8 @@ function drawWatermark() {
   } else {
     const ww = (wm.image_scale || 0.15) * cw;
     const wh = ww * 0.6;
-    const wx = right  ? (ox + cw - margin - ww) : (ox + margin);
-    const wy = bottom ? (oy + ch - margin - wh) : (oy + margin);
+    const wx = right  ? (ox + cw - marginX - ww) : (ox + marginX);
+    const wy = bottom ? (oy + ch - marginY - wh) : (oy + marginY);
     ctx.globalAlpha = (wm.image_opacity != null ? wm.image_opacity : 100) / 100;
     ctx.fillStyle = "rgba(255,255,255,0.20)";
     ctx.fillRect(wx, wy, ww, wh);

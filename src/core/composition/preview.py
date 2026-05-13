@@ -35,6 +35,8 @@ def style_to_web_dict(style: CompositionStyle) -> dict:
             "position": sub.position,
             "stroke_color": sub.stroke_color,
             "stroke_width": sub.stroke_width,
+            "block_margin_pct": sub.block_margin_pct,
+            "track_gap_pct": sub.track_gap_pct,
             "sub1": {
                 "enabled": sub.sub1.enabled,
                 "fontsize": sub.sub1.fontsize,
@@ -64,6 +66,8 @@ def style_to_web_dict(style: CompositionStyle) -> dict:
             "image_scale": wm.image_scale,
             "image_opacity": wm.image_opacity,
             "position": wm.position,
+            "margin_x_pct": wm.margin_x_pct,
+            "margin_y_pct": wm.margin_y_pct,
         },
         "hookOutro": {
             "size":               ho.size,
