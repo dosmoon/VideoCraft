@@ -35,9 +35,11 @@ from .style import (
 PRESET_DIR = user_data.path("presets")
 PROJECT_PRESETS_PATH = os.path.join(PRESET_DIR, "clip_project.json")
 HOOK_OUTRO_PRESETS_PATH = os.path.join(PRESET_DIR, "clip_hook_outro.json")
+BILIBURN_PRESETS_PATH = os.path.join(PRESET_DIR, "bilingual_burn.json")
 
 BUILTIN_DEFAULT_PROJECT = "Default 9:16"
 BUILTIN_DEFAULT_HOOK_OUTRO = "默认 / Default"
+BUILTIN_DEFAULT_BILIBURN = "Default"
 
 
 # ── Schema-strict dict → dataclass conversion ──────────────────────────────
@@ -410,5 +412,118 @@ def get_last_used_hook_outro(store: dict) -> str:
 
 
 def set_last_used_hook_outro(store: dict, name: str) -> None:
+    if name in store.get("presets", {}):
+        store["last_used"] = name
+
+
+# ── Bilingual burn store API (passthrough-mode CompositionStyle) ───────────
+#
+# Bilingual burn produces a derivative whose output canvas matches the
+# source exactly (passthrough mode) — distinct enough from the clip
+# derivative's reframe-1080 presets that it deserves its own preset file
+# and built-ins. Same CompositionStyle schema, just different defaults.
+
+BUILTIN_BILIBURN_PRESETS: dict[str, CompositionStyle] = {
+    BUILTIN_DEFAULT_BILIBURN: CompositionStyle(
+        output=OutputGeometry(mode="passthrough"),
+        subtitle=SubtitleStyle(
+            sub1=SubtitleLineStyle(
+                enabled=True, fontsize=24, color="#FFFF00",
+                bold=True, is_chinese=True,
+                auto_max_chars=False, manual_max_chars=20),
+            sub2=SubtitleLineStyle(
+                enabled=True, fontsize=24, color="#FFFFFF",
+                bold=False, is_chinese=False,
+                auto_max_chars=False, manual_max_chars=50),
+            stroke_color="#000000", stroke_width=2, position="bottom",
+        ),
+        watermark=WatermarkStyle(
+            enabled=True, type="image",
+            text="字幕By老猿@OldApeTalk",
+            text_fontsize=48, text_color="#00FFFF", text_opacity=60,
+            image_path="",          # resolved at apply time from Logo/
+            image_scale=0.25, image_opacity=100,
+            position="top-right",
+        ),
+        encode_preset="veryfast",
+    ),
+}
+
+
+def _seed_biliburn_store() -> dict:
+    return {
+        "last_used": BUILTIN_DEFAULT_BILIBURN,
+        "presets": {n: composition_style_to_dict(s)
+                     for n, s in BUILTIN_BILIBURN_PRESETS.items()},
+    }
+
+
+def load_biliburn_store() -> dict:
+    raw = _read_json(BILIBURN_PRESETS_PATH)
+    if raw is None or "presets" not in raw:
+        return _seed_biliburn_store()
+    kept, _dropped = _validate_project_presets(raw.get("presets") or {})
+    for name, style in BUILTIN_BILIBURN_PRESETS.items():
+        if name not in kept:
+            kept[name] = composition_style_to_dict(style)
+    last_used = raw.get("last_used", BUILTIN_DEFAULT_BILIBURN)
+    if last_used not in kept:
+        last_used = BUILTIN_DEFAULT_BILIBURN
+    return {"last_used": last_used, "presets": kept}
+
+
+def save_biliburn_store(store: dict) -> None:
+    _write_json(BILIBURN_PRESETS_PATH, store)
+
+
+def list_biliburn_presets(store: dict) -> list[str]:
+    presets = store.get("presets", {})
+    builtin_order = [n for n in BUILTIN_BILIBURN_PRESETS if n in presets]
+    user_names = sorted(
+        (n for n in presets if n not in BUILTIN_BILIBURN_PRESETS),
+        key=lambda s: s.lower(),
+    )
+    return builtin_order + user_names
+
+
+def get_biliburn_preset(store: dict, name: str) -> Optional[CompositionStyle]:
+    raw = store.get("presets", {}).get(name)
+    if raw is None:
+        return None
+    try:
+        return composition_style_from_dict(raw)
+    except (PresetSchemaError, TypeError, ValueError):
+        return None
+
+
+def upsert_biliburn_preset(store: dict, name: str,
+                              style: CompositionStyle) -> None:
+    store.setdefault("presets", {})[name] = composition_style_to_dict(style)
+
+
+def delete_biliburn_preset(store: dict, name: str) -> bool:
+    if name in BUILTIN_BILIBURN_PRESETS:
+        return False
+    presets = store.get("presets", {})
+    if name not in presets:
+        return False
+    del presets[name]
+    if store.get("last_used") == name:
+        store["last_used"] = BUILTIN_DEFAULT_BILIBURN
+    return True
+
+
+def is_builtin_biliburn(name: str) -> bool:
+    return name in BUILTIN_BILIBURN_PRESETS
+
+
+def get_last_used_biliburn(store: dict) -> str:
+    name = store.get("last_used", BUILTIN_DEFAULT_BILIBURN)
+    if name not in store.get("presets", {}):
+        return BUILTIN_DEFAULT_BILIBURN
+    return name
+
+
+def set_last_used_biliburn(store: dict, name: str) -> None:
     if name in store.get("presets", {}):
         store["last_used"] = name

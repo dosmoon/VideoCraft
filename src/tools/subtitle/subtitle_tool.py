@@ -5,7 +5,7 @@
 """
 
 from tools.base import ToolBase
-from core import burn_presets
+from core.composition import presets as comp_presets
 from i18n import tr
 import tkinter as tk
 from tkinter import filedialog, messagebox, colorchooser, simpledialog, ttk
@@ -186,15 +186,18 @@ class SubtitleToolApp(ToolBase):
 
         # Load preset store and apply last-used preset (after Tk vars exist,
         # after _update_split_settings so preset values are authoritative).
-        self._preset_store = burn_presets.load_store()
-        last_name = burn_presets.get_last_used(self._preset_store)
-        last_params = burn_presets.get_preset(self._preset_store, last_name) \
-            or burn_presets.get_preset(self._preset_store, burn_presets.BUILTIN_DEFAULT_NAME)
-        if last_params:
-            self._apply_params(last_params)
+        self._preset_store = comp_presets.load_biliburn_store()
+        last_name = comp_presets.get_last_used_biliburn(self._preset_store)
+        last_style = comp_presets.get_biliburn_preset(
+                          self._preset_store, last_name) \
+            or comp_presets.get_biliburn_preset(
+                          self._preset_store,
+                          comp_presets.BUILTIN_DEFAULT_BILIBURN)
+        if last_style is not None:
+            self._apply_style(last_style)
         self._refresh_preset_combo(select=last_name)
         # Persist once so the file exists on first run.
-        burn_presets.save_store(self._preset_store)
+        comp_presets.save_biliburn_store(self._preset_store)
 
         if initial_file and os.path.exists(initial_file):
             ext = os.path.splitext(initial_file)[1].lower()
@@ -808,10 +811,22 @@ class SubtitleToolApp(ToolBase):
             secondary_iso = os.path.splitext(cfg["secondary_srt"])[0] or None
         _resolve_and_fill(self.entry_sub2, secondary_iso)
 
-        # Style params (uses _PARAM_VARS map)
+        # Style payload — accept either the current CompositionStyle dict
+        # ("subtitle" key present, nested) or the legacy flat burn_presets
+        # shape ("sub1_fontsize" etc.). The latter is lazy-migrated on
+        # touch — no separate migration script.
         params = cfg.get("params")
         if isinstance(params, dict):
-            self._apply_params(params)
+            from core.composition.presets import (composition_style_from_dict,
+                                                    PresetSchemaError)
+            try:
+                if "subtitle" in params and isinstance(params["subtitle"], dict):
+                    style = composition_style_from_dict(params)
+                else:
+                    style = self._legacy_flat_to_style(params)
+                self._apply_style(style)
+            except (PresetSchemaError, TypeError, ValueError, KeyError):
+                pass
 
     def _save_instance_config(self) -> None:
         """Persist SRT iso choices + style params to the instance's
@@ -822,11 +837,12 @@ class SubtitleToolApp(ToolBase):
             return
         sub1 = self.entry_sub1.get().strip()
         sub2 = self.entry_sub2.get().strip()
+        from core.composition.presets import composition_style_to_dict
         cfg = {
             "schema_version": 2,
             "primary_srt_iso": self._extract_srt_iso(sub1),
             "secondary_srt_iso": self._extract_srt_iso(sub2),
-            "params": self._collect_params(),
+            "params": composition_style_to_dict(self._form_to_style()),
         }
         # Preserve burned_at if it already exists.
         path = self._instance_config_path()
@@ -948,30 +964,114 @@ class SubtitleToolApp(ToolBase):
         if color and color[1]:
             self.sub2_color_var.set(color[1])
 
-    # ── Preset 管理 ─────────────────────────────────────────────────────────
+    # ── Style ↔ Form converters (preset / config payload shape) ──────────
+    #
+    # The bilingual burn preset and per-instance config both store a
+    # CompositionStyle dict — same shape clip uses, just always passthrough
+    # mode. _form_to_style() snapshots Tk vars to a CompositionStyle,
+    # _apply_style() pushes one back into the Tk vars. The split_subN
+    # checkbox is encoded into manual_max_chars: 99999 sentinel means
+    # "wrap off", any smaller number is the user's wrap width.
 
-    def _collect_params(self) -> dict:
-        """Snapshot current Tk variables into a plain-dict preset payload."""
-        params = {}
-        for key, attr in self._PARAM_VARS.items():
-            var = getattr(self, attr, None)
-            if var is not None:
-                params[key] = var.get()
-        return params
+    _NO_WRAP_SENTINEL = 99999
 
-    def _apply_params(self, params: dict) -> None:
-        """Push a preset payload into the Tk variables. Unknown/missing keys skipped."""
-        for key, attr in self._PARAM_VARS.items():
-            if key not in params:
-                continue
-            var = getattr(self, attr, None)
-            if var is None:
-                continue
+    def _form_to_style(self) -> 'CompositionStyle':
+        from core.composition import (
+            CompositionStyle, OutputGeometry, SubtitleStyle,
+            SubtitleLineStyle, WatermarkStyle,
+        )
+
+        def _mc(split_on: bool, n: int) -> int:
+            return int(n) if split_on else self._NO_WRAP_SENTINEL
+
+        return CompositionStyle(
+            output=OutputGeometry(mode="passthrough"),
+            encode_preset=self.encode_preset_var.get(),
+            subtitle=SubtitleStyle(
+                sub1=SubtitleLineStyle(
+                    enabled=bool(self.sub1_show_var.get()),
+                    fontsize=int(self.sub1_fontsize_var.get()),
+                    color=self.sub1_color_var.get(),
+                    bold=True,
+                    is_chinese=bool(self.sub1_is_chinese_var.get()),
+                    auto_max_chars=False,
+                    manual_max_chars=_mc(self.split_sub1_var.get(),
+                                          self.sub1_max_chars_var.get()),
+                ),
+                sub2=SubtitleLineStyle(
+                    enabled=bool(self.sub2_show_var.get()),
+                    fontsize=int(self.sub2_fontsize_var.get()),
+                    color=self.sub2_color_var.get(),
+                    bold=False,
+                    is_chinese=bool(self.sub2_is_chinese_var.get()),
+                    auto_max_chars=False,
+                    manual_max_chars=_mc(self.split_sub2_var.get(),
+                                          self.sub2_max_chars_var.get()),
+                ),
+                position="bottom",
+            ),
+            watermark=WatermarkStyle(
+                enabled=bool(self.watermark_show_var.get()),
+                type=self.watermark_type_var.get(),
+                text=self.watermark_text_var.get(),
+                text_fontsize=int(self.watermark_fontsize_var.get()),
+                text_color=self.watermark_color_var.get(),
+                text_opacity=int(self.watermark_txt_alpha_var.get()),
+                image_path=self.watermark_img_path_var.get(),
+                image_scale=float(self.watermark_img_scale_var.get()),
+                image_opacity=int(self.watermark_img_alpha_var.get()),
+                position="top-right",
+            ),
+        )
+
+    def _apply_style(self, style: 'CompositionStyle') -> None:
+        """Push a CompositionStyle into the Tk vars. Style fields that
+        don't have a UI control are skipped."""
+        sub = style.subtitle
+        for src, show, fsize, color, is_cn, split, mc in (
+            (sub.sub1, self.sub1_show_var, self.sub1_fontsize_var,
+             self.sub1_color_var, self.sub1_is_chinese_var,
+             self.split_sub1_var, self.sub1_max_chars_var),
+            (sub.sub2, self.sub2_show_var, self.sub2_fontsize_var,
+             self.sub2_color_var, self.sub2_is_chinese_var,
+             self.split_sub2_var, self.sub2_max_chars_var),
+        ):
             try:
-                var.set(params[key])
+                show.set(bool(src.enabled))
+                fsize.set(int(src.fontsize))
+                color.set(src.color)
+                is_cn.set(bool(src.is_chinese))
+                if src.manual_max_chars >= self._NO_WRAP_SENTINEL:
+                    split.set(False)
+                    # Don't clobber the spinbox value — leave whatever
+                    # was there so re-toggling wrap reveals a sensible
+                    # number rather than 99999.
+                else:
+                    split.set(True)
+                    mc.set(int(src.manual_max_chars))
             except tk.TclError:
                 pass
-        # watermark_img_path may be empty (builtin default) or stale path →
+
+        wm = style.watermark
+        try:
+            self.watermark_show_var.set(bool(wm.enabled))
+            self.watermark_type_var.set(wm.type or "image")
+            self.watermark_text_var.set(wm.text or "")
+            self.watermark_fontsize_var.set(int(wm.text_fontsize))
+            self.watermark_color_var.set(wm.text_color)
+            self.watermark_txt_alpha_var.set(float(wm.text_opacity))
+            self.watermark_img_path_var.set(wm.image_path or "")
+            self.watermark_img_scale_var.set(float(wm.image_scale))
+            self.watermark_img_alpha_var.set(float(wm.image_opacity))
+        except tk.TclError:
+            pass
+
+        try:
+            self.encode_preset_var.set(style.encode_preset or "veryfast")
+        except tk.TclError:
+            pass
+
+        # Watermark image path may be empty (builtin default) or stale →
         # fall back to first available image under Logo/.
         cur_img = self.watermark_img_path_var.get()
         if not cur_img or not os.path.exists(cur_img):
@@ -979,8 +1079,64 @@ class SubtitleToolApp(ToolBase):
         if hasattr(self, "_wm_img_combo"):
             self._refresh_wm_img_combo()
 
+    def _legacy_flat_to_style(self, flat: dict) -> 'CompositionStyle':
+        """Convert a pre-S4 burn_presets-flat-dict params payload into a
+        CompositionStyle. Used only on lazy load of legacy instance
+        config.json files."""
+        from core.composition import (
+            CompositionStyle, OutputGeometry, SubtitleStyle,
+            SubtitleLineStyle, WatermarkStyle,
+        )
+
+        def _mc(split_on: bool, n: int) -> int:
+            return int(n) if split_on else self._NO_WRAP_SENTINEL
+
+        return CompositionStyle(
+            output=OutputGeometry(mode="passthrough"),
+            encode_preset=str(flat.get("encode_preset", "veryfast")),
+            subtitle=SubtitleStyle(
+                sub1=SubtitleLineStyle(
+                    enabled=bool(flat.get("sub1_show", True)),
+                    fontsize=int(flat.get("sub1_fontsize", 24)),
+                    color=str(flat.get("sub1_color", "#FFFF00")),
+                    bold=True,
+                    is_chinese=bool(flat.get("sub1_is_chinese", True)),
+                    auto_max_chars=False,
+                    manual_max_chars=_mc(
+                        bool(flat.get("split_sub1", True)),
+                        int(flat.get("sub1_max_chars", 20))),
+                ),
+                sub2=SubtitleLineStyle(
+                    enabled=bool(flat.get("sub2_show", True)),
+                    fontsize=int(flat.get("sub2_fontsize", 24)),
+                    color=str(flat.get("sub2_color", "#FFFFFF")),
+                    bold=False,
+                    is_chinese=bool(flat.get("sub2_is_chinese", False)),
+                    auto_max_chars=False,
+                    manual_max_chars=_mc(
+                        bool(flat.get("split_sub2", True)),
+                        int(flat.get("sub2_max_chars", 50))),
+                ),
+                position="bottom",
+            ),
+            watermark=WatermarkStyle(
+                enabled=bool(flat.get("watermark_show", True)),
+                type=str(flat.get("watermark_type", "image")),
+                text=str(flat.get("watermark_text", "")),
+                text_fontsize=int(flat.get("watermark_fontsize", 48)),
+                text_color=str(flat.get("watermark_color", "#00ffff")),
+                text_opacity=int(float(flat.get("watermark_txt_alpha", 60))),
+                image_path=str(flat.get("watermark_img_path", "")),
+                image_scale=float(flat.get("watermark_img_scale", 0.25)),
+                image_opacity=int(float(flat.get("watermark_img_alpha", 100))),
+                position="top-right",
+            ),
+        )
+
+    # ── Preset combo wiring ──────────────────────────────────────────────
+
     def _refresh_preset_combo(self, select: str = None) -> None:
-        names = burn_presets.list_preset_names(self._preset_store)
+        names = comp_presets.list_biliburn_presets(self._preset_store)
         self.preset_combo["values"] = names
         if select and select in names:
             self.preset_combo.set(select)
@@ -989,29 +1145,30 @@ class SubtitleToolApp(ToolBase):
         self._update_preset_button_state()
 
     def _update_preset_button_state(self) -> None:
-        is_default = self.preset_combo.get() == burn_presets.BUILTIN_DEFAULT_NAME
-        state = "disabled" if is_default else "normal"
+        is_builtin = comp_presets.is_builtin_biliburn(self.preset_combo.get())
+        state = "disabled" if is_builtin else "normal"
         self.btn_preset_save.config(state=state)
         self.btn_preset_delete.config(state=state)
 
     def _on_preset_selected(self, event=None) -> None:
         name = self.preset_combo.get()
-        params = burn_presets.get_preset(self._preset_store, name)
-        if params is None:
+        style = comp_presets.get_biliburn_preset(self._preset_store, name)
+        if style is None:
             return
-        self._apply_params(params)
-        burn_presets.set_last_used(self._preset_store, name)
-        burn_presets.save_store(self._preset_store)
+        self._apply_style(style)
+        comp_presets.set_last_used_biliburn(self._preset_store, name)
+        comp_presets.save_biliburn_store(self._preset_store)
         self._update_preset_button_state()
 
     def _on_preset_save(self) -> None:
         name = self.preset_combo.get()
-        if name == burn_presets.BUILTIN_DEFAULT_NAME:
+        if comp_presets.is_builtin_biliburn(name):
             messagebox.showinfo(tr("dialog.common.info"),
                                 tr("tool.subtitle.preset.default_protected"))
             return
-        burn_presets.upsert_preset(self._preset_store, name, self._collect_params())
-        burn_presets.save_store(self._preset_store)
+        comp_presets.upsert_biliburn_preset(
+            self._preset_store, name, self._form_to_style())
+        comp_presets.save_biliburn_store(self._preset_store)
         messagebox.showinfo(tr("tool.subtitle.preset.saved_title"),
                             tr("tool.subtitle.preset.saved_msg", name=name))
 
@@ -1032,33 +1189,36 @@ class SubtitleToolApp(ToolBase):
                 tr("tool.subtitle.preset.overwrite_confirm", name=name),
             ):
                 return
-        burn_presets.upsert_preset(self._preset_store, name, self._collect_params())
-        burn_presets.set_last_used(self._preset_store, name)
-        burn_presets.save_store(self._preset_store)
+        comp_presets.upsert_biliburn_preset(
+            self._preset_store, name, self._form_to_style())
+        comp_presets.set_last_used_biliburn(self._preset_store, name)
+        comp_presets.save_biliburn_store(self._preset_store)
         self._refresh_preset_combo(select=name)
 
     def _on_preset_delete(self) -> None:
         name = self.preset_combo.get()
-        if name == burn_presets.BUILTIN_DEFAULT_NAME:
+        if comp_presets.is_builtin_biliburn(name):
             return
         if not messagebox.askyesno(
             tr("tool.subtitle.preset.delete_title"),
             tr("tool.subtitle.preset.delete_confirm", name=name),
         ):
             return
-        burn_presets.delete_preset(self._preset_store, name)
-        burn_presets.save_store(self._preset_store)
-        self._refresh_preset_combo(select=burn_presets.BUILTIN_DEFAULT_NAME)
-        # Re-apply Default after deletion so the UI reflects the fallback.
-        default_params = burn_presets.get_preset(self._preset_store, burn_presets.BUILTIN_DEFAULT_NAME)
-        if default_params:
-            self._apply_params(default_params)
+        comp_presets.delete_biliburn_preset(self._preset_store, name)
+        comp_presets.save_biliburn_store(self._preset_store)
+        self._refresh_preset_combo(select=comp_presets.BUILTIN_DEFAULT_BILIBURN)
+        default_style = comp_presets.get_biliburn_preset(
+            self._preset_store, comp_presets.BUILTIN_DEFAULT_BILIBURN)
+        if default_style is not None:
+            self._apply_style(default_style)
 
     def _on_preset_reset_default(self) -> None:
-        """Reload the Default preset values into the UI without changing last_used."""
-        params = burn_presets.get_preset(self._preset_store, burn_presets.BUILTIN_DEFAULT_NAME)
-        if params:
-            self._apply_params(params)
+        """Reload the Default preset values into the UI without changing
+        last_used."""
+        style = comp_presets.get_biliburn_preset(
+            self._preset_store, comp_presets.BUILTIN_DEFAULT_BILIBURN)
+        if style is not None:
+            self._apply_style(style)
 
     # ── 辅助 ────────────────────────────────────────────────────────────────
 
@@ -1203,63 +1363,19 @@ class SubtitleToolApp(ToolBase):
                                  tr("tool.subtitle.error.output_dir_missing", dir=out_dir))
             return
 
-        # Build the CompositionRequest from Tk vars. Bilingual burn runs the
-        # composition engine in passthrough mode so source resolution/aspect
-        # are preserved verbatim (no crop, no resize, no aspect coercion).
-        from core.composition import (
-            CompositionStyle, OutputGeometry, SubtitleStyle, SubtitleLineStyle,
-            WatermarkStyle, CompositionRequest, render_composition,
-        )
+        # Build the CompositionRequest from Tk vars. Bilingual burn runs
+        # the composition engine in passthrough mode so source resolution
+        # and aspect are preserved verbatim. _form_to_style is the shared
+        # converter — same dataclass goes into config.json and preset.
+        from core.composition import CompositionRequest, render_composition
 
-        # When the user opts out of wrap-split (split_subN=False), we want
-        # both the shipped sidecar and the burned subtitles to pass through
-        # the original cue text unchanged. The shipped sidecar is already a
-        # plain copy in that case (see _write_adapted); for the burn path
-        # we set manual_max_chars=99999 so composition's process_srt_split
-        # becomes effectively a no-op.
-        def _mc(split_on: bool, n: int) -> int:
-            return int(n) if split_on else 99999
-
-        encode_preset = self.encode_preset_var.get()
-        style = CompositionStyle(
-            output=OutputGeometry(mode="passthrough"),
-            encode_preset=encode_preset,
-            subtitle=SubtitleStyle(
-                sub1=SubtitleLineStyle(
-                    enabled=show_sub1,
-                    fontsize=int(self.sub1_fontsize_var.get()),
-                    color=self.sub1_color_var.get(),
-                    bold=True,
-                    is_chinese=bool(self.sub1_is_chinese_var.get()),
-                    auto_max_chars=False,
-                    manual_max_chars=_mc(self.split_sub1_var.get(),
-                                          self.sub1_max_chars_var.get()),
-                ),
-                sub2=SubtitleLineStyle(
-                    enabled=show_sub2,
-                    fontsize=int(self.sub2_fontsize_var.get()),
-                    color=self.sub2_color_var.get(),
-                    bold=False,
-                    is_chinese=bool(self.sub2_is_chinese_var.get()),
-                    auto_max_chars=False,
-                    manual_max_chars=_mc(self.split_sub2_var.get(),
-                                          self.sub2_max_chars_var.get()),
-                ),
-                position="bottom",
-            ),
-            watermark=WatermarkStyle(
-                enabled=bool(self.watermark_show_var.get()),
-                type=self.watermark_type_var.get(),
-                text=self.watermark_text_var.get(),
-                text_fontsize=int(self.watermark_fontsize_var.get()),
-                text_color=self.watermark_color_var.get(),
-                text_opacity=int(self.watermark_txt_alpha_var.get()),
-                image_path=self.watermark_img_path_var.get(),
-                image_scale=float(self.watermark_img_scale_var.get()),
-                image_opacity=int(self.watermark_img_alpha_var.get()),
-                position="top-right",
-            ),
-        )
+        style = self._form_to_style()
+        # show_sub1/show_sub2 in render must respect the live Tk checkbox
+        # which can disagree with the form-snapshot if the user touched it
+        # mid-burn. Honor the validated values from earlier in this fn.
+        style.subtitle.sub1.enabled = show_sub1
+        style.subtitle.sub2.enabled = show_sub2
+        encode_preset = style.encode_preset
 
         # Resolve duration. self.video_duration is populated when the user
         # selects a video; fall back to a probe if it didn't take.
