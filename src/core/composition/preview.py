@@ -156,8 +156,22 @@ class CompositionPreview:
         self._call_js(f"window.vc.setAspect({aspect[0]}, {aspect[1]})")
         self._call_js(f"window.vc.setStyle({json.dumps(payload, ensure_ascii=False)})")
 
-    def set_clip_meta(self, hook: str = "", outro: str = "") -> None:
-        meta = {"hook": hook, "outro": outro}
+    def set_clip_meta(self, hook: str = "", outro: str = "",
+                       hook_lines: Optional[list[str]] = None,
+                       outro_lines: Optional[list[str]] = None) -> None:
+        """Push hook/outro overlay state.
+
+        Callers SHOULD pass `hook_lines` / `outro_lines` pre-computed via
+        core.composition.text_layout.wrap_hook_outro — these are the exact
+        lines the ffmpeg render will use, guaranteeing preview ≡ output
+        layout. The raw `hook` / `outro` strings are still accepted as a
+        fallback (JS will wrap them on its own; layout may diverge).
+        """
+        meta: dict = {"hook": hook, "outro": outro}
+        if hook_lines is not None:
+            meta["hookLines"] = hook_lines
+        if outro_lines is not None:
+            meta["outroLines"] = outro_lines
         self._call_js(f"window.vc.setClipMeta({json.dumps(meta, ensure_ascii=False)})")
 
     def set_cues(self, cues: list[dict]) -> None:

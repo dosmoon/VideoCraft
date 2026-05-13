@@ -24,6 +24,11 @@ from .render import (
     CompositionResult,
     render_composition,
 )
+from .text_layout import (
+    wrap_overlay_text,
+    wrap_hook_outro,
+    target_width_for_aspect,
+)
 
 __all__ = [
     "CompositionStyle",
@@ -37,4 +42,7 @@ __all__ = [
     "CompositionRequest",
     "CompositionResult",
     "render_composition",
+    "wrap_overlay_text",
+    "wrap_hook_outro",
+    "target_width_for_aspect",
 ]

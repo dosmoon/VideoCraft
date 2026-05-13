@@ -69,7 +69,10 @@ let styleState = {
   },
 };
 
-let clipMeta = { hook: "", outro: "" };
+// hook / outro = raw text; hookLines / outroLines = Python-pre-wrapped
+// canonical lines. When Lines is non-null we use it as-is; otherwise we
+// fall back to JS-side wrapping (legacy / safety path).
+let clipMeta = { hook: "", outro: "", hookLines: null, outroLines: null };
 // Real SRT cues in *source-video* timeline: [{start, end, text}]. Empty
 // means render placeholder text from styleState.subtitle.sub*.text.
 let cues = [];
@@ -122,6 +125,10 @@ window.vc = {
     if (meta && typeof meta === 'object') {
       if (typeof meta.hook  === 'string') clipMeta.hook  = meta.hook;
       if (typeof meta.outro === 'string') clipMeta.outro = meta.outro;
+      // Pre-wrapped lines from Python (preferred path — matches the
+      // ffmpeg drawtext output exactly). `null` means "use JS fallback".
+      clipMeta.hookLines  = Array.isArray(meta.hookLines)  ? meta.hookLines  : null;
+      clipMeta.outroLines = Array.isArray(meta.outroLines) ? meta.outroLines : null;
     }
     drawOverlay();
   },
@@ -289,13 +296,16 @@ function drawSubtitles() {
   }
 }
 
+// Mirrors core/composition/fonts.py:y_expr_for_position. Returns the TOP
+// of the (possibly multi-line) text block — render side's drawtext y= uses
+// the exact same formula via `text_h`.
 function _hoYForPosition(pos, oy, ch, textHeight) {
   switch (pos) {
     case "top":          return oy + ch * 0.08;
     case "upper-third":  return oy + ch * 0.25;
-    case "center":       return oy + ch * 0.50 - textHeight * 0.35;
-    case "lower-third":  return oy + ch * 0.65;
-    case "bottom":       return oy + ch * 0.85 - textHeight * 0.7;
+    case "center":       return oy + (ch - textHeight) / 2;
+    case "lower-third":  return oy + ch * 0.65 - textHeight / 2;
+    case "bottom":       return oy + ch * 0.85 - textHeight;
     default:             return oy + ch * 0.25;
   }
 }
@@ -332,16 +342,23 @@ function drawHookOutro() {
   const t = vid.currentTime || 0;
   let text = "";
   let position = ho.hook_position;
+  let preWrapped = null;
   if (clipStart > 0 || clipEnd > 0) {
     const hookEnd  = clipStart + (ho.hook_duration_sec  || 0);
     const outroStart = clipEnd - (ho.outro_duration_sec || 0);
     if (clipMeta.hook && t >= clipStart && t < hookEnd) {
-      text = clipMeta.hook; position = ho.hook_position;
+      text = clipMeta.hook;
+      preWrapped = clipMeta.hookLines;
+      position = ho.hook_position;
     } else if (clipMeta.outro && t >= outroStart && t <= clipEnd) {
-      text = clipMeta.outro; position = ho.outro_position;
+      text = clipMeta.outro;
+      preWrapped = clipMeta.outroLines;
+      position = ho.outro_position;
     }
   } else if (clipMeta.hook) {
-    text = clipMeta.hook; position = ho.hook_position;
+    text = clipMeta.hook;
+    preWrapped = clipMeta.hookLines;
+    position = ho.hook_position;
   }
   if (!text) return;
 
@@ -350,11 +367,13 @@ function drawHookOutro() {
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
 
-  // Wrap long hook text to fit inside the crop. Leave ~6% margin each side
-  // so the background box never touches the crop border.
+  // Lines come from Python (canonical) if available; otherwise wrap here
+  // as a fallback (layout will diverge from final mp4 — last resort).
   const padding = (ho.box_padding || 10) * (px / 24);
   const maxTextWidth = Math.max(40, cw * 0.88 - padding * 2);
-  const lines = wrapTextToWidth(text, maxTextWidth);
+  const lines = (preWrapped && preWrapped.length > 0)
+    ? preWrapped
+    : wrapTextToWidth(text, maxTextWidth);
   const lineHeight = px * 1.15;
   const totalTextHeight = lines.length * lineHeight;
   const widestLine = lines.reduce(

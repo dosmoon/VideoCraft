@@ -55,13 +55,19 @@ def hook_outro_font_path(font_name: str) -> str:
 
 
 def y_expr_for_position(position: str) -> str:
-    """Translate a position preset to an ffmpeg drawtext y= expression."""
+    """Translate a position preset to an ffmpeg drawtext y= expression.
+
+    `text_h` expands to the bounding-box height (includes all lines for
+    multi-line text), so the bottom/lower-third/center formulas adapt
+    automatically when an overlay wraps to 2+ lines. Top / upper-third are
+    text-grows-downward anchors and don't need text_h compensation.
+    """
     return {
         "top":          "h*0.08",
         "upper-third":  "h*0.25",
         "center":       "(h-text_h)/2",
-        "lower-third":  "h*0.65",
-        "bottom":       "h*0.85",
+        "lower-third":  "h*0.65 - text_h/2",
+        "bottom":       "h*0.85 - text_h",
     }.get(position, "h*0.25")
 
 

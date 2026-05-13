@@ -32,6 +32,7 @@ from .style import CompositionStyle, SubtitleStyle, WatermarkStyle, \
 from .fonts import (
     hook_outro_font_path, y_expr_for_position, ass_alignment_for_position,
 )
+from .text_layout import wrap_hook_outro, wrap_overlay_text
 
 
 ProgressCallback = Callable[[str, int], None]   # (stage, percent 0-100)
@@ -177,12 +178,38 @@ def _escape_drawtext(text: str) -> str:
 
 
 def _drawtext_filter(text: str, *, role: str, ho: HookOutroStyle,
-                      duration: float) -> str:
+                      duration: float, aspect_ratio: tuple[int, int],
+                      tmp_files: list[str]) -> str:
     """Build a drawtext snippet for hook (first hook_duration_sec) or outro
-    (last outro_duration_sec). role ∈ {'hook', 'outro'}."""
-    txt = _escape_drawtext(text)
-    if not txt:
+    (last outro_duration_sec). role ∈ {'hook', 'outro'}.
+
+    Multi-line behaviour: text is wrapped to fit the target frame width
+    via core.composition.text_layout.wrap_hook_outro (same call as the
+    WebView preview), then written to a temp file consumed by drawtext's
+    `textfile=` parameter. `text=` doesn't reliably accept newlines, so
+    going through a file is the only escape-safe path. The temp file is
+    appended to tmp_files for the caller to clean up after ffmpeg returns.
+    """
+    if not text:
         return ""
+
+    font_path = hook_outro_font_path(ho.font)
+    lines = wrap_hook_outro(text, aspect_ratio, font_path, ho.size)
+    if not lines:
+        return ""
+    wrapped = "\n".join(lines)
+
+    tmp_path = os.path.join(
+        tempfile.gettempdir(),
+        f"composition-{role}-{os.getpid()}-{id(text)}.txt",
+    )
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(wrapped)
+    except OSError:
+        return ""
+    tmp_files.append(tmp_path)
+
     if role == "hook":
         position = ho.hook_position
         enable = f"between(t,0,{ho.hook_duration_sec})"
@@ -191,13 +218,12 @@ def _drawtext_filter(text: str, *, role: str, ho: HookOutroStyle,
         start = max(0.0, duration - ho.outro_duration_sec)
         enable = f"between(t,{start},{duration})"
 
-    fontfile = hook_outro_font_path(ho.font).replace(":", "\\:")
+    fontfile_ff = font_path.replace(":", "\\:")
+    textfile_ff = tmp_path.replace("\\", "/").replace(":", "\\:")
     y_expr = y_expr_for_position(position)
     parts = [
-        # expansion=none: keep '%' literal, see note in _escape_drawtext.
-        "drawtext=expansion=none",
-        f"text='{txt}'",
-        f"fontfile='{fontfile}'",
+        f"drawtext=textfile='{textfile_ff}'",
+        f"fontfile='{fontfile_ff}'",
         f"fontcolor={ho.color}",
         f"fontsize={ho.size}",
         "x=(w-text_w)/2",
@@ -242,21 +268,44 @@ def _hex_to_drawtext_rgba(hex_color: str, alpha: float) -> str:
 
 
 def _build_text_watermark_drawtext(watermark: WatermarkStyle,
-                                      target_w: int) -> str:
-    """Single drawtext snippet for text-mode watermark."""
+                                      target_w: int,
+                                      tmp_files: list[str]) -> str:
+    """Text-mode watermark via textfile so long strings wrap consistently
+    with the preview. Wraps at 40% of target width — watermarks should be
+    small / corner-anchored, not banner-width."""
     if not watermark.enabled or watermark.type != "text":
         return ""
-    txt = _escape_drawtext(watermark.text)
-    if not txt:
+    raw = (watermark.text or "").strip()
+    if not raw:
         return ""
+
+    font_path = "C:/Windows/Fonts/msyh.ttc"
+    lines = wrap_overlay_text(
+        raw, max(40.0, target_w * 0.40),
+        font_path, watermark.text_fontsize)
+    if not lines:
+        return ""
+    wrapped = "\n".join(lines)
+
+    tmp_path = os.path.join(
+        tempfile.gettempdir(),
+        f"composition-watermark-{os.getpid()}-{id(watermark)}.txt",
+    )
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(wrapped)
+    except OSError:
+        return ""
+    tmp_files.append(tmp_path)
+
     margin = max(20, int(target_w * 0.025))
     pos = watermark.position or "top-right"
     x = f"w-text_w-{margin}" if pos.endswith("right") else f"{margin}"
     y = f"h-text_h-{margin}" if pos.startswith("bottom") else f"{margin}"
     opacity = max(0.0, min(1.0, (watermark.text_opacity or 70) / 100.0))
-    return (f"drawtext=expansion=none:"
-            f"text='{txt}':"
-            f"fontfile='C\\:/Windows/Fonts/msyh.ttc':"
+    textfile_ff = tmp_path.replace("\\", "/").replace(":", "\\:")
+    return (f"drawtext=textfile='{textfile_ff}':"
+            f"fontfile='{font_path.replace(':', chr(92)+':')}':"
             f"fontcolor={_hex_to_drawtext_rgba(watermark.text_color, opacity)}:"
             f"fontsize={watermark.text_fontsize}:"
             f"x={x}:y={y}:"
@@ -374,17 +423,22 @@ def render_composition(
         style.watermark, target_w, cur)
     parts.extend(img_wm_nodes)
 
+    tmp_text_files: list[str] = []
     overlay_filters: list[str] = []
-    text_wm = _build_text_watermark_drawtext(style.watermark, target_w)
+    text_wm = _build_text_watermark_drawtext(
+        style.watermark, target_w, tmp_text_files)
     if text_wm:
         overlay_filters.append(text_wm)
     ho = style.hook_outro
+    aspect = style.aspect_ratio()
     if req.hook_text:
         overlay_filters.append(_drawtext_filter(
-            req.hook_text, role="hook", ho=ho, duration=duration))
+            req.hook_text, role="hook", ho=ho, duration=duration,
+            aspect_ratio=aspect, tmp_files=tmp_text_files))
     if req.outro_text:
         overlay_filters.append(_drawtext_filter(
-            req.outro_text, role="outro", ho=ho, duration=duration))
+            req.outro_text, role="outro", ho=ho, duration=duration,
+            aspect_ratio=aspect, tmp_files=tmp_text_files))
     if overlay_filters:
         parts.append(f"{cur}{','.join(overlay_filters)}[vout]")
     else:
@@ -437,6 +491,12 @@ def render_composition(
         if tmp_srt_path and os.path.exists(tmp_srt_path):
             try:
                 os.unlink(tmp_srt_path)
+            except OSError:
+                pass
+        for p in tmp_text_files:
+            try:
+                if os.path.exists(p):
+                    os.unlink(p)
             except OSError:
                 pass
         # Whether cancelled or crashed, leave no half-rendered mp4 behind.

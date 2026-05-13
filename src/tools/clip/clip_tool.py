@@ -31,9 +31,10 @@ from typing import Optional
 from tools.base import ToolBase
 from core.composition import (
     CompositionRequest, CompositionStyle, render_composition,
-    compute_subtitle_max_chars,
+    compute_subtitle_max_chars, wrap_hook_outro,
 )
 from core.composition import presets as comp_presets
+from core.composition.fonts import hook_outro_font_path
 from core.composition.preview import CompositionPreview
 from core.subtitle_ops import split_subtitle
 from i18n import tr
@@ -782,6 +783,17 @@ class ClipToolApp(ToolBase):
             return str(ov["title"])
         return (hot.get("suggested_title") or "").strip()
 
+    def _wrap_for_overlay(self, text: str) -> list[str]:
+        """Pre-wrap hook/outro text using the same algorithm the ffmpeg
+        render uses. Both previews consume this to guarantee preview ≡
+        rendered output (no JS-side wrap divergence)."""
+        if not text:
+            return []
+        font_path = hook_outro_font_path(self._current_style.hook_outro.font)
+        return wrap_hook_outro(
+            text, self._current_style.aspect_ratio(),
+            font_path, self._current_style.hook_outro.size)
+
     def _effective_outro(self, idx: int) -> str:
         if not (0 <= idx < len(self._candidate_meta)):
             return ""
@@ -1099,9 +1111,12 @@ class ClipToolApp(ToolBase):
             video_path = self.project.source_video_path
             if os.path.isfile(video_path):
                 self._clip_preview.set_source(video_path, start, end)
+                hook = self._effective_hook(idx)
+                outro = self._effective_outro(idx)
                 self._clip_preview.set_clip_meta(
-                    hook=self._effective_hook(idx),
-                    outro=self._effective_outro(idx))
+                    hook=hook, outro=outro,
+                    hook_lines=self._wrap_for_overlay(hook),
+                    outro_lines=self._wrap_for_overlay(outro))
                 self._clip_preview.set_cues(
                     self._cues_for_window(start, end))
                 self._clip_preview.set_crop(self._effective_crop(idx))
@@ -1240,11 +1255,14 @@ class ClipToolApp(ToolBase):
                 ov.pop(field, None)
         self._refresh_render_tv()
         self._save_all()
-        # Push to preview (hook/outro overlay updates)
+        # Push to preview (hook/outro overlay updates) with canonical lines
         if self._clip_preview is not None and self._detail_idx is not None:
+            hook = self._effective_hook(self._detail_idx)
+            outro = self._effective_outro(self._detail_idx)
             self._clip_preview.set_clip_meta(
-                hook=self._effective_hook(self._detail_idx),
-                outro=self._effective_outro(self._detail_idx))
+                hook=hook, outro=outro,
+                hook_lines=self._wrap_for_overlay(hook),
+                outro_lines=self._wrap_for_overlay(outro))
 
     def _on_nudge_start(self, delta: float) -> None:
         if self._detail_idx is None:
@@ -1388,14 +1406,17 @@ class ClipToolApp(ToolBase):
             # hooks look like with their style.
             if self._candidate_meta:
                 first = self._candidate_meta[0]
-                self._style_preview.set_clip_meta(
-                    hook=(first.get("suggested_title")
-                          or first.get("hook")
-                          or tr("clip_tool.sample_hook_placeholder")),
-                    outro="")
+                sample_hook = (first.get("hook")
+                                or first.get("suggested_title")
+                                or tr("clip_tool.sample_hook_placeholder"))
+                sample_outro = first.get("outro") or ""
             else:
-                self._style_preview.set_clip_meta(
-                    hook=tr("clip_tool.sample_hook_placeholder"), outro="")
+                sample_hook = tr("clip_tool.sample_hook_placeholder")
+                sample_outro = ""
+            self._style_preview.set_clip_meta(
+                hook=sample_hook, outro=sample_outro,
+                hook_lines=self._wrap_for_overlay(sample_hook),
+                outro_lines=self._wrap_for_overlay(sample_outro))
 
     def _push_clip_preview_style(self) -> None:
         """Re-push style + re-split cues to the clip detail preview. Called
