@@ -28,7 +28,7 @@ from core.chapters_io import (
 )
 from core.subtitle_pipeline import ProgressInfo
 from core.ai.cancellation import CancellationToken
-from core.subtitle_ops import read_srt
+from core.subtitle_ops import read_srt, srt_end_seconds as _srt_end_seconds
 from core.source_context import read_context as _read_context
 
 
@@ -44,21 +44,11 @@ def _say(progress_cb, phase: str, status: str, percent: float | None = None) -> 
         progress_cb(ProgressInfo(phase=phase, percent=percent, status_text=status))
 
 
-# ── Chapter timestamp helpers ────────────────────────────────────────────────
+# ── Chapter derivation ───────────────────────────────────────────────────────
 #
-# parse/fmt helpers live in core.chapters_io and are re-imported above so
-# this module's existing callers keep their names.
-
-def _srt_end_seconds(srt_path: str) -> float:
-    """Return the end timestamp of the last cue in seconds, or 0.0."""
-    try:
-        subs = list(srt.parse(read_srt(srt_path)))
-    except Exception:
-        return 0.0
-    if not subs:
-        return 0.0
-    return subs[-1].end.total_seconds()
-
+# parse/fmt helpers live in core.chapters_io; SRT end probing lives in
+# core.subtitle_ops. Both are re-imported above to keep this module's
+# existing private names.
 
 def _derive_chapters(pack_segments: list[dict], srt_path: str,
                      lang_iso: str) -> list[dict]:

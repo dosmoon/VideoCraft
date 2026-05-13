@@ -43,6 +43,17 @@ def read_srt(path: str) -> str:
     raise ValueError(f"无法识别文件编码：{path}")
 
 
+def srt_end_seconds(path: str) -> float:
+    """End timestamp of the last cue in seconds, or 0.0 on failure."""
+    try:
+        subs = list(srt.parse(read_srt(path)))
+    except Exception:
+        return 0.0
+    if not subs:
+        return 0.0
+    return subs[-1].end.total_seconds()
+
+
 # ── 字幕分割 ─────────────────────────────────────────────────────────────────
 
 def split_subtitle(sub, max_chars: int, is_chinese: bool = False):

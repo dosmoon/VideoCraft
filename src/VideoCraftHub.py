@@ -632,7 +632,10 @@ class VideoCraftHub:
         key = f"analysis:{artifact.lang_iso}:{artifact.type.kind}"
         if self._preview_key != key:
             self._clear_preview_tab()
-            frame = build_analysis_preview(self._preview_tab, artifact)
+            frame = build_analysis_preview(
+                self._preview_tab, artifact,
+                on_saved=self._refresh_subtitles_section,
+            )
             frame.pack(fill="both", expand=True)
             self._preview_key = key
         self._select_tab(PREVIEW_TAB_KEY)

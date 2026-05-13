@@ -25,8 +25,13 @@ from i18n import tr
 def build_analysis_preview(
     parent: tk.Frame,
     artifact: AnalysisArtifact,
+    on_saved=None,
 ) -> tk.Frame:
-    """Build the analysis preview UI inside parent. Returns the outer Frame."""
+    """Build the analysis preview UI inside parent. Returns the outer Frame.
+
+    `on_saved` is invoked when the user saves edits (currently only the
+    chapter editor uses this — Hub passes its sidebar refresh).
+    """
     outer = tk.Frame(parent, bg="white")
 
     # Header
@@ -62,7 +67,7 @@ def build_analysis_preview(
 
     try:
         if artifact.type.format == "json":
-            _render_json(body, artifact)
+            _render_json(body, artifact, on_saved=on_saved)
         else:
             _render_markdown(body, artifact)
     except Exception as e:
@@ -77,7 +82,8 @@ def build_analysis_preview(
 
 # ── Format-specific renderers ────────────────────────────────────────────────
 
-def _render_json(parent: tk.Frame, artifact: AnalysisArtifact) -> None:
+def _render_json(parent: tk.Frame, artifact: AnalysisArtifact,
+                 on_saved=None) -> None:
     with open(artifact.path, "r", encoding="utf-8") as f:
         data = json.load(f)
 
@@ -85,7 +91,7 @@ def _render_json(parent: tk.Frame, artifact: AnalysisArtifact) -> None:
     if kind == "titles":
         _render_titles(parent, data)
     elif kind == "chapters":
-        _render_chapters(parent, data)
+        _render_chapters(parent, data, artifact=artifact, on_saved=on_saved)
     elif kind == "hotclips":
         _render_hotclips(parent, data)
     else:
@@ -118,12 +124,44 @@ def _render_titles(parent: tk.Frame, data) -> None:
                  ).pack(side="left", fill="x", expand=True)
 
 
-def _render_chapters(parent: tk.Frame, data) -> None:
+def _render_chapters(parent: tk.Frame, data, *,
+                     artifact: AnalysisArtifact, on_saved=None) -> None:
     items = data.get("chapters") if isinstance(data, dict) else data
     if not isinstance(items, list):
         _render_raw_json(parent, data)
         return
-    box, frame = _scrollable(parent)
+
+    # Geometric derivation: <project>/subtitles/<iso>.chapters.json
+    subtitles_dir = os.path.dirname(artifact.path)
+    project_root = os.path.dirname(subtitles_dir)
+    source_video = os.path.join(project_root, "source", "video.mp4")
+    srt_path = os.path.join(subtitles_dir, f"{artifact.lang_iso}.srt")
+    cache_dir = os.path.join(project_root, ".videocraft", "cache")
+
+    if not os.path.isfile(source_video):
+        # Per design: chapters only exist when subtitles exist, which
+        # implies source video exists. Defensive read-only fallback in
+        # case some old project lost its video.
+        _render_chapters_readonly(parent, items)
+        return
+
+    from ui.chapter_editor import ChapterEditor
+    editor = ChapterEditor(
+        parent,
+        chapters_path=artifact.path,
+        lang_iso=artifact.lang_iso,
+        source_video=source_video,
+        srt_path=srt_path,
+        cache_dir=cache_dir,
+        on_saved=on_saved,
+    )
+    editor.pack(fill="both", expand=True)
+
+
+def _render_chapters_readonly(parent: tk.Frame, items: list) -> None:
+    """Fallback list view when the source video is missing — same shape
+    as the original read-only renderer."""
+    _box, frame = _scrollable(parent)
     for i, item in enumerate(items, 1):
         start = (item.get("start") or item.get("start_time") or "") if isinstance(item, dict) else ""
         end = (item.get("end") or item.get("end_time") or "") if isinstance(item, dict) else ""

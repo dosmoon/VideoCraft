@@ -1416,7 +1416,6 @@
   "tool.clip.status_pkg_done": "✓ Generated copy for clip #{id}",
   "tool.clip.warn_no_pack_loaded": "Load Pack JSON first",
   "tool.clip.warn_no_paragraphs": "paragraphs.txt not found at: {path}",
-
   "tool.models.title": "Local Model Manager",
   "tool.models.dir_label": "Models dir:",
   "tool.models.disk_free": "Free space: {free}",
@@ -1473,7 +1472,6 @@
   "tool.models.job_state.done": "Done",
   "tool.models.job_state.failed": "Failed",
   "tool.models.job_state.cancelled": "Cancelled",
-
   "tool.voice_picker.title": "Pick a TTS voice",
   "tool.voice_picker.filter_section": "Filters",
   "tool.voice_picker.filter_provider": "Engine:",
@@ -1543,7 +1541,6 @@
   "subtitle.preview.read_failed": "Read failed: {error}",
   "subtitle.preview.section_header": "{title} ({n})",
   "subtitle.preview.fix_failed_title": "Auto-fix failed",
-
   "hub.error.project_not_found": "Project not found:\n{path}",
   "hub.sidebar.source.title": "Source",
   "hub.dialog.source.title_modify": "Modify Source Video",
@@ -1595,7 +1592,6 @@
   "hub.error.launch_failed": "Launch failed",
   "hub.about.title": "About VideoCraft",
   "hub.about.body": "VideoCraft\nVideo production toolkit\n\nFlow: download → speech-to-text → translate → burn",
-
   "launcher.tagline": "Source-video derivative creation tool",
   "launcher.btn_new": "  +  New Project",
   "launcher.btn_open": "  □  Open Existing Project...",
@@ -1608,12 +1604,10 @@
   "launcher.error.project_missing": "Project not found",
   "launcher.error.path_not_exist": "Path does not exist or has been moved:\n{path}",
   "launcher.error.open_failed": "Open failed",
-
   "dialog.common.btn_cancel": "Cancel",
   "dialog.common.btn_start": "Start",
   "dialog.common.btn_select": "Select...",
   "dialog.common.btn_ok": "OK",
-
   "dialog.new_project.title": "New Project",
   "dialog.new_project.heading": "New Project",
   "dialog.new_project.label_name": "Name:",
@@ -1629,7 +1623,6 @@
   "dialog.new_project.err_mkdir_failed": "Cannot create directory: {error}",
   "dialog.new_project.err_parent_not_writable": "Save directory not writable",
   "dialog.new_project.err_dir_exists": "Project directory already exists: {name}",
-
   "dialog.source_add.section_source": "Source Video",
   "dialog.source_add.option_link": "Video Link",
   "dialog.source_add.option_local": "Local File",
@@ -1655,7 +1648,6 @@
   "dialog.source_add.err_range_pair": "Clip range requires both start and end times",
   "dialog.source_add.err_time_format": "Invalid time format: {error}",
   "dialog.source_add.err_range_order": "Start time must be less than end time",
-
   "dialog.source_prepare.title": "Preparing Source Video",
   "dialog.source_prepare.preparing": "Preparing...",
   "dialog.source_prepare.btn_cancel": "Cancel and Delete Project",
@@ -1667,12 +1659,10 @@
   "dialog.source_prepare.remaining": "{eta} left",
   "dialog.source_prepare.cancelling": "Cancelling...",
   "dialog.source_prepare.unexpected_error": "Unexpected error",
-
   "dialog.disclaimer.title": "About Video Link Processing",
   "dialog.disclaimer.heading": "About Video Link Processing",
   "dialog.disclaimer.body": "VideoCraft uses yt-dlp to process the video link you provide.\nPlease confirm you have legal rights to use the content\n(own recording / authorized / public domain / fair use).\nDownload and subsequent-use copyright responsibilities are yours.\n\nThis prompt appears once; the full statement is available in the About window.",
   "dialog.disclaimer.btn_accept": "I Understand",
-
   "dialog.new_derivative.title": "New Derivative",
   "dialog.new_derivative.heading": "New Derivative",
   "dialog.new_derivative.section_type": "Type",
@@ -1686,7 +1676,6 @@
   "dialog.new_derivative.err_leading_dot": "Instance name cannot start with .",
   "dialog.new_derivative.err_name_too_long": "Instance name too long (over 64 chars)",
   "dialog.new_derivative.err_name_exists": "Instance name '{name}' already exists",
-
   "dialog.asr.title": "Generate Subtitles",
   "dialog.asr.heading": "Generate Subtitles",
   "dialog.asr.option_auto": "Auto-generate (ASR)",
@@ -1701,21 +1690,17 @@
   "dialog.asr.err_file_missing": "File not found",
   "dialog.asr.err_import_need_lang": "Import requires a subtitle language",
   "dialog.asr.err_unknown_lang": "Unknown language",
-
   "dialog.translate.title": "Add Translation",
   "dialog.translate.from_to": "Translate from {lang} ({iso}.srt) to:",
   "dialog.translate.existing": "Existing translations: {langs}",
   "dialog.translate.will_overwrite": "If the target language exists, its old file will be overwritten.",
   "dialog.translate.btn_start": "Start Translation",
-
   "dialog.regenerate_all.message": "Regenerating will overwrite all subtitle files (source + translations).\n\nContinue?",
-
   "dialog.subtitles_progress.preparing": "Preparing...",
   "dialog.subtitles_progress.cancelling": "Cancelling...",
   "dialog.subtitles_progress.phase.preparing": "Preparing",
   "dialog.subtitles_progress.phase.transcribing": "Transcribing",
   "dialog.subtitles_progress.phase.translating": "Translating",
-
   "source_preview.missing": "✗ Source video missing",
   "source_preview.status_ready": "✓ Ready  ·  {size}",
   "source_preview.modified_at": "Modified {ts}",
@@ -1730,16 +1715,13 @@
   "source_preview.field_local_path": "Local path",
   "source_preview.err_open_folder": "Cannot open folder",
   "source_preview.btn_show_in_explorer": "Show in Explorer",
-
   "video_preview.missing": "✗ Video not found",
-
   "subtitle_tool.project.title": "{type} — {instance}",
   "subtitle_tool.project.pick_primary": "Select primary subtitle",
   "subtitle_tool.project.pick_secondary": "Select secondary subtitle (bilingual)",
   "subtitle_tool.project.no_subs": "Project has no subtitles yet. Generate them from the Subtitles section in the sidebar.",
   "subtitle_tool.project.available_subs": "Available subtitles:",
   "subtitle_tool.project.btn_clear": "Clear selection",
-
   "analysis.kind.titles": "Titles",
   "analysis.kind.chapters": "Chapters",
   "analysis.kind.transcript": "Transcript",
@@ -1748,13 +1730,11 @@
   "analysis.kind.hotclips": "Hot Clips",
   "analysis_preview.missing": "(not generated yet)",
   "analysis_preview.read_failed": "Read failed: {error}",
-
   "analysis.modal.title": "Generate {kind}",
   "analysis.confirm_overwrite.title": "Confirm overwrite",
   "analysis.confirm_overwrite.message": "{iso} already has a \"{kind}\" artifact. Regenerating will overwrite it. Continue?",
   "analysis.error.srt_missing": "Subtitle file not found.",
   "analysis.error.failed": "Generation failed",
-
   "source_preview.btn_edit_context": "Edit Context",
   "dialog.source_context.title": "Content Context",
   "dialog.source_context.heading": "Source Video Content Context",
@@ -1773,7 +1753,6 @@
   "dialog.source_context.notes": "Notes:",
   "dialog.source_context.hint": "Context is fed to AI (chapters/titles/hotclips) to produce on-target outputs. All fields optional.",
   "dialog.source_context.btn_save": "Save",
-
   "derivative.clip": "Clip",
   "clip_tool.tab_title": "Clip / {instance}",
   "clip_tool.lang_label": "Hotclips source:",
@@ -1893,11 +1872,17 @@
   "clip_tool.done_with_warning": "Some clips failed — see the list",
   "clip_tool.error_detail_title": "Failure detail",
   "clip_tool.btn_close": "Close",
-
   "hotclip.field.hook": "Hook",
   "hotclip.field.outro": "Outro",
   "hotclip.field.why_viral": "Why viral",
   "hotclip.field.title": "Title",
   "hotclip.field.hashtags": "Tags",
-  "hotclip.field.transcript": "Transcript"
+  "hotclip.field.transcript": "Transcript",
+  "chapter_editor.col_start": "Start",
+  "chapter_editor.col_title": "Title",
+  "chapter_editor.field_start": "Start",
+  "chapter_editor.btn_save": "💾 Save",
+  "chapter_editor.btn_undo": "↺ Undo",
+  "chapter_editor.saved": "Saved",
+  "chapter_editor.save_failed_title": "Save failed"
 }
