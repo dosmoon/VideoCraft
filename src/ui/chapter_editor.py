@@ -114,18 +114,22 @@ class ChapterEditor(tk.Frame):
         paned = ttk.PanedWindow(self, orient="horizontal")
         paned.pack(fill="both", expand=True)
 
-        # Left: chapter list
-        left = tk.Frame(paned, bg="white")
+        # Left: chapter list (top) + per-chapter subtitle view (bottom)
+        left = ttk.PanedWindow(paned, orient="vertical")
         paned.add(left, weight=2)
 
+        tree_frame = tk.Frame(left, bg="white")
+        left.add(tree_frame, weight=1)
+
         cols = ("start", "title")
-        self._tree = ttk.Treeview(left, columns=cols, show="headings",
+        self._tree = ttk.Treeview(tree_frame, columns=cols, show="headings",
                                   selectmode="browse")
         self._tree.heading("start", text=tr("chapter_editor.col_start"))
         self._tree.heading("title", text=tr("chapter_editor.col_title"))
         self._tree.column("start", width=90, anchor="w", stretch=False)
         self._tree.column("title", width=200, anchor="w", stretch=True)
-        vsb = ttk.Scrollbar(left, orient="vertical", command=self._tree.yview)
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical",
+                            command=self._tree.yview)
         self._tree.configure(yscrollcommand=vsb.set)
         vsb.pack(side="right", fill="y")
         self._tree.pack(side="left", fill="both", expand=True)
@@ -139,6 +143,25 @@ class ChapterEditor(tk.Frame):
         self._tree_menu.add_command(
             label=tr("chapter_editor.menu_delete"),
             command=self._on_delete_chapter)
+
+        # Per-chapter subtitles (read-only). Loaded lazily on first
+        # chapter select to avoid parsing the SRT before it's needed.
+        subs_frame = tk.Frame(left, bg="white")
+        left.add(subs_frame, weight=2)
+        sub_vsb = ttk.Scrollbar(subs_frame, orient="vertical")
+        self._subs_text = tk.Text(
+            subs_frame, wrap="word", bg="#fafafa", fg="#222",
+            font=("Microsoft YaHei UI", 10), relief="flat",
+            padx=8, pady=6, yscrollcommand=sub_vsb.set,
+            state="disabled", cursor="arrow",
+        )
+        sub_vsb.config(command=self._subs_text.yview)
+        sub_vsb.pack(side="right", fill="y")
+        self._subs_text.pack(side="left", fill="both", expand=True)
+        self._subs_text.tag_configure("ts", foreground="#0078d4",
+                                      font=("Consolas", 9))
+        self._set_subs_text(tr("chapter_editor.subs_no_selection"))
+        self._subs_cues = None  # lazy-parsed list of srt.Subtitle
 
         # Right: video + controls
         right = tk.Frame(paned, bg="white")
@@ -226,6 +249,7 @@ class ChapterEditor(tk.Frame):
         self._selected = None
         self._start_var.set("")
         self._start_entry.configure(state="disabled")
+        self._set_subs_text(tr("chapter_editor.subs_no_selection"))
         self._refresh_button_states()
 
     def _on_select(self, _e=None) -> None:
@@ -244,7 +268,69 @@ class ChapterEditor(tk.Frame):
         is_first = idx == 0
         self._start_entry.configure(state="disabled" if is_first else "normal")
         self._seek_to_str(start_str)
+        self._render_chapter_subs(idx)
         self._refresh_button_states()
+
+    # ── Subtitle pane ────────────────────────────────────────────────────
+
+    def _ensure_subs_loaded(self) -> None:
+        """Parse the SRT once on first chapter selection."""
+        if self._subs_cues is not None:
+            return
+        try:
+            import srt as _srt
+            from core.subtitle_ops import read_srt
+            self._subs_cues = list(_srt.parse(read_srt(self._srt_path)))
+        except Exception as e:
+            self._subs_cues = []
+            self._set_subs_text(
+                tr("chapter_editor.subs_load_failed", err=str(e)))
+
+    def _chapter_end_sec(self, start_sec: float) -> float:
+        """End of the chapter that starts at `start_sec`, computed live
+        from the working set (which may be unsorted after user edits)."""
+        later = sorted(parse_time_str(c.get("start", ""))
+                       for c in self._working)
+        for s in later:
+            if s > start_sec:
+                return s
+        return self._srt_end_sec
+
+    def _render_chapter_subs(self, idx: int) -> None:
+        self._ensure_subs_loaded()
+        if not self._subs_cues:
+            return  # error placeholder already set
+        ch = self._working[idx]
+        start_sec = parse_time_str(ch.get("start", ""))
+        end_sec = self._chapter_end_sec(start_sec)
+
+        self._subs_text.configure(state="normal")
+        self._subs_text.delete("1.0", "end")
+        any_cue = False
+        for cue in self._subs_cues:
+            cue_start = cue.start.total_seconds()
+            if cue_start < start_sec:
+                continue
+            if cue_start >= end_sec:
+                break
+            ts = str(cue.start)[:8]
+            text = cue.content.replace("\n", " ").strip()
+            if not text:
+                continue
+            ts_index = self._subs_text.index("end-1c")
+            self._subs_text.insert("end", f"[{ts}] ", ("ts",))
+            self._subs_text.insert("end", text + "\n")
+            any_cue = True
+        if not any_cue:
+            self._subs_text.insert("end",
+                                   tr("chapter_editor.subs_empty"))
+        self._subs_text.configure(state="disabled")
+
+    def _set_subs_text(self, text: str) -> None:
+        self._subs_text.configure(state="normal")
+        self._subs_text.delete("1.0", "end")
+        self._subs_text.insert("end", text)
+        self._subs_text.configure(state="disabled")
 
     # ── Title inline edit ────────────────────────────────────────────────
 

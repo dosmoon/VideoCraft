@@ -1889,5 +1889,8 @@
   "chapter_editor.btn_delete": "🗑 删除",
   "chapter_editor.menu_delete": "删除章节",
   "chapter_editor.new_default": "新章节",
-  "chapter_editor.cant_delete_first": "首章 (00:00) 不可手动删除"
+  "chapter_editor.cant_delete_first": "首章 (00:00) 不可手动删除",
+  "chapter_editor.subs_empty": "（本章节内无字幕）",
+  "chapter_editor.subs_no_selection": "选择章节以查看字幕",
+  "chapter_editor.subs_load_failed": "字幕加载失败：{err}"
 }

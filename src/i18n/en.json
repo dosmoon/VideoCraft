@@ -1889,5 +1889,8 @@
   "chapter_editor.btn_delete": "🗑 Delete",
   "chapter_editor.menu_delete": "Delete chapter",
   "chapter_editor.new_default": "New chapter",
-  "chapter_editor.cant_delete_first": "First chapter (00:00) cannot be deleted manually"
+  "chapter_editor.cant_delete_first": "First chapter (00:00) cannot be deleted manually",
+  "chapter_editor.subs_empty": "(no subtitles in this chapter)",
+  "chapter_editor.subs_no_selection": "Select a chapter to view its subtitles",
+  "chapter_editor.subs_load_failed": "Failed to load subtitles: {err}"
 }
