@@ -325,6 +325,8 @@ function drawNewsDeskOverlays() {
       _drawLowerThird(ov, ox, oy, cw, ch);
     } else if (ov.kind === "topic_strip") {
       _drawTopicStrip(ov, ox, oy, cw, ch);
+    } else if (ov.kind === "chapter_point_card") {
+      _drawChapterPointCard(ov, ox, oy, cw, ch);
     }
   }
 }
@@ -402,6 +404,126 @@ function _drawTopicStrip(ov, ox, oy, cw, ch) {
   else if (align === "right")  { tx = ox + cw - padPx; ctx.textAlign = "right"; }
   else                         { tx = ox + padPx; ctx.textAlign = "left"; }
   ctx.fillText(ov.topic_text || "", tx, stripY + stripH / 2);
+}
+
+function _wrapTextCjk(text, maxChars) {
+  // Mirror of core/composition/news_desk_overlays.py::_wrap_text_cjk —
+  // CJK char counts 1, ASCII counts 0.5; max 2 lines, surplus truncated …
+  text = (text || "").trim();
+  if (!text || maxChars <= 0) return [];
+  const cost = (ch) => (ch.charCodeAt(0) > 0x2E80 ? 1.0 : 0.5);
+  const lines = [];
+  let cur = [];
+  let curW = 0;
+  let lastBreak = -1;
+  for (const ch of text) {
+    const w = cost(ch);
+    if (curW + w > maxChars && cur.length > 0) {
+      if (lastBreak >= 0 && cur[cur.length - 1].charCodeAt(0) <= 0x2E80) {
+        lines.push(cur.slice(0, lastBreak).join("").replace(/\s+$/, ""));
+        cur = cur.slice(lastBreak + 1);
+        curW = cur.reduce((s, c) => s + cost(c), 0);
+        lastBreak = -1;
+      } else {
+        lines.push(cur.join(""));
+        cur = [];
+        curW = 0;
+        lastBreak = -1;
+      }
+      if (lines.length >= 2) break;
+    }
+    cur.push(ch);
+    curW += w;
+    if (ch === " ") lastBreak = cur.length - 1;
+  }
+  if (cur.length > 0 && lines.length < 2) {
+    lines.push(cur.join("").replace(/\s+$/, ""));
+  }
+  if (lines.length >= 2 && curW > maxChars) {
+    let tail = lines[1];
+    while (tail && [...tail].reduce((s, c) => s + cost(c), 0) > maxChars - 0.5) {
+      tail = tail.slice(0, -1);
+    }
+    lines[1] = (tail.replace(/\s+$/, "") || "") + "…";
+  }
+  return lines;
+}
+
+function _drawChapterPointCard(ov, ox, oy, cw, ch) {
+  // Broadcast L3 — fitted dark band + left red accent + centered text.
+  // Mirrors core/composition/news_desk_overlays.py::_build_chapter_point_card_dialogues.
+  const st = _resolveOverlayStyle("chapter_point_card", ov.style_class) || {};
+  const fontPx    = st.fontsize != null ? st.fontsize : 40;
+  const lineGapPx = Math.max(2, (st.line_gap_pct != null ? st.line_gap_pct : 0.005) * ch);
+  const yPct      = st.y_pct != null ? st.y_pct : 0.70;
+  const maxChars  = Math.max(4, st.max_chars_per_line != null ? st.max_chars_per_line : 22);
+  const padX      = Math.max(8, (st.padding_x_pct != null ? st.padding_x_pct : 0.020) * cw);
+  const padY      = Math.max(6, (st.padding_y_pct != null ? st.padding_y_pct : 0.014) * ch);
+  const accentW   = Math.max(0, (st.accent_width_pct != null ? st.accent_width_pct : 0.004) * cw);
+  const fadeInMs  = st.fade_in_ms  != null ? st.fade_in_ms  : 350;
+  const fadeOutMs = st.fade_out_ms != null ? st.fade_out_ms : 300;
+  const slidePx   = st.slide_in_px != null ? st.slide_in_px : 24;
+
+  const wrapped = _wrapTextCjk(ov.text, maxChars);
+  if (wrapped.length === 0) return;
+
+  // Animation timing — relative to overlay window.
+  const t = vid.currentTime || 0;
+  const tIn  = (t - ov.start_sec) * 1000;
+  const tOut = (ov.end_sec - t)   * 1000;
+  if (tIn < 0 || tOut < 0) return;
+
+  let alpha = 1.0;
+  let yOffset = 0.0;
+  if (fadeInMs > 0 && tIn < fadeInMs) {
+    const p = tIn / fadeInMs;
+    alpha = Math.min(alpha, p);
+    yOffset = (1 - p) * slidePx;
+  }
+  if (fadeOutMs > 0 && tOut < fadeOutMs) {
+    alpha = Math.min(alpha, tOut / fadeOutMs);
+  }
+  if (alpha <= 0.01) return;
+
+  // Band geometry.
+  const textW = Math.max(...wrapped.map(ln => _estTextWidthPx(ln, fontPx)));
+  const textBlockH = fontPx * wrapped.length + lineGapPx * (wrapped.length - 1);
+  const bandW = textW + padX * 2 + accentW;
+  const bandH = textBlockH + padY * 2;
+  const bandX = ox + (cw - bandW) / 2;
+  const bandY = oy + ch * yPct - bandH / 2 + yOffset;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  // Background band.
+  ctx.fillStyle = _hexToRgba(st.bg_color || "#0F172A",
+                                st.bg_opacity != null ? st.bg_opacity : 78);
+  ctx.fillRect(bandX, bandY, bandW, bandH);
+
+  // Left accent stripe.
+  if (accentW > 0) {
+    ctx.fillStyle = _hexToRgba(st.accent_color || "#C8102E", 100);
+    ctx.fillRect(bandX, bandY, accentW, bandH);
+  }
+
+  // Text — centered in the text region (excluding the accent stripe).
+  const textRegionLeft = bandX + accentW + padX;
+  const textCx = textRegionLeft + textW / 2;
+  const textTop = bandY + padY;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  // Quote the font name in case it has spaces; canvas falls back through
+  // the list, so we add sans-serif as the final fallback.
+  const fontName = st.font || "SimHei";
+  ctx.font = `${st.bold === false ? "" : "bold "}${fontPx}px "${fontName}", sans-serif`;
+  ctx.fillStyle = st.text_color || "#FFFFFF";
+  for (let i = 0; i < wrapped.length; i++) {
+    const ly = textTop + i * (fontPx + lineGapPx);
+    ctx.fillText(wrapped[i], textCx, ly);
+  }
+
+  ctx.restore();
 }
 
 function cropBox() {

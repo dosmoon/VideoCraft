@@ -25,9 +25,12 @@ from typing import Iterable
 
 from core.subtitle_ops import escape_ffmpeg_path, hex_color_to_ass
 
-from .overlays import LowerThirdOverlay, TopicStripOverlay
+from .overlays import (
+    ChapterPointCardOverlay, LowerThirdOverlay, TopicStripOverlay,
+)
 from .style import (
-    LowerThirdStyle, TopicStripStyle, resolve_overlay_style,
+    ChapterPointCardStyle, LowerThirdStyle, TopicStripStyle,
+    resolve_overlay_style,
 )
 
 
@@ -119,6 +122,55 @@ def _text_dialogue(start: float, end: float, *,
     body = "{" + "".join(body_parts) + "}" + _ass_escape_text(text)
     return (f"Dialogue: {layer},{_ass_time(start)},{_ass_time(end)},"
             f"NewsDeskText,,0,0,0,,{body}")
+
+
+def _wrap_text_cjk(text: str, max_chars: int) -> list[str]:
+    """Greedy wrap on `max_chars` budget. CJK char counts as 1; ASCII
+    char counts as 0.5 (so a 20-char budget fits ~40 Latin chars). Breaks
+    on spaces for Latin runs; CJK breaks anywhere. Returns up to 2 lines —
+    surplus is appended with an ellipsis."""
+    text = (text or "").strip()
+    if not text or max_chars <= 0:
+        return []
+
+    def _cost(ch: str) -> float:
+        return 1.0 if ord(ch) > 0x2E80 else 0.5
+
+    lines: list[str] = []
+    cur: list[str] = []
+    cur_w = 0.0
+    last_break = -1  # last index in `cur` where we can split (space)
+    for ch in text:
+        w = _cost(ch)
+        if cur_w + w > max_chars and cur:
+            if last_break >= 0 and ord(cur[-1]) <= 0x2E80:
+                lines.append("".join(cur[:last_break]).rstrip())
+                cur = cur[last_break + 1:]
+                cur_w = sum(_cost(c) for c in cur)
+                last_break = -1
+            else:
+                lines.append("".join(cur))
+                cur = []
+                cur_w = 0.0
+                last_break = -1
+            if len(lines) >= 2:
+                break
+        cur.append(ch)
+        cur_w += w
+        if ch == " ":
+            last_break = len(cur) - 1
+
+    if cur and len(lines) < 2:
+        lines.append("".join(cur).rstrip())
+
+    # If we broke out with leftover text, truncate the second line with …
+    if len(lines) >= 2 and cur_w > max_chars:
+        tail = lines[1]
+        # rough budget-aware trim
+        while tail and sum(_cost(c) for c in tail) > max_chars - 0.5:
+            tail = tail[:-1]
+        lines[1] = (tail.rstrip() + "…") if tail else "…"
+    return lines
 
 
 # ── Per-kind dialogue builders ──────────────────────────────────────────────
@@ -240,6 +292,112 @@ def _build_topic_strip_dialogues(
     return lines
 
 
+def _build_chapter_point_card_dialogues(
+    spec: ChapterPointCardOverlay, style: ChapterPointCardStyle,
+    *, target_w: int, target_h: int,
+) -> list[str]:
+    """Broadcast lower-third — fitted dark band + left red accent stripe
+    + centered text, all sharing one fade+lift entrance animation.
+
+    Three Dialogue lines emitted (layer 0 = bg, 1 = accent, 2 = text)
+    so libass paints them in stable z-order. Each carries an identical
+    `\\move`+`\\fad` block so the whole graphic moves as one unit.
+    """
+    if not spec.text:
+        return []
+
+    wrapped = _wrap_text_cjk(spec.text, max(4, int(style.max_chars_per_line)))
+    if not wrapped:
+        return []
+
+    fontsize = max(10, int(style.fontsize))
+    line_gap_px = max(2, int(style.line_gap_pct * target_h))
+    n_lines = len(wrapped)
+    text_block_h = fontsize * n_lines + line_gap_px * (n_lines - 1)
+
+    text_w_est = max(_est_text_width_px(ln, fontsize) for ln in wrapped)
+
+    pad_x = max(8, int(style.padding_x_pct * target_w))
+    pad_y = max(6, int(style.padding_y_pct * target_h))
+    accent_w = max(0, int(style.accent_width_pct * target_w))
+
+    band_w = int(text_w_est + pad_x * 2 + accent_w)
+    band_h = text_block_h + pad_y * 2
+
+    band_x = (target_w - band_w) // 2
+    band_y = int(target_h * style.y_pct) - band_h // 2
+
+    # Text region: inside the band, right of the accent stripe.
+    text_region_left = band_x + accent_w + pad_x
+    text_cx = text_region_left + int(text_w_est // 2)
+    text_cy = band_y + band_h // 2
+
+    fade_in = max(0, int(style.fade_in_ms))
+    fade_out = max(0, int(style.fade_out_ms))
+    slide_px = max(0, int(style.slide_in_px))
+
+    def _anim(x: int, y: int) -> str:
+        """\\move (or \\pos) + \\fad fragment for one element. Same slide
+        offset is applied to every element so the whole band moves as a
+        rigid unit on entry."""
+        parts: list[str] = []
+        if slide_px > 0 and fade_in > 0:
+            parts.append(
+                f"\\move({x},{y + slide_px},{x},{y},0,{fade_in})")
+        else:
+            parts.append(f"\\pos({x},{y})")
+        if fade_in > 0 or fade_out > 0:
+            parts.append(f"\\fad({fade_in},{fade_out})")
+        return "".join(parts)
+
+    lines: list[str] = []
+
+    # Layer 0 — semi-transparent background band.
+    bg_color = hex_color_to_ass(style.bg_color)
+    bg_alpha = _ass_alpha(style.bg_opacity)
+    band_body = ("{\\an7" + _anim(band_x, band_y)
+                  + f"\\bord0\\shad0\\1c{bg_color}\\1a{bg_alpha}\\p1}}"
+                  f"m 0 0 l {band_w} 0 {band_w} {band_h} 0 {band_h}"
+                  "{\\p0}")
+    lines.append(
+        f"Dialogue: 0,{_ass_time(spec.start_sec)},"
+        f"{_ass_time(spec.end_sec)},NewsDeskRect,,0,0,0,,{band_body}"
+    )
+
+    # Layer 1 — left accent stripe.
+    if accent_w > 0:
+        acc_color = hex_color_to_ass(style.accent_color)
+        acc_body = ("{\\an7" + _anim(band_x, band_y)
+                     + f"\\bord0\\shad0\\1c{acc_color}\\1a&H00&\\p1}}"
+                     f"m 0 0 l {accent_w} 0 {accent_w} {band_h} 0 {band_h}"
+                     "{\\p0}")
+        lines.append(
+            f"Dialogue: 1,{_ass_time(spec.start_sec)},"
+            f"{_ass_time(spec.end_sec)},NewsDeskRect,,0,0,0,,{acc_body}"
+        )
+
+    # Layer 2 — text (center-anchored, libass auto-centers each \\N line).
+    text_color = hex_color_to_ass(style.text_color)
+    text_overrides = [
+        "\\an5",
+        _anim(text_cx, text_cy),
+        f"\\fn{style.font}",
+        f"\\fs{fontsize}",
+        f"\\1c{text_color}",
+        "\\bord0",
+        "\\shad0",
+    ]
+    if style.bold:
+        text_overrides.append("\\b1")
+    joined = "\\N".join(_ass_escape_text(ln) for ln in wrapped)
+    text_body = "{" + "".join(text_overrides) + "}" + joined
+    lines.append(
+        f"Dialogue: 2,{_ass_time(spec.start_sec)},"
+        f"{_ass_time(spec.end_sec)},NewsDeskText,,0,0,0,,{text_body}"
+    )
+    return lines
+
+
 # ── ASS file assembly ──────────────────────────────────────────────────────
 
 _ASS_HEADER_TMPL = """[Script Info]
@@ -280,6 +438,13 @@ def build_news_desk_ass(specs: Iterable, *,
             if style is None:
                 style = TopicStripStyle()
             dialogues.extend(_build_topic_strip_dialogues(
+                spec, style, target_w=target_w, target_h=target_h))
+        elif isinstance(spec, ChapterPointCardOverlay):
+            style = resolve_overlay_style(
+                overlay_styles, "chapter_point_card", spec.style_class)
+            if style is None:
+                style = ChapterPointCardStyle()
+            dialogues.extend(_build_chapter_point_card_dialogues(
                 spec, style, target_w=target_w, target_h=target_h))
 
     if not dialogues:

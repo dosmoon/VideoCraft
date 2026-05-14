@@ -187,11 +187,59 @@ class TopicStripStyle:
     text_padding_pct: float = 0.025
 
 
+@dataclass
+class ChapterPointCardStyle:
+    """Broadcast lower-third style — text on a fitted semi-transparent
+    dark band with a left red accent stripe (CNN / Reuters / 央视 L3
+    convention).
+
+    Default position is the lower-third zone (y_pct=0.70), above the
+    subtitle band. The band auto-sizes to text width + padding so it
+    reads as a framed graphic, not a full-width ticker.
+    """
+    # Text.
+    text_color: str = "#FFFFFF"
+    fontsize: int = 40
+    bold: bool = True
+    # SimHei (黑体) reads squarer / more "news-y" than YaHei's rounder
+    # shape. Fallback chain handled by the font engine.
+    font: str = "SimHei"
+
+    # Background band — semi-transparent dark fill behind the text.
+    bg_color: str = "#0F172A"
+    bg_opacity: int = 78
+
+    # Left accent stripe (broadcast convention). 0 = stripe off.
+    accent_color: str = "#C8102E"
+    accent_width_pct: float = 0.004    # fraction of frame width
+
+    # Inner padding — fraction of frame dim. Padding is what gives the
+    # band its visible "card" feel rather than tight text-hugging.
+    padding_x_pct: float = 0.020
+    padding_y_pct: float = 0.014
+
+    # Vertical center of the band, as fraction of frame height. 0.70 sits
+    # in the broadcast lower-third zone, above the subtitle band
+    # (subtitle outer track baseline ≈ 92%, inner ≈ 80%).
+    y_pct: float = 0.70
+    # Line-to-line vertical gap when text wraps to 2 lines.
+    line_gap_pct: float = 0.005
+    # Pre-wrap budget for the text.
+    max_chars_per_line: int = 22
+
+    # Entrance animation. fade_in / fade_out durations in milliseconds;
+    # slide_in_px = the band+text lift up by this many pixels on entry.
+    fade_in_ms: int = 350
+    fade_out_ms: int = 300
+    slide_in_px: int = 24
+
+
 # Registry of typed overlay-style classes by `kind` discriminator. Render
 # and preview look up the matching class to coerce dict → dataclass.
 OVERLAY_STYLE_CLASSES: dict[str, type] = {
     "lower_third": LowerThirdStyle,
     "topic_strip": TopicStripStyle,
+    "chapter_point_card": ChapterPointCardStyle,
 }
 
 

@@ -55,14 +55,30 @@ A 路径数据准备工作连带做了几个架构清债：
 hotclips.json 含 hook/start/end/score）。下面要做的是**新增两种 overlay
 kind 把这些数据渲到视频上**：
 
-#### 待开发：`ChapterPointCard`（章节摘要小卡）
-- **数据来源**：`subtitles/<iso>.analysis.json` 的 `chapter[].refined` 或 `key_points[i]`
-- **形态**：章节切换时左/右下角弹出 5-8 秒 1-2 行小卡，显示精炼摘要前 ~40 字
-- 新 dataclass `ChapterPointCardOverlay`（参考 LowerThirdOverlay 套路）
-- 新 style class `ChapterPointCardStyle`
-- libass 渲染（沿用 `core/composition/news_desk_overlays.py` 框架）
-- canvas 镜像
-- 工作台新按钮"从 analysis.json 派生章节卡"
+#### ✅ 已完成：`ChapterPointCard` Broadcast L3 — 2026-05-14
+- 数据来源：analysis.json 的 `chapter[].key_points[0]` 优先，否则
+  `refined` 截断到 40 字
+- **形态：广播 L3 半透底条**（CNN/Reuters/央视 L3，用户先 picked
+  Hero-上三分之一，实测贴脸 + 无底丑陋，改下三分之一 + L3 band）
+- 视觉：SimHei 40px 加粗白字 / 半透深底 #0F172A @ 78% / 左 4px 红
+  accent stripe / 底条 fit 文字宽度 + padding
+- 动画：bg + accent + text 三件套共享 `\move(slide_in_px=24)` lift +
+  `\fad(350,300)` —— 整组当作刚体动画；canvas 用 `globalAlpha` +
+  yOffset 同步镜像
+- 位置：`y_pct=0.70` 下三分之一 —— 在 sub2 (80%) 上方留 5% 安全距
+- 已弃用字段：`position` (4-corner) 从 dataclass 移除；dialog 不再问位置
+- 工作台：手动「+ 章节卡」/「从 analysis.json 派生章节卡」批量（每段 6 秒）
+- i18n: `add.chapter_point_card` / `derive_cpc` / `field.card_text` 双语
+
+#### ✅ 已完成：工作台「渲 20s 预览」按钮 — 2026-05-14
+- 位置：导出 MP4 旁边的次按钮
+- 锚点：选中行的 overlay.start_sec（无选中 fallback t=0）；
+  窗口 = [anchor - 2s, anchor + 18s] 共 20s，给入场动画留 2s 预热
+- 输出：`output.preview.mp4`（与正式产物 output.mp4 分文件，不覆盖）
+- 跳过 publish.md sidecar（预览是抛弃物，不是交付物）
+- `_rebase_overlays` helper 把用户 overlay 时间线 rebase 到 [0, win_len]
+  —— 因为 ffmpeg `-ss` 会把片段 timeline 归 0，字幕 SRT 已经被
+  render.py 自己 rebase；overlay 之前要手动；现在新加这步
 
 #### 待开发：`PullQuote`（金句弹屏）
 - **数据来源**：`subtitles/<iso>.hotclips.json` 的 `hook` 字段 + `start`/`end`
@@ -79,28 +95,32 @@ kind 把这些数据渲到视频上**：
 
 ### 实现成本估算
 
-- ChapterPointCard 全套：~1 会话（dataclass + style + ASS builder + canvas + i18n）
-- PullQuote 全套：~1 会话（同上，居中定位略不同）
-- 工作台两个派生按钮 + edit dialog 调整：~0.5 会话
-
-合计 **~2.5 会话**。建议下次会话开 ChapterPointCard。
+- ~~ChapterPointCard 全套~~：✅ 已完成
+- PullQuote 全套：~1 会话（dataclass + style + libass + canvas + i18n，
+  居中定位略不同，参考 ChapterPointCard 套路）
+- v0.2 收尾（用户实测两种 overlay + 文档/git tag）：~0.5 会话
 
 ### 关键参考路径
 
 - 渲染框架：`src/core/composition/news_desk_overlays.py`
-  （`build_news_desk_ass` + libass 绘图模式 rect + 文本 dialogue 套路）
+  （`build_news_desk_ass` + libass 绘图模式 rect + 文本 dialogue 套路；
+  ChapterPointCard 是最近的可抄作业样本）
+- canvas wrap 镜像：`src/ui/composition_preview.html::_wrapTextCjk` /
+  `_drawChapterPointCard`
 - 数据加载：`src/core/chapters_io.load_analysis(path) -> dict`
-- analysis.json 字段：见 `src/core/chapters_io.py` 模块 docstring
 - hotclips.json 字段：见 `src/core/subtitle_analysis_runners.py::HOTCLIPS_SCHEMA`
-- 工作台模式：`src/tools/news_desk/news_desk_tool.py::_derive_topic_strips_from_chapters`
-  （照这个套路加 `_derive_chapter_cards` 和 `_derive_pull_quotes`）
+- 派生按钮模式：`news_desk_tool.py::_derive_chapter_cards_from_analysis`
+  （照这个套路加 `_derive_pull_quotes_from_hotclips`）
 
 ### 当前会话状态
 
-- HEAD: `ea3ab5f`（已 push 到 origin/main）
-- workspace clean
-- v0.2 数据底座完成，UI 测试用户已确认渲染输出 OK
-- 下次开 ChapterPointCard 实现
+- HEAD: `ea3ab5f` + 未提交的 ChapterPointCard 改动
+- 改动文件：overlays.py / style.py / news_desk_overlays.py / render.py
+  / news_desk_tool.py / composition_preview.html / zh.json / en.json
+  / docs/task.md
+- 已通过：py_compile + ASS 构建 smoke test + JSON 解析
+- **尚未做**：用户实测真实视频；待用户跑通后再 commit
+- 下次（或本会话续）：用户验收 → commit；之后开 PullQuote
 
 ### 不在本任务范围（备忘）
 

@@ -35,7 +35,7 @@ from hub_logger import logger
 from core import derivative_types
 from core.composition import presets as comp_presets
 from core.composition.overlays import (
-    LowerThirdOverlay, TopicStripOverlay,
+    ChapterPointCardOverlay, LowerThirdOverlay, TopicStripOverlay,
     overlay_to_dict, overlay_from_dict,
 )
 from core.composition.preview import CompositionPreview
@@ -69,6 +69,28 @@ def _probe_resolution(video_path: str) -> tuple[int, int]:
     except Exception:
         pass
     return 0, 0
+
+
+def _rebase_overlays(overlays: list, ws: float, we: float) -> list:
+    """Clip overlays into the window [ws, we] and rebase start/end to 0.
+
+    Returns a new list of overlays whose times are expressed in the
+    trimmed clip's timeline (matches what ffmpeg `-ss ws -to we` produces).
+    Overlays fully outside the window are dropped. The dataclass type is
+    preserved so libass dispatch still works."""
+    from dataclasses import replace
+    out: list = []
+    for ov in overlays:
+        start = float(getattr(ov, "start_sec", 0.0))
+        end = float(getattr(ov, "end_sec", 0.0))
+        if end <= ws or start >= we:
+            continue
+        new_start = max(0.0, start - ws)
+        new_end = min(we - ws, end - ws)
+        if new_end <= new_start:
+            continue
+        out.append(replace(ov, start_sec=new_start, end_sec=new_end))
+    return out
 
 
 def _probe_duration(video_path: str) -> float:
@@ -143,6 +165,13 @@ class NewsDeskApp(ToolBase):
             bottom, text=tr("tool.news_desk.action.export"),
             command=self._do_export)
         self.btn_export.pack(side="right")
+        # 20-second preview render — quick visual verification of styles /
+        # animations without waiting for the full clip. Anchored on the
+        # selected overlay (or t=0 if nothing selected).
+        self.btn_preview_render = ttk.Button(
+            bottom, text=tr("tool.news_desk.action.preview_render"),
+            command=self._do_preview_render)
+        self.btn_preview_render.pack(side="right", padx=(0, 6))
         self.label_status = ttk.Label(bottom, text="", foreground="#666")
         self.label_status.pack(side="left", padx=(0, 8))
         self.progress = ttk.Progressbar(
@@ -250,6 +279,8 @@ class NewsDeskApp(ToolBase):
                    command=self._add_lower_third).pack(side="left", padx=2)
         ttk.Button(btns, text=tr("tool.news_desk.add.topic_strip"),
                    command=self._add_topic_strip).pack(side="left", padx=2)
+        ttk.Button(btns, text=tr("tool.news_desk.add.chapter_point_card"),
+                   command=self._add_chapter_point_card).pack(side="left", padx=2)
         ttk.Button(btns, text=tr("tool.news_desk.edit"),
                    command=self._edit_selected).pack(side="left", padx=2)
         ttk.Button(btns, text=tr("tool.news_desk.delete"),
@@ -261,6 +292,9 @@ class NewsDeskApp(ToolBase):
                    ).pack(side="left", padx=2)
         ttk.Button(btns2, text=tr("tool.news_desk.derive_ts"),
                    command=self._derive_topic_strips_from_chapters
+                   ).pack(side="left", padx=2)
+        ttk.Button(btns2, text=tr("tool.news_desk.derive_cpc"),
+                   command=self._derive_chapter_cards_from_analysis
                    ).pack(side="left", padx=2)
 
     # ── Style form ──────────────────────────────────────────────────────────
@@ -669,6 +703,8 @@ class NewsDeskApp(ToolBase):
                 content = f"{ov.title} | {ov.subtitle}"
             elif isinstance(ov, TopicStripOverlay):
                 content = ov.topic_text
+            elif isinstance(ov, ChapterPointCardOverlay):
+                content = ov.text
             else:
                 content = ""
             self.tree.insert("", "end", iid=str(i),
@@ -708,6 +744,15 @@ class NewsDeskApp(ToolBase):
         spec = TopicStripOverlay(
             topic_text="",
             start_sec=0.0, end_sec=max(10.0, self._duration),
+        )
+        if self._edit_overlay_dialog(spec):
+            self._overlays.append(spec)
+            self._after_overlays_changed()
+
+    def _add_chapter_point_card(self) -> None:
+        spec = ChapterPointCardOverlay(
+            text="",
+            start_sec=0.0, end_sec=max(6.0, min(self._duration, 6.0)),
         )
         if self._edit_overlay_dialog(spec):
             self._overlays.append(spec)
@@ -784,6 +829,13 @@ class NewsDeskApp(ToolBase):
                       ).pack(side="left")
             ttk.Entry(row, textvariable=topic_v, width=42
                       ).pack(side="left", fill="x", expand=True)
+        elif isinstance(spec, ChapterPointCardOverlay):
+            text_v = tk.StringVar(value=spec.text)
+            row = ttk.Frame(body); row.pack(fill="x", pady=2)
+            ttk.Label(row, text=tr("tool.news_desk.field.card_text"), width=10
+                      ).pack(side="left")
+            ttk.Entry(row, textvariable=text_v, width=42
+                      ).pack(side="left", fill="x", expand=True)
 
         result = {"ok": False}
         def _ok():
@@ -795,6 +847,8 @@ class NewsDeskApp(ToolBase):
                 spec.position = pos_v.get() or "bottom-left"
             elif isinstance(spec, TopicStripOverlay):
                 spec.topic_text = topic_v.get().strip()
+            elif isinstance(spec, ChapterPointCardOverlay):
+                spec.text = text_v.get().strip()
             result["ok"] = True
             win.destroy()
         def _cancel():
@@ -860,6 +914,47 @@ class NewsDeskApp(ToolBase):
                 continue
             self._overlays.append(TopicStripOverlay(
                 topic_text=title, start_sec=start_s, end_sec=end_s))
+            added += 1
+        if added:
+            self._after_overlays_changed()
+
+    def _derive_chapter_cards_from_analysis(self) -> None:
+        """One Hero callout per chapter, using `key_points[0]` if present
+        else a truncated `refined`. Each callout lives ~6 s starting at
+        the chapter boundary; the Hero zone (upper third) does not clash
+        with LowerThird (lower) or subtitles (bottom)."""
+        subs_dir = self.project.subtitles_dir
+        chapters = self._load_any_chapters(subs_dir)
+        if not chapters:
+            messagebox.showinfo(
+                "VideoCraft",
+                tr("tool.news_desk.derive.no_chapters"),
+                parent=self.master)
+            return
+        added = 0
+        for ch in chapters:
+            start_s = chapters_io.parse_time_str(ch.get("start", ""))
+            end_s = chapters_io.parse_time_str(ch.get("end", ""))
+            if end_s <= start_s:
+                continue
+            text = ""
+            kps = ch.get("key_points")
+            if isinstance(kps, list) and kps:
+                cand = str(kps[0]).strip()
+                if cand:
+                    text = cand
+            if not text:
+                refined = str(ch.get("refined", "")).strip()
+                if refined:
+                    text = refined[:40]
+            if not text:
+                continue
+            card_dur = 6.0
+            card_end = min(end_s, start_s + card_dur)
+            self._overlays.append(ChapterPointCardOverlay(
+                text=text,
+                start_sec=start_s, end_sec=card_end,
+            ))
             added += 1
         if added:
             self._after_overlays_changed()
@@ -941,8 +1036,10 @@ class NewsDeskApp(ToolBase):
 
         self._save_instance_config()
         self._processing = True
+        self._skip_sidecar = False
         self.set_busy()
         self.btn_export.config(state="disabled")
+        self.btn_preview_render.config(state="disabled")
         self.label_status.config(
             text=tr("tool.news_desk.status.rendering"))
         self.progress["value"] = 0
@@ -957,6 +1054,82 @@ class NewsDeskApp(ToolBase):
             overlays=list(self._overlays),
         )
 
+        threading.Thread(
+            target=self._export_thread, args=(req,), daemon=True).start()
+
+    def _do_preview_render(self) -> None:
+        """Render a 20-second window for quick visual verification.
+
+        Window anchor: the start_sec of the currently-selected overlay row
+        (placed 2 s into the preview so its entrance animation is visible).
+        Falls back to t=0 if nothing is selected. Output goes to
+        `output.preview.mp4` and skips the publish.md sidecar.
+        """
+        if self._processing:
+            return
+        src = self.project.source_video_path
+        if not os.path.isfile(src):
+            messagebox.showerror("VideoCraft",
+                                  tr("tool.news_desk.error.source_missing"),
+                                  parent=self.master)
+            return
+        if self._duration <= 0:
+            self._duration = _probe_duration(src)
+        if self._duration <= 0:
+            messagebox.showerror("VideoCraft",
+                                  tr("tool.news_desk.error.duration"),
+                                  parent=self.master)
+            return
+
+        # Pick the anchor — selected overlay's start_sec or t=0.
+        anchor = 0.0
+        idx = self._selected_index()
+        if 0 <= idx < len(self._overlays):
+            anchor = float(self._overlays[idx].start_sec)
+        # 20-s window with 2-s lead-in so the overlay's fade/lift entrance
+        # is fully visible. Clamped to [0, duration].
+        lead_in = 2.0
+        window_len = 20.0
+        ws = max(0.0, anchor - lead_in)
+        we = min(self._duration, ws + window_len)
+        if we - ws < 4.0:
+            # Anchor is near the end — pull the window back so it has
+            # at least 4 s of content.
+            ws = max(0.0, we - window_len)
+        if we <= ws:
+            messagebox.showerror("VideoCraft",
+                                  tr("tool.news_desk.error.duration"),
+                                  parent=self.master)
+            return
+
+        # Rebase user overlays into [0, we-ws] — the renderer trims source
+        # with `-ss`, so the clip timeline starts at 0 and overlay times
+        # need to follow. Subtitle SRTs get rebased by render.py itself.
+        rebased = _rebase_overlays(self._overlays, ws, we)
+
+        out = os.path.join(self._instance_dir(), "output.preview.mp4")
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+
+        self._save_instance_config()
+        self._processing = True
+        self._skip_sidecar = True
+        self.set_busy()
+        self.btn_export.config(state="disabled")
+        self.btn_preview_render.config(state="disabled")
+        self.label_status.config(
+            text=tr("tool.news_desk.status.preview_rendering",
+                    start=f"{ws:.1f}", end=f"{we:.1f}"))
+        self.progress["value"] = 0
+
+        req = CompositionRequest(
+            source_video=src,
+            start_sec=ws, end_sec=we,
+            output_path=out,
+            style=self._current_style,
+            source_srt=self._sub1_srt or None,
+            source_srt_secondary=self._sub2_srt or None,
+            overlays=rebased,
+        )
         threading.Thread(
             target=self._export_thread, args=(req,), daemon=True).start()
 
@@ -977,9 +1150,16 @@ class NewsDeskApp(ToolBase):
         self._processing = False
         self.set_done()
         self.btn_export.config(state="normal")
+        self.btn_preview_render.config(state="normal")
         self.label_status.config(
             text=tr("tool.news_desk.status.done", path=result.output_path))
         self.progress["value"] = 100
+        # Skip the publish.md sidecar for preview renders — they're throw-
+        # away visual checks, not deliverables. The `_skip_sidecar` flag is
+        # set by `_do_preview_render` and cleared here.
+        if getattr(self, "_skip_sidecar", False):
+            self._skip_sidecar = False
+            return
         # Best-effort publish.md sidecar — video is already on disk; .md
         # failures are nice-to-have, never abort the success report.
         try:
@@ -1039,8 +1219,10 @@ class NewsDeskApp(ToolBase):
 
     def _on_export_failed(self, msg: str) -> None:
         self._processing = False
+        self._skip_sidecar = False
         self.set_error(msg)
         self.btn_export.config(state="normal")
+        self.btn_preview_render.config(state="normal")
         self.label_status.config(
             text=tr("tool.news_desk.status.failed"))
         self.progress["value"] = 0

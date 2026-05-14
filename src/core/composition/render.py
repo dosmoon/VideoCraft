@@ -34,7 +34,9 @@ from core.subtitle_ops import (
 
 from .style import CompositionStyle, SubtitleStyle, SubtitleLineStyle, \
     WatermarkStyle, HookOutroStyle, compute_subtitle_max_chars
-from .overlays import OverlaySpec, LowerThirdOverlay, TopicStripOverlay
+from .overlays import (
+    ChapterPointCardOverlay, LowerThirdOverlay, OverlaySpec, TopicStripOverlay,
+)
 from .layout import libass_margin_v, pixel_offset
 from .fonts import (
     hook_outro_font_path, y_expr_for_position, ass_alignment_for_position,
@@ -614,7 +616,8 @@ def _named_overlay_jobs(req: CompositionRequest,
     #     kind that has its own registered renderer.
     news_desk_specs: list = []
     for spec in req.overlays:
-        if isinstance(spec, (LowerThirdOverlay, TopicStripOverlay)):
+        if isinstance(spec, (LowerThirdOverlay, TopicStripOverlay,
+                              ChapterPointCardOverlay)):
             news_desk_specs.append(spec)
         elif isinstance(spec, OverlaySpec):
             jobs.append(_OverlayJob(

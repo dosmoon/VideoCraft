@@ -73,6 +73,25 @@ class LowerThirdOverlay:
 
 
 @dataclass
+class ChapterPointCardOverlay:
+    """Per-chapter hero callout — large centered text in the upper-third
+    zone with fade+slide entrance.
+
+    Sits above the subtitle band and clear of the LowerThird zone, so all
+    three can coexist on the same beat (hero up top, name plate bottom-
+    corner, subtitles bottom-center). Visual heavy-lifting (size / stroke /
+    shadow / animation / accent underline) lives entirely in style.
+    """
+    text: str = ""
+    start_sec: float = 0.0
+    end_sec: float = 0.0
+    style_class: str = "default"
+    kind: str = "chapter_point_card"
+    z_order: int = 45
+    zone: str = "upper_third"
+
+
+@dataclass
 class TopicStripOverlay:
     """Top-edge labeled strip — chapter marker / topic bar.
 
@@ -93,14 +112,16 @@ class TopicStripOverlay:
 
 # Union for callers that want type-narrowing. Renderer dispatch keys off
 # `kind` (str) so this union is purely for static typing convenience.
-OverlayUnion = Union[OverlaySpec, LowerThirdOverlay, TopicStripOverlay]
+OverlayUnion = Union[
+    OverlaySpec, LowerThirdOverlay, TopicStripOverlay, ChapterPointCardOverlay,
+]
 
 
 # Tuple of the typed kinds the news_desk pipeline knows about. Used by
 # render.py / preview.py to test isinstance() against all supported shapes
 # in one shot — extends as new kinds (PullQuote / FullCard / ...) ship.
 TYPED_OVERLAY_KINDS: tuple[type, ...] = (
-    OverlaySpec, LowerThirdOverlay, TopicStripOverlay,
+    OverlaySpec, LowerThirdOverlay, TopicStripOverlay, ChapterPointCardOverlay,
 )
 
 
@@ -125,6 +146,8 @@ def overlay_from_dict(d: dict):
         return LowerThirdOverlay(**_filter(d, LowerThirdOverlay))
     if kind == "topic_strip":
         return TopicStripOverlay(**_filter(d, TopicStripOverlay))
+    if kind == "chapter_point_card":
+        return ChapterPointCardOverlay(**_filter(d, ChapterPointCardOverlay))
     return OverlaySpec(**_filter(d, OverlaySpec))
 
 
