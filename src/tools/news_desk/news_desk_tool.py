@@ -304,7 +304,10 @@ class NewsDeskApp(ToolBase):
         sf = ttk.LabelFrame(parent, text=tr("tool.news_desk.style.sub.frame"))
         sf.pack(fill="x", padx=6, pady=4)
 
-        # Position radio.
+        # Position radio + fine-tune spinboxes. block_margin_pct = distance
+        # from the anchored edge (% of frame height); track_gap_pct = gap
+        # between sub1 and sub2 baselines. Both let users lift subtitles
+        # clear of source-baked chyrons (e.g. White House lower-third).
         row = ttk.Frame(sf); row.pack(fill="x", padx=4, pady=2)
         v_pos = tk.StringVar(value="bottom")
         ttk.Label(row, text=tr("tool.news_desk.style.sub.position"),
@@ -314,6 +317,26 @@ class NewsDeskApp(ToolBase):
                             command=self._on_style_var_changed
                             ).pack(side="left", padx=(4, 0))
         self._style_vars["sub_position"] = v_pos
+
+        ttk.Label(row, text=tr("tool.news_desk.style.sub.block_margin"),
+                  ).pack(side="left", padx=(12, 2))
+        v_block = tk.IntVar(value=8)   # percent units in UI
+        ttk.Spinbox(row, from_=0, to=40, width=4, textvariable=v_block,
+                     command=self._on_style_var_changed
+                     ).pack(side="left")
+        v_block.trace_add("write", lambda *_: self._on_style_var_changed())
+        self._style_vars["sub_block_margin"] = v_block
+        ttk.Label(row, text="%").pack(side="left")
+
+        ttk.Label(row, text=tr("tool.news_desk.style.sub.track_gap"),
+                  ).pack(side="left", padx=(8, 2))
+        v_gap = tk.IntVar(value=12)
+        ttk.Spinbox(row, from_=4, to=30, width=4, textvariable=v_gap,
+                     command=self._on_style_var_changed
+                     ).pack(side="left")
+        v_gap.trace_add("write", lambda *_: self._on_style_var_changed())
+        self._style_vars["sub_track_gap"] = v_gap
+        ttk.Label(row, text="%").pack(side="left")
 
         for slot, default_show, default_size, default_color, default_cn in (
             (1, True,  28, "#FFFF00", True),
@@ -370,6 +393,126 @@ class NewsDeskApp(ToolBase):
                      ).pack(side="left")
         v.trace_add("write", lambda *_: self._on_style_var_changed())
         self._style_vars["ts_fontsize"] = v
+
+        # Watermark — channel name or logo pinned to a corner of the frame.
+        # Exposes the full WatermarkStyle inline: both text + image modes
+        # are visible at once and the `type` radio picks which one renders.
+        wmf = ttk.LabelFrame(parent, text=tr("tool.news_desk.style.wm.frame"))
+        wmf.pack(fill="x", padx=6, pady=4)
+
+        row = ttk.Frame(wmf); row.pack(fill="x", padx=4, pady=2)
+        v_wm_en = tk.BooleanVar(value=False)
+        ttk.Checkbutton(row, text=tr("tool.news_desk.style.wm.enabled"),
+                         variable=v_wm_en,
+                         command=self._on_style_var_changed
+                         ).pack(side="left")
+        self._style_vars["wm_enabled"] = v_wm_en
+
+        v_wm_type = tk.StringVar(value="text")
+        for label, val in ((tr("tool.news_desk.style.wm.type_text"), "text"),
+                            (tr("tool.news_desk.style.wm.type_image"), "image")):
+            ttk.Radiobutton(row, text=label, variable=v_wm_type, value=val,
+                            command=self._on_style_var_changed
+                            ).pack(side="left", padx=(8, 0))
+        self._style_vars["wm_type"] = v_wm_type
+
+        ttk.Label(row, text=tr("tool.news_desk.style.wm.position")
+                  ).pack(side="left", padx=(12, 2))
+        v_wm_pos = tk.StringVar(value="top-right")
+        ttk.Combobox(row, textvariable=v_wm_pos, state="readonly",
+                      values=["top-left", "top-right",
+                              "bottom-left", "bottom-right"], width=14
+                      ).pack(side="left")
+        v_wm_pos.trace_add("write", lambda *_: self._on_style_var_changed())
+        self._style_vars["wm_position"] = v_wm_pos
+
+        # Text mode row.
+        row = ttk.Frame(wmf); row.pack(fill="x", padx=4, pady=2)
+        ttk.Label(row, text=tr("tool.news_desk.style.wm.text"),
+                  width=8).pack(side="left")
+        v_wm_text = tk.StringVar(value="")
+        ent = ttk.Entry(row, textvariable=v_wm_text, width=24)
+        ent.pack(side="left")
+        v_wm_text.trace_add("write", lambda *_: self._on_style_var_changed())
+        self._style_vars["wm_text"] = v_wm_text
+        ttk.Label(row, text=tr("tool.news_desk.style.wm.text_size")
+                  ).pack(side="left", padx=(8, 2))
+        v_wm_fs = tk.IntVar(value=36)
+        ttk.Spinbox(row, from_=10, to=96, width=4, textvariable=v_wm_fs,
+                     command=self._on_style_var_changed
+                     ).pack(side="left")
+        v_wm_fs.trace_add("write", lambda *_: self._on_style_var_changed())
+        self._style_vars["wm_text_fontsize"] = v_wm_fs
+        ttk.Label(row, text=tr("tool.news_desk.style.wm.text_color")
+                  ).pack(side="left", padx=(8, 2))
+        self._add_color_picker(row, "wm_text_color", "#FFFFFF")
+        ttk.Label(row, text=tr("tool.news_desk.style.wm.opacity")
+                  ).pack(side="left", padx=(8, 2))
+        v_wm_to = tk.IntVar(value=70)
+        ttk.Spinbox(row, from_=10, to=100, width=4, textvariable=v_wm_to,
+                     command=self._on_style_var_changed
+                     ).pack(side="left")
+        v_wm_to.trace_add("write", lambda *_: self._on_style_var_changed())
+        self._style_vars["wm_text_opacity"] = v_wm_to
+
+        # Image mode row.
+        row = ttk.Frame(wmf); row.pack(fill="x", padx=4, pady=2)
+        ttk.Label(row, text=tr("tool.news_desk.style.wm.image"),
+                  width=8).pack(side="left")
+        v_wm_img = tk.StringVar(value="")
+        ent_img = ttk.Entry(row, textvariable=v_wm_img, width=28)
+        ent_img.pack(side="left")
+        v_wm_img.trace_add("write", lambda *_: self._on_style_var_changed())
+        self._style_vars["wm_image_path"] = v_wm_img
+
+        def _pick_image() -> None:
+            p = filedialog.askopenfilename(
+                parent=self.master,
+                title=tr("tool.news_desk.style.wm.image"),
+                filetypes=[("Image", "*.png *.jpg *.jpeg *.webp *.bmp")])
+            if p:
+                v_wm_img.set(p)
+        ttk.Button(row, text="…", width=2, command=_pick_image
+                   ).pack(side="left", padx=(2, 0))
+
+        ttk.Label(row, text=tr("tool.news_desk.style.wm.image_scale")
+                  ).pack(side="left", padx=(8, 2))
+        v_wm_sc = tk.IntVar(value=15)   # percent of frame width
+        ttk.Spinbox(row, from_=2, to=50, width=4, textvariable=v_wm_sc,
+                     command=self._on_style_var_changed
+                     ).pack(side="left")
+        v_wm_sc.trace_add("write", lambda *_: self._on_style_var_changed())
+        self._style_vars["wm_image_scale"] = v_wm_sc
+        ttk.Label(row, text="%").pack(side="left")
+        ttk.Label(row, text=tr("tool.news_desk.style.wm.opacity")
+                  ).pack(side="left", padx=(8, 2))
+        v_wm_io = tk.IntVar(value=100)
+        ttk.Spinbox(row, from_=10, to=100, width=4, textvariable=v_wm_io,
+                     command=self._on_style_var_changed
+                     ).pack(side="left")
+        v_wm_io.trace_add("write", lambda *_: self._on_style_var_changed())
+        self._style_vars["wm_image_opacity"] = v_wm_io
+
+        # Margins row.
+        row = ttk.Frame(wmf); row.pack(fill="x", padx=4, pady=2)
+        ttk.Label(row, text=tr("tool.news_desk.style.wm.margin"),
+                  width=8).pack(side="left")
+        ttk.Label(row, text="X").pack(side="left", padx=(0, 2))
+        v_mx = tk.IntVar(value=2)        # percent
+        ttk.Spinbox(row, from_=0, to=20, width=4, textvariable=v_mx,
+                     command=self._on_style_var_changed
+                     ).pack(side="left")
+        v_mx.trace_add("write", lambda *_: self._on_style_var_changed())
+        self._style_vars["wm_margin_x"] = v_mx
+        ttk.Label(row, text="%").pack(side="left")
+        ttk.Label(row, text="Y").pack(side="left", padx=(8, 2))
+        v_my = tk.IntVar(value=2)
+        ttk.Spinbox(row, from_=0, to=20, width=4, textvariable=v_my,
+                     command=self._on_style_var_changed
+                     ).pack(side="left")
+        v_my.trace_add("write", lambda *_: self._on_style_var_changed())
+        self._style_vars["wm_margin_y"] = v_my
+        ttk.Label(row, text="%").pack(side="left")
 
     def _build_sub_row(self, parent, slot, dshow, dsize, dcolor, dcn):
         """Build one subtitle line's controls (sub1 or sub2)."""
@@ -446,6 +589,12 @@ class NewsDeskApp(ToolBase):
         try:
             sub = style.subtitle
             self._style_vars["sub_position"].set(sub.position or "bottom")
+            # block_margin / track_gap are stored as fractions (0.08), shown
+            # as integer percents (8) in the UI.
+            self._style_vars["sub_block_margin"].set(
+                int(round(sub.block_margin_pct * 100)))
+            self._style_vars["sub_track_gap"].set(
+                int(round(sub.track_gap_pct * 100)))
             for slot, line in ((1, sub.sub1), (2, sub.sub2)):
                 self._style_vars[f"sub{slot}_enabled"].set(bool(line.enabled))
                 self._style_vars[f"sub{slot}_fontsize"].set(int(line.fontsize))
@@ -469,6 +618,23 @@ class NewsDeskApp(ToolBase):
             self._style_vars["ts_bg_color"].set(ts.bg_color)
             self._style_vars["ts_text_color"].set(ts.text_color)
             self._style_vars["ts_fontsize"].set(int(ts.fontsize))
+
+            wm = style.watermark
+            self._style_vars["wm_enabled"].set(bool(wm.enabled))
+            self._style_vars["wm_type"].set(wm.type or "text")
+            self._style_vars["wm_position"].set(wm.position or "top-right")
+            self._style_vars["wm_text"].set(wm.text or "")
+            self._style_vars["wm_text_fontsize"].set(int(wm.text_fontsize))
+            self._style_vars["wm_text_color"].set(wm.text_color or "#FFFFFF")
+            self._style_vars["wm_text_opacity"].set(int(wm.text_opacity))
+            self._style_vars["wm_image_path"].set(wm.image_path or "")
+            self._style_vars["wm_image_scale"].set(
+                int(round((wm.image_scale or 0.15) * 100)))
+            self._style_vars["wm_image_opacity"].set(int(wm.image_opacity))
+            self._style_vars["wm_margin_x"].set(
+                int(round((wm.margin_x_pct or 0.025) * 100)))
+            self._style_vars["wm_margin_y"].set(
+                int(round((wm.margin_y_pct or 0.025) * 100)))
         finally:
             self._suppress_trace = False
 
@@ -479,6 +645,16 @@ class NewsDeskApp(ToolBase):
         st = self._current_style
         sub = st.subtitle
         sub.position = self._style_vars["sub_position"].get() or "bottom"
+        try:
+            sub.block_margin_pct = max(0.0, min(0.40,
+                int(self._style_vars["sub_block_margin"].get()) / 100.0))
+        except (tk.TclError, ValueError):
+            pass
+        try:
+            sub.track_gap_pct = max(0.04, min(0.30,
+                int(self._style_vars["sub_track_gap"].get()) / 100.0))
+        except (tk.TclError, ValueError):
+            pass
         for slot, line in ((1, sub.sub1), (2, sub.sub2)):
             line.enabled = bool(self._style_vars[f"sub{slot}_enabled"].get())
             try:
@@ -517,6 +693,44 @@ class NewsDeskApp(ToolBase):
             pass
         st.overlay_styles = ostyles
 
+        wm = st.watermark
+        wm.enabled = bool(self._style_vars["wm_enabled"].get())
+        wm.type = self._style_vars["wm_type"].get() or "text"
+        wm.position = self._style_vars["wm_position"].get() or "top-right"
+        wm.text = self._style_vars["wm_text"].get() or ""
+        try:
+            wm.text_fontsize = max(8, int(
+                self._style_vars["wm_text_fontsize"].get()))
+        except (tk.TclError, ValueError):
+            pass
+        wm.text_color = self._style_vars["wm_text_color"].get() or wm.text_color
+        try:
+            wm.text_opacity = max(0, min(100, int(
+                self._style_vars["wm_text_opacity"].get())))
+        except (tk.TclError, ValueError):
+            pass
+        wm.image_path = self._style_vars["wm_image_path"].get() or ""
+        try:
+            wm.image_scale = max(0.02, min(0.50,
+                int(self._style_vars["wm_image_scale"].get()) / 100.0))
+        except (tk.TclError, ValueError):
+            pass
+        try:
+            wm.image_opacity = max(0, min(100, int(
+                self._style_vars["wm_image_opacity"].get())))
+        except (tk.TclError, ValueError):
+            pass
+        try:
+            wm.margin_x_pct = max(0.0, min(0.20,
+                int(self._style_vars["wm_margin_x"].get()) / 100.0))
+        except (tk.TclError, ValueError):
+            pass
+        try:
+            wm.margin_y_pct = max(0.0, min(0.20,
+                int(self._style_vars["wm_margin_y"].get()) / 100.0))
+        except (tk.TclError, ValueError):
+            pass
+
         self._save_instance_config()
         self._push_preview()
 
@@ -554,7 +768,7 @@ class NewsDeskApp(ToolBase):
             try:
                 self._preview.set_source(src, 0.0, 0.0)
             except Exception as e:
-                logger.debug(f"news_desk: preview set_source failed: {e}")
+                logger.warning(f"news_desk: preview set_source failed: {e}")
         self._push_preview()
 
         comp_presets.save_news_desk_store(self._preset_store)
@@ -746,7 +960,7 @@ class NewsDeskApp(ToolBase):
         try:
             self._preview.seek(float(self._overlays[idx].start_sec))
         except Exception as e:
-            logger.debug(f"news_desk seek failed: {e}")
+            logger.warning(f"news_desk seek failed: {e}")
 
     def _selected_index(self) -> int:
         sel = self.tree.selection()
@@ -1031,7 +1245,7 @@ class NewsDeskApp(ToolBase):
             else:
                 self._preview.set_cues_secondary([])
         except Exception as e:
-            logger.debug(f"news_desk preview push failed: {e}")
+            logger.warning(f"news_desk preview push failed: {e}")
 
     # ── Export ──────────────────────────────────────────────────────────────
 
@@ -1170,7 +1384,8 @@ class NewsDeskApp(ToolBase):
             result = render_composition(req, on_progress=_on_progress)
             self.master.after(0, self._on_export_done, result)
         except Exception as e:
-            logger.exception("news_desk render failed")
+            import traceback
+            logger.error(f"news_desk render failed: {e}\n{traceback.format_exc()}")
             self.master.after(0, self._on_export_failed, str(e))
 
     def _on_export_done(self, result) -> None:

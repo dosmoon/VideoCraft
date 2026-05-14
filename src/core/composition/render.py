@@ -22,6 +22,12 @@ import os
 import re
 import subprocess
 import tempfile
+
+try:
+    from hub_logger import logger
+except ImportError:  # core module imported in tests without UI layer
+    import logging
+    logger = logging.getLogger(__name__)
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Callable, Optional
@@ -469,7 +475,12 @@ def _build_image_watermark_chain(watermark: WatermarkStyle,
     if not watermark.enabled or watermark.type != "image":
         return [], prev_label
     img_path = (watermark.image_path or "").strip()
-    if not img_path or not os.path.exists(img_path):
+    if not img_path:
+        logger.warning("image watermark skipped: image_path is empty")
+        return [], prev_label
+    if not os.path.exists(img_path):
+        logger.warning(
+            f"image watermark skipped: file not found at {img_path}")
         return [], prev_label
     img_ff = escape_ffmpeg_path(img_path)
     wm_w = max(1, int(target_w * max(0.01, watermark.image_scale or 0.15)))
@@ -631,13 +642,15 @@ def _named_overlay_jobs(req: CompositionRequest,
                 margin_v=margin_v2, target_h=target_h),
         }))
 
-    # Watermark — image or text (mutually exclusive).
+    # Watermark — image or text (mutually exclusive). High z_order so the
+    # logo / channel bug paints on top of everything else (broadcast
+    # convention: corner bugs override L3 banners + chapter strips).
     if style.watermark.enabled:
         if style.watermark.type == "image":
-            jobs.append(_OverlayJob(kind="image_watermark", z_order=20,
+            jobs.append(_OverlayJob(kind="image_watermark", z_order=60,
                                       data={"watermark": style.watermark}))
         else:
-            jobs.append(_OverlayJob(kind="text_watermark", z_order=21,
+            jobs.append(_OverlayJob(kind="text_watermark", z_order=61,
                                       data={"watermark": style.watermark}))
 
     # Hook + Outro card.
@@ -799,6 +812,7 @@ def render_composition(
 
     parts.append(f"{cur}null[vout]")
     filter_complex = ";".join(parts)
+    logger.info(f"composition filter_complex: {filter_complex}")
 
     # ── Invoke ffmpeg ──────────────────────────────────────────────────────
     cmd = [

@@ -70,6 +70,19 @@ kind 把这些数据渲到视频上**：
 - 工作台：手动「+ 章节卡」/「从 analysis.json 派生章节卡」批量（每段 6 秒）
 - i18n: `add.chapter_point_card` / `derive_cpc` / `field.card_text` 双语
 
+#### ✅ 已完成：字幕位置 + 水印 UI 暴露 — 2026-05-15
+- **字幕位置**：`SubtitleStyle.block_margin_pct` (距边) + `track_gap_pct`
+  (双轨间距) 已存在但工作台没 UI；现在同一行 (top/bottom radio 旁) 加
+  两个 % spinbox，让用户根据源条幅高度上抬字幕
+- **水印**：`WatermarkStyle` 整个 dataclass 之前完全没 UI；现在工作
+  台底部新 LabelFrame，4 行：(1) 启用 + 类型 (文/图 radio) + 4-corner
+  位置 (2) 文字模式 (内容/字号/色/不透明) (3) 图片模式 (路径+...+缩放+
+  不透明) (4) 边距 X/Y
+- 两种 watermark 字段一直可见，由 `type` radio 决定渲染哪个 (跟
+  `OutputGeometry` 的 reframe/passthrough 一样的 UX 模式)
+- i18n: `style.sub.block_margin` / `.track_gap` + `style.wm.*` 共 15
+  键双语
+
 #### ✅ 已完成：字幕底衬（box mode）— 2026-05-15
 - **动机**：白宫/CSPAN 这类源视频自带固定下三分之一 chyron（"TEXT
   VP TO 45470 FOR UPDATES…"），sub1 默认 92% Y 撞上去看不清；不愿
