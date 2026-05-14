@@ -53,44 +53,85 @@ bilingual_video 已落地，news_desk 是第三种。
      LLM 输出未转义引号/换行的 JSON 自救
    - xAI provider 注册到 `_DEFAULT_PROVIDERS`（用户需自行配 xAI.key）
 
-### 下一步要做（news_desk overlay 系统）
+### 已完成（2026-05-14 第二轮：news_desk overlay 渲染管线）
 
-事件档案有了，现在做"把档案信息渲染到视频上"的部分：
+设计决策：命名跟齐广播业标准 —— `LowerThirdOverlay`（业内硬通货词）+
+`TopicStripOverlay`（替代之前的 ChapterRibbon，更贴 topic-bar / chapter-
+marker-strip 业内叫法）。Q1-Q4 决策见 docs/draft/news-desk-derivative.md。
 
-**v0.1 范围（已在 part 3 规划讨论时达成共识，待开工）**：
+落地清单 1-7 + 10 已完成（UI 工作台壳 8-9 留下次会话）：
 
-**完整 v0.1 设计文档**：[`docs/draft/news-desk-derivative.md`](draft/news-desk-derivative.md)
-（范围 / 落地清单 / Q1-Q4 决策都在那里，下面的 7 条只是骨架摘要）
+1. **`core/composition/overlays.py`** — 加 `LowerThirdOverlay` /
+   `TopicStripOverlay` dataclass + `overlay_to_dict` / `overlay_from_dict`
+   round-trip helper + `TYPED_OVERLAY_KINDS` 元组
+2. **`core/composition/style.py`** — 加 `LowerThirdStyle` /
+   `TopicStripStyle` + `OVERLAY_STYLE_CLASSES` 注册表 +
+   `resolve_overlay_style()` 查找器 + `default_overlay_styles()` seed
+3. **`core/composition/news_desk_overlays.py`** — 新文件，所有
+   news_desk 类型 overlay 合并成单个 .ass 文件（PlayResX/Y = target_w/h，
+   ASS 坐标=像素），通过单个 `subtitles=` filter 链入；`build_news_desk_ass()`
+   纯函数 + `_renderer_news_desk_ass` 注册器
+4. **`core/composition/render.py`** — `_named_overlay_jobs` 把
+   typed news_desk overlays 路由成单个 `kind="news_desk_ass"` 合并 job；
+   底部 import news_desk_overlays 触发注册
+5. **`core/composition/preview.py`** — `style_to_web_dict` 加
+   overlay_styles 字段；新增 `set_overlays(list)` API
+6. **`ui/composition_preview.html`** — 加 `setOverlays` /
+   `drawNewsDeskOverlays` / `_drawLowerThird` / `_drawTopicStrip`，pct→pixel
+   换算与 Python 端一致
+7. **`core/composition/presets.py`** — 加 `news_desk` 预设 store
+   （passthrough + 双语字幕底 + overlay_styles seed）+ 完整 CRUD API
+8. **`core/derivative_types.py`** — 注册 `news_desk` type
+   （tool_key="news-desk", single_instance=False, basename="news"）
 
-1. `core/composition/overlays.py` 升级（现在只有 stub）：
-   - 实现 `LowerThirdOverlay` dataclass：演讲者名牌（host + host_bio
-     + host_affiliation），左下/右下时段控制
-   - 实现 `ChapterRibbonOverlay`：顶部常驻细条显示当前章节标题
-2. `core/composition/render.py` 注册 overlay renderer：
-   - 走 libass 多轨方案（再加 1-2 个 ASS dialogue 轨道，带 `\\pos()` 
-     绝对定位 + 起止时间），与现有字幕轨同引擎，**preview≡render**
-3. `composition_preview.html`：Canvas 镜像绘制两种 overlay
-4. `core/composition/style.py`：`overlay_styles` 加这两个 class 的 schema
-5. `derivative_types.py` 注册 `news_desk` type
-6. `tools/news_desk/news_desk_tool.py` 工作台壳：基本字幕设置 +
-   overlay 列表编辑器 + 预览
-7. preset `news_desk_default.json`
+**Smoke test 通过**：
+- Round-trip：LowerThirdOverlay/TopicStripOverlay → dict → 还原
+- ASS 生成：1920x1080 目标，结构正确（Header + 2 Style + 6 Dialogue）
+- e2e ffmpeg render：10s testsrc + 2 overlays → MP4 渲染成功 + 抽帧验证
+  名牌（深蓝底 + 红色 accent + 双行文字）和 topic strip（顶部蓝条）都正确显示
 
-**明确不在 v0.1**：
-- AI prompt 自动生成 overlay 列表（先支持 chapters → ChapterRibbon
-  自动派生 + 用户手填 LowerThird）
-- 弹入弹出动效
-- Zone 自动避让管理器
-- ASR diarization 多说话人切换
+### 下一步要做（news_desk UI 工作台壳）
 
-**先决条件**：news context 数据底座已经齐了，可以直接开做。
+渲染管线打通了，下一步是工作台 UI（task.md 老清单第 6-8 步）：
+
+8. **`tools/news_desk/news_desk_tool.py`** —— 工作台壳（新文件）：
+   - 复用 subtitle_tool 的 normalized layout 控件 + 双语字幕设置
+   - Overlay 列表编辑器：增删改 LowerThird（基础 5 字段：title /
+     subtitle / start / end / position）
+   - 自动从 chapters.json 派生 TopicStrip（每章一条，[start, end] 取章节区间）
+   - 自动从 basic_info.json 预填 LowerThird（host + host_bio + host_affiliation）
+   - WebView 预览（CompositionPreview + set_overlays）
+   - 导出按钮 → render_composition → derivatives/news_desk/<instance>/
+
+9. **`VideoCraftHub.py` `TOOL_MAP`** — 挂载 `"news-desk"` →
+   `"tools/news_desk/news_desk_tool.py"` / `"NewsDeskApp"`
+
+10. **`i18n/{zh,en}.json`** — `derivative.news_desk` 显示名 + overlay
+    UI 字符串（"添加名牌" / "Add lower third" 等）
+
+### 重要参考
+
+- 渲染入口：`src/core/composition/news_desk_overlays.py` （build_news_desk_ass）
+- 默认样式：`LowerThirdStyle` / `TopicStripStyle` 字段含义见 dataclass docstring
+- chapters 数据架构：`core/chapters_io.normalize_chapters` 单源；遍历
+  即可派生 TopicStrip（每章 → 一条 TopicStripOverlay(topic_text=title,
+  start=ch.start, end=ch.end)）
+- 派生路径：`<project>/derivatives/news_desk/<instance>/` 约定
+- 字幕轨复用：news_desk 的字幕跟 bilingual_video 是同一套 SubtitleStyle，
+  preset 默认双语都开
 
 ### 当前会话状态
 
-- HEAD: `66735ae` (news.realtime: ClaudeCode + WebSearch as second-source provider)
-- 已 push origin/main
-- workspace clean
-- 准备 /clear 长上下文
+- HEAD: 待 commit（本会话改动尚未提交；task.md 已含完整接力信息）
+- workspace dirty（待 commit / 或继续做 UI 后一并 commit）
+
+### 重要参考（旧）
+
+- 内容上下文数据架构：`src/core/source_context.py`（双 dataclass + 合并）
+- AI 路由严格契约：`src/core/ai/router.py::_complete_json_by_tier`
+- xAI Responses API 集成：`src/core/ai/providers/openai_compat.py::_call_xai_responses_json`
+- ClaudeCode WebSearch 集成：`src/core/ai/providers/claude_code.py::_call_json_with_search`
+- 设计文档：`docs/draft/news-desk-derivative.md`
 
 ### 重要参考
 

@@ -19,6 +19,7 @@ from dataclasses import asdict
 from typing import Callable, Optional
 
 from .style import CompositionStyle
+from .overlays import overlay_to_dict
 
 
 def style_to_web_dict(style: CompositionStyle) -> dict:
@@ -84,6 +85,9 @@ def style_to_web_dict(style: CompositionStyle) -> dict:
         },
         "aspect": style.aspect_ratio(),   # [w, h] tuple → JSON array
         "output_mode": style.output.mode,
+        # News-desk overlay style library — dict-of-dicts, the JS canvas
+        # pulls per-class styling for visible overlays at draw time.
+        "overlay_styles": dict(style.overlay_styles or {}),
     }
 
 
@@ -165,6 +169,17 @@ class CompositionPreview:
         self._call_js(f"window.vc.setOutputMode({json.dumps(mode)})")
         self._call_js(f"window.vc.setAspect({aspect[0]}, {aspect[1]})")
         self._call_js(f"window.vc.setStyle({json.dumps(payload, ensure_ascii=False)})")
+
+    def set_overlays(self, overlays: list) -> None:
+        """Push the news_desk overlay list to the canvas mirror.
+
+        `overlays` is a list of typed overlay dataclasses (LowerThirdOverlay,
+        TopicStripOverlay, ...). Each is serialized to a dict (incl. `kind`
+        discriminator) so the JS side can dispatch by kind. Pass [] to clear.
+        """
+        payload = [overlay_to_dict(o) for o in (overlays or [])]
+        self._call_js(
+            f"window.vc.setOverlays({json.dumps(payload, ensure_ascii=False)})")
 
     def set_clip_meta(self, hook: str = "", outro: str = "",
                        hook_lines: Optional[list[str]] = None,

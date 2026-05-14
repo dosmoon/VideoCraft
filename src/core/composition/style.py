@@ -124,6 +124,120 @@ class OutputGeometry:
             return (9, 16)
 
 
+# ── Overlay style classes (named library, used by news_desk overlays) ──────
+#
+# CompositionStyle.overlay_styles is a dict keyed by `style_class` name
+# (e.g. "default", "breaking", "interview"). Each value is one of these
+# style dataclasses, picked at render time by matching the overlay's
+# `kind` to the dataclass type. Storage on disk is dict-of-dicts (asdict
+# round-trips); the typed loader in presets.py coerces back to dataclass.
+
+@dataclass
+class LowerThirdStyle:
+    """Visual style for LowerThirdOverlay — title + subtitle on a colored
+    bar anchored to the bottom safe area.
+
+    Industry defaults: bar height ~10-15% of frame; title font 4-6% of
+    frame height; subtitle ~60% of title size. Margin ≥ 5% from bottom
+    edge keeps the bar inside title-safe area on broadcast displays.
+    """
+    # Bar background.
+    bg_color: str = "#0F172A"
+    bg_opacity: int = 88              # 0-100
+    accent_color: str = "#C8102E"     # left-edge accent bar (broadcast convention)
+    accent_width_pct: float = 0.006   # fraction of frame width; 0 disables
+
+    # Title (large name).
+    title_color: str = "#FFFFFF"
+    title_fontsize: int = 38
+    title_bold: bool = True
+    # Subtitle (role / affiliation).
+    subtitle_color: str = "#E2E8F0"
+    subtitle_fontsize: int = 24
+    subtitle_bold: bool = False
+
+    font: str = "Microsoft YaHei"
+
+    # Position — fraction of frame dimension. margin_x_pct from the
+    # anchored side edge, margin_y_pct from the bottom edge.
+    margin_x_pct: float = 0.05
+    margin_y_pct: float = 0.10        # ≥ 0.05 keeps inside title-safe
+    # Bar inner padding (fraction of frame height).
+    padding_pct: float = 0.012
+    # Title-to-subtitle vertical gap (fraction of frame height).
+    line_gap_pct: float = 0.005
+
+
+@dataclass
+class TopicStripStyle:
+    """Visual style for TopicStripOverlay — top-edge labeled strip."""
+    bg_color: str = "#1E40AF"
+    bg_opacity: int = 90
+    text_color: str = "#FFFFFF"
+    fontsize: int = 26
+    bold: bool = True
+    font: str = "Microsoft YaHei"
+
+    # Strip geometry. height_pct = strip thickness as fraction of frame height.
+    height_pct: float = 0.055
+    # Distance from top edge (lets you leave a sliver of source video
+    # showing above the strip if desired).
+    top_margin_pct: float = 0.0
+    # Horizontal text alignment within the strip.
+    text_align: str = "left"          # "left" | "center" | "right"
+    # Inner left/right text padding (fraction of frame width).
+    text_padding_pct: float = 0.025
+
+
+# Registry of typed overlay-style classes by `kind` discriminator. Render
+# and preview look up the matching class to coerce dict → dataclass.
+OVERLAY_STYLE_CLASSES: dict[str, type] = {
+    "lower_third": LowerThirdStyle,
+    "topic_strip": TopicStripStyle,
+}
+
+
+def resolve_overlay_style(overlay_styles: dict, kind: str,
+                            style_class: str = "default"):
+    """Look up an overlay style instance from the dict library.
+
+    `overlay_styles` schema on disk:
+        {
+            "lower_third": {"default": {...LowerThirdStyle dict...}, ...},
+            "topic_strip": {"default": {...TopicStripStyle dict...}, ...},
+        }
+
+    Returns a typed dataclass instance. Falls back to default-constructed
+    style if the requested class is missing — so missing-preset never
+    breaks the render.
+    """
+    cls = OVERLAY_STYLE_CLASSES.get(kind)
+    if cls is None:
+        return None
+    by_kind = (overlay_styles or {}).get(kind) or {}
+    raw = by_kind.get(style_class)
+    if raw is None and style_class != "default":
+        raw = by_kind.get("default")
+    if not isinstance(raw, dict):
+        return cls()
+    fields = cls.__dataclass_fields__
+    kwargs = {k: v for k, v in raw.items() if k in fields}
+    try:
+        return cls(**kwargs)
+    except TypeError:
+        return cls()
+
+
+def default_overlay_styles() -> dict:
+    """Build the seed overlay_styles dict — one default class per known
+    overlay kind. Presets that want custom looks override entries here."""
+    from dataclasses import asdict
+    return {
+        kind: {"default": asdict(cls())}
+        for kind, cls in OVERLAY_STYLE_CLASSES.items()
+    }
+
+
 # ── Top-level CompositionStyle ─────────────────────────────────────────────
 
 @dataclass

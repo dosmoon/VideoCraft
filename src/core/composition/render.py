@@ -34,7 +34,7 @@ from core.subtitle_ops import (
 
 from .style import CompositionStyle, SubtitleStyle, SubtitleLineStyle, \
     WatermarkStyle, HookOutroStyle, compute_subtitle_max_chars
-from .overlays import OverlaySpec
+from .overlays import OverlaySpec, LowerThirdOverlay, TopicStripOverlay
 from .layout import libass_margin_v, pixel_offset
 from .fonts import (
     hook_outro_font_path, y_expr_for_position, ass_alignment_for_position,
@@ -560,6 +560,12 @@ register_overlay_renderer("text_watermark",  _renderer_text_watermark)
 register_overlay_renderer("hook_text",       _renderer_hook_text)
 register_overlay_renderer("outro_text",      _renderer_outro_text)
 
+# News-desk overlay kinds (lower_third + topic_strip merged into one
+# .ass file via a single "news_desk_ass" job). Imported for the side
+# effect of registering its renderer with the table above.
+from . import news_desk_overlays as _news_desk_overlays
+_news_desk_overlays.register()
+
 
 def _named_overlay_jobs(req: CompositionRequest,
                           sub1_srt: Optional[str],
@@ -603,16 +609,37 @@ def _named_overlay_jobs(req: CompositionRequest,
         jobs.append(_OverlayJob(kind="outro_text", z_order=31,
                                   data={"text": req.outro_text}))
 
-    # User-supplied overlays (future news_desk kinds). z_order from spec,
-    # defaulting to 100 so they stack above the named overlays unless the
-    # caller explicitly orders them in between.
+    # User-supplied overlays — split into:
+    #   - news_desk typed overlays (LowerThird/TopicStrip): merged into
+    #     a single libass job (one .ass file regardless of count) so the
+    #     filter chain stays shallow.
+    #   - generic OverlaySpec entries: passed through individually for any
+    #     kind that has its own registered renderer.
+    news_desk_specs: list = []
     for spec in req.overlays:
-        if not isinstance(spec, OverlaySpec):
-            continue
+        if isinstance(spec, (LowerThirdOverlay, TopicStripOverlay)):
+            news_desk_specs.append(spec)
+        elif isinstance(spec, OverlaySpec):
+            jobs.append(_OverlayJob(
+                kind=spec.kind, z_order=spec.z_order,
+                data={"spec": spec},
+            ))
+
+    if news_desk_specs:
+        # Build the merged .ass lazily — needs target_w/target_h which only
+        # the render context knows. Stash specs + overlay_styles on the job
+        # and let the dispatcher build it just before invoking the renderer.
+        # Sort by z_order so libass layer ordering matches user intent.
+        news_desk_specs.sort(key=lambda s: s.z_order)
+        # Use the lowest news-desk z_order as the job's order so they stack
+        # together in the filter chain (default 40 = TopicStrip first).
+        merged_z = min((s.z_order for s in news_desk_specs), default=40)
         jobs.append(_OverlayJob(
-            kind=spec.kind,
-            z_order=spec.z_order,
-            data={"spec": spec},
+            kind="news_desk_ass", z_order=merged_z,
+            data={
+                "specs": news_desk_specs,
+                "overlay_styles": req.style.overlay_styles,
+            },
         ))
 
     jobs.sort(key=lambda j: j.z_order)

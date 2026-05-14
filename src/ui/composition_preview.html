@@ -87,6 +87,12 @@ let cues2 = [];   // sub2 — secondary (bilingual)
 // natural dims (no crop rect UI, no dimming).
 let outputMode = "reframe";
 
+// News-desk overlays — list of {kind, start_sec, end_sec, ...kind-specific}.
+// Drawn each frame with currentTime-based visibility filter. Style data
+// looked up via overlayStyles[kind][style_class].
+let overlays = [];
+let overlayStyles = {};   // populated from styleState.overlay_styles via setStyle
+
 const SHORT_EDGE = 1080;
 const ASS_RENDER_SCALE = 4.7;
 
@@ -128,7 +134,14 @@ window.vc = {
       if (s.subtitle)  styleState.subtitle  = Object.assign({}, styleState.subtitle,  s.subtitle);
       if (s.watermark) styleState.watermark = Object.assign({}, styleState.watermark, s.watermark);
       if (s.hookOutro) styleState.hookOutro = Object.assign({}, styleState.hookOutro, s.hookOutro);
+      if (s.overlay_styles && typeof s.overlay_styles === 'object') {
+        overlayStyles = s.overlay_styles;
+      }
     }
+    drawOverlay();
+  },
+  setOverlays(arr) {
+    overlays = Array.isArray(arr) ? arr.filter(o => o && typeof o.kind === 'string') : [];
     drawOverlay();
   },
   setClipMeta(meta) {
@@ -252,6 +265,130 @@ function drawOverlay() {
   drawSubtitles();
   drawWatermark();
   drawHookOutro();
+  drawNewsDeskOverlays();
+}
+
+// ── news-desk overlays (LowerThird + TopicStrip) ─────────────────────────
+//
+// Mirrors core/composition/news_desk_overlays.py. Pixel coordinates derive
+// from the same pct fields the libass renderer reads, so layout matches
+// across engines. Time visibility uses absolute video currentTime (overlay
+// specs carry source-video time stamps the same way subtitle cues do).
+
+function _resolveOverlayStyle(kind, styleClass) {
+  const byKind = overlayStyles && overlayStyles[kind];
+  if (!byKind) return null;
+  return byKind[styleClass || "default"] || byKind["default"] || null;
+}
+
+function _hexToRgba(hex, opacity0to100) {
+  const h = (hex || "#000000").replace("#", "");
+  if (h.length !== 6) return `rgba(0,0,0,${(opacity0to100||0)/100})`;
+  const r = parseInt(h.substr(0,2), 16);
+  const g = parseInt(h.substr(2,2), 16);
+  const b = parseInt(h.substr(4,2), 16);
+  return `rgba(${r},${g},${b},${(opacity0to100||0)/100})`;
+}
+
+function _estTextWidthPx(text, fontsize) {
+  if (!text) return 0;
+  let cjk = 0;
+  for (const ch of text) if (ch.charCodeAt(0) > 0x2E80) cjk++;
+  const latin = text.length - cjk;
+  return cjk * fontsize + latin * fontsize * 0.55;
+}
+
+function drawNewsDeskOverlays() {
+  if (!overlays || overlays.length === 0) return;
+  const t = vid.currentTime || 0;
+  const { ox, oy, cw, ch } = cropBox();
+  // Overlay pixel coords are computed against the CROPPED frame (the
+  // visible content area), matching the libass render which positions
+  // against the post-crop frame too.
+  for (const ov of overlays) {
+    if (typeof ov.start_sec === "number" && t < ov.start_sec) continue;
+    if (typeof ov.end_sec === "number" && ov.end_sec > 0 && t >= ov.end_sec) continue;
+    if (ov.kind === "lower_third") {
+      _drawLowerThird(ov, ox, oy, cw, ch);
+    } else if (ov.kind === "topic_strip") {
+      _drawTopicStrip(ov, ox, oy, cw, ch);
+    }
+  }
+}
+
+function _drawLowerThird(ov, ox, oy, cw, ch) {
+  const st = _resolveOverlayStyle("lower_third", ov.style_class) || {};
+  const titleSize    = (st.title_fontsize    != null ? st.title_fontsize    : 38);
+  const subSize      = (st.subtitle_fontsize != null ? st.subtitle_fontsize : 24);
+  const padPx        = Math.max(4, (st.padding_pct  != null ? st.padding_pct  : 0.012) * ch);
+  const lineGapPx    = Math.max(2, (st.line_gap_pct != null ? st.line_gap_pct : 0.005) * ch);
+  const accentWPx    = (st.accent_width_pct != null ? st.accent_width_pct : 0.006) * cw;
+  const marginX      = (st.margin_x_pct != null ? st.margin_x_pct : 0.05) * cw;
+  const marginY      = (st.margin_y_pct != null ? st.margin_y_pct : 0.10) * ch;
+
+  const titleW = _estTextWidthPx(ov.title, titleSize);
+  const subW   = _estTextWidthPx(ov.subtitle, subSize);
+  const textW  = Math.max(titleW, subW);
+  const subH   = ov.subtitle ? subSize : 0;
+  const textBlockH = titleSize + (subH ? lineGapPx + subH : 0);
+  const barH = textBlockH + padPx * 2;
+  let barW = Math.max(textW + padPx * 2 + accentWPx, cw * 0.20);
+
+  const barY = oy + ch - marginY - barH;
+  let barX, accentX, textLeft;
+  if (ov.position === "bottom-right") {
+    barX = ox + cw - marginX - barW;
+    accentX = barX + barW - accentWPx;
+    textLeft = barX + padPx;
+  } else {
+    barX = ox + marginX;
+    accentX = barX;
+    textLeft = barX + accentWPx + padPx;
+  }
+
+  // Bar bg.
+  ctx.fillStyle = _hexToRgba(st.bg_color || "#0F172A",
+                                st.bg_opacity != null ? st.bg_opacity : 88);
+  ctx.fillRect(barX, barY, barW, barH);
+  // Accent stripe.
+  if (accentWPx > 0) {
+    ctx.fillStyle = _hexToRgba(st.accent_color || "#C8102E", 100);
+    ctx.fillRect(accentX, barY, accentWPx, barH);
+  }
+  // Title.
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  ctx.font = `${st.title_bold === false ? "" : "bold "}${titleSize}px sans-serif`;
+  ctx.fillStyle = st.title_color || "#FFFFFF";
+  ctx.fillText(ov.title || "", textLeft, barY + padPx);
+  // Subtitle.
+  if (ov.subtitle) {
+    ctx.font = `${st.subtitle_bold ? "bold " : ""}${subSize}px sans-serif`;
+    ctx.fillStyle = st.subtitle_color || "#E2E8F0";
+    ctx.fillText(ov.subtitle, textLeft, barY + padPx + titleSize + lineGapPx);
+  }
+}
+
+function _drawTopicStrip(ov, ox, oy, cw, ch) {
+  const st = _resolveOverlayStyle("topic_strip", ov.style_class) || {};
+  const stripH = Math.max(8, (st.height_pct != null ? st.height_pct : 0.055) * ch);
+  const stripY = oy + Math.max(0, (st.top_margin_pct != null ? st.top_margin_pct : 0.0) * ch);
+  const padPx  = Math.max(8, (st.text_padding_pct != null ? st.text_padding_pct : 0.025) * cw);
+  const fontPx = st.fontsize != null ? st.fontsize : 26;
+
+  ctx.fillStyle = _hexToRgba(st.bg_color || "#1E40AF",
+                                st.bg_opacity != null ? st.bg_opacity : 90);
+  ctx.fillRect(ox, stripY, cw, stripH);
+
+  ctx.font = `${st.bold === false ? "" : "bold "}${fontPx}px sans-serif`;
+  ctx.fillStyle = st.text_color || "#FFFFFF";
+  ctx.textBaseline = "middle";
+  const align = st.text_align || "left";
+  let tx;
+  if (align === "center")      { tx = ox + cw / 2; ctx.textAlign = "center"; }
+  else if (align === "right")  { tx = ox + cw - padPx; ctx.textAlign = "right"; }
+  else                         { tx = ox + padPx; ctx.textAlign = "left"; }
+  ctx.fillText(ov.topic_text || "", tx, stripY + stripH / 2);
 }
 
 function cropBox() {

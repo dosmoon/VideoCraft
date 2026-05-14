@@ -53,6 +53,16 @@ REGISTRY: list[DerivativeType] = [
         description_zh="基于字幕热点片段，批量切出短视频",
         description_en="Batch-cut short clips from subtitle hotclips",
     ),
+    DerivativeType(
+        type_name="news_desk",
+        i18n_key="derivative.news_desk",
+        tool_key="news-desk",
+        default_basename="news",
+        single_instance=False,
+        description_zh="新闻/演讲/发布会成片：双语字幕 + 名牌 + 章节条",
+        description_en="News / speech / press-briefing video with bilingual"
+                       " subs, lower-third name plates, and topic strip",
+    ),
 ]
 
 _BY_NAME: dict[str, DerivativeType] = {t.type_name: t for t in REGISTRY}
