@@ -31,12 +31,11 @@ from typing import Optional
 from tools.base import ToolBase
 from core.composition import (
     CompositionRequest, CompositionStyle, render_composition,
-    compute_subtitle_max_chars, wrap_hook_outro,
+    wrap_hook_outro,
 )
 from core.composition import presets as comp_presets
 from core.composition.fonts import hook_outro_font_path
 from core.composition.preview import CompositionPreview
-from core.subtitle_ops import split_subtitle
 from i18n import tr
 
 
@@ -317,6 +316,11 @@ class ClipToolApp(ToolBase):
         self._sub_stroke_color = tk.StringVar(value=s.stroke_color)
         self._sub_stroke_width = tk.IntVar(value=s.stroke_width)
         self._sub_position = tk.StringVar(value=s.position)
+        # Normalized layout (percent in UI, fraction in schema). Same
+        # contract as bilingual_video — both renderers consume via
+        # core.composition.layout.
+        self._sub_block_margin_pct = tk.DoubleVar(value=s.block_margin_pct * 100.0)
+        self._sub_track_gap_pct = tk.DoubleVar(value=s.track_gap_pct * 100.0)
 
         for tag, en_var, fs_var, c_var, bold_var, cn_var in (
                 ("sub1", self._sub1_enabled, self._sub1_fontsize,
@@ -344,6 +348,22 @@ class ClipToolApp(ToolBase):
                      values=("top", "middle", "bottom"),
                      state="readonly", width=8).pack(side="left")
 
+        row = ttk.Frame(sub); row.pack(fill="x", padx=4, pady=2)
+        ttk.Label(row, text=tr("clip_tool.layout_block_margin")
+                  ).pack(side="left")
+        ttk.Spinbox(row, from_=0, to=30, increment=0.5, width=6,
+                    format="%.1f",
+                    textvariable=self._sub_block_margin_pct
+                    ).pack(side="left", padx=(4, 0))
+        ttk.Label(row, text="%").pack(side="left")
+        ttk.Label(row, text=tr("clip_tool.layout_track_gap")
+                  ).pack(side="left", padx=(16, 0))
+        ttk.Spinbox(row, from_=0, to=25, increment=0.5, width=6,
+                    format="%.1f",
+                    textvariable=self._sub_track_gap_pct
+                    ).pack(side="left", padx=(4, 0))
+        ttk.Label(row, text="%").pack(side="left")
+
         # Watermark
         wm = ttk.LabelFrame(parent, text=tr("clip_tool.section_watermark"))
         wm.pack(fill="x", padx=6, pady=4)
@@ -358,6 +378,8 @@ class ClipToolApp(ToolBase):
         self._wm_text_fontsize = tk.IntVar(value=w.text_fontsize)
         self._wm_text_color = tk.StringVar(value=w.text_color)
         self._wm_text_opacity = tk.IntVar(value=w.text_opacity)
+        self._wm_margin_x_pct = tk.DoubleVar(value=w.margin_x_pct * 100.0)
+        self._wm_margin_y_pct = tk.DoubleVar(value=w.margin_y_pct * 100.0)
 
         row = ttk.Frame(wm); row.pack(fill="x", padx=4, pady=2)
         ttk.Checkbutton(row, text=tr("clip_tool.enabled"),
@@ -395,6 +417,23 @@ class ClipToolApp(ToolBase):
         self._color_picker(row, self._wm_text_color)
         ttk.Spinbox(row, from_=0, to=100, textvariable=self._wm_text_opacity,
                      width=4).pack(side="left", padx=(4, 0))
+
+        # Normalized margins from anchored corner — same contract as bilingual.
+        row = ttk.Frame(wm); row.pack(fill="x", padx=4, pady=2)
+        ttk.Label(row, text=tr("clip_tool.layout_margin_x")
+                  ).pack(side="left")
+        ttk.Spinbox(row, from_=0, to=10, increment=0.5, width=6,
+                    format="%.1f",
+                    textvariable=self._wm_margin_x_pct
+                    ).pack(side="left", padx=(4, 0))
+        ttk.Label(row, text="%").pack(side="left")
+        ttk.Label(row, text=tr("clip_tool.layout_margin_y")
+                  ).pack(side="left", padx=(16, 0))
+        ttk.Spinbox(row, from_=0, to=10, increment=0.5, width=6,
+                    format="%.1f",
+                    textvariable=self._wm_margin_y_pct
+                    ).pack(side="left", padx=(4, 0))
+        ttk.Label(row, text="%").pack(side="left")
 
         # Hook/Outro
         ho = ttk.LabelFrame(parent, text=tr("clip_tool.section_hook_outro"))
@@ -494,10 +533,12 @@ class ClipToolApp(ToolBase):
             self._sub2_enabled, self._sub2_fontsize, self._sub2_color,
             self._sub2_bold, self._sub2_is_chinese,
             self._sub_stroke_color, self._sub_stroke_width, self._sub_position,
+            self._sub_block_margin_pct, self._sub_track_gap_pct,
             self._wm_enabled, self._wm_type, self._wm_position,
             self._wm_image_path, self._wm_image_scale, self._wm_image_opacity,
             self._wm_text, self._wm_text_fontsize, self._wm_text_color,
             self._wm_text_opacity,
+            self._wm_margin_x_pct, self._wm_margin_y_pct,
             self._ho_font, self._ho_size, self._ho_color,
             self._ho_bg_color, self._ho_bg_opacity,
             self._ho_stroke_color, self._ho_stroke_width, self._ho_box_padding,
@@ -1192,63 +1233,26 @@ class ClipToolApp(ToolBase):
 
     def _cues_for_window(self, start_sec: float,
                           end_sec: float) -> list[dict]:
-        """Return SRT cues overlapping [start_sec, end_sec], pre-split per
-        the current sub1 config so each cue fits one visual line. Mirrors
-        what render.py does at burn time."""
-        cues_raw = self._load_raw_cues()
-        if not cues_raw:
-            return []
-        filtered = []
-        for c in cues_raw:
-            cs = c.start.total_seconds()
-            ce = c.end.total_seconds()
-            if ce <= start_sec or cs >= end_sec:
-                continue
-            filtered.append(c)
-        return self._split_cues_for_preview(filtered)
+        """Return SRT cues overlapping [start_sec, end_sec] in *source-video*
+        timeline (no rebase — the clip preview seeks within the source).
+        Wrap/split is performed by core.composition.prepare_subtitle_cues,
+        the same helper the burn path uses, so preview ≡ render."""
+        full = self._full_srt_cues()
+        return [c for c in full
+                if c["end"] > start_sec and c["start"] < end_sec]
 
     def _full_srt_cues(self) -> list[dict]:
-        """Whole SRT, pre-split per current sub1 config."""
-        cues_raw = self._load_raw_cues()
-        if not cues_raw:
-            return []
-        return self._split_cues_for_preview(cues_raw)
-
-    def _load_raw_cues(self) -> list:
+        """Whole SRT, pre-split per current sub1 config via the shared core
+        helper. Source-video timeline, no slicing."""
         srt_path = self._resolve_source_srt()
         if not srt_path or not os.path.isfile(srt_path):
             return []
-        try:
-            import srt as _srt
-            with open(srt_path, "r", encoding="utf-8") as f:
-                return list(_srt.parse(f.read()))
-        except Exception:
-            return []
-
-    def _split_cues_for_preview(self, cues: list) -> list[dict]:
-        """Apply split_subtitle to each cue at the current effective max_chars
-        so the preview renders the same line breaks the final ffmpeg burn
-        would produce."""
+        from core.composition import prepare_subtitle_cues
         sub1 = self._current_style.subtitle.sub1
-        if sub1.auto_max_chars:
-            max_chars = compute_subtitle_max_chars(
-                self._current_style.output.aspect, sub1.fontsize, sub1.is_chinese,
-                short_edge=self._current_style.output.short_edge)
-        else:
-            max_chars = max(8, sub1.manual_max_chars)
-        out: list[dict] = []
-        for c in cues:
-            try:
-                pieces = split_subtitle(c, max_chars, sub1.is_chinese)
-            except Exception:
-                pieces = [c]
-            for p in pieces:
-                out.append({
-                    "start": p.start.total_seconds(),
-                    "end":   p.end.total_seconds(),
-                    "text":  (p.content or "").replace("\n", " "),
-                })
-        return out
+        return prepare_subtitle_cues(
+            srt_path, sub1,
+            aspect=self._current_style.output.aspect,
+            short_edge=self._current_style.output.short_edge)
 
     def _resolve_source_srt(self) -> Optional[str]:
         """Return the instance's SRT snapshot. Falls back to upstream only
@@ -1498,6 +1502,8 @@ class ClipToolApp(ToolBase):
             self._sub_stroke_color.set(sub.stroke_color)
             self._sub_stroke_width.set(sub.stroke_width)
             self._sub_position.set(sub.position)
+            self._sub_block_margin_pct.set(round(sub.block_margin_pct * 100.0, 1))
+            self._sub_track_gap_pct.set(round(sub.track_gap_pct * 100.0, 1))
             w = s.watermark
             self._wm_enabled.set(w.enabled)
             self._wm_type.set(w.type)
@@ -1509,6 +1515,8 @@ class ClipToolApp(ToolBase):
             self._wm_text_fontsize.set(w.text_fontsize)
             self._wm_text_color.set(w.text_color)
             self._wm_text_opacity.set(w.text_opacity)
+            self._wm_margin_x_pct.set(round(w.margin_x_pct * 100.0, 1))
+            self._wm_margin_y_pct.set(round(w.margin_y_pct * 100.0, 1))
             h = s.hook_outro
             self._ho_font.set(h.font)
             self._ho_size.set(h.size)
@@ -1558,11 +1566,15 @@ class ClipToolApp(ToolBase):
                 stroke_color=self._sub_stroke_color.get(),
                 stroke_width=int(self._sub_stroke_width.get()),
                 position=self._sub_position.get(),
+                block_margin_pct=float(self._sub_block_margin_pct.get()) / 100.0,
+                track_gap_pct=float(self._sub_track_gap_pct.get()) / 100.0,
             ),
             watermark=WatermarkStyle(
                 enabled=self._wm_enabled.get(),
                 type=self._wm_type.get(),
                 position=self._wm_position.get(),
+                margin_x_pct=float(self._wm_margin_x_pct.get()) / 100.0,
+                margin_y_pct=float(self._wm_margin_y_pct.get()) / 100.0,
                 image_path=self._wm_image_path.get(),
                 image_scale=float(self._wm_image_scale.get()),
                 image_opacity=int(self._wm_image_opacity.get()),
