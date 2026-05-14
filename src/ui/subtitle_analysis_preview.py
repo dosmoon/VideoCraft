@@ -104,26 +104,31 @@ def _render_markdown(parent: tk.Frame, artifact: AnalysisArtifact) -> None:
 
 def _render_analysis(parent: tk.Frame, data, *,
                       artifact: AnalysisArtifact, on_saved=None) -> None:
-    """Unified analysis envelope view: titles[] strip on top, chapter
-    editor (with per-chapter refined + key_points) below."""
+    """Unified analysis envelope view: chapter editor takes the main
+    surface; the candidate-titles strip lives compact at the bottom
+    (read-only YouTube/X description reference, not the focus)."""
     items = data.get("chapters") if isinstance(data, dict) else None
     if not isinstance(items, list):
         _render_raw_json(parent, data)
         return
 
-    # Top: candidate titles strip (read-only; titles editing is v0.3+).
+    # Bottom: candidate titles compact strip — packed first with
+    # side="bottom" so the chapter editor below claims all remaining
+    # vertical space. Single muted line per title; no label frame
+    # heading (a leading "📋" prefix is enough cue).
     titles = data.get("titles") if isinstance(data, dict) else []
     if isinstance(titles, list) and titles:
-        titles_box = tk.LabelFrame(
-            parent, text=tr("analysis_preview.titles_section"),
-            bg="white", fg="#444", font=("Microsoft YaHei UI", 9))
-        titles_box.pack(fill="x", padx=0, pady=(0, 6))
-        for ttl in titles:
-            tk.Label(titles_box, text=f"• {ttl}",
-                      bg="white", fg="#222",
-                      font=("Microsoft YaHei UI", 10),
-                      anchor="w", justify="left", wraplength=560
-                      ).pack(fill="x", padx=8, pady=1)
+        strip = tk.Frame(parent, bg="#f5f5f5", bd=1, relief="flat",
+                          highlightbackground="#ddd", highlightthickness=1)
+        strip.pack(side="bottom", fill="x", pady=(6, 0))
+        for i, ttl in enumerate(titles):
+            prefix = "📋 " if i == 0 else "    "
+            tk.Label(strip, text=f"{prefix}{ttl}",
+                      bg="#f5f5f5", fg="#666",
+                      font=("Microsoft YaHei UI", 9),
+                      anchor="w", justify="left",
+                      wraplength=900,
+                      ).pack(fill="x", padx=8, pady=0)
 
     # Geometric derivation: <project>/subtitles/<iso>.analysis.json
     subtitles_dir = os.path.dirname(artifact.path)
