@@ -433,12 +433,10 @@ BUILTIN_BILIBURN_PRESETS: dict[str, CompositionStyle] = {
         subtitle=SubtitleStyle(
             sub1=SubtitleLineStyle(
                 enabled=True, fontsize=24, color="#FFFF00",
-                bold=True, is_chinese=True,
-                auto_max_chars=False, manual_max_chars=20),
+                bold=True, is_chinese=True),
             sub2=SubtitleLineStyle(
                 enabled=True, fontsize=24, color="#FFFFFF",
-                bold=False, is_chinese=False,
-                auto_max_chars=False, manual_max_chars=50),
+                bold=False, is_chinese=False),
             stroke_color="#000000", stroke_width=2, position="bottom",
         ),
         watermark=WatermarkStyle(
@@ -547,12 +545,10 @@ BUILTIN_NEWS_DESK_PRESETS: dict[str, CompositionStyle] = {
         subtitle=SubtitleStyle(
             sub1=SubtitleLineStyle(
                 enabled=True, fontsize=24, color="#FFFF00",
-                bold=True, is_chinese=True,
-                auto_max_chars=False, manual_max_chars=20),
+                bold=True, is_chinese=True),
             sub2=SubtitleLineStyle(
                 enabled=True, fontsize=22, color="#FFFFFF",
-                bold=False, is_chinese=False,
-                auto_max_chars=False, manual_max_chars=50),
+                bold=False, is_chinese=False),
             stroke_color="#000000", stroke_width=2, position="bottom",
         ),
         watermark=WatermarkStyle(enabled=False),

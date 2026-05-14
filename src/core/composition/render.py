@@ -174,11 +174,8 @@ def _slice_and_wrap_cues(
     except Exception:
         return []
 
-    if line.auto_max_chars:
-        max_chars = compute_subtitle_max_chars(
-            aspect, line.fontsize, line.is_chinese, short_edge=short_edge)
-    else:
-        max_chars = max(8, line.manual_max_chars)
+    max_chars = compute_subtitle_max_chars(
+        aspect, line.fontsize, line.is_chinese, short_edge=short_edge)
 
     # Slice + rebase only when a window was requested.
     rebase = start_sec > 0.0 or end_sec is not None

@@ -1012,7 +1012,6 @@ class SubtitleToolApp(ToolBase):
                     color=self.sub1_color_var.get(),
                     bold=True,
                     is_chinese=bool(self.sub1_is_chinese_var.get()),
-                    auto_max_chars=True,
                 ),
                 sub2=SubtitleLineStyle(
                     enabled=bool(self.sub2_show_var.get()),
@@ -1020,7 +1019,6 @@ class SubtitleToolApp(ToolBase):
                     color=self.sub2_color_var.get(),
                     bold=False,
                     is_chinese=bool(self.sub2_is_chinese_var.get()),
-                    auto_max_chars=True,
                 ),
                 position=self.sub_position_var.get() or "bottom",
                 block_margin_pct=float(self.sub_block_margin_pct_var.get()) / 100.0,
@@ -1043,9 +1041,7 @@ class SubtitleToolApp(ToolBase):
         )
 
     def _apply_style(self, style: 'CompositionStyle') -> None:
-        """Push a CompositionStyle into the Tk vars. Wrap-related fields
-        (auto_max_chars / manual_max_chars) are dropped on the floor —
-        the UI doesn't expose them; auto computes from fontsize/is_chinese."""
+        """Push a CompositionStyle into the Tk vars."""
         sub = style.subtitle
         for src, show, fsize, color, is_cn in (
             (sub.sub1, self.sub1_show_var, self.sub1_fontsize_var,
@@ -1117,7 +1113,6 @@ class SubtitleToolApp(ToolBase):
                     color=str(flat.get("sub1_color", "#FFFF00")),
                     bold=True,
                     is_chinese=bool(flat.get("sub1_is_chinese", True)),
-                    auto_max_chars=True,
                 ),
                 sub2=SubtitleLineStyle(
                     enabled=bool(flat.get("sub2_show", True)),
@@ -1125,7 +1120,6 @@ class SubtitleToolApp(ToolBase):
                     color=str(flat.get("sub2_color", "#FFFFFF")),
                     bold=False,
                     is_chinese=bool(flat.get("sub2_is_chinese", False)),
-                    auto_max_chars=True,
                 ),
                 position="bottom",
             ),
@@ -1345,15 +1339,13 @@ class SubtitleToolApp(ToolBase):
                 temp_sub1_path = _write_adapted(
                     sub1_path,
                     _SLS(enabled=True, fontsize=int(self.sub1_fontsize_var.get()),
-                          is_chinese=bool(self.sub1_is_chinese_var.get()),
-                          auto_max_chars=True),
+                          is_chinese=bool(self.sub1_is_chinese_var.get())),
                     _eff_aspect, _eff_short_edge)
             if show_sub2:
                 temp_sub2_path = _write_adapted(
                     sub2_path,
                     _SLS(enabled=True, fontsize=int(self.sub2_fontsize_var.get()),
-                          is_chinese=bool(self.sub2_is_chinese_var.get()),
-                          auto_max_chars=True),
+                          is_chinese=bool(self.sub2_is_chinese_var.get())),
                     _eff_aspect, _eff_short_edge)
         except Exception as e:
             messagebox.showerror(tr("tool.subtitle.error.split_failed_title"), str(e))

@@ -28,8 +28,6 @@ class SubtitleLineStyle:
     color: str = "#FFFFFF"
     bold: bool = False
     is_chinese: bool = False         # affects glyph-width / line-break logic
-    auto_max_chars: bool = True      # compute from aspect+fontsize at runtime
-    manual_max_chars: int = 20       # used only when auto_max_chars is False
 
 
 @dataclass
@@ -338,8 +336,6 @@ def _measure_glyph_width(fontsize: int, is_chinese: bool,
 
 def effective_max_chars(line: SubtitleLineStyle, aspect: str,
                           *, font_path: str | None = None) -> int:
-    """Resolve a line's actual max_chars: auto-computed or manual."""
-    if line.auto_max_chars:
-        return compute_subtitle_max_chars(
-            aspect, line.fontsize, line.is_chinese, font_path=font_path)
-    return max(1, int(line.manual_max_chars))
+    """Resolve a line's max_chars by computing from aspect + fontsize."""
+    return compute_subtitle_max_chars(
+        aspect, line.fontsize, line.is_chinese, font_path=font_path)
