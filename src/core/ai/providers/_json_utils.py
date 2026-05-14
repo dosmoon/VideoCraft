@@ -24,8 +24,9 @@ def strip_json_fence(raw: str) -> str:
 
 
 def parse_json_response(raw: str, *, provider_hint: str) -> dict:
-    """Clean fences and json.loads. Raises RuntimeError with a raw-output
-    snippet on failure so callers can see what the model emitted.
+    """Clean fences and json.loads. On failure, fall back to json_repair
+    which handles common LLM JSON quirks (unescaped quotes inside string
+    values, literal LF/CR/TAB inside strings, trailing commas, etc.).
 
     Phase 7 will likely re-raise these as AIError(Kind.MALFORMED) at the
     provider adapter layer so feature layer can decide to retry.
@@ -33,12 +34,21 @@ def parse_json_response(raw: str, *, provider_hint: str) -> dict:
     cleaned = strip_json_fence(raw)
     try:
         parsed = json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        snippet = cleaned[:300].replace("\n", "\\n")
-        raise RuntimeError(
-            f"{provider_hint} returned non-JSON output: {e}. "
-            f"Raw (first 300 chars): {snippet!r}"
-        )
+    except json.JSONDecodeError:
+        # LLM JSON output frequently violates the spec — unescaped " inside
+        # Chinese strings, raw newlines, trailing commas. json_repair is a
+        # purpose-built recovery layer designed exactly for this.
+        try:
+            from json_repair import repair_json
+            repaired = repair_json(cleaned)
+            parsed = json.loads(repaired)
+        except Exception as e:
+            snippet = cleaned[:300].replace("\n", "\\n")
+            raise RuntimeError(
+                f"{provider_hint} returned non-JSON output (even after "
+                f"json_repair fallback): {e}. "
+                f"Raw (first 300 chars): {snippet!r}"
+            )
     if not isinstance(parsed, dict):
         raise RuntimeError(
             f"{provider_hint} returned non-object JSON "

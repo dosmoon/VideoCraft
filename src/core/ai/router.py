@@ -705,7 +705,7 @@ class AIRouter:
                     f"is disabled — re-enable it in AI Console or pick a "
                     f"different provider for this task."
                 )
-            if _cfg.read_key(cfg) is None and cfg.get("auth_required") is not False:
+            if not _cfg.has_auth(cfg):
                 raise RuntimeError(
                     f"Provider {r_provider!r} has no API key — configure "
                     f"the key in AI Console → Cloud Services."
@@ -768,7 +768,7 @@ class AIRouter:
                     f"is disabled — re-enable it in AI Console or pick a "
                     f"different provider for this task."
                 )
-            if _cfg.read_key(cfg) is None and cfg.get("auth_required") is not False:
+            if not _cfg.has_auth(cfg):
                 raise RuntimeError(
                     f"Provider {r_provider!r} has no API key — configure "
                     f"the key in AI Console → Cloud Services."
@@ -885,6 +885,7 @@ class AIRouter:
                                                     cancel_token=cancel_token)
             elif ptype == "claude_code":
                 result = _claude_code.call_json(cfg, model_id, prompt, schema,
+                                                  task=task,
                                                   cancel_token=cancel_token)
             elif ptype == "llama_cpp":
                 result = _llama_cpp.call_json(

@@ -13,6 +13,7 @@ srt==3.5.3
 google-genai==1.55.0
 fish-audio-sdk==1.3.0
 openai==2.30.0
+json-repair==0.59.9   # forgive LLM JSON quirks (unescaped quotes inside Chinese strings, raw newlines)
 
 # Edge TTS — Microsoft Edge Read-Aloud endpoint, free + no key.
 # News-grade Chinese voices (XiaoxiaoNeural, YunxiNeural, etc.) without
