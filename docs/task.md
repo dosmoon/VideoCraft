@@ -59,6 +59,9 @@ bilingual_video 已落地，news_desk 是第三种。
 
 **v0.1 范围（已在 part 3 规划讨论时达成共识，待开工）**：
 
+**完整 v0.1 设计文档**：[`docs/draft/news-desk-derivative.md`](draft/news-desk-derivative.md)
+（范围 / 落地清单 / Q1-Q4 决策都在那里，下面的 7 条只是骨架摘要）
+
 1. `core/composition/overlays.py` 升级（现在只有 stub）：
    - 实现 `LowerThirdOverlay` dataclass：演讲者名牌（host + host_bio
      + host_affiliation），左下/右下时段控制
