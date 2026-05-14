@@ -42,6 +42,7 @@ TOOL_MAP = {
     "translate":   {"file": "tools/translate/translate_srt.py",    "class": "TranslateApp"},
     "subtitle":    {"file": "tools/subtitle/subtitle_tool.py",     "class": "SubtitleToolApp"},
     "clip":        {"file": "tools/clip/clip_tool.py",             "class": "ClipToolApp"},
+    "news-desk":   {"file": "tools/news_desk/news_desk_tool.py",   "class": "NewsDeskApp"},
     "word-subtitle": {"file": "tools/subtitle/word_subtitle.py",   "class": "WordSubtitleApp"},
     "srt-extract-subtitles":  {"file": "tools/subtitle/srt_tools.py", "class": "SrtExtractSubtitlesApp"},
     "srt-gen-segments":       {"file": "tools/subtitle/srt_tools.py", "class": "SrtGenerateSegmentsApp"},
@@ -2006,12 +2007,13 @@ class VideoCraftHub:
             tf._set_status_cb = lambda s, k=registry_key: tab_bar.set_status(k, s)
 
             # Tools take an optional initial_file (legacy plumbing). Project-
-            # only tools (clip, subtitle) don't accept initial_file.
+            # only tools (clip, subtitle, news-desk) don't accept initial_file.
             kwargs: dict = {}
-            if initial_file is not None and tool_key not in ("clip", "subtitle"):
+            project_only = ("clip", "subtitle", "news-desk")
+            if initial_file is not None and tool_key not in project_only:
                 kwargs["initial_file"] = initial_file
             # Project-only tools must receive project + instance_name.
-            if tool_key in ("subtitle", "clip"):
+            if tool_key in project_only:
                 kwargs["project"] = project
                 kwargs["instance_name"] = instance_name
             app = cls(tf, **kwargs) if kwargs else cls(tf)

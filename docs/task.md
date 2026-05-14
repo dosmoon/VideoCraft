@@ -90,24 +90,52 @@ marker-strip 业内叫法）。Q1-Q4 决策见 docs/draft/news-desk-derivative.m
 - e2e ffmpeg render：10s testsrc + 2 overlays → MP4 渲染成功 + 抽帧验证
   名牌（深蓝底 + 红色 accent + 双行文字）和 topic strip（顶部蓝条）都正确显示
 
-### 下一步要做（news_desk UI 工作台壳）
+### 已完成（2026-05-14 第三轮：UI 工作台壳 + Hub 挂载）
 
-渲染管线打通了，下一步是工作台 UI（task.md 老清单第 6-8 步）：
+**`tools/news_desk/news_desk_tool.py`** 新建 ~570 行，`NewsDeskApp(ToolBase)`：
+- 锁定的源/输出路径（project derivative mode-only）
+- Preset combo（news_desk store, save/save-as/delete）
+- 双 SRT 拣选器（sub1 / sub2，存相对路径到 config.json）
+- Overlay Treeview + add LowerThird / add TopicStrip / Edit / Delete
+- 编辑模态：start/end + LowerThird 三字段(title/sub/position)
+  或 TopicStrip 单字段(topic_text)
+- 自动派生：
+  * `_derive_lower_third_from_basic` — basic_info.host +
+    host_bio + ctx.host_affiliation
+  * `_derive_topic_strips_from_chapters` — 找 subtitles/*.chapters.json
+    第一个，每章一条 TopicStrip
+- WebView 预览：set_style + set_overlays + set_cues x2
+- 后台线程导出 → render_composition → derivatives/news_desk/<inst>/output.mp4
+- config.json 持久化（preset_name + sub1/sub2 相对路径 + overlays JSON）
 
-8. **`tools/news_desk/news_desk_tool.py`** —— 工作台壳（新文件）：
-   - 复用 subtitle_tool 的 normalized layout 控件 + 双语字幕设置
-   - Overlay 列表编辑器：增删改 LowerThird（基础 5 字段：title /
-     subtitle / start / end / position）
-   - 自动从 chapters.json 派生 TopicStrip（每章一条，[start, end] 取章节区间）
-   - 自动从 basic_info.json 预填 LowerThird（host + host_bio + host_affiliation）
-   - WebView 预览（CompositionPreview + set_overlays）
-   - 导出按钮 → render_composition → derivatives/news_desk/<instance>/
+**`VideoCraftHub.py`** — 挂 `"news-desk"` 到 TOOL_MAP；project_only 元组
+扩到 `("clip", "subtitle", "news-desk")`，确保走 project+instance_name 分支。
 
-9. **`VideoCraftHub.py` `TOOL_MAP`** — 挂载 `"news-desk"` →
-   `"tools/news_desk/news_desk_tool.py"` / `"NewsDeskApp"`
+**`i18n/{zh,en}.json`** — 各加 43 个 key，覆盖 `derivative.news_desk` +
+所有 `tool.news_desk.*` 字符串。
 
-10. **`i18n/{zh,en}.json`** — `derivative.news_desk` 显示名 + overlay
-    UI 字符串（"添加名牌" / "Add lower third" 等）
+**Smoke**：纯 import（无 Tk）跑通，确认无 cyclic import / 语法错误；
+derivative_types.get('news_desk') / presets.load_news_desk_store() 都正常。
+
+### v0.1 全部完成 ✅
+
+news_desk derivative v0.1 端到端打通：
+- 渲染管线（LowerThird + TopicStrip 通过单 .ass 走 libass）
+- 数据层（dataclass + style 库 + 预设 store）
+- 派生注册（derivative_types + 工程目录约定）
+- UI 工作台（Hub 可打开，全功能可用）
+- 双语 i18n
+- Smoke 已 e2e 验证（手写 CompositionRequest 跑过完整 ffmpeg 渲染）
+
+### v0.2+ 候选（下次再做）
+
+设计文档 `docs/draft/news-desk-derivative.md` 第 3 节列了：
+- ChapterCard 弹屏（章节切换全屏 1-3s 标题卡）
+- PullQuote 金句弹屏（从 hotclips 派生）
+- ProgressBar 底部进度条 + 章节刻度
+- 动效层（fade in / slide）
+- Zone 自动避让（LowerThird 跟字幕重叠时自动上移）
+- ASR diarization 多说话人 LowerThird 自动切换
 
 ### 重要参考
 
@@ -122,8 +150,8 @@ marker-strip 业内叫法）。Q1-Q4 决策见 docs/draft/news-desk-derivative.m
 
 ### 当前会话状态
 
-- HEAD: 待 commit（本会话改动尚未提交；task.md 已含完整接力信息）
-- workspace dirty（待 commit / 或继续做 UI 后一并 commit）
+- HEAD: 上一轮已 commit `67f2974`（渲染管线）；本轮 UI 工作台壳待 commit
+- workspace dirty（待 commit）
 
 ### 重要参考（旧）
 
