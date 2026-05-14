@@ -919,7 +919,7 @@ class SubtitleToolApp(ToolBase):
         any failure is swallowed and logged.
         """
         try:
-            from core.publish_sidecar import render_bilingual_publish
+            from tools.subtitle.publish import render_bilingual_publish
 
             cfg_path = self._instance_config_path()
             inst_dir = os.path.dirname(cfg_path)

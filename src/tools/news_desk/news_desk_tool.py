@@ -980,6 +980,62 @@ class NewsDeskApp(ToolBase):
         self.label_status.config(
             text=tr("tool.news_desk.status.done", path=result.output_path))
         self.progress["value"] = 100
+        # Best-effort publish.md sidecar — video is already on disk; .md
+        # failures are nice-to-have, never abort the success report.
+        try:
+            self._write_publish_sidecar()
+        except Exception as e:
+            logger.warning(f"news_desk publish.md write skipped: {e}")
+
+    def _write_publish_sidecar(self) -> None:
+        from tools.news_desk.publish import render_news_desk_publish
+        from datetime import datetime as _dt
+        bi = source_context.read_basic_info(self.project.source_dir)
+        ctx = source_context.read_context(self.project.source_dir)
+
+        # Pull chapters from the source project's chapters.json if any
+        # exist. _load_any_chapters already handles the discovery.
+        chapters = self._load_any_chapters(self.project.subtitles_dir)
+
+        # LowerThird roster — strip overlay dataclasses to plain dicts so
+        # the publish renderer stays decoupled from overlay types.
+        lts = [{
+            "title": ov.title,
+            "subtitle": ov.subtitle,
+            "start_sec": ov.start_sec,
+            "end_sec": ov.end_sec,
+        } for ov in self._overlays
+              if isinstance(ov, LowerThirdOverlay)]
+
+        # Adapted SRT pointers: rebased / split SRTs aren't kept on disk
+        # (render writes them to %TEMP% and unlinks). Just point at the
+        # source SRTs the user picked, project-relative for portability.
+        adapted: list[str] = []
+        for p in (self._sub1_srt, self._sub2_srt):
+            if p:
+                adapted.append(self._proj_relative(p))
+
+        try:
+            lang_iso = self.project.meta.language.source or "zh"
+            project_title = self.project.meta.source.title
+            source_url = self.project.meta.source.url
+        except AttributeError:
+            lang_iso, project_title, source_url = "zh", None, None
+
+        md = render_news_desk_publish(
+            project_title=project_title,
+            source_url=source_url,
+            basic_info=bi.to_dict(),
+            context=ctx.to_dict(),
+            chapters=chapters,
+            lower_thirds=lts,
+            adapted_srts=adapted,
+            rendered_at=_dt.now().strftime("%Y-%m-%d %H:%M"),
+            lang_iso=lang_iso,
+        )
+        out = os.path.join(self._instance_dir(), "publish.md")
+        with open(out, "w", encoding="utf-8", newline="\n") as f:
+            f.write(md)
 
     def _on_export_failed(self, msg: str) -> None:
         self._processing = False
