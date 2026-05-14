@@ -812,7 +812,6 @@ def render_composition(
 
     parts.append(f"{cur}null[vout]")
     filter_complex = ";".join(parts)
-    logger.info(f"composition filter_complex: {filter_complex}")
 
     # ── Invoke ffmpeg ──────────────────────────────────────────────────────
     cmd = [
