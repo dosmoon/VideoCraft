@@ -23,6 +23,7 @@ from typing import Callable, Optional
 from core.io_utils import atomic_write_text, atomic_write_json
 from core.chapters_io import (
     normalize_chapters,
+    save_analysis,
     parse_time_str as _parse_time_str,
     fmt_time_str as _fmt_time_str,
 )
@@ -54,30 +55,35 @@ def _derive_chapters(pack_segments: list[dict], srt_path: str,
                      lang_iso: str) -> list[dict]:
     """Map an AI 'segments' payload to the normalized chapter list.
 
-    Each segment carries `time_str` (start) and `title`. End timestamps
-    and the synthetic 00:00 intro (when first start > 0) are produced
-    by `normalize_chapters`, which is also the UI save-path's
-    normalizer — so AI-generated and user-edited chapters cannot
-    drift apart.
+    Each segment carries `time_str` (start), `title`, `refined`, and
+    `key_points`. End timestamps and the synthetic 00:00 intro (when
+    first start > 0) are produced by `normalize_chapters`, which is also
+    the UI save-path's normalizer — so AI-generated and user-edited
+    chapters cannot drift apart. refined + key_points are carried
+    through the normalize pass so they survive subsequent edits.
     """
     items = []
     for seg in pack_segments:
         t = (seg.get("time_str") or "").strip()
         if not t:
             continue
-        items.append({"start": t, "title": (seg.get("title") or "").strip()})
+        items.append({
+            "start":      t,
+            "title":      (seg.get("title") or "").strip(),
+            "refined":    (seg.get("refined") or "").strip(),
+            "key_points": seg.get("key_points") or [],
+        })
     if not items:
         return []
     return normalize_chapters(items, _srt_end_seconds(srt_path), lang_iso)
 
 
-# ── Pack-derived runners (titles / chapters / chapter_refined) ───────────────
+# ── Pack-derived runner (analysis.json) ─────────────────────────────────────
 #
-# These three share a single AI call (generate_subtitle_pack returns titles +
-# segments[time_str/title/refined] in one shot). To avoid 3× cost when the user
-# clicks them in sequence, each runner — when it runs the pack — also writes
-# the sibling artifacts. The artifact the user explicitly asked for is the
-# return value; the bonus writes are best-effort and silent.
+# titles + chapters (with per-chapter refined + key_points) all come from
+# ONE AI call (generate_subtitle_pack). They live in a single envelope
+# `<iso>.analysis.json` — see core.chapters_io.save_analysis. The legacy
+# split into titles.json + chapters.json + chapter_refined.md is gone.
 
 def _source_dir_for(subtitles_dir: str) -> str:
     """Sibling source/ given the project's subtitles/ dir."""
@@ -113,71 +119,28 @@ def _run_pack(srt_path: str, subtitles_dir: str,
     return generate_subtitle_pack(srt_path, cancel_token=cancel_token)
 
 
-def _persist_pack(pack: dict, srt_path: str, subtitles_dir: str, lang_iso: str,
-                  requested: str) -> str:
-    """Write titles.json + chapters.json + chapter_refined.md from one pack
-    payload. Returns the path of the artifact the caller asked for."""
+def run_pack_analysis(srt_path: str, subtitles_dir: str, lang_iso: str,
+                       progress_cb, cancel_token) -> dict:
+    """Run the AI subtitle pack and persist a single analysis.json envelope
+    (titles + chapters with refined + key_points). One AI call, one file."""
     from core.subtitle_analysis import analysis_path
+
+    pack = _run_pack(srt_path, subtitles_dir, progress_cb, cancel_token)
+    _say(progress_cb, "transcribing", "正在写入产物...", 95)
 
     titles = pack.get("titles") or []
     segments = pack.get("segments") or []
     chapters = _derive_chapters(segments, srt_path, lang_iso)
-
-    titles_path = analysis_path(subtitles_dir, lang_iso, "titles")
-    chapters_path = analysis_path(subtitles_dir, lang_iso, "chapters")
-    refined_path = analysis_path(subtitles_dir, lang_iso, "chapter_refined")
-
-    atomic_write_json(titles_path, {
-        "schema_version": 1,
-        "generated_at": _now_iso(),
-        "source_subtitle": f"{lang_iso}.srt",
-        "titles": [str(t).strip() for t in titles if t],
-    })
-
-    atomic_write_json(chapters_path, {
-        "schema_version": 1,
-        "generated_at": _now_iso(),
-        "source_subtitle": f"{lang_iso}.srt",
-        "chapters": chapters,
-    })
-
-    md_lines = [f"# 分章节精炼 ({lang_iso})", ""]
-    for seg in segments:
-        md_lines.append(f"## {seg.get('time_str', '').strip()} {seg.get('title', '').strip()}")
-        md_lines.append("")
-        md_lines.append(str(seg.get("refined", "")).strip())
-        md_lines.append("")
-    atomic_write_text(refined_path, "\n".join(md_lines))
-
-    return {
-        "titles": titles_path,
-        "chapters": chapters_path,
-        "chapter_refined": refined_path,
-    }[requested]
-
-
-def run_titles(srt_path: str, subtitles_dir: str, lang_iso: str,
-               progress_cb, cancel_token) -> dict:
-    pack = _run_pack(srt_path, subtitles_dir, progress_cb, cancel_token)
-    _say(progress_cb, "transcribing", "正在写入产物...", 95)
-    path = _persist_pack(pack, srt_path, subtitles_dir, lang_iso, "titles")
-    return {"path": path, "kind": "titles"}
-
-
-def run_chapters(srt_path: str, subtitles_dir: str, lang_iso: str,
-                 progress_cb, cancel_token) -> dict:
-    pack = _run_pack(srt_path, subtitles_dir, progress_cb, cancel_token)
-    _say(progress_cb, "transcribing", "正在写入产物...", 95)
-    path = _persist_pack(pack, srt_path, subtitles_dir, lang_iso, "chapters")
-    return {"path": path, "kind": "chapters"}
-
-
-def run_chapter_refined(srt_path: str, subtitles_dir: str, lang_iso: str,
-                        progress_cb, cancel_token) -> dict:
-    pack = _run_pack(srt_path, subtitles_dir, progress_cb, cancel_token)
-    _say(progress_cb, "transcribing", "正在写入产物...", 95)
-    path = _persist_pack(pack, srt_path, subtitles_dir, lang_iso, "chapter_refined")
-    return {"path": path, "kind": "chapter_refined"}
+    out_path = analysis_path(subtitles_dir, lang_iso, "analysis")
+    save_analysis(
+        out_path,
+        titles=[str(t).strip() for t in titles if t],
+        chapters=chapters,
+        srt_end_sec=_srt_end_seconds(srt_path),
+        lang_iso=lang_iso,
+        source_subtitle=f"{lang_iso}.srt",
+    )
+    return {"path": out_path, "kind": "analysis"}
 
 
 # ── Non-AI runners (transcript / chapter_transcript) ─────────────────────────
@@ -198,23 +161,24 @@ def run_transcript(srt_path: str, subtitles_dir: str, lang_iso: str,
 
 def run_chapter_transcript(srt_path: str, subtitles_dir: str, lang_iso: str,
                            progress_cb, cancel_token) -> dict:
-    """Group cues into the existing chapter boundaries. Requires chapters.json;
-    if missing, runs the AI pack first to produce it (cascade).
+    """Group cues into the existing chapter boundaries. Requires
+    analysis.json (which contains the chapter list); if missing, cascade
+    through the AI pack to produce it.
     """
     from core.subtitle_analysis import analysis_path
-    chapters_path = analysis_path(subtitles_dir, lang_iso, "chapters")
+    analysis_pth = analysis_path(subtitles_dir, lang_iso, "analysis")
 
-    if not os.path.isfile(chapters_path):
+    if not os.path.isfile(analysis_pth):
         _say(progress_cb, "transcribing",
-             "未发现章节，先调用 AI 生成章节...", None)
-        pack = _run_pack(srt_path, subtitles_dir, progress_cb, cancel_token)
-        _persist_pack(pack, srt_path, subtitles_dir, lang_iso, "chapters")
+             "未发现章节，先调用 AI 生成...", None)
+        run_pack_analysis(srt_path, subtitles_dir, lang_iso,
+                            progress_cb, cancel_token)
 
-    with open(chapters_path, "r", encoding="utf-8") as f:
+    with open(analysis_pth, "r", encoding="utf-8") as f:
         ch_data = json.load(f)
     chapters = ch_data.get("chapters") or []
     if not chapters:
-        raise ValueError("chapters.json 没有有效章节")
+        raise ValueError("analysis.json 没有有效章节")
 
     _say(progress_cb, "transcribing", "按章节切分字幕...", 70)
     subs = list(srt.parse(read_srt(srt_path)))
@@ -366,21 +330,21 @@ def run_hotclips(srt_path: str, subtitles_dir: str, lang_iso: str,
     if not subs:
         raise ValueError("SRT 为空，无法生成热点片段")
 
-    chapters_path = analysis_path(subtitles_dir, lang_iso, "chapters")
-    has_chapters = os.path.isfile(chapters_path)
+    analysis_pth = analysis_path(subtitles_dir, lang_iso, "analysis")
+    has_chapters = os.path.isfile(analysis_pth)
 
     use_chapters = (
         strategy == "per_chapter" or (strategy == "auto" and has_chapters)
     )
     if strategy == "per_chapter" and not has_chapters:
-        raise ValueError("strategy=per_chapter 但 chapters.json 不存在")
+        raise ValueError("strategy=per_chapter 但 analysis.json 不存在")
 
     ctx_block = _context_block(subtitles_dir)
 
     # Build (chapter_label, slice_text) pairs.
     slices: list[tuple[str, str]] = []
     if use_chapters:
-        with open(chapters_path, "r", encoding="utf-8") as f:
+        with open(analysis_pth, "r", encoding="utf-8") as f:
             chapters = (json.load(f).get("chapters") or [])
         for ch in chapters:
             t0 = _parse_time_str(ch.get("start", ""))
@@ -450,11 +414,9 @@ def run_hotclips(srt_path: str, subtitles_dir: str, lang_iso: str,
 # ── Dispatch table ───────────────────────────────────────────────────────────
 
 RUNNERS: dict[str, Callable[..., dict]] = {
-    "titles":             run_titles,
-    "chapters":           run_chapters,
+    "analysis":           run_pack_analysis,
     "transcript":         run_transcript,
     "chapter_transcript": run_chapter_transcript,
-    "chapter_refined":    run_chapter_refined,
     "hotclips":           run_hotclips,
 }
 

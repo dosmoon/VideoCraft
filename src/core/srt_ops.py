@@ -34,11 +34,16 @@ SUBTITLE_PACK_SCHEMA: dict = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "time_str": {"type": "string"},
-                    "title": {"type": "string"},
-                    "refined": {"type": "string"},
+                    "time_str":   {"type": "string"},
+                    "title":      {"type": "string"},
+                    "refined":    {"type": "string"},
+                    "key_points": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 0,
+                    },
                 },
-                "required": ["time_str", "title", "refined"],
+                "required": ["time_str", "title", "refined", "key_points"],
             },
             "minItems": 1,
         },

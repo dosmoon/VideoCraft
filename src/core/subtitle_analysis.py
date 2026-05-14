@@ -23,11 +23,9 @@ from typing import Literal
 
 # Analysis kinds.
 AnalysisKind = Literal[
-    "titles",
-    "chapters",
+    "analysis",
     "transcript",
     "chapter_transcript",
-    "chapter_refined",
     "hotclips",
 ]
 
@@ -44,13 +42,15 @@ class AnalysisType:
 
 
 # Registry. Order is the order shown in the sidebar [+] menu.
+# `analysis` is the unified AI subtitle pack (titles + chapters with
+# refined + key_points). The legacy 3-file split (titles / chapters /
+# chapter_refined) was retired — they always came from one AI call and
+# carrying them as 3 sidebar rows + 3 files just spread the data thin.
 ANALYSIS_TYPES: tuple[AnalysisType, ...] = (
-    AnalysisType("titles",             "titles.json",             "json", "📋", "标题",        "Titles"),
-    AnalysisType("chapters",           "chapters.json",           "json", "📑", "章节",        "Chapters"),
-    AnalysisType("transcript",         "transcript.md",           "md",   "📄", "全文文字稿",  "Transcript"),
-    AnalysisType("chapter_transcript", "chapter_transcript.md",   "md",   "📜", "分章节全文",  "Chapter Transcript"),
-    AnalysisType("chapter_refined",    "chapter_refined.md",      "md",   "✨", "分章节精炼",  "Chapter Refined"),
-    AnalysisType("hotclips",           "hotclips.json",           "json", "🔥", "热点片段",    "Hot Clips"),
+    AnalysisType("analysis",           "analysis.json",           "json", "📑", "标题与章节",   "Titles & Chapters"),
+    AnalysisType("transcript",         "transcript.md",           "md",   "📄", "全文文字稿",   "Transcript"),
+    AnalysisType("chapter_transcript", "chapter_transcript.md",   "md",   "📜", "分章节全文",   "Chapter Transcript"),
+    AnalysisType("hotclips",           "hotclips.json",           "json", "🔥", "热点片段",     "Hot Clips"),
 )
 
 

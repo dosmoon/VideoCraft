@@ -2,8 +2,8 @@
 
 Lands in the permanent preview tab 0 when the user clicks an analysis
 sub-row in the sidebar Subtitles section. Dispatches by analysis kind
-to a type-specific render (titles / chapters / hotclips for JSON,
-transcript / chapter_transcript / chapter_refined for Markdown).
+to a type-specific render (analysis = titles + chapter editor / hotclips
+for JSON; transcript / chapter_transcript for Markdown).
 
 The renderers are intentionally minimal in P1: enough to verify the
 file is on disk and visually correct. Richer interactions (click cue
@@ -88,10 +88,8 @@ def _render_json(parent: tk.Frame, artifact: AnalysisArtifact,
         data = json.load(f)
 
     kind = artifact.type.kind
-    if kind == "titles":
-        _render_titles(parent, data)
-    elif kind == "chapters":
-        _render_chapters(parent, data, artifact=artifact, on_saved=on_saved)
+    if kind == "analysis":
+        _render_analysis(parent, data, artifact=artifact, on_saved=on_saved)
     elif kind == "hotclips":
         _render_hotclips(parent, data)
     else:
@@ -104,34 +102,30 @@ def _render_markdown(parent: tk.Frame, artifact: AnalysisArtifact) -> None:
     _text_box(parent, text)
 
 
-def _render_titles(parent: tk.Frame, data) -> None:
-    # Accept either a bare list of strings/objects or a wrapped {"titles": [...]}.
-    items = data.get("titles") if isinstance(data, dict) else data
-    if not isinstance(items, list):
-        _render_raw_json(parent, data)
-        return
-    box, frame = _scrollable(parent)
-    for i, item in enumerate(items, 1):
-        title = item if isinstance(item, str) else (item.get("title") or item.get("text") or repr(item))
-        row = tk.Frame(frame, bg="white")
-        row.pack(fill="x", padx=4, pady=2)
-        tk.Label(row, text=f"{i:>2}.", bg="white", fg="#888",
-                 font=("Microsoft YaHei UI", 10), width=4, anchor="ne"
-                 ).pack(side="left", padx=(0, 6))
-        tk.Label(row, text=title, bg="white", fg="#222",
-                 font=("Microsoft YaHei UI", 10), anchor="w",
-                 wraplength=520, justify="left",
-                 ).pack(side="left", fill="x", expand=True)
-
-
-def _render_chapters(parent: tk.Frame, data, *,
-                     artifact: AnalysisArtifact, on_saved=None) -> None:
-    items = data.get("chapters") if isinstance(data, dict) else data
+def _render_analysis(parent: tk.Frame, data, *,
+                      artifact: AnalysisArtifact, on_saved=None) -> None:
+    """Unified analysis envelope view: titles[] strip on top, chapter
+    editor (with per-chapter refined + key_points) below."""
+    items = data.get("chapters") if isinstance(data, dict) else None
     if not isinstance(items, list):
         _render_raw_json(parent, data)
         return
 
-    # Geometric derivation: <project>/subtitles/<iso>.chapters.json
+    # Top: candidate titles strip (read-only; titles editing is v0.3+).
+    titles = data.get("titles") if isinstance(data, dict) else []
+    if isinstance(titles, list) and titles:
+        titles_box = tk.LabelFrame(
+            parent, text=tr("analysis_preview.titles_section"),
+            bg="white", fg="#444", font=("Microsoft YaHei UI", 9))
+        titles_box.pack(fill="x", padx=0, pady=(0, 6))
+        for ttl in titles:
+            tk.Label(titles_box, text=f"• {ttl}",
+                      bg="white", fg="#222",
+                      font=("Microsoft YaHei UI", 10),
+                      anchor="w", justify="left", wraplength=560
+                      ).pack(fill="x", padx=8, pady=1)
+
+    # Geometric derivation: <project>/subtitles/<iso>.analysis.json
     subtitles_dir = os.path.dirname(artifact.path)
     project_root = os.path.dirname(subtitles_dir)
     source_video = os.path.join(project_root, "source", "video.mp4")

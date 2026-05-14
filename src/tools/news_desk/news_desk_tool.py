@@ -8,7 +8,7 @@ v0.1 shell: minimal but functional.
   - Overlay list editor: add/edit/delete LowerThird + TopicStrip rows.
   - "Auto-derive" buttons:
       * LowerThird ← source/basic_info.json (host + bio + affiliation)
-      * TopicStrip ← any subtitles/<iso>.chapters.json (one strip per chapter)
+      * TopicStrip ← any subtitles/<iso>.analysis.json (one strip per chapter)
   - WebView preview mirrors the burn (subtitle cues + overlays).
   - Export button → render_composition → derivatives/news_desk/<inst>/output.mp4
 
@@ -842,7 +842,7 @@ class NewsDeskApp(ToolBase):
         self._after_overlays_changed()
 
     def _derive_topic_strips_from_chapters(self) -> None:
-        # Find any chapters.json in subtitles/.
+        # Find any analysis.json in subtitles/.
         subs_dir = self.project.subtitles_dir
         chapters = self._load_any_chapters(subs_dir)
         if not chapters:
@@ -865,14 +865,14 @@ class NewsDeskApp(ToolBase):
             self._after_overlays_changed()
 
     def _load_any_chapters(self, subs_dir: str) -> list[dict]:
-        """Find any <iso>.chapters.json under subs_dir and return its
-        normalized chapter list. Picks the first one alphabetically."""
+        """Find any <iso>.analysis.json under subs_dir and return its
+        chapter list. Picks the first one alphabetically."""
         if not os.path.isdir(subs_dir):
             return []
         for fn in sorted(os.listdir(subs_dir)):
-            if fn.endswith(".chapters.json"):
+            if fn.endswith(".analysis.json"):
                 try:
-                    env = chapters_io.load_chapters(os.path.join(subs_dir, fn))
+                    env = chapters_io.load_analysis(os.path.join(subs_dir, fn))
                     chs = env.get("chapters") if isinstance(env, dict) else []
                     if isinstance(chs, list):
                         return chs
@@ -993,7 +993,7 @@ class NewsDeskApp(ToolBase):
         bi = source_context.read_basic_info(self.project.source_dir)
         ctx = source_context.read_context(self.project.source_dir)
 
-        # Pull chapters from the source project's chapters.json if any
+        # Pull chapters from the source project's analysis.json if any
         # exist. _load_any_chapters already handles the discovery.
         chapters = self._load_any_chapters(self.project.subtitles_dir)
 

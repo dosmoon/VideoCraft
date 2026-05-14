@@ -932,13 +932,13 @@ class SubtitleToolApp(ToolBase):
                 or os.path.splitext((cfg.get("primary_srt") or "").strip())[0] \
                 or (self.project.meta.language.source or "zh")
 
-            # Pull chapters from the source project's chapters.json
+            # Pull chapters from the source project's analysis.json
             # if it exists; absence means the user hasn't generated one
             # — publish.md then renders without a chapter block.
             chapters: list[dict] = []
             ch_path = os.path.join(
                 self.project.subtitles_dir,
-                f"{lang_iso}.chapters.json")
+                f"{lang_iso}.analysis.json")
             if os.path.isfile(ch_path):
                 try:
                     with open(ch_path, "r", encoding="utf-8") as f:

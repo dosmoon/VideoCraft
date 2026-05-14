@@ -77,7 +77,7 @@ class TopicStripOverlay:
     """Top-edge labeled strip — chapter marker / topic bar.
 
     A thin always-on strip (when active) showing the current chapter or
-    topic title. Auto-derivable from `chapters.json` (one strip per
+    topic title. Auto-derivable from `analysis.json` (one strip per
     chapter, time window = chapter [start, end]); also user-editable.
 
     style_class: key into CompositionStyle.overlay_styles → TopicStripStyle.

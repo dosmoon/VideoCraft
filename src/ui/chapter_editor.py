@@ -1,7 +1,7 @@
 """Chapter list verify + edit pane.
 
-Embedded into the permanent preview tab 0 when the user clicks a
-chapters.json sidebar artifact. Two columns:
+Embedded into the permanent preview tab 0 when the user clicks an
+analysis.json sidebar artifact. Two columns:
 
     +-----------------+----------------------------------------+
     |  chapter list   |  WebView <video>                       |
@@ -30,8 +30,8 @@ from tkinter import messagebox, ttk
 from typing import Callable, Optional
 
 from core.chapters_io import (
-    load_chapters,
-    save_chapters,
+    load_analysis,
+    save_analysis_chapters_only,
     parse_time_str,
     fmt_time_str,
 )
@@ -128,7 +128,7 @@ class ChapterEditor(tk.Frame):
         on_saved: Optional[Callable[[], None]] = None,
     ):
         super().__init__(parent, bg="white")
-        self._chapters_path = chapters_path
+        self._analysis_path = chapters_path    # arg name kept for caller compat
         self._lang_iso = lang_iso
         self._source_video = source_video
         self._srt_path = srt_path
@@ -136,8 +136,10 @@ class ChapterEditor(tk.Frame):
         self._srt_end_sec = srt_end_seconds(srt_path)
         self._source_subtitle = f"{lang_iso}.srt"
 
-        # State
-        env = load_chapters(chapters_path)
+        # State — loads the unified analysis envelope and edits its
+        # chapters[] portion. Save preserves titles + other envelope keys.
+        env = load_analysis(chapters_path)
+        self._titles: list[str] = list(env.get("titles") or [])
         self._baseline: list[dict] = list(env.get("chapters") or [])
         self._working: list[dict] = copy.deepcopy(self._baseline)
         self._selected: Optional[int] = None
@@ -257,6 +259,27 @@ class ChapterEditor(tk.Frame):
                                 anchor="w")
         self._status.pack(fill="x", padx=8, pady=(0, 6))
 
+        # AI details panel — read-only, shows the refined summary +
+        # key_points generated when the analysis was created. User can
+        # see what AI thought this chapter is about; full editing of
+        # refined / key_points is a v0.3 enrichment.
+        details = tk.LabelFrame(
+            right, text=tr("chapter_editor.details_frame"),
+            bg="white", fg="#444",
+            font=("Microsoft YaHei UI", 9))
+        details.pack(fill="both", expand=False, padx=8, pady=(0, 8))
+        self._refined_text = tk.Text(
+            details, height=3, wrap="word",
+            font=("Microsoft YaHei UI", 9),
+            bg="#fafafa", fg="#333",
+            relief="flat", state="disabled")
+        self._refined_text.pack(fill="x", padx=6, pady=(4, 2))
+        self._key_points_label = tk.Label(
+            details, text="", bg="white", fg="#444",
+            font=("Microsoft YaHei UI", 9), anchor="w",
+            justify="left", wraplength=480)
+        self._key_points_label.pack(fill="x", padx=6, pady=(0, 6))
+
     # ── Tree ─────────────────────────────────────────────────────────────
 
     def _reload_tree(self) -> None:
@@ -287,6 +310,27 @@ class ChapterEditor(tk.Frame):
         self._start_entry.configure(state="disabled" if is_first else "normal")
         self._seek_to_str(start_str)
         self._refresh_button_states()
+        self._refresh_details(ch)
+
+    def _refresh_details(self, ch: dict) -> None:
+        """Push the selected chapter's refined + key_points into the
+        read-only details panel."""
+        refined = (ch.get("refined") or "").strip()
+        self._refined_text.configure(state="normal")
+        self._refined_text.delete("1.0", "end")
+        if refined:
+            self._refined_text.insert("1.0", refined)
+        else:
+            self._refined_text.insert("1.0", tr("chapter_editor.refined_empty"))
+        self._refined_text.configure(state="disabled")
+
+        kps = ch.get("key_points") or []
+        if kps:
+            self._key_points_label.configure(
+                text="\n".join(f"• {kp}" for kp in kps))
+        else:
+            self._key_points_label.configure(
+                text=tr("chapter_editor.key_points_empty"))
 
     # ── Subtitle overlay ─────────────────────────────────────────────────
 
@@ -506,8 +550,8 @@ class ChapterEditor(tk.Frame):
 
     def _on_save(self) -> None:
         try:
-            normalized = save_chapters(
-                self._chapters_path, self._working,
+            envelope = save_analysis_chapters_only(
+                self._analysis_path, self._working,
                 srt_end_sec=self._srt_end_sec,
                 lang_iso=self._lang_iso,
                 source_subtitle=self._source_subtitle,
@@ -516,6 +560,7 @@ class ChapterEditor(tk.Frame):
             messagebox.showerror(tr("chapter_editor.save_failed_title"),
                                  str(e), parent=self)
             return
+        normalized = envelope.get("chapters") or []
         self._baseline = copy.deepcopy(normalized)
         self._working = copy.deepcopy(normalized)
         self._reload_tree()
