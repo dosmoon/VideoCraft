@@ -327,6 +327,8 @@ function drawNewsDeskOverlays() {
       _drawTopicStrip(ov, ox, oy, cw, ch);
     } else if (ov.kind === "chapter_point_card") {
       _drawChapterPointCard(ov, ox, oy, cw, ch);
+    } else if (ov.kind === "date_stamp") {
+      _drawDateStamp(ov, ox, oy, cw, ch);
     }
   }
 }
@@ -524,6 +526,51 @@ function _drawChapterPointCard(ov, ox, oy, cw, ch) {
   }
 
   ctx.restore();
+}
+
+function _drawDateStamp(ov, ox, oy, cw, ch) {
+  // Compact corner date label — mirrors
+  // core/composition/news_desk_overlays.py::_build_date_stamp_dialogues.
+  const st = _resolveOverlayStyle("date_stamp", ov.style_class) || {};
+  const fontPx   = st.fontsize != null ? st.fontsize : 22;
+  const padX     = Math.max(2, (st.padding_x_pct != null ? st.padding_x_pct : 0.008) * cw);
+  const padY     = Math.max(2, (st.padding_y_pct != null ? st.padding_y_pct : 0.004) * ch);
+  const marginX  = (st.margin_x_pct != null ? st.margin_x_pct : 0.025) * cw;
+  const marginY  = (st.margin_y_pct != null ? st.margin_y_pct : 0.025) * ch;
+  const bgOpa    = st.bg_opacity != null ? st.bg_opacity : 60;
+
+  const text = ov.text || "";
+  if (!text) return;
+
+  ctx.font = `${st.bold ? "bold " : ""}${fontPx}px "${st.font || "SimHei"}", sans-serif`;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "top";
+  const textW = ctx.measureText(text).width;
+  const boxW = textW + padX * 2;
+  const boxH = fontPx + padY * 2;
+
+  const pos = (ov.position || "bottom-left").toLowerCase();
+  let boxX, boxY;
+  if (pos === "top-left") {
+    boxX = ox + marginX;
+    boxY = oy + marginY;
+  } else if (pos === "top-right") {
+    boxX = ox + cw - marginX - boxW;
+    boxY = oy + marginY;
+  } else if (pos === "bottom-right") {
+    boxX = ox + cw - marginX - boxW;
+    boxY = oy + ch - marginY - boxH;
+  } else {  // bottom-left (default)
+    boxX = ox + marginX;
+    boxY = oy + ch - marginY - boxH;
+  }
+
+  if (bgOpa > 0) {
+    ctx.fillStyle = _hexToRgba(st.bg_color || "#0F172A", bgOpa);
+    ctx.fillRect(boxX, boxY, boxW, boxH);
+  }
+  ctx.fillStyle = st.text_color || "#FFFFFF";
+  ctx.fillText(text, boxX + padX, boxY + padY);
 }
 
 function cropBox() {

@@ -26,10 +26,12 @@ from typing import Iterable
 from core.subtitle_ops import escape_ffmpeg_path, hex_color_to_ass
 
 from .overlays import (
-    ChapterPointCardOverlay, LowerThirdOverlay, TopicStripOverlay,
+    ChapterPointCardOverlay, DateStampOverlay,
+    LowerThirdOverlay, TopicStripOverlay,
 )
 from .style import (
-    ChapterPointCardStyle, LowerThirdStyle, TopicStripStyle,
+    ChapterPointCardStyle, DateStampStyle,
+    LowerThirdStyle, TopicStripStyle,
     resolve_overlay_style,
 )
 
@@ -398,6 +400,60 @@ def _build_chapter_point_card_dialogues(
     return lines
 
 
+def _build_date_stamp_dialogues(
+    spec: DateStampOverlay, style: DateStampStyle,
+    *, target_w: int, target_h: int,
+) -> list[str]:
+    """Compact corner date label — optional fitted backdrop + text.
+
+    No animation (this is "always-on bug" semantics, not chapter-driven
+    UI). The anchor follows spec.position; margins come from style."""
+    if not spec.text:
+        return []
+
+    fontsize = max(8, int(style.fontsize))
+    text_w = _est_text_width_px(spec.text, fontsize)
+
+    pad_x = max(2, int(style.padding_x_pct * target_w))
+    pad_y = max(2, int(style.padding_y_pct * target_h))
+    box_w = int(text_w + pad_x * 2)
+    box_h = fontsize + pad_y * 2
+
+    margin_x = int(style.margin_x_pct * target_w)
+    margin_y = int(style.margin_y_pct * target_h)
+    pos = (spec.position or "bottom-left").lower()
+    if pos == "top-left":
+        box_x, box_y = margin_x, margin_y
+    elif pos == "top-right":
+        box_x, box_y = target_w - margin_x - box_w, margin_y
+    elif pos == "bottom-right":
+        box_x = target_w - margin_x - box_w
+        box_y = target_h - margin_y - box_h
+    else:   # bottom-left (default)
+        box_x = margin_x
+        box_y = target_h - margin_y - box_h
+
+    lines: list[str] = []
+
+    if style.bg_opacity > 0:
+        lines.append(_rect_dialogue(
+            spec.start_sec, spec.end_sec,
+            x=box_x, y=box_y, w=box_w, h=box_h,
+            color_hex=style.bg_color, opacity=style.bg_opacity, layer=0,
+        ))
+
+    text_x = box_x + pad_x
+    text_y = box_y + pad_y
+    lines.append(_text_dialogue(
+        spec.start_sec, spec.end_sec,
+        x=text_x, y=text_y, anchor=7,
+        text=spec.text, fontname=style.font, fontsize=fontsize,
+        color_hex=style.text_color, bold=style.bold,
+        layer=1,
+    ))
+    return lines
+
+
 # ── ASS file assembly ──────────────────────────────────────────────────────
 
 _ASS_HEADER_TMPL = """[Script Info]
@@ -445,6 +501,13 @@ def build_news_desk_ass(specs: Iterable, *,
             if style is None:
                 style = ChapterPointCardStyle()
             dialogues.extend(_build_chapter_point_card_dialogues(
+                spec, style, target_w=target_w, target_h=target_h))
+        elif isinstance(spec, DateStampOverlay):
+            style = resolve_overlay_style(
+                overlay_styles, "date_stamp", spec.style_class)
+            if style is None:
+                style = DateStampStyle()
+            dialogues.extend(_build_date_stamp_dialogues(
                 spec, style, target_w=target_w, target_h=target_h))
 
     if not dialogues:

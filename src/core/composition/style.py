@@ -243,12 +243,37 @@ class ChapterPointCardStyle:
     slide_in_px: int = 24
 
 
+@dataclass
+class DateStampStyle:
+    """Visual style for DateStampOverlay — small persistent corner label.
+
+    Compact by default (Bloomberg-style bug): small font, optional dark
+    backdrop for legibility on busy backgrounds. Pin to a corner via
+    DateStampOverlay.position; this style only controls look + offsets.
+    """
+    text_color: str = "#FFFFFF"
+    fontsize: int = 22
+    bold: bool = False
+    font: str = "SimHei"
+
+    # Optional backdrop. bg_opacity=0 → no rectangle (clean text only).
+    bg_color: str = "#0F172A"
+    bg_opacity: int = 60
+    padding_x_pct: float = 0.008
+    padding_y_pct: float = 0.004
+
+    # Distance from the anchored corner — fraction of frame dim.
+    margin_x_pct: float = 0.025
+    margin_y_pct: float = 0.025
+
+
 # Registry of typed overlay-style classes by `kind` discriminator. Render
 # and preview look up the matching class to coerce dict → dataclass.
 OVERLAY_STYLE_CLASSES: dict[str, type] = {
     "lower_third": LowerThirdStyle,
     "topic_strip": TopicStripStyle,
     "chapter_point_card": ChapterPointCardStyle,
+    "date_stamp": DateStampStyle,
 }
 
 

@@ -73,6 +73,24 @@ class LowerThirdOverlay:
 
 
 @dataclass
+class DateStampOverlay:
+    """Persistent corner date stamp — small, optional, always-on text
+    label carrying the event/broadcast date (Bloomberg / Reuters style
+    "bug" under the logo). Default corner is bottom-left to avoid the
+    typical top-right watermark / logo zone.
+    """
+    text: str = ""
+    start_sec: float = 0.0
+    end_sec: float = 0.0
+    position: str = "bottom-left"
+    # "bottom-left" | "bottom-right" | "top-left" | "top-right"
+    style_class: str = "default"
+    kind: str = "date_stamp"
+    z_order: int = 55
+    zone: str = "auto"
+
+
+@dataclass
 class ChapterPointCardOverlay:
     """Per-chapter hero callout — large centered text in the upper-third
     zone with fade+slide entrance.
@@ -113,7 +131,8 @@ class TopicStripOverlay:
 # Union for callers that want type-narrowing. Renderer dispatch keys off
 # `kind` (str) so this union is purely for static typing convenience.
 OverlayUnion = Union[
-    OverlaySpec, LowerThirdOverlay, TopicStripOverlay, ChapterPointCardOverlay,
+    OverlaySpec, LowerThirdOverlay, TopicStripOverlay,
+    ChapterPointCardOverlay, DateStampOverlay,
 ]
 
 
@@ -121,7 +140,8 @@ OverlayUnion = Union[
 # render.py / preview.py to test isinstance() against all supported shapes
 # in one shot — extends as new kinds (PullQuote / FullCard / ...) ship.
 TYPED_OVERLAY_KINDS: tuple[type, ...] = (
-    OverlaySpec, LowerThirdOverlay, TopicStripOverlay, ChapterPointCardOverlay,
+    OverlaySpec, LowerThirdOverlay, TopicStripOverlay,
+    ChapterPointCardOverlay, DateStampOverlay,
 )
 
 
@@ -148,6 +168,8 @@ def overlay_from_dict(d: dict):
         return TopicStripOverlay(**_filter(d, TopicStripOverlay))
     if kind == "chapter_point_card":
         return ChapterPointCardOverlay(**_filter(d, ChapterPointCardOverlay))
+    if kind == "date_stamp":
+        return DateStampOverlay(**_filter(d, DateStampOverlay))
     return OverlaySpec(**_filter(d, OverlaySpec))
 
 

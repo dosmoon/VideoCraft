@@ -70,6 +70,25 @@ kind 把这些数据渲到视频上**：
 - 工作台：手动「+ 章节卡」/「从 analysis.json 派生章节卡」批量（每段 6 秒）
 - i18n: `add.chapter_point_card` / `derive_cpc` / `field.card_text` 双语
 
+#### ✅ 已完成：日期展示 (L3 嵌入 + DateStamp 角标) — 2026-05-15
+- 数据源：现成的 `basic_info.event_date` (YYYY-MM-DD)
+- **L3 内嵌**：`_derive_lower_third_from_basic` 把 event_date 追加到
+  subtitle 行（host_bio · affiliation · 2026-05-15）；零代码 + 跟主播
+  身份信息同行
+- **DateStamp 角标** = 新 overlay kind `date_stamp`，全程常驻小字
+  - `DateStampOverlay`(text + start/end + position 4-corner) +
+    `DateStampStyle`(SimHei 22 / 白字 / 可选半透深底 60% / 4-corner
+    margin)
+  - libass `_build_date_stamp_dialogues`：可选 fitted 背景 + 文字，
+    无动画（"bug" 语义,持续不闪)
+  - canvas mirror `_drawDateStamp`
+  - 工作台「+ 日期戳」按钮 / edit dialog (文字 + 4 角位置) /
+    「从 basic_info 派生日期戳」批量按钮（先清旧 DateStamp，再加新的
+    持续整段，默认左下避开右上水印）
+- 不采用方案 4 (每章节加日期)：用户判定章节级重复无价值
+- i18n: `add.date_stamp` / `derive_ds` / `derive.no_date` /
+  `field.date_text` 双语
+
 #### ✅ 已完成：字幕位置 + 水印 UI 暴露 — 2026-05-15
 - **字幕位置**：`SubtitleStyle.block_margin_pct` (距边) + `track_gap_pct`
   (双轨间距) 已存在但工作台没 UI；现在同一行 (top/bottom radio 旁) 加

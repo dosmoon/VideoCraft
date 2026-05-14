@@ -35,7 +35,8 @@ from hub_logger import logger
 from core import derivative_types
 from core.composition import presets as comp_presets
 from core.composition.overlays import (
-    ChapterPointCardOverlay, LowerThirdOverlay, TopicStripOverlay,
+    ChapterPointCardOverlay, DateStampOverlay,
+    LowerThirdOverlay, TopicStripOverlay,
     overlay_to_dict, overlay_from_dict,
 )
 from core.composition.preview import CompositionPreview
@@ -281,6 +282,8 @@ class NewsDeskApp(ToolBase):
                    command=self._add_topic_strip).pack(side="left", padx=2)
         ttk.Button(btns, text=tr("tool.news_desk.add.chapter_point_card"),
                    command=self._add_chapter_point_card).pack(side="left", padx=2)
+        ttk.Button(btns, text=tr("tool.news_desk.add.date_stamp"),
+                   command=self._add_date_stamp).pack(side="left", padx=2)
         ttk.Button(btns, text=tr("tool.news_desk.edit"),
                    command=self._edit_selected).pack(side="left", padx=2)
         ttk.Button(btns, text=tr("tool.news_desk.delete"),
@@ -295,6 +298,9 @@ class NewsDeskApp(ToolBase):
                    ).pack(side="left", padx=2)
         ttk.Button(btns2, text=tr("tool.news_desk.derive_cpc"),
                    command=self._derive_chapter_cards_from_analysis
+                   ).pack(side="left", padx=2)
+        ttk.Button(btns2, text=tr("tool.news_desk.derive_ds"),
+                   command=self._derive_date_stamp_from_basic
                    ).pack(side="left", padx=2)
 
     # ── Style form ──────────────────────────────────────────────────────────
@@ -946,6 +952,8 @@ class NewsDeskApp(ToolBase):
                 content = ov.topic_text
             elif isinstance(ov, ChapterPointCardOverlay):
                 content = ov.text
+            elif isinstance(ov, DateStampOverlay):
+                content = ov.text
             else:
                 content = ""
             self.tree.insert("", "end", iid=str(i),
@@ -994,6 +1002,17 @@ class NewsDeskApp(ToolBase):
         spec = ChapterPointCardOverlay(
             text="",
             start_sec=0.0, end_sec=max(6.0, min(self._duration, 6.0)),
+        )
+        if self._edit_overlay_dialog(spec):
+            self._overlays.append(spec)
+            self._after_overlays_changed()
+
+    def _add_date_stamp(self) -> None:
+        spec = DateStampOverlay(
+            text="",
+            start_sec=0.0,
+            end_sec=max(60.0, self._duration),    # persistent full-length
+            position="bottom-left",
         )
         if self._edit_overlay_dialog(spec):
             self._overlays.append(spec)
@@ -1077,6 +1096,21 @@ class NewsDeskApp(ToolBase):
                       ).pack(side="left")
             ttk.Entry(row, textvariable=text_v, width=42
                       ).pack(side="left", fill="x", expand=True)
+        elif isinstance(spec, DateStampOverlay):
+            ds_text_v = tk.StringVar(value=spec.text)
+            ds_pos_v = tk.StringVar(value=spec.position)
+            row = ttk.Frame(body); row.pack(fill="x", pady=2)
+            ttk.Label(row, text=tr("tool.news_desk.field.date_text"), width=10
+                      ).pack(side="left")
+            ttk.Entry(row, textvariable=ds_text_v, width=42
+                      ).pack(side="left", fill="x", expand=True)
+            row = ttk.Frame(body); row.pack(fill="x", pady=2)
+            ttk.Label(row, text=tr("tool.news_desk.field.position"), width=10
+                      ).pack(side="left")
+            ttk.Combobox(row, textvariable=ds_pos_v, state="readonly",
+                          values=["bottom-left", "bottom-right",
+                                  "top-left", "top-right"], width=20
+                          ).pack(side="left")
 
         result = {"ok": False}
         def _ok():
@@ -1090,6 +1124,9 @@ class NewsDeskApp(ToolBase):
                 spec.topic_text = topic_v.get().strip()
             elif isinstance(spec, ChapterPointCardOverlay):
                 spec.text = text_v.get().strip()
+            elif isinstance(spec, DateStampOverlay):
+                spec.text = ds_text_v.get().strip()
+                spec.position = ds_pos_v.get() or "bottom-left"
             result["ok"] = True
             win.destroy()
         def _cancel():
@@ -1121,12 +1158,17 @@ class NewsDeskApp(ToolBase):
                 parent=self.master)
             return
         title = info.host or ""
-        # subtitle line: prefer host_bio + host_affiliation
+        # subtitle line: host_bio + host_affiliation + event_date.
+        # Embedding the date here is the lightest-weight way to put the
+        # broadcast date on screen; combine with a DateStampOverlay if
+        # you want a persistent corner stamp too.
         parts: list[str] = []
         if info.host_bio:
             parts.append(info.host_bio)
         if ctx.host_affiliation:
             parts.append(ctx.host_affiliation)
+        if info.event_date:
+            parts.append(info.event_date)
         sub = " · ".join(parts)
         spec = LowerThirdOverlay(
             title=title, subtitle=sub,
@@ -1199,6 +1241,28 @@ class NewsDeskApp(ToolBase):
             added += 1
         if added:
             self._after_overlays_changed()
+
+    def _derive_date_stamp_from_basic(self) -> None:
+        """One persistent corner date stamp pulled from
+        basic_info.event_date. Spans the full video. Default bottom-left
+        to stay clear of the top-right watermark zone."""
+        info = source_context.read_basic_info(self.project.source_dir)
+        date = (info.event_date or "").strip()
+        if not date:
+            messagebox.showinfo(
+                "VideoCraft",
+                tr("tool.news_desk.derive.no_date"),
+                parent=self.master)
+            return
+        # Drop any existing DateStamp overlays so re-derive is idempotent.
+        self._overlays = [o for o in self._overlays
+                            if not isinstance(o, DateStampOverlay)]
+        self._overlays.append(DateStampOverlay(
+            text=date,
+            start_sec=0.0, end_sec=max(60.0, self._duration),
+            position="bottom-left",
+        ))
+        self._after_overlays_changed()
 
     def _load_any_chapters(self, subs_dir: str) -> list[dict]:
         """Find any <iso>.analysis.json under subs_dir and return its
