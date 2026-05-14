@@ -144,6 +144,19 @@ window.vc = {
     overlays = Array.isArray(arr) ? arr.filter(o => o && typeof o.kind === 'string') : [];
     drawOverlay();
   },
+  seek(sec) {
+    if (typeof sec !== 'number' || isNaN(sec)) return;
+    // Clamp to the loaded clip window when one is set; otherwise to the
+    // video element's natural duration (fallback is just no clamp).
+    let t = sec;
+    if (clipEnd > 0) {
+      t = Math.max(clipStart, Math.min(clipEnd, t));
+    } else if (vid.duration && isFinite(vid.duration)) {
+      t = Math.max(0, Math.min(vid.duration, t));
+    }
+    vid.currentTime = t;
+    drawOverlay();
+  },
   setClipMeta(meta) {
     if (meta && typeof meta === 'object') {
       if (typeof meta.hook  === 'string') clipMeta.hook  = meta.hook;

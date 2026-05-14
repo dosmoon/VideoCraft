@@ -1961,5 +1961,21 @@
   "tool.news_desk.error.duration": "Failed to probe source video duration.",
   "tool.news_desk.status.rendering": "Rendering...",
   "tool.news_desk.status.done": "Exported: {path}",
-  "tool.news_desk.status.failed": "Render failed"
+  "tool.news_desk.status.failed": "Render failed",
+  "tool.news_desk.style.sub.frame": "Subtitle Style",
+  "tool.news_desk.style.sub.position": "Position",
+  "tool.news_desk.style.sub.show": "Show",
+  "tool.news_desk.style.sub.size": "Size",
+  "tool.news_desk.style.sub.color": "Color",
+  "tool.news_desk.style.sub.zh": "CJK",
+  "tool.news_desk.style.lt.frame": "Lower Third Default Style",
+  "tool.news_desk.style.lt.bg": "Bg",
+  "tool.news_desk.style.lt.accent": "Accent",
+  "tool.news_desk.style.lt.title_size": "Title size",
+  "tool.news_desk.style.lt.sub_size": "Sub size",
+  "tool.news_desk.style.ts.frame": "Topic Strip Default Style",
+  "tool.news_desk.style.ts.bg": "Bg",
+  "tool.news_desk.style.ts.text": "Text",
+  "tool.news_desk.style.ts.size": "Size",
+  "tool.news_desk.style.color_picker_title": "Pick color"
 }

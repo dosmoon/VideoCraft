@@ -170,6 +170,12 @@ class CompositionPreview:
         self._call_js(f"window.vc.setAspect({aspect[0]}, {aspect[1]})")
         self._call_js(f"window.vc.setStyle({json.dumps(payload, ensure_ascii=False)})")
 
+    def seek(self, sec: float) -> None:
+        """Move the preview <video> playhead to `sec` (seconds, source-video
+        time). Out-of-range values are clamped to the loaded clip window
+        on the JS side (see `setSource` / `setClipRange`)."""
+        self._call_js(f"window.vc.seek({float(sec)})")
+
     def set_overlays(self, overlays: list) -> None:
         """Push the news_desk overlay list to the canvas mirror.
 

@@ -26,7 +26,7 @@ import threading
 import time
 import tkinter as tk
 from dataclasses import asdict
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
 
 from tools.base import ToolBase
 from i18n import tr
@@ -42,7 +42,10 @@ from core.composition.preview import CompositionPreview
 from core.composition.render import (
     CompositionRequest, prepare_subtitle_cues, render_composition,
 )
-from core.composition.style import CompositionStyle
+from core.composition.style import (
+    CompositionStyle, LowerThirdStyle, TopicStripStyle,
+    OVERLAY_STYLE_CLASSES,
+)
 from core import source_context
 from core import chapters_io
 
@@ -118,6 +121,12 @@ class NewsDeskApp(ToolBase):
         self._current_preset_name = last_name
 
         self._preview: CompositionPreview | None = None
+
+        # Style-form Tk vars. Populated in _build_form, applied via
+        # _apply_style_to_vars on preset load. _suppress_trace blocks the
+        # write-back path while we're loading vars from a CompositionStyle.
+        self._suppress_trace = False
+        self._style_vars: dict = {}
 
         self._build_ui()
         self._enter_project_mode()
@@ -211,6 +220,11 @@ class NewsDeskApp(ToolBase):
                    command=lambda: self._pick_srt(2, clear=True)
                    ).pack(side="left", padx=(2, 0))
 
+        # Style controls — minimal but enough that "Save Preset" captures
+        # something meaningful. All edits flow back to self._current_style
+        # via _on_style_var_changed and immediately push the preview.
+        self._build_style_form(parent)
+
         # Overlays.
         of = ttk.LabelFrame(parent, text=tr("tool.news_desk.overlays.frame"))
         of.pack(fill="both", expand=True, padx=6, pady=4)
@@ -227,6 +241,9 @@ class NewsDeskApp(ToolBase):
         self.tree.column("content", width=240, anchor="w")
         self.tree.pack(side="top", fill="both", expand=True, padx=4, pady=4)
         self.tree.bind("<Double-1>", lambda _e: self._edit_selected())
+        # Single-click any row → preview seeks to that overlay's start_sec
+        # (handy for jumping straight to the spot you're editing).
+        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._seek_to_selected())
 
         btns = ttk.Frame(of); btns.pack(side="top", fill="x", padx=4, pady=2)
         ttk.Button(btns, text=tr("tool.news_desk.add.lower_third"),
@@ -245,6 +262,202 @@ class NewsDeskApp(ToolBase):
         ttk.Button(btns2, text=tr("tool.news_desk.derive_ts"),
                    command=self._derive_topic_strips_from_chapters
                    ).pack(side="left", padx=2)
+
+    # ── Style form ──────────────────────────────────────────────────────────
+
+    def _build_style_form(self, parent: ttk.Frame) -> None:
+        # Subtitles section.
+        sf = ttk.LabelFrame(parent, text=tr("tool.news_desk.style.sub.frame"))
+        sf.pack(fill="x", padx=6, pady=4)
+
+        # Position radio.
+        row = ttk.Frame(sf); row.pack(fill="x", padx=4, pady=2)
+        v_pos = tk.StringVar(value="bottom")
+        ttk.Label(row, text=tr("tool.news_desk.style.sub.position"),
+                  width=8).pack(side="left")
+        for label, val in (("⬆ top", "top"), ("⬇ bottom", "bottom")):
+            ttk.Radiobutton(row, text=label, variable=v_pos, value=val,
+                            command=self._on_style_var_changed
+                            ).pack(side="left", padx=(4, 0))
+        self._style_vars["sub_position"] = v_pos
+
+        for slot, default_show, default_size, default_color, default_cn in (
+            (1, True,  28, "#FFFF00", True),
+            (2, True,  24, "#FFFFFF", False),
+        ):
+            self._build_sub_row(sf, slot,
+                                  default_show, default_size,
+                                  default_color, default_cn)
+
+        # LowerThird default style.
+        lf = ttk.LabelFrame(parent, text=tr("tool.news_desk.style.lt.frame"))
+        lf.pack(fill="x", padx=6, pady=4)
+        row = ttk.Frame(lf); row.pack(fill="x", padx=4, pady=2)
+        ttk.Label(row, text=tr("tool.news_desk.style.lt.bg"),
+                  width=8).pack(side="left")
+        self._add_color_picker(row, "lt_bg_color", "#0F172A")
+        ttk.Label(row, text=tr("tool.news_desk.style.lt.accent"),
+                  width=10).pack(side="left", padx=(8, 0))
+        self._add_color_picker(row, "lt_accent_color", "#C8102E")
+
+        row = ttk.Frame(lf); row.pack(fill="x", padx=4, pady=2)
+        ttk.Label(row, text=tr("tool.news_desk.style.lt.title_size"),
+                  width=10).pack(side="left")
+        v = tk.IntVar(value=38)
+        ttk.Spinbox(row, from_=14, to=96, width=5, textvariable=v,
+                     command=self._on_style_var_changed
+                     ).pack(side="left")
+        v.trace_add("write", lambda *_: self._on_style_var_changed())
+        self._style_vars["lt_title_fontsize"] = v
+        ttk.Label(row, text=tr("tool.news_desk.style.lt.sub_size"),
+                  width=10).pack(side="left", padx=(8, 0))
+        v2 = tk.IntVar(value=24)
+        ttk.Spinbox(row, from_=10, to=64, width=5, textvariable=v2,
+                     command=self._on_style_var_changed
+                     ).pack(side="left")
+        v2.trace_add("write", lambda *_: self._on_style_var_changed())
+        self._style_vars["lt_subtitle_fontsize"] = v2
+
+        # TopicStrip default style.
+        tf = ttk.LabelFrame(parent, text=tr("tool.news_desk.style.ts.frame"))
+        tf.pack(fill="x", padx=6, pady=4)
+        row = ttk.Frame(tf); row.pack(fill="x", padx=4, pady=2)
+        ttk.Label(row, text=tr("tool.news_desk.style.ts.bg"),
+                  width=8).pack(side="left")
+        self._add_color_picker(row, "ts_bg_color", "#1E40AF")
+        ttk.Label(row, text=tr("tool.news_desk.style.ts.text"),
+                  width=10).pack(side="left", padx=(8, 0))
+        self._add_color_picker(row, "ts_text_color", "#FFFFFF")
+        ttk.Label(row, text=tr("tool.news_desk.style.ts.size"),
+                  width=8).pack(side="left", padx=(8, 0))
+        v = tk.IntVar(value=26)
+        ttk.Spinbox(row, from_=10, to=64, width=5, textvariable=v,
+                     command=self._on_style_var_changed
+                     ).pack(side="left")
+        v.trace_add("write", lambda *_: self._on_style_var_changed())
+        self._style_vars["ts_fontsize"] = v
+
+    def _build_sub_row(self, parent, slot, dshow, dsize, dcolor, dcn):
+        """Build one subtitle line's controls (sub1 or sub2)."""
+        row = ttk.Frame(parent); row.pack(fill="x", padx=4, pady=2)
+        ttk.Label(row, text=f"sub{slot}", width=4).pack(side="left")
+
+        v_show = tk.BooleanVar(value=dshow)
+        ttk.Checkbutton(row, text=tr("tool.news_desk.style.sub.show"),
+                         variable=v_show,
+                         command=self._on_style_var_changed
+                         ).pack(side="left", padx=(2, 0))
+        self._style_vars[f"sub{slot}_enabled"] = v_show
+
+        ttk.Label(row, text=tr("tool.news_desk.style.sub.size")
+                  ).pack(side="left", padx=(6, 0))
+        v_size = tk.IntVar(value=dsize)
+        ttk.Spinbox(row, from_=10, to=72, width=4, textvariable=v_size,
+                     command=self._on_style_var_changed
+                     ).pack(side="left")
+        v_size.trace_add("write", lambda *_: self._on_style_var_changed())
+        self._style_vars[f"sub{slot}_fontsize"] = v_size
+
+        ttk.Label(row, text=tr("tool.news_desk.style.sub.color")
+                  ).pack(side="left", padx=(6, 0))
+        self._add_color_picker(row, f"sub{slot}_color", dcolor)
+
+        v_cn = tk.BooleanVar(value=dcn)
+        ttk.Checkbutton(row, text=tr("tool.news_desk.style.sub.zh"),
+                         variable=v_cn,
+                         command=self._on_style_var_changed
+                         ).pack(side="left", padx=(6, 0))
+        self._style_vars[f"sub{slot}_is_chinese"] = v_cn
+
+    def _add_color_picker(self, parent, key: str, default: str) -> None:
+        v = tk.StringVar(value=default)
+        ent = ttk.Entry(parent, textvariable=v, width=9)
+        ent.pack(side="left")
+        v.trace_add("write", lambda *_: self._on_style_var_changed())
+
+        def _pick():
+            current = v.get() or default
+            res = colorchooser.askcolor(
+                color=current, parent=self.master,
+                title=tr("tool.news_desk.style.color_picker_title"))
+            if res and res[1]:
+                v.set(res[1].upper())
+        ttk.Button(parent, text="🎨", width=2, command=_pick
+                   ).pack(side="left", padx=(2, 0))
+        self._style_vars[key] = v
+
+    def _apply_style_to_vars(self, style: CompositionStyle) -> None:
+        """Push a CompositionStyle into the style form's Tk vars. Trace
+        callbacks are suppressed so the round-trip doesn't immediately
+        write back and over-write the preset."""
+        self._suppress_trace = True
+        try:
+            sub = style.subtitle
+            self._style_vars["sub_position"].set(sub.position or "bottom")
+            for slot, line in ((1, sub.sub1), (2, sub.sub2)):
+                self._style_vars[f"sub{slot}_enabled"].set(bool(line.enabled))
+                self._style_vars[f"sub{slot}_fontsize"].set(int(line.fontsize))
+                self._style_vars[f"sub{slot}_color"].set(line.color or "#FFFFFF")
+                self._style_vars[f"sub{slot}_is_chinese"].set(bool(line.is_chinese))
+
+            from core.composition.style import resolve_overlay_style
+            lt = resolve_overlay_style(
+                style.overlay_styles, "lower_third", "default") \
+                or LowerThirdStyle()
+            self._style_vars["lt_bg_color"].set(lt.bg_color)
+            self._style_vars["lt_accent_color"].set(lt.accent_color)
+            self._style_vars["lt_title_fontsize"].set(int(lt.title_fontsize))
+            self._style_vars["lt_subtitle_fontsize"].set(int(lt.subtitle_fontsize))
+
+            ts = resolve_overlay_style(
+                style.overlay_styles, "topic_strip", "default") \
+                or TopicStripStyle()
+            self._style_vars["ts_bg_color"].set(ts.bg_color)
+            self._style_vars["ts_text_color"].set(ts.text_color)
+            self._style_vars["ts_fontsize"].set(int(ts.fontsize))
+        finally:
+            self._suppress_trace = False
+
+    def _on_style_var_changed(self, *_args) -> None:
+        """Write form vars back into self._current_style + push preview."""
+        if self._suppress_trace:
+            return
+        st = self._current_style
+        sub = st.subtitle
+        sub.position = self._style_vars["sub_position"].get() or "bottom"
+        for slot, line in ((1, sub.sub1), (2, sub.sub2)):
+            line.enabled = bool(self._style_vars[f"sub{slot}_enabled"].get())
+            try:
+                line.fontsize = int(self._style_vars[f"sub{slot}_fontsize"].get())
+            except (tk.TclError, ValueError):
+                pass
+            line.color = self._style_vars[f"sub{slot}_color"].get() or line.color
+            line.is_chinese = bool(self._style_vars[f"sub{slot}_is_chinese"].get())
+
+        # Overlay style library — mutate the "default" entry in place so
+        # any existing LowerThird/TopicStrip overlay using style_class=
+        # "default" picks up the change.
+        ostyles = st.overlay_styles or {}
+        lt_dict = ostyles.setdefault("lower_third", {}).setdefault("default", {})
+        lt_dict["bg_color"] = self._style_vars["lt_bg_color"].get()
+        lt_dict["accent_color"] = self._style_vars["lt_accent_color"].get()
+        try:
+            lt_dict["title_fontsize"] = int(self._style_vars["lt_title_fontsize"].get())
+            lt_dict["subtitle_fontsize"] = int(self._style_vars["lt_subtitle_fontsize"].get())
+        except (tk.TclError, ValueError):
+            pass
+
+        ts_dict = ostyles.setdefault("topic_strip", {}).setdefault("default", {})
+        ts_dict["bg_color"] = self._style_vars["ts_bg_color"].get()
+        ts_dict["text_color"] = self._style_vars["ts_text_color"].get()
+        try:
+            ts_dict["fontsize"] = int(self._style_vars["ts_fontsize"].get())
+        except (tk.TclError, ValueError):
+            pass
+        st.overlay_styles = ostyles
+
+        self._save_instance_config()
+        self._push_preview()
 
     # ── Project mode setup ──────────────────────────────────────────────────
 
@@ -272,6 +485,7 @@ class NewsDeskApp(ToolBase):
                     text=tr("tool.news_desk.duration_fmt", hms=hms))
 
         self._refresh_preset_combo(select=self._current_preset_name)
+        self._apply_style_to_vars(self._current_style)
         self._refresh_overlay_tree()
         self._sync_srt_entries()
 
@@ -369,6 +583,7 @@ class NewsDeskApp(ToolBase):
         self._current_preset_name = name
         comp_presets.set_last_used_news_desk(self._preset_store, name)
         comp_presets.save_news_desk_store(self._preset_store)
+        self._apply_style_to_vars(style)
         self._save_instance_config()
         self._push_preview()
 
@@ -458,6 +673,17 @@ class NewsDeskApp(ToolBase):
                 content = ""
             self.tree.insert("", "end", iid=str(i),
                               values=(kind, start, end, content))
+
+    def _seek_to_selected(self) -> None:
+        idx = self._selected_index()
+        if idx < 0 or idx >= len(self._overlays):
+            return
+        if self._preview is None:
+            return
+        try:
+            self._preview.seek(float(self._overlays[idx].start_sec))
+        except Exception as e:
+            logger.debug(f"news_desk seek failed: {e}")
 
     def _selected_index(self) -> int:
         sel = self.tree.selection()

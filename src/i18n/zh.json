@@ -1961,5 +1961,21 @@
   "tool.news_desk.error.duration": "无法读取源视频时长。",
   "tool.news_desk.status.rendering": "渲染中...",
   "tool.news_desk.status.done": "已导出：{path}",
-  "tool.news_desk.status.failed": "渲染失败"
+  "tool.news_desk.status.failed": "渲染失败",
+  "tool.news_desk.style.sub.frame": "字幕样式",
+  "tool.news_desk.style.sub.position": "位置",
+  "tool.news_desk.style.sub.show": "显示",
+  "tool.news_desk.style.sub.size": "字号",
+  "tool.news_desk.style.sub.color": "颜色",
+  "tool.news_desk.style.sub.zh": "中文",
+  "tool.news_desk.style.lt.frame": "名牌默认样式 (LowerThird)",
+  "tool.news_desk.style.lt.bg": "底色",
+  "tool.news_desk.style.lt.accent": "强调色",
+  "tool.news_desk.style.lt.title_size": "标题字号",
+  "tool.news_desk.style.lt.sub_size": "副标题字号",
+  "tool.news_desk.style.ts.frame": "章节条默认样式 (TopicStrip)",
+  "tool.news_desk.style.ts.bg": "底色",
+  "tool.news_desk.style.ts.text": "文字色",
+  "tool.news_desk.style.ts.size": "字号",
+  "tool.news_desk.style.color_picker_title": "选择颜色"
 }
