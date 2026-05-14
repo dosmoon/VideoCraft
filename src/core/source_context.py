@@ -1,20 +1,22 @@
-"""Source content context — user-augmented metadata about the source video.
+"""Source content context — split into two ownership zones.
 
-Sits next to the technical metadata (`source/meta.json` from yt-dlp/ffprobe)
-and feeds into AI prompts so subtitle analyses (chapters / titles /
-hotclips) produce non-generic outputs anchored to the actual subject
-matter, speakers, audience, and platform tone.
+Two on-disk files share the prompt-context responsibility. They have
+DISJOINT field sets and are intentionally not merged into one dataclass
+so the editing surfaces (UI panes) have unambiguous ownership:
 
-This schema migrated from core/program/clip.py (Phase C's
-ProjectBackground dataclass) — same fields, new home, renamed
-SourceContext to reflect that it describes the source video specifically
-rather than a generic "project background". The old location is kept
-for one release cycle as a deprecation shim; new code should import
-from here.
+  source/basic_info.json   — SourceBasicInfo (5 fields)
+      Hand-filled ground truth. Source pane owns it. AI never writes
+      here; AI READS it as authoritative seed during news.realtime
+      extraction (preserved verbatim in merge).
 
-All fields are optional. Empty/missing fields are simply omitted from
-the prompt context block (no "(unset)" placeholders that would dilute
-the AI's signal).
+  source/context.json      — SourceContext (10 fields)
+      AI-generated event archive. news_context pane owns it. Manual
+      edit possible (via dialog) but typical flow is AI Fill.
+
+Downstream consumers (subtitle_analysis_runners, future news_desk
+overlays) call `combined_prompt_block(source_dir)` to get a unified
+markdown block covering both. They should NOT read either file
+directly — the combined view is the contract.
 """
 
 from __future__ import annotations
@@ -24,80 +26,122 @@ import os
 from dataclasses import asdict, dataclass
 
 
+SOURCE_BASIC_INFO_FILENAME = "basic_info.json"
 SOURCE_CONTEXT_FILENAME = "context.json"
 
 
+# ── Manual anchor fields (source pane) ──────────────────────────────────────
+
 @dataclass
-class SourceContext:
-    """Free-form context describing the source material."""
-    show_type: str = ""          # 访谈 / 演讲 / 直播切片 / 课程 / 评论 / 解说
+class SourceBasicInfo:
+    """5 anchor fields a human can fill in 30 seconds after watching the
+    first 5 seconds of the source video. Acts as authoritative seed for
+    AI extraction — `extract()` in source_context_ai.py preserves any
+    non-empty value here verbatim.
+    """
     host: str = ""               # main speaker / host name
     host_bio: str = ""           # one-line identity / role
-    guests: str = ""             # other on-screen people (free text, comma-separated)
-    audience: str = ""           # target audience profile
-    episode_topic: str = ""      # episode-level topic / YouTube title
-    platform_tone: str = ""      # B 站 / 抖音 / 小红书 / YouTube
-    notes: str = ""              # misc: sensitive topics, taboo words, tone hints
+    event_date: str = ""         # YYYY-MM-DD
+    event_location: str = ""     # venue + city, flat string
+    episode_topic: str = ""      # ≤30 chars, noun phrase
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "SourceBasicInfo":
+        fields = {f for f in cls.__dataclass_fields__}
+        return cls(**{k: v for k, v in d.items() if k in fields and isinstance(v, str)})
+
+    def is_empty(self) -> bool:
+        return not any(getattr(self, f).strip() for f in self.__dataclass_fields__)
+
+
+# ── AI-generated 5W+ context (news_context pane) ────────────────────────────
+
+@dataclass
+class SourceContext:
+    """10 AI-generated fields. Owned by news.realtime extraction; user can
+    still hand-edit via the manual-edit dialog in the news pane.
+    """
+    # — People —
+    host_affiliation: str = ""   # 主讲人所属机构
+    guests: str = ""             # other on-screen people (顿号 separated)
+    # — Time —
+    event_time: str = ""         # Full "YYYY-MM-DD HH:MM TZ" e.g. "2026-05-13 14:30 EDT"
+    # — Event —
+    show_type: str = ""          # 新闻发布会 / 演讲 / 访谈 / ...
+    event_summary: str = ""      # 1-2 sentences, ≤200 chars
+    key_points: str = ""         # 3-5 bullets, newline-separated
+    # — Why —
+    background: str = ""         # ≤300 chars; web-search grounded
+    # — Production —
+    audience: str = ""
+    platform_tone: str = ""      # YouTube / B 站 / TikTok / ...
+    notes: str = ""              # sensitive topics, taboo words, tone hints
 
     def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, d: dict) -> "SourceContext":
-        """Tolerant: drops unknown keys, missing keys default to ''."""
         fields = {f for f in cls.__dataclass_fields__}
         return cls(**{k: v for k, v in d.items() if k in fields and isinstance(v, str)})
 
     def is_empty(self) -> bool:
-        """True when every field is blank — used to skip prompt injection."""
         return not any(getattr(self, f).strip() for f in self.__dataclass_fields__)
 
-    def as_prompt_block(self) -> str:
-        """Render as a markdown block to prepend to AI prompts. Empty fields
-        are omitted entirely (not rendered as "field: (unset)") so the AI
-        doesn't waste context on null signals."""
-        if self.is_empty():
-            return ""
-        lines = ["以下是源视频的内容背景，请在生成时充分考虑："]
-        labels = [
-            ("show_type",     "节目类型"),
-            ("host",          "主讲人"),
-            ("host_bio",      "身份"),
-            ("guests",        "嘉宾"),
-            ("audience",      "观众"),
-            ("episode_topic", "整集主题"),
-            ("platform_tone", "平台语气"),
-            ("notes",         "备注"),
-        ]
-        for field, zh in labels:
-            val = getattr(self, field).strip()
-            if val:
-                lines.append(f"- {zh}: {val}")
-        return "\n".join(lines)
+
+# ── Paths + IO ──────────────────────────────────────────────────────────────
+
+def basic_info_path(source_dir: str) -> str:
+    return os.path.join(source_dir, SOURCE_BASIC_INFO_FILENAME)
 
 
 def context_path(source_dir: str) -> str:
-    """Canonical location: <source_dir>/context.json (next to meta.json)."""
     return os.path.join(source_dir, SOURCE_CONTEXT_FILENAME)
 
 
+def read_basic_info(source_dir: str) -> SourceBasicInfo:
+    """Read basic_info.json. Returns empty when absent. If absent BUT the
+    legacy context.json has the 5 anchor fields, migrate them out (kept
+    intact in context.json until the next AI/manual write strips them)."""
+    path = basic_info_path(source_dir)
+    if os.path.isfile(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                return SourceBasicInfo.from_dict(data)
+        except (OSError, json.JSONDecodeError):
+            pass
+    # Migration: derive from legacy 15-field context.json if present.
+    legacy = _read_raw_json(context_path(source_dir))
+    if legacy:
+        return SourceBasicInfo.from_dict(legacy)
+    return SourceBasicInfo()
+
+
+def write_basic_info(source_dir: str, info: SourceBasicInfo) -> None:
+    """Persist basic_info.json atomically."""
+    os.makedirs(source_dir, exist_ok=True)
+    path = basic_info_path(source_dir)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(info.to_dict(), f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
+
+
 def read_context(source_dir: str) -> SourceContext:
-    """Read context from disk; return empty SourceContext if not present."""
-    path = context_path(source_dir)
-    if not os.path.isfile(path):
-        return SourceContext()
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, json.JSONDecodeError):
-        return SourceContext()
-    if not isinstance(data, dict):
-        return SourceContext()
-    return SourceContext.from_dict(data)
+    """Read context.json. Legacy files that still contain the 5 anchor
+    fields load fine — SourceContext.from_dict() drops unknown keys."""
+    data = _read_raw_json(context_path(source_dir))
+    return SourceContext.from_dict(data) if data else SourceContext()
 
 
 def write_context(source_dir: str, ctx: SourceContext) -> None:
-    """Persist context.json atomically (temp + rename)."""
+    """Persist context.json with ONLY the AI-owned fields (no anchor
+    fields). Implicitly migrates legacy 15-field files on first write."""
     os.makedirs(source_dir, exist_ok=True)
     path = context_path(source_dir)
     tmp = path + ".tmp"
@@ -107,15 +151,64 @@ def write_context(source_dir: str, ctx: SourceContext) -> None:
 
 
 def read_platform_metadata(source_dir: str) -> dict:
-    """Read read-only platform metadata from `source/meta.json` (yt-dlp output)
-    so the edit UI can show uploader / description / tags / etc. as
-    reference. Returns a dict; empty if file is missing or malformed.
-    """
-    path = os.path.join(source_dir, "meta.json")
+    """Read read-only platform metadata from `source/meta.json`."""
+    return _read_raw_json(os.path.join(source_dir, "meta.json")) or {}
+
+
+def _read_raw_json(path: str) -> dict:
+    """Load a JSON file as dict; return {} on any failure."""
     if not os.path.isfile(path):
         return {}
     try:
         with open(path, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
     except (OSError, json.JSONDecodeError):
         return {}
+
+
+# ── Combined view (downstream prompt injection) ─────────────────────────────
+
+# Field rendering order in the combined prompt block. Anchor fields come
+# first (most reliable signal), then AI-generated derived fields.
+_COMBINED_LABELS = (
+    ("host",             "主讲人"),
+    ("host_bio",         "身份"),
+    ("host_affiliation", "所属机构"),
+    ("guests",           "嘉宾 / 在场人物"),
+    ("event_date",       "事件日期"),
+    ("event_time",       "事件时间"),
+    ("event_location",   "事件地点"),
+    ("show_type",        "节目类型"),
+    ("episode_topic",    "整集主题"),
+    ("event_summary",    "事件概述"),
+    ("key_points",       "核心要点"),
+    ("background",       "背景"),
+    ("audience",         "观众"),
+    ("platform_tone",    "发布平台"),
+    ("notes",            "备注"),
+)
+
+
+def combined_dict(source_dir: str) -> dict[str, str]:
+    """Merged 15-field dict for inspection / dialog editing / serialization
+    into AI prompts. basic_info fields take priority on the (rare) chance
+    a name collision is reintroduced."""
+    out = {}
+    out.update(read_context(source_dir).to_dict())
+    out.update(read_basic_info(source_dir).to_dict())
+    return out
+
+
+def combined_prompt_block(source_dir: str) -> str:
+    """Render the combined view as a markdown block for downstream AI
+    prompts. Empty fields omitted; returns "" when everything is blank."""
+    data = combined_dict(source_dir)
+    if not any((data.get(f) or "").strip() for f, _ in _COMBINED_LABELS):
+        return ""
+    lines = ["以下是源视频的内容背景，请在生成时充分考虑："]
+    for field, zh in _COMBINED_LABELS:
+        val = (data.get(field) or "").strip()
+        if val:
+            lines.append(f"- {zh}: {val}")
+    return "\n".join(lines)

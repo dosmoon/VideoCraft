@@ -29,7 +29,7 @@ from core.chapters_io import (
 from core.subtitle_pipeline import ProgressInfo
 from core.ai.cancellation import CancellationToken
 from core.subtitle_ops import read_srt, srt_end_seconds as _srt_end_seconds
-from core.source_context import read_context as _read_context
+from core.source_context import combined_prompt_block as _combined_prompt_block
 
 
 # ── Shared output helpers ────────────────────────────────────────────────────
@@ -85,12 +85,12 @@ def _source_dir_for(subtitles_dir: str) -> str:
 
 
 def _context_block(subtitles_dir: str) -> str:
-    """Read source/context.json and render as a prompt prefix block."""
+    """Render the combined source context (basic_info + ai context) as a
+    prompt prefix block. Empty when both files are missing/blank."""
     try:
-        ctx = _read_context(_source_dir_for(subtitles_dir))
+        return _combined_prompt_block(_source_dir_for(subtitles_dir))
     except Exception:
         return ""
-    return ctx.as_prompt_block()
 
 
 def _run_pack(srt_path: str, subtitles_dir: str,

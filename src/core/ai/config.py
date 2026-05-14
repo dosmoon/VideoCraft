@@ -52,6 +52,27 @@ _DEFAULT_PROVIDERS = {
             TIER_ECONOMY:  "deepseek-chat",
         },
     },
+    "xAI": {
+        # Grok via xAI's OpenAI-compatible endpoint. Distinguishing feature:
+        # native web/X search grounding, which is what unlocks the
+        # `news.realtime` task (source-context extraction, future
+        # news_desk speaker / event lookups). Other tasks can still pick
+        # it manually from the LLM dropdown.
+        "type":     "openai_compatible",
+        "base_url": "https://api.x.ai/v1",
+        "key_file": "xAI.key",
+        "enabled":  True,
+        "priority": 2,
+        "models": [
+            "grok-4",
+            "grok-4-fast",
+        ],
+        "tiers": {
+            TIER_PREMIUM:  "grok-4",
+            TIER_STANDARD: "grok-4-fast",
+            TIER_ECONOMY:  "grok-4-fast",
+        },
+    },
     "Custom": {
         "type":     "openai_compatible",
         "base_url": "",
@@ -216,6 +237,10 @@ _DEFAULT_TTS_PROVIDERS = {
 TASKS: list[tuple[str, str, str]] = [
     ("translate",         "llm", "翻译 / Translate"),
     ("subtitle.post",     "llm", "字幕后处理 / Subtitle post-process"),
+    # 2026-05-14: realtime news extraction. Requires web/search-grounded
+    # LLM (xAI Grok native, Perplexity Sonar later). Built-in / aistack
+    # tiers have no useful candidate here; cloud tier is the path.
+    ("news.realtime",     "llm", "实时新闻 / Realtime news"),
     ("asr.transcribe",    "asr", "语音转写 / Speech-to-text"),
     # tts.synthesize was removed 2026-05-11. Voice + engine selection
     # happens at use time via VoicePickerDialog (tools/router/voice_picker.py)

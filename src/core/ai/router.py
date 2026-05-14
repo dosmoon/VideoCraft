@@ -115,7 +115,7 @@ class AIRouter:
         if provider:
             provider = _cfg.canonicalize_provider_name(provider)
             return self._complete_json_explicit(provider, tier, model, prompt,
-                                                  schema, cancel_token)
+                                                  schema, cancel_token, task=task)
         return self._complete_json_by_tier(task, tier, model, prompt, schema,
                                             cancel_token)
 
@@ -684,22 +684,42 @@ class AIRouter:
 
     def _complete_by_tier(self, task: str, tier: str,
                           model: str | None, prompt: str) -> str:
-        """Task/tier routing with explicit-config priority, auto-fallback on error."""
+        """Task/tier routing. Honors user's task_routing pick STRICTLY:
+        if the user has chosen a provider for this task and it fails, the
+        error propagates — no silent switch to a different provider.
+        Candidate-pool fallback runs ONLY when the user left the task on
+        Auto (empty task_routing entry).
+        """
         r_provider, r_model = self._resolve_task_tier(task, tier, model)
 
         if r_provider and r_model:
             cfg = self._providers.get(r_provider)
-            if cfg and cfg.get("enabled", True) and _cfg.read_key(cfg) is not None:
-                try:
-                    return self._call(r_provider, cfg, r_model, prompt)
-                except Exception:
-                    pass  # Explicitly configured failed -> fall through to auto
+            if cfg is None:
+                raise RuntimeError(
+                    f"Provider {r_provider!r} configured for task {task!r} "
+                    f"is not registered in providers.json"
+                )
+            if not cfg.get("enabled", True):
+                raise RuntimeError(
+                    f"Provider {r_provider!r} (picked for task {task!r}) "
+                    f"is disabled — re-enable it in AI Console or pick a "
+                    f"different provider for this task."
+                )
+            if _cfg.read_key(cfg) is None and cfg.get("auth_required") is not False:
+                raise RuntimeError(
+                    f"Provider {r_provider!r} has no API key — configure "
+                    f"the key in AI Console → Cloud Services."
+                )
+            # Honor user's explicit choice. Errors propagate.
+            return self._call(r_provider, cfg, r_model, prompt)
 
+        # User picked Auto (empty task_routing). Run priority candidates.
         candidates = self._get_candidates(tier)
         if not candidates:
             raise RuntimeError(
-                f"No available provider for tier={tier!r}. "
-                "Configure an API Key in the AI Router manager."
+                f"No available provider for task={task!r} tier={tier!r}. "
+                "Configure a provider in AI Console → Provider Routing, "
+                "or set up keys for at least one auto-fallback candidate."
             )
         last_err = None
         for name, cfg, mid in candidates:
@@ -708,12 +728,12 @@ class AIRouter:
             except Exception as e:
                 last_err = e
         raise RuntimeError(
-            f"All providers for tier={tier!r} failed. Last error: {last_err}"
+            f"All Auto candidates failed for task={task!r}. Last error: {last_err}"
         )
 
     def _complete_json_explicit(self, provider: str, tier: str, model: str | None,
                                 prompt: str, schema: dict,
-                                cancel_token=None) -> dict:
+                                cancel_token=None, *, task: str = "") -> dict:
         cfg = self._providers.get(provider)
         if cfg is None:
             raise RuntimeError(
@@ -725,37 +745,51 @@ class AIRouter:
                 f"provider {provider!r} has no model configured for tier={tier!r}"
             )
         return self._call_json(provider, cfg, resolved_model, prompt, schema,
-                                cancel_token=cancel_token)
+                                cancel_token=cancel_token, task=task)
 
     def _complete_json_by_tier(self, task: str, tier: str, model: str | None,
                                prompt: str, schema: dict,
                                cancel_token=None) -> dict:
+        """Strict task routing for JSON completion. See _complete_by_tier for
+        the contract: user's explicit pick is authoritative; only the Auto
+        radio (empty task_routing cell) authorizes candidate fallback."""
         r_provider, r_model = self._resolve_task_tier(task, tier, model)
 
         if r_provider and r_model:
             cfg = self._providers.get(r_provider)
-            if cfg and cfg.get("enabled", True) and _cfg.read_key(cfg) is not None:
-                try:
-                    return self._call_json(r_provider, cfg, r_model, prompt,
-                                            schema, cancel_token=cancel_token)
-                except AIError as e:
-                    # Don't auto-fall-back on cancellation — user wants OUT.
-                    if e.kind == Kind.CANCELLED:
-                        raise
-                except Exception:
-                    pass
+            if cfg is None:
+                raise RuntimeError(
+                    f"Provider {r_provider!r} configured for task {task!r} "
+                    f"is not registered in providers.json"
+                )
+            if not cfg.get("enabled", True):
+                raise RuntimeError(
+                    f"Provider {r_provider!r} (picked for task {task!r}) "
+                    f"is disabled — re-enable it in AI Console or pick a "
+                    f"different provider for this task."
+                )
+            if _cfg.read_key(cfg) is None and cfg.get("auth_required") is not False:
+                raise RuntimeError(
+                    f"Provider {r_provider!r} has no API key — configure "
+                    f"the key in AI Console → Cloud Services."
+                )
+            return self._call_json(r_provider, cfg, r_model, prompt,
+                                    schema, cancel_token=cancel_token,
+                                    task=task)
 
+        # User picked Auto. Run priority candidates.
         candidates = self._get_candidates(tier)
         if not candidates:
             raise RuntimeError(
-                f"No available provider for tier={tier!r}. "
-                "Configure an API Key in the AI Router manager."
+                f"No available provider for task={task!r} tier={tier!r}. "
+                "Configure a provider in AI Console → Provider Routing, "
+                "or set up keys for at least one auto-fallback candidate."
             )
         last_err = None
         for name, cfg, mid in candidates:
             try:
                 return self._call_json(name, cfg, model or mid, prompt, schema,
-                                        cancel_token=cancel_token)
+                                        cancel_token=cancel_token, task=task)
             except AIError as e:
                 if e.kind == Kind.CANCELLED:
                     raise
@@ -763,7 +797,7 @@ class AIRouter:
             except Exception as e:
                 last_err = e
         raise RuntimeError(
-            f"All providers for tier={tier!r} failed. Last error: {last_err}"
+            f"All Auto candidates failed for task={task!r}. Last error: {last_err}"
         )
 
     def _get_candidates(self, tier: str) -> list:
@@ -825,7 +859,8 @@ class AIRouter:
             raise
 
     def _call_json(self, name: str, cfg: dict, model_id: str,
-                   prompt: str, schema: dict, *, cancel_token=None) -> dict:
+                   prompt: str, schema: dict, *,
+                   cancel_token=None, task: str = "") -> dict:
         ptype = cfg.get("type")
         api_key = None
         if ptype != "claude_code":
@@ -846,6 +881,7 @@ class AIRouter:
                     raise RuntimeError(f"provider {name!r} has no base_url configured")
                 result = _openai_compat.call_json(api_key, base_url, model_id,
                                                     prompt, schema,
+                                                    task=task,
                                                     cancel_token=cancel_token)
             elif ptype == "claude_code":
                 result = _claude_code.call_json(cfg, model_id, prompt, schema,

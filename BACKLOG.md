@@ -25,6 +25,8 @@
 | 🟢 P3 | [~] | 操作参数持久化 | 🟡 subtitle_tool 已完成 preset 系统（user_data/presets/subtitle_burn.json，支持命名保存/切换/记忆 last_used）；其他工具待跟进 |
 | 🟢 P3 | [ ] | ASR / TTS Test 真实施 | AI 控制台 Lemonfox / Fish Audio 的 Test 按钮目前 disabled 占位。需要：(a) ASR — 在 `prompts/samples/silence-1s.wav` 塞 1 秒静音样本，Test 拿它打 Lemonfox；(b) TTS — provider 配置加 `test_voice_id` 字段，Test 调短文本合成 |
 | 🟢 P3 | [ ] | per-(task, provider) prompt 变体 | `core.prompts.get(task)` 当前一 task 一 prompt。不同 provider 在同一任务上风格差异明显（DeepSeek 喜欢长解释、Gemini 偏简洁）。需要：扩展 prompts 文件命名为 `<task>.<provider>.md`，loader 优先匹配 (task, provider) 后 fallback 到 (task) |
+| 🟢 P3 | [ ] | 新闻档案 AI 迭代会话 | 当前 `source_context_ai.extract()` 是单次替换（无状态）—— 每次 AI 填充全量覆盖 context.json，basic_info 作种子。若将来需要"用户看完 AI 输出，针对某字段说『再深挖一下背景』"这种交互式优化，需要：(a) Responses API 的多轮 session（xAI 支持 `previous_response_id` 串联）(b) UI 加对话区域（小型 ChatGPT 风格）(c) token / 成本爆炸的预算。眼前不做 —— 新闻档案单次质量已经够用，迭代收益不抵开发成本 |
+| 🟡 P2 | [ ] | AI Router Auto 模式必要性审视 | 2026-05-14 修了静默 fallback bug（用户选了具体 provider 但失败时被悄悄换成 candidates 兜底，详见 commit history & router.py `_complete_by_tier`/`_complete_json_by_tier`）。现在只有用户主动选 `⚡ Auto` 才走 candidate 循环。但 Auto 这个选项本身是不是还有存在必要？翻译/字幕后处理任务用户实际都会指定具体 provider，Auto 槽位可能只是 UI 噪音。考虑：(a) 评估各 task 用 Auto 的真实场景 (b) 若无价值则下线，简化 task_routing schema (c) 若保留则在 UI 上加明确提示"Auto = 你授权我自由换 provider" |
 | 🟢 P3 | [x] | TTS Voice ID 收藏 | 2026-05-11 完成 — 整套 TTS 抽象重构 (P1~P6)：`core/ai/tts_voice.py` (TTSVoice 数据模型 + 磁盘缓存)、`tools/router/voice_picker.py` (VoicePickerDialog 跨 provider 选择 + ffplay 试听 + 手动输入 ID + VoiceSlot widget)、AI 控制台第 5 个独立 TTS tab (替代散落在内置/云/aistack)、text2video 单声 + 多角色每角色独立选引擎、`ai.tts(provider=...)` 必填。Fish Audio "我的收藏" workaround：v1 API 没 /me/marks 端点，做了 [导入收藏 voice IDs...] 入口让用户粘贴 ID 列表逐个 GET /model/{id} 拉 metadata。详见 commits 67845f8..d6b6336 |
 
 ---

@@ -675,6 +675,19 @@ class VideoCraftHub:
             self._preview_key = key
         self._select_tab(PREVIEW_TAB_KEY)
 
+    def show_news_context_preview(self) -> None:
+        """Sidebar click handler: show the AI-generated event context pane."""
+        if self.project.source_status() != "ready":
+            return
+        from ui.news_context_pane import build_news_context_preview
+        key = "news_context"
+        if self._preview_key != key:
+            self._clear_preview_tab()
+            frame = build_news_context_preview(self._preview_tab, self.project)
+            frame.pack(fill="both", expand=True)
+            self._preview_key = key
+        self._select_tab(PREVIEW_TAB_KEY)
+
     def _select_tab(self, key: str):
         assert self._tab_bar is not None
         for tf in self._tab_frames.values():
@@ -759,7 +772,14 @@ class VideoCraftHub:
 
         _sidebar_separator(parent)
 
-        # ── Section 2: Subtitles ──
+        # ── Section 2: News context (AI-generated event archive) ──
+        self._news_context_section = tk.Frame(parent, bg="#f5f5f5")
+        self._news_context_section.pack(fill="x", padx=4, pady=(0, 0))
+        self._build_news_context_section(self._news_context_section)
+
+        _sidebar_separator(parent)
+
+        # ── Section 3: Subtitles ──
         self._subtitles_section = tk.Frame(parent, bg="#f5f5f5")
         self._subtitles_section.pack(fill="x", padx=4, pady=(0, 0))
         self._build_subtitles_section(self._subtitles_section)
@@ -796,6 +816,52 @@ class VideoCraftHub:
             command=self._on_source_button,
         )
         self._source_primary_btn.pack(side="left")
+
+    # ── News context section ──────────────────────────────────────────────────
+
+    def _build_news_context_section(self, parent: tk.Frame) -> None:
+        """Sidebar entry pointing at the AI-generated event context pane.
+        Source pane stays manual; this is the AI-content surface.
+        """
+        tk.Label(parent, text=tr("hub.sidebar.news_context.title"),
+                 font=("", 9, "bold"), bg="#f5f5f5", fg="#555",
+                 anchor="w",
+                 ).pack(fill="x", padx=2, pady=(2, 2))
+
+        self._news_context_status_var = tk.StringVar()
+        lbl = tk.Label(
+            parent, textvariable=self._news_context_status_var,
+            bg="#f5f5f5", fg="#222", font=("", 9),
+            anchor="w", justify="left", wraplength=280, cursor="hand2",
+        )
+        lbl.pack(fill="x", padx=4, pady=(0, 4))
+        lbl.bind("<Button-1>", lambda _e: self.show_news_context_preview())
+        self._news_context_status_lbl = lbl
+
+    def _refresh_news_context_section(self) -> None:
+        """Update sidebar status text: count of non-empty context fields."""
+        if not hasattr(self, "_news_context_status_var"):
+            return
+        if self.project.source_status() != "ready":
+            self._news_context_status_var.set(
+                tr("hub.sidebar.news_context.locked"))
+            self._news_context_status_lbl.configure(fg="#999", cursor="")
+            return
+        try:
+            from core.source_context import combined_dict
+            data = combined_dict(self.project.source_dir)
+            total = len(data)
+            filled = sum(1 for v in data.values() if (v or "").strip())
+        except Exception:
+            filled, total = 0, 15
+        if filled == 0:
+            self._news_context_status_var.set(
+                tr("hub.sidebar.news_context.empty"))
+        else:
+            self._news_context_status_var.set(
+                tr("hub.sidebar.news_context.filled",
+                   filled=filled, total=total))
+        self._news_context_status_lbl.configure(fg="#222", cursor="hand2")
 
     def _on_source_button(self) -> None:
         """Add (when missing) or Modify (when present)."""
@@ -1042,6 +1108,7 @@ class VideoCraftHub:
         if not hasattr(self, "_source_status_var"):
             return  # not built yet
         self._refresh_source_section()
+        self._refresh_news_context_section()
         self._refresh_subtitles_section()
         self._refresh_derivatives_section()
 
