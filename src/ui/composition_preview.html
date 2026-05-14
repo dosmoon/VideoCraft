@@ -612,14 +612,37 @@ function drawSubtitles() {
     ctx.font = `${weight}${px}px sans-serif`;
     ctx.textAlign = "center";
     ctx.textBaseline = "alphabetic";
-    if (sub.stroke_width > 0) {
+
+    // Per-line backdrop — mirrors libass BorderStyle=3 box mode.
+    // bg_opacity=0 keeps legacy outline-only rendering.
+    const text = line.text || "";
+    if (line.bg_opacity > 0 && text) {
+      const tw = ctx.measureText(text).width;
+      // bg_padding_x_pct is fraction of frame HEIGHT (matches the libass
+      // Outline value derived from target_h in _build_subtitle_force_style).
+      const padPctH = (line.bg_padding_x_pct != null
+                        ? line.bg_padding_x_pct : 0.006);
+      const padPx = Math.max(2, padPctH * ch);
+      // Box covers ascender↔descender of the text line; px is a fair
+      // approximation since libass measures the actual font metrics.
+      const boxH = px + padPx * 2;
+      const boxW = tw + padPx * 2;
+      const boxX = ox + cw / 2 - boxW / 2;
+      const boxY = y - px + padPx * 0.2 - padPx;   // align baseline-ish
+      ctx.fillStyle = _hexToRgba(line.bg_color || "#000000", line.bg_opacity);
+      ctx.fillRect(boxX, boxY, boxW, boxH);
+    }
+
+    if (sub.stroke_width > 0 && line.bg_opacity <= 0) {
+      // Outline only when box mode is off — libass also drops the outline
+      // when BorderStyle=3 takes over, so the preview matches.
       ctx.strokeStyle = sub.stroke_color || "#000";
       ctx.lineWidth = (sub.stroke_width || 2) * (px / 24);
       ctx.lineJoin = "round";
-      ctx.strokeText(line.text || "", ox + cw / 2, y);
+      ctx.strokeText(text, ox + cw / 2, y);
     }
     ctx.fillStyle = line.color || "#FFF";
-    ctx.fillText(line.text || "", ox + cw / 2, y);
+    ctx.fillText(text, ox + cw / 2, y);
   }
 }
 

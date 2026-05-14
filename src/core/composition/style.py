@@ -22,12 +22,21 @@ from dataclasses import dataclass, field
 class SubtitleLineStyle:
     """One subtitle track's per-line style. Two lines (sub1 / sub2) per
     composition — typically sub1 = primary language (CJK, bold, larger),
-    sub2 = secondary (Latin, regular)."""
+    sub2 = secondary (Latin, regular).
+
+    Per-line backdrop (bg_*): when bg_opacity > 0 the cue is rendered in
+    libass "opaque box" mode (BorderStyle=3) — a fitted translucent
+    rectangle behind each line. Lets subtitles stay readable on top of
+    source-baked banners / chyrons without touching the source frame."""
     enabled: bool = True
     fontsize: int = 24
     color: str = "#FFFFFF"
     bold: bool = False
     is_chinese: bool = False         # affects glyph-width / line-break logic
+    # Per-line backdrop. opacity=0 keeps legacy outline-only rendering.
+    bg_color: str = "#000000"
+    bg_opacity: int = 0              # 0-100; 0 disables the box mode
+    bg_padding_x_pct: float = 0.006  # extra padding around glyphs (fraction of frame height)
 
 
 @dataclass

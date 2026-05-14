@@ -327,21 +327,58 @@ def _drawtext_filter(text: str, *, role: str, ho: HookOutroStyle,
     return ":".join(parts)
 
 
+def _ass_bgr_with_alpha(hex_color: str, opacity_0_100: int) -> str:
+    """libass colour with alpha — `&HAABBGGRR&`. 0 = fully opaque, 255 =
+    fully transparent. opacity_0_100 follows the dataclass convention
+    (0 = transparent, 100 = opaque)."""
+    h = (hex_color or "#000000").lstrip("#")
+    if len(h) != 6:
+        h = "000000"
+    rr, gg, bb = h[0:2], h[2:4], h[4:6]
+    o = max(0, min(100, int(opacity_0_100)))
+    aa = int(round((100 - o) * 255 / 100))
+    return f"&H{aa:02X}{bb}{gg}{rr}&"
+
+
 def _build_subtitle_force_style(line: SubtitleLineStyle,
                                   subtitle: SubtitleStyle,
-                                  *, margin_v: int) -> str:
-    """ASS force_style string for one subtitle track."""
+                                  *, margin_v: int,
+                                  target_h: int) -> str:
+    """ASS force_style string for one subtitle track. When
+    `line.bg_opacity > 0` the track switches to libass opaque-box mode
+    (BorderStyle=3) — a translucent rectangle is drawn behind each cue
+    line, sized to fit the text with `bg_padding_x_pct` extra padding."""
     font_name = "Microsoft YaHei" if line.is_chinese else "Arial"
-    return (f"Fontname={font_name},"
-            f"Fontsize={line.fontsize},"
-            f"PrimaryColour={hex_color_to_ass(line.color)},"
-            f"OutlineColour={hex_color_to_ass(subtitle.stroke_color)},"
-            f"BorderStyle=1,"
-            f"Outline={max(0, int(subtitle.stroke_width))},"
-            f"Shadow=0,"
-            f"Bold={1 if line.bold else 0},"
-            f"Alignment={ass_alignment_for_position(subtitle.position)},"
-            f"MarginV={margin_v}")
+    parts = [
+        f"Fontname={font_name}",
+        f"Fontsize={line.fontsize}",
+        f"PrimaryColour={hex_color_to_ass(line.color)}",
+    ]
+    if line.bg_opacity > 0:
+        # Box mode. OutlineColour mirrors BackColour so the box edge
+        # blends with its own fill — reads as a single flat backdrop.
+        bg_ass = _ass_bgr_with_alpha(line.bg_color, line.bg_opacity)
+        pad_px = max(1, int(line.bg_padding_x_pct * target_h))
+        parts += [
+            f"OutlineColour={bg_ass}",
+            f"BackColour={bg_ass}",
+            "BorderStyle=3",
+            f"Outline={pad_px}",
+            "Shadow=0",
+        ]
+    else:
+        parts += [
+            f"OutlineColour={hex_color_to_ass(subtitle.stroke_color)}",
+            "BorderStyle=1",
+            f"Outline={max(0, int(subtitle.stroke_width))}",
+            "Shadow=0",
+        ]
+    parts += [
+        f"Bold={1 if line.bold else 0}",
+        f"Alignment={ass_alignment_for_position(subtitle.position)}",
+        f"MarginV={margin_v}",
+    ]
+    return ",".join(parts)
 
 
 def _track_margins(subtitle: SubtitleStyle) -> tuple[int, int]:
@@ -568,7 +605,8 @@ _news_desk_overlays.register()
 
 def _named_overlay_jobs(req: CompositionRequest,
                           sub1_srt: Optional[str],
-                          sub2_srt: Optional[str]) -> list[_OverlayJob]:
+                          sub2_srt: Optional[str],
+                          *, target_h: int) -> list[_OverlayJob]:
     """Convert the named style sections + req.hook_text/outro_text into
     _OverlayJob records. z_order chosen so the visible stacking matches
     the legacy hand-coded order: subtitles → image_wm → text_wm → hook/outro.
@@ -582,13 +620,15 @@ def _named_overlay_jobs(req: CompositionRequest,
         jobs.append(_OverlayJob(kind="subtitle_libass", z_order=10, data={
             "srt_path": sub1_srt,
             "force_style": _build_subtitle_force_style(
-                style.subtitle.sub1, style.subtitle, margin_v=margin_v1),
+                style.subtitle.sub1, style.subtitle,
+                margin_v=margin_v1, target_h=target_h),
         }))
     if style.subtitle.sub2.enabled and sub2_srt:
         jobs.append(_OverlayJob(kind="subtitle_libass", z_order=11, data={
             "srt_path": sub2_srt,
             "force_style": _build_subtitle_force_style(
-                style.subtitle.sub2, style.subtitle, margin_v=margin_v2),
+                style.subtitle.sub2, style.subtitle,
+                margin_v=margin_v2, target_h=target_h),
         }))
 
     # Watermark — image or text (mutually exclusive).
@@ -746,7 +786,8 @@ def render_composition(
         style=style, tmp_files=tmp_text_files,
     )
 
-    jobs = _named_overlay_jobs(req, tmp_srt_path, tmp_srt2_path)
+    jobs = _named_overlay_jobs(req, tmp_srt_path, tmp_srt2_path,
+                                target_h=target_h)
     for job in jobs:
         renderer = _OVERLAY_RENDERERS.get(job.kind)
         if renderer is None:

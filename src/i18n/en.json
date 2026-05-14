@@ -1970,6 +1970,8 @@
   "tool.news_desk.style.sub.size": "Size",
   "tool.news_desk.style.sub.color": "Color",
   "tool.news_desk.style.sub.zh": "CJK",
+  "tool.news_desk.style.sub.bg": "Bg",
+  "tool.news_desk.style.sub.bg_opacity": "Opacity",
   "tool.news_desk.style.lt.frame": "Lower Third Default Style",
   "tool.news_desk.style.lt.bg": "Bg",
   "tool.news_desk.style.lt.accent": "Accent",

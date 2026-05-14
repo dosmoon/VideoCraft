@@ -43,6 +43,9 @@ def style_to_web_dict(style: CompositionStyle) -> dict:
                 "fontsize": sub.sub1.fontsize,
                 "color": sub.sub1.color,
                 "bold": sub.sub1.bold,
+                "bg_color": sub.sub1.bg_color,
+                "bg_opacity": sub.sub1.bg_opacity,
+                "bg_padding_x_pct": sub.sub1.bg_padding_x_pct,
                 "text": ("字幕预览第一行 sub1"
                          if sub.sub1.is_chinese
                          else "Subtitle preview line 1"),
@@ -52,6 +55,9 @@ def style_to_web_dict(style: CompositionStyle) -> dict:
                 "fontsize": sub.sub2.fontsize,
                 "color": sub.sub2.color,
                 "bold": sub.sub2.bold,
+                "bg_color": sub.sub2.bg_color,
+                "bg_opacity": sub.sub2.bg_opacity,
+                "bg_padding_x_pct": sub.sub2.bg_padding_x_pct,
                 "text": ("字幕预览第二行 sub2"
                          if sub.sub2.is_chinese
                          else "Subtitle preview line 2"),

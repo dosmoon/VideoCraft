@@ -403,6 +403,24 @@ class NewsDeskApp(ToolBase):
                          ).pack(side="left", padx=(6, 0))
         self._style_vars[f"sub{slot}_is_chinese"] = v_cn
 
+        # Backdrop row — solves "subtitle lands on top of source-baked
+        # banner / chyron" (e.g. White House lower-third). bg_opacity=0
+        # keeps the legacy outline-only rendering for back-compat.
+        row2 = ttk.Frame(parent); row2.pack(fill="x", padx=4, pady=(0, 2))
+        ttk.Label(row2, text="", width=4).pack(side="left")  # alignment pad
+        ttk.Label(row2, text=tr("tool.news_desk.style.sub.bg")
+                  ).pack(side="left", padx=(2, 0))
+        self._add_color_picker(row2, f"sub{slot}_bg_color", "#000000")
+        ttk.Label(row2, text=tr("tool.news_desk.style.sub.bg_opacity")
+                  ).pack(side="left", padx=(6, 0))
+        v_opa = tk.IntVar(value=0)
+        ttk.Spinbox(row2, from_=0, to=100, increment=5, width=4,
+                     textvariable=v_opa,
+                     command=self._on_style_var_changed
+                     ).pack(side="left")
+        v_opa.trace_add("write", lambda *_: self._on_style_var_changed())
+        self._style_vars[f"sub{slot}_bg_opacity"] = v_opa
+
     def _add_color_picker(self, parent, key: str, default: str) -> None:
         v = tk.StringVar(value=default)
         ent = ttk.Entry(parent, textvariable=v, width=9)
@@ -433,6 +451,8 @@ class NewsDeskApp(ToolBase):
                 self._style_vars[f"sub{slot}_fontsize"].set(int(line.fontsize))
                 self._style_vars[f"sub{slot}_color"].set(line.color or "#FFFFFF")
                 self._style_vars[f"sub{slot}_is_chinese"].set(bool(line.is_chinese))
+                self._style_vars[f"sub{slot}_bg_color"].set(line.bg_color or "#000000")
+                self._style_vars[f"sub{slot}_bg_opacity"].set(int(line.bg_opacity))
 
             from core.composition.style import resolve_overlay_style
             lt = resolve_overlay_style(
@@ -467,6 +487,13 @@ class NewsDeskApp(ToolBase):
                 pass
             line.color = self._style_vars[f"sub{slot}_color"].get() or line.color
             line.is_chinese = bool(self._style_vars[f"sub{slot}_is_chinese"].get())
+            line.bg_color = (self._style_vars[f"sub{slot}_bg_color"].get()
+                              or line.bg_color)
+            try:
+                line.bg_opacity = max(0, min(100, int(
+                    self._style_vars[f"sub{slot}_bg_opacity"].get())))
+            except (tk.TclError, ValueError):
+                pass
 
         # Overlay style library — mutate the "default" entry in place so
         # any existing LowerThird/TopicStrip overlay using style_class=

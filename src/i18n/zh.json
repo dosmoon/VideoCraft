@@ -1970,6 +1970,8 @@
   "tool.news_desk.style.sub.size": "字号",
   "tool.news_desk.style.sub.color": "颜色",
   "tool.news_desk.style.sub.zh": "中文",
+  "tool.news_desk.style.sub.bg": "底衬",
+  "tool.news_desk.style.sub.bg_opacity": "不透明",
   "tool.news_desk.style.lt.frame": "名牌默认样式 (LowerThird)",
   "tool.news_desk.style.lt.bg": "底色",
   "tool.news_desk.style.lt.accent": "强调色",

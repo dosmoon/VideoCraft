@@ -70,6 +70,23 @@ kind 把这些数据渲到视频上**：
 - 工作台：手动「+ 章节卡」/「从 analysis.json 派生章节卡」批量（每段 6 秒）
 - i18n: `add.chapter_point_card` / `derive_cpc` / `field.card_text` 双语
 
+#### ✅ 已完成：字幕底衬（box mode）— 2026-05-15
+- **动机**：白宫/CSPAN 这类源视频自带固定下三分之一 chyron（"TEXT
+  VP TO 45470 FOR UPDATES…"），sub1 默认 92% Y 撞上去看不清；不愿
+  动源视频 → 给字幕加底衬
+- 数据：`SubtitleLineStyle` 加 `bg_color` / `bg_opacity` (0-100) /
+  `bg_padding_x_pct`；默认 `bg_opacity=0` 保持向后兼容
+- libass 侧：`_build_subtitle_force_style` 走 `BorderStyle=3` +
+  `BackColour=&HAA{BGR}&`；padding 由 `Outline` 接管；`OutlineColour`
+  跟 `BackColour` 相同 → 看起来就是一片纯平半透底
+- canvas 镜像：drawSubtitles 加 measureText 算文字宽度，画 fit 矩形
+  + padding；箱模式下不再叠 stroke（跟 libass 行为一致）
+- 跨 derivative 受益：所有用 `SubtitleStyle` 的 derivative（subtitle
+  /clip/news_desk/将来的）都自动支持，加配置就生效
+- UI：暂只在 news_desk 工作台 style form 加 sub1/sub2 各一组「底衬
+  色 + 不透明」(0=关)；其他工作台 UI 后续扩散
+- i18n: `tool.news_desk.style.sub.bg` / `.bg_opacity` 双语
+
 #### ✅ 已完成：工作台「渲 20s 预览」按钮 — 2026-05-14
 - 位置：导出 MP4 旁边的次按钮
 - 锚点：选中行的 overlay.start_sec（无选中 fallback t=0）；
