@@ -5,66 +5,84 @@
 
 ---
 
-## news_desk 派生形态 v0.2 —— 几乎收尾，只剩 PullQuote
+## news_desk v0.4 + AI 输出层简化 — 已收尾上线
 
-### 已完成（v0.2 4/5）
+HEAD: `76c7342` (已 push origin/main)，workspace clean。
 
-| 项 | 形态 | 数据源 | 关键 commit |
+### 本次会话核心变化
+
+#### 1. news_desk v0.4 components-based 重构（76a65e4）
+
+推翻了 v0.3 的"全片属性 vs 时间组件 (A/B 类)"假分类。整个工作台收敛到一个原语：**组件**。
+
+UI 三栏：list / preview / property panel。绝不再加折叠组、按类型分组、"默认样式"框。
+
+4 个组件实现：
+| kind | 实例数 | 数据源 | 视觉 |
 |---|---|---|---|
-| **ChapterPointCard** | 广播 L3 半透底条（CNN/Reuters 风格）+ fade+lift 入场 | analysis.json `chapter[].key_points[0]` 或 `refined[:40]` | `146d53c` |
-| **字幕底衬 (box mode)** | libass `BorderStyle=3` 半透底，每条 cue 一个 fit rect | UI 配置 `bg_color` + `bg_opacity` | `6227d19` |
-| **字幕位置 + 水印 UI** | `block_margin_pct` / `track_gap_pct` 暴露；WatermarkStyle 全字段暴露；水印 z_order 抬到 60 高于 news_desk overlay | UI 配置 | `39ca6e4` |
-| **日期展示** | (a) `_derive_lower_third_from_basic` append event_date 到 subtitle (b) DateStampOverlay 持续角标 | `basic_info.event_date` | `5bc249f` |
+| chapter | singleton | analysis.json chapters | top_strip / start_card 多选 |
+| subtitle | N | 各 1 SRT | 1 |
+| text_watermark | N | 字面值 | 1 |
+| image_watermark | N | 图片路径 | 1 |
 
-附加：
-- 工作台「渲 20s 预览」按钮（`output.preview.mp4` / 选行作锚点 / lead-in 2s）—— `146d53c`
-- 弃用方案：「Hero 上三分之一」「TopicStrip 章节前缀加日期」（用户判定不合适）
+延后：**名牌**（等 context.json 真有结构化发言人数据）
 
-### v0.2 还差 1 项 —— `PullQuote`（金句弹屏）
+详见 `[[project_news_desk_status]]`、`[[feedback_no_code_structure_in_ux]]`。
 
-- **数据来源**：`subtitles/<iso>.hotclips.json` 的 `hook` 字段 + `start` / `end`
-- **形态**：hotclip 时段中段，屏幕中央偏上短暂 (3-5 秒) 大字 + 半透明黑底
-- **抄作业模板**：ChapterPointCard L3 band 那套套路（dataclass + style + libass builder + canvas mirror + workbench add/derive 按钮）；定位逻辑改成「中央偏上」而非「下三分之一」
-- 估计：~1 会话
+#### 2. context.json 升级（fe8b3d1）
 
-### 当前会话状态
+basic_info.json 重新定位为**用户给 AI 的线索（可能错）**，context.json 是**AI 校正后的权威版本**。
+- SourceContext 加 5 个 anchor 字段（host / host_bio / event_date / event_location / episode_topic）
+- 总 15 字段
+- AI 必须搜索核实并输出权威值（"Vance" → "JD Vance"）
+- combined_dict 优先级翻转：context 非空胜 basic_info
+- 下游统一读 combined_dict
 
-- HEAD: `5bc249f`（已 push origin/main）
-- workspace clean
-- 用户已实测 v0.2 现有功能 OK（截图验过 watermark / L3 / TopicStrip / 字幕底衬都正常烧录）
-- 下次：开 PullQuote 或先 v0.3 优先级讨论
+#### 3. AI 输出层简化（76c7342）
+
+`subtitle.pack` 任务从"一锅 5+ 分钟"降到 "2.1 分钟"：
+- key_points 从 list[dict{text, start_sec, end_sec}] **回退**到 list[str]（移除时间戳要求）
+- 章节组件砍掉 `key_points_popup` 视觉模式
+- ClaudeCode 提供商加 `--effort low` lean 模式（subtitle.post 走它）
+- 实测全片 53 分钟 SRT：Sonnet + low effort + 简化 prompt = **125.9s, 29 章节, 90 key_points**
+
+经验：不要让单次 AI 调用做太多事；不要硬要 AI 做"程序工种"（如逐 cue 找时间戳），AI 会逃避或思考爆炸。
+
+### 当前打开的任务（按优先级）
+
+参见任务系统：
+- **#13** ✓ 已完成
+- **#18 [P2]** 渲染层支持 N 条字幕（解锁 subtitle 组件多实例真正发挥）
+- **#19 [P2]** 渲染层支持 N 个水印
+- **#20** 已收尾（按"简化版"路线落地，非原计划"加时间戳"）
+- **#21 [P3]** 章节"结尾小结"模式 + 段落 overlay 渲染
+
+### 名牌组件（延后）
+
+#13 完成后，context.json 有了 host/host_bio/host_affiliation。但仍缺**多发言人结构化数据**（speakers 列表 + 出场时段）。等到 AI 提取多发言人或新数据 schema 出现时再做。
+
+参见 `[[project_news_desk_status]]` 关于"名牌延后"原因。
+
+### 下一步候选
+
+1. **#18 / #19** —— 渲染层 N-字幕 / N-水印，让 v0.4 多实例承诺真正兑现
+2. 真实使用 v0.4 + AI 简化版几天，攒反馈
+3. 拓展到其它工作台（clip_script、bilingual_video 用同一组件框架重构？）
+
+让用户决定。
 
 ---
 
-## 已知潜在 bug（next-session 顺手清）
+## 仍生效的开发约定
 
-`src/tools/subtitle/subtitle_tool.py` 有 4 处 `logger.debug` / `logger.exception` 调用——HubLogger 不支持这俩方法（只有 `info/warning/error`），命中任何错误路径就会再抛 `AttributeError`。新 news_desk 类似问题已在本会话修掉，subtitle_tool 还遗留。
-
-行号（截至 `5bc249f`）：
-- `491` / `517` / `652` — `logger.debug(...)` → 改 `logger.warning(...)`
-- `1444` — `logger.exception("Subtitle burn failed")` → 改 `logger.error(...)` + `traceback.format_exc()`
-
----
-
-## 关键参考路径
-
-- 渲染框架：`src/core/composition/news_desk_overlays.py`
-  - `build_news_desk_ass` 是合并 .ass 入口；新 overlay kind 加 dispatch 分支
-  - 最新可抄作业的两个 builder：
-    - `_build_chapter_point_card_dialogues`（L3 band + 3 层 dialogue 共享 `\move`+`\fad`）
-    - `_build_date_stamp_dialogues`（无动画 / 可选背景的最简版）
-- canvas 镜像：`src/ui/composition_preview.html`
-  - `_drawChapterPointCard` / `_drawDateStamp`；wrap helper `_wrapTextCjk`
-- 数据加载：
-  - chapters → `src/core/chapters_io.load_analysis()`
-  - hotclips → `subtitles/<iso>.hotclips.json`（schema 见 `subtitle_analysis_runners.py::HOTCLIPS_SCHEMA`）
-- 派生按钮模式：`news_desk_tool.py::_derive_chapter_cards_from_analysis`（一段一条 + 幂等清旧 + 错误对话框）
-- 工作台 style form：`_build_style_form` / `_build_sub_row` / `_apply_style_to_vars` / `_on_style_var_changed` 是四件套，新加 style 字段必须四处都改
+- prompt 改动必须 git commit（不能只改 src/core/prompts.py 不刷盘 prompts/*.md，反过来也是）
+- 修 ComponentSpec 改组件原语前回看 `[[feedback_no_code_structure_in_ux]]`
+- AI 任务设计前看 `[[feedback_ai_call_budget]]` + `[[reference_claude_cli_options]]`
 
 ---
 
 ## 不在本任务范围（备忘）
 
-- v0.3+ 候选见 `docs/draft/news-desk-derivative.md` 第 3 节
-- timeline 拖拽编辑（B 路径）—— v0.2 全部完成后再评估，看用户是否真需要
-- AI 增强 overlay（嘉宾自动派生 / 智能金句挑选）—— v0.3 暂搁
+- v0.3 设计文档 `docs/draft/news_desk-ux-v0.3.md` **已被 v0.4 模型推翻**——A/B 分类、模式选择那部分错了
+- timeline 拖拽编辑——v0.4 砍掉了，列表顺序 = z-order，足够
+- 名牌 / PullQuote / 引文 / 数据卡 等新组件——等需求清楚再加
