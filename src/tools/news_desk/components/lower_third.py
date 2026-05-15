@@ -86,6 +86,7 @@ register(ComponentSpec(
     kind="lower_third",
     dataclass_type=LowerThirdOverlay,
     label_key="tool.news_desk.add.lower_third",
+    name_key="tool.news_desk.kind.lower_third",
     default_factory=_factory,
     format_content=_format,
     build_edit_fields=_build_edit_fields,

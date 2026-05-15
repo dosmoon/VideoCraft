@@ -59,6 +59,7 @@ register(ComponentSpec(
     kind="topic_strip",
     dataclass_type=TopicStripOverlay,
     label_key="tool.news_desk.add.topic_strip",
+    name_key="tool.news_desk.kind.topic_strip",
     default_factory=_factory,
     format_content=_format,
     build_edit_fields=_build_edit_fields,

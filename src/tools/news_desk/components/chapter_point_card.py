@@ -77,6 +77,7 @@ register(ComponentSpec(
     kind="chapter_point_card",
     dataclass_type=ChapterPointCardOverlay,
     label_key="tool.news_desk.add.chapter_point_card",
+    name_key="tool.news_desk.kind.chapter_point_card",
     default_factory=_factory,
     format_content=_format,
     build_edit_fields=_build_edit_fields,

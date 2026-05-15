@@ -66,9 +66,12 @@ class ComponentSpec:
       dataclass_type  — overlay dataclass class. Used for isinstance
                         dispatch when refreshing the list and when
                         derive handlers want to filter existing overlays.
-      label_key       — i18n key for the button/menu label (e.g.
+      label_key       — i18n key for the "+ Add" button/menu label (e.g.
                         "tool.news_desk.add.lower_third"). The host adds
                         the leading "+ " visual itself.
+      name_key        — i18n key for the bare component name (used as
+                        group header in the list). e.g.
+                        "tool.news_desk.kind.lower_third" → "名牌".
       default_factory — (duration:float) -> overlay instance with sane
                         defaults. Called when the user clicks "+ Add".
       format_content  — (overlay) -> str. One-line content summary shown
@@ -83,6 +86,7 @@ class ComponentSpec:
     kind: str
     dataclass_type: type
     label_key: str
+    name_key: str
     default_factory: Callable
     format_content: Callable
     build_edit_fields: Callable

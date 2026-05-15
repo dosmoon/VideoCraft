@@ -72,6 +72,7 @@ register(ComponentSpec(
     kind="date_stamp",
     dataclass_type=DateStampOverlay,
     label_key="tool.news_desk.add.date_stamp",
+    name_key="tool.news_desk.kind.date_stamp",
     default_factory=_factory,
     format_content=_format,
     build_edit_fields=_build_edit_fields,

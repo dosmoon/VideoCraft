@@ -263,16 +263,21 @@ class NewsDeskApp(ToolBase):
         of = ttk.LabelFrame(parent, text=tr("tool.news_desk.overlays.frame"))
         of.pack(fill="both", expand=True, padx=6, pady=4)
 
-        cols = ("kind", "start", "end", "content")
-        self.tree = ttk.Treeview(of, columns=cols, show="headings", height=8)
-        self.tree.heading("kind",    text=tr("tool.news_desk.col.kind"))
+        # Grouped tree: each registry component kind is a top-level node;
+        # its instances live as children. show="tree headings" gives us the
+        # native ▼/▶ disclosure on group rows + value columns for the
+        # leaves. iid prefix disambiguates: "g:<kind>" for groups,
+        # "i:<idx>" for instances.
+        cols = ("start", "end", "content")
+        self.tree = ttk.Treeview(of, columns=cols, show="tree headings", height=10)
+        self.tree.heading("#0",      text=tr("tool.news_desk.col.kind"))
         self.tree.heading("start",   text=tr("tool.news_desk.col.start"))
         self.tree.heading("end",     text=tr("tool.news_desk.col.end"))
         self.tree.heading("content", text=tr("tool.news_desk.col.content"))
-        self.tree.column("kind",    width=90,  anchor="w")
-        self.tree.column("start",   width=70,  anchor="e")
-        self.tree.column("end",     width=70,  anchor="e")
-        self.tree.column("content", width=240, anchor="w")
+        self.tree.column("#0",      width=160, anchor="w", stretch=False)
+        self.tree.column("start",   width=70,  anchor="e", stretch=False)
+        self.tree.column("end",     width=70,  anchor="e", stretch=False)
+        self.tree.column("content", width=260, anchor="w")
         self.tree.pack(side="top", fill="both", expand=True, padx=4, pady=4)
         self.tree.bind("<Double-1>", lambda _e: self._edit_selected())
         # Single-click any row → preview seeks to that overlay's start_sec
@@ -985,15 +990,46 @@ class NewsDeskApp(ToolBase):
     # ── Overlay list ops ────────────────────────────────────────────────────
 
     def _refresh_overlay_tree(self) -> None:
+        """Rebuild the grouped tree: one parent node per registry kind,
+        instance rows nested underneath. Empty groups still render with
+        a (0) count so the user sees what kinds are available."""
+        # Save expand state so toggling doesn't slam closed on every
+        # refresh. Defaults to expanded for any group not seen before.
+        prev_open = {iid: bool(self.tree.item(iid, "open"))
+                      for iid in self.tree.get_children("")}
         self.tree.delete(*self.tree.get_children())
+
+        # Bucket overlays by spec.kind. Items not matching any registered
+        # kind get dropped from the list view (legacy data on disk would
+        # surface here — the warning lands once per refresh).
+        by_kind: dict[str, list[tuple[int, object]]] = {
+            s.kind: [] for s in nd_components.all_specs()}
         for i, ov in enumerate(self._overlays):
-            kind = ov.kind
-            start = f"{ov.start_sec:.1f}"
-            end = f"{ov.end_sec:.1f}"
             spec = nd_components.spec_for(ov)
-            content = spec.format_content(ov) if spec else ""
-            self.tree.insert("", "end", iid=str(i),
-                              values=(kind, start, end, content))
+            if spec is None:
+                continue
+            by_kind[spec.kind].append((i, ov))
+
+        header_fmt = tr("tool.news_desk.kind.header_fmt")
+        for spec in nd_components.all_specs():
+            entries = by_kind[spec.kind]
+            group_iid = f"g:{spec.kind}"
+            group_label = header_fmt.format(
+                name=tr(spec.name_key), count=len(entries))
+            self.tree.insert(
+                "", "end", iid=group_iid, text=group_label, open=True,
+                values=("", "", ""))
+            for idx, ov in entries:
+                self.tree.insert(
+                    group_iid, "end", iid=f"i:{idx}", text="",
+                    values=(f"{ov.start_sec:.1f}",
+                              f"{ov.end_sec:.1f}",
+                              spec.format_content(ov)))
+
+        # Restore expand state for groups we still have.
+        for iid, was_open in prev_open.items():
+            if iid in self.tree.get_children(""):
+                self.tree.item(iid, open=was_open)
 
     def _seek_to_selected(self) -> None:
         idx = self._selected_index()
@@ -1007,11 +1043,17 @@ class NewsDeskApp(ToolBase):
             logger.warning(f"news_desk seek failed: {e}")
 
     def _selected_index(self) -> int:
+        """Return the overlay index for the selected instance row, or -1
+        if nothing or a group header is selected. Instance iids are
+        formatted "i:<idx>", group iids "g:<kind>"."""
         sel = self.tree.selection()
         if not sel:
             return -1
+        iid = sel[0]
+        if not iid.startswith("i:"):
+            return -1
         try:
-            return int(sel[0])
+            return int(iid[2:])
         except ValueError:
             return -1
 
