@@ -70,6 +70,7 @@ def style_to_web_dict(style: CompositionStyle) -> dict:
             "text_fontsize": wm.text_fontsize,
             "text_color": wm.text_color,
             "text_opacity": wm.text_opacity,
+            "image_path": wm.image_path,
             "image_scale": wm.image_scale,
             "image_opacity": wm.image_opacity,
             "position": wm.position,
@@ -220,6 +221,30 @@ class CompositionPreview:
         so the cue list reflects the same slice + max_chars wrap the
         ffmpeg burn will produce — preview ≡ render."""
         self._call_js(f"window.vc.setCues({json.dumps(cues, ensure_ascii=False)})")
+
+    def set_extra_subtitles(self, specs: list[dict]) -> None:
+        """Push N independent extra subtitle tracks (news_desk path).
+
+        Each spec entry shape:
+            {
+                "line": {fontsize, color, bold, is_chinese, bg_color,
+                          bg_opacity, bg_padding_x_pct},
+                "position": "top" | "bottom",
+                "block_margin_pct": float,
+                "cues": [{start, end, text}, ...],
+            }
+        Pass [] to clear. Independent of set_cues / set_cues_secondary —
+        these are NOT routed through the legacy sub1/sub2 stack.
+        """
+        self._call_js(
+            f"window.vc.setExtraSubtitles({json.dumps(specs, ensure_ascii=False)})")
+
+    def set_extra_watermarks(self, wms: list[dict]) -> None:
+        """Push N additional watermarks (news_desk path). Each entry is a
+        WatermarkStyle-shaped dict (see style_to_web_dict's `watermark` block
+        for fields). Pass [] to clear."""
+        self._call_js(
+            f"window.vc.setExtraWatermarks({json.dumps(wms, ensure_ascii=False)})")
 
     def set_cues_secondary(self, cues: list[dict]) -> None:
         """Push the secondary (sub2) cue list. Same shape and same source

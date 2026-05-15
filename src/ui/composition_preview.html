@@ -82,6 +82,20 @@ let clipMeta = { hook: "", outro: "", hookLines: null, outroLines: null };
 let cues  = [];   // sub1 — primary
 let cues2 = [];   // sub2 — secondary (bilingual)
 
+// N independent subtitle tracks (news_desk path). Each entry is
+//   { line: {fontsize, color, bold, is_chinese, bg_color, bg_opacity,
+//            bg_padding_x_pct},
+//     position: "top"|"bottom",
+//     block_margin_pct: 0.09,
+//     cues: [{start, end, text}, ...] }
+// Drawn after the legacy sub1/sub2 pair; each anchors independently
+// (no shared track_gap), matching the renderer's per-spec MarginV.
+let extraSubs = [];
+
+// N independent watermarks (news_desk path). Each entry mirrors the
+// styleState.watermark shape — drawn after the singular slot.
+let extraWms = [];
+
 // "reframe" (default) | "passthrough". Passthrough means the burn keeps
 // source resolution/aspect verbatim, so the canvas uses the video's
 // natural dims (no crop rect UI, no dimming).
@@ -178,6 +192,14 @@ window.vc = {
     cues2 = Array.isArray(arr) ? arr.filter(c =>
         c && typeof c.text === 'string' &&
         typeof c.start === 'number' && typeof c.end === 'number') : [];
+    drawOverlay();
+  },
+  setExtraSubtitles(arr) {
+    extraSubs = Array.isArray(arr) ? arr.filter(e => e && e.line) : [];
+    drawOverlay();
+  },
+  setExtraWatermarks(arr) {
+    extraWms = Array.isArray(arr) ? arr.filter(w => w && w.enabled) : [];
     drawOverlay();
   },
   setOutputMode(mode) {
@@ -632,7 +654,8 @@ function drawSubtitles() {
   const sub2 = sub.sub2 && sub.sub2.enabled
     ? { ...sub.sub2, text: live2 != null ? live2 : sub.sub2.text }
     : null;
-  if (!sub1 && !sub2) return;
+  // NOTE: don't early-return when sub1+sub2 are both null — extraSubs
+  // (news_desk N-track path) may still need to render below.
 
   const blockPct = (typeof sub.block_margin_pct === "number")
                      ? sub.block_margin_pct : 0.08;
@@ -654,43 +677,59 @@ function drawSubtitles() {
       const isOuter = (anchor === "top") ? (line === sub1) : (line === sub2);
       y = subtitleBaselineY(blockPct, gapPct, !isOuter, anchor, oy, ch);
     }
-    const px = subtitleFontPx(line.fontsize);
-    const weight = line.bold ? "bold " : "";
-    ctx.font = `${weight}${px}px sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "alphabetic";
-
-    // Per-line backdrop — mirrors libass BorderStyle=3 box mode.
-    // bg_opacity=0 keeps legacy outline-only rendering.
-    const text = line.text || "";
-    if (line.bg_opacity > 0 && text) {
-      const tw = ctx.measureText(text).width;
-      // bg_padding_x_pct is fraction of frame HEIGHT (matches the libass
-      // Outline value derived from target_h in _build_subtitle_force_style).
-      const padPctH = (line.bg_padding_x_pct != null
-                        ? line.bg_padding_x_pct : 0.006);
-      const padPx = Math.max(2, padPctH * ch);
-      // Box covers ascender↔descender of the text line; px is a fair
-      // approximation since libass measures the actual font metrics.
-      const boxH = px + padPx * 2;
-      const boxW = tw + padPx * 2;
-      const boxX = ox + cw / 2 - boxW / 2;
-      const boxY = y - px + padPx * 0.2 - padPx;   // align baseline-ish
-      ctx.fillStyle = _hexToRgba(line.bg_color || "#000000", line.bg_opacity);
-      ctx.fillRect(boxX, boxY, boxW, boxH);
-    }
-
-    if (sub.stroke_width > 0 && line.bg_opacity <= 0) {
-      // Outline only when box mode is off — libass also drops the outline
-      // when BorderStyle=3 takes over, so the preview matches.
-      ctx.strokeStyle = sub.stroke_color || "#000";
-      ctx.lineWidth = (sub.stroke_width || 2) * (px / 24);
-      ctx.lineJoin = "round";
-      ctx.strokeText(text, ox + cw / 2, y);
-    }
-    ctx.fillStyle = line.color || "#FFF";
-    ctx.fillText(text, ox + cw / 2, y);
+    drawSubtitleLine(line, y, ox, cw, ch, sub.stroke_color, sub.stroke_width);
   }
+
+  // N independent extra tracks (news_desk path). Each anchors at its own
+  // block_margin_pct from its own position edge — no shared track_gap.
+  // Stroke borrows the global stroke_color/width from the legacy slot.
+  for (const es of extraSubs) {
+    const line = es.line;
+    if (!line) continue;
+    const live = pickActiveCueFrom(es.cues);
+    const text = (live != null) ? live : "";
+    if (!text) continue;
+    const renderLine = { ...line, text };
+    const eAnchor = es.position || "bottom";
+    const eBlock = (typeof es.block_margin_pct === "number")
+                     ? es.block_margin_pct : 0.09;
+    const y = (eAnchor === "top")
+                ? oy + ch * eBlock + subtitleFontPx(line.fontsize)
+                : oy + ch * (1.0 - eBlock);
+    drawSubtitleLine(renderLine, y, ox, cw, ch,
+                       sub.stroke_color, sub.stroke_width);
+  }
+}
+
+// One subtitle line at a fixed baseline `y`. Pulled out of drawSubtitles
+// so the legacy sub1/sub2 stack and the N-track extras path share styling.
+function drawSubtitleLine(line, y, ox, cw, ch, strokeColor, strokeWidth) {
+  const px = subtitleFontPx(line.fontsize);
+  const weight = line.bold ? "bold " : "";
+  ctx.font = `${weight}${px}px sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  const text = line.text || "";
+  if (line.bg_opacity > 0 && text) {
+    const tw = ctx.measureText(text).width;
+    const padPctH = (line.bg_padding_x_pct != null
+                      ? line.bg_padding_x_pct : 0.006);
+    const padPx = Math.max(2, padPctH * ch);
+    const boxH = px + padPx * 2;
+    const boxW = tw + padPx * 2;
+    const boxX = ox + cw / 2 - boxW / 2;
+    const boxY = y - px + padPx * 0.2 - padPx;
+    ctx.fillStyle = _hexToRgba(line.bg_color || "#000000", line.bg_opacity);
+    ctx.fillRect(boxX, boxY, boxW, boxH);
+  }
+  if ((strokeWidth || 0) > 0 && line.bg_opacity <= 0) {
+    ctx.strokeStyle = strokeColor || "#000";
+    ctx.lineWidth = (strokeWidth || 2) * (px / 24);
+    ctx.lineJoin = "round";
+    ctx.strokeText(text, ox + cw / 2, y);
+  }
+  ctx.fillStyle = line.color || "#FFF";
+  ctx.fillText(text, ox + cw / 2, y);
 }
 
 // Mirrors core/composition/fonts.py:y_expr_for_position. Returns the TOP
@@ -812,7 +851,15 @@ function pixelOffsetFromPct(pct, dim) {
 }
 
 function drawWatermark() {
-  const wm = styleState.watermark;
+  if (styleState.watermark && styleState.watermark.enabled) {
+    drawSingleWatermark(styleState.watermark);
+  }
+  for (const wm of extraWms) {
+    drawSingleWatermark(wm);
+  }
+}
+
+function drawSingleWatermark(wm) {
   if (!wm || !wm.enabled) return;
   const { ox, oy, cw, ch } = cropBox();
   // Mirrors core.composition.layout.pixel_offset: normalized margins,
@@ -836,22 +883,49 @@ function drawWatermark() {
     ctx.globalAlpha = 1;
   } else {
     const ww = (wm.image_scale || 0.15) * cw;
-    const wh = ww * 0.6;
-    const wx = right  ? (ox + cw - marginX - ww) : (ox + marginX);
-    const wy = bottom ? (oy + ch - marginY - wh) : (oy + marginY);
+    const img = _wmImage(wm.image_path);
     ctx.globalAlpha = (wm.image_opacity != null ? wm.image_opacity : 100) / 100;
-    ctx.fillStyle = "rgba(255,255,255,0.20)";
-    ctx.fillRect(wx, wy, ww, wh);
-    ctx.strokeStyle = "rgba(255,255,255,0.65)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(wx, wy, ww, wh);
-    ctx.fillStyle = "rgba(255,255,255,0.80)";
-    ctx.font = `${Math.max(12, ww*0.10)}px sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText("LOGO", wx + ww/2, wy + wh/2);
+    if (img && img.complete && img.naturalWidth > 0) {
+      const wh = ww * (img.naturalHeight / img.naturalWidth);
+      const wx = right  ? (ox + cw - marginX - ww) : (ox + marginX);
+      const wy = bottom ? (oy + ch - marginY - wh) : (oy + marginY);
+      ctx.drawImage(img, wx, wy, ww, wh);
+    } else {
+      // Image not loaded yet (or path empty/missing) — placeholder so the
+      // user still sees position + scale while the bitmap streams in.
+      const wh = ww * 0.6;
+      const wx = right  ? (ox + cw - marginX - ww) : (ox + marginX);
+      const wy = bottom ? (oy + ch - marginY - wh) : (oy + marginY);
+      ctx.fillStyle = "rgba(255,255,255,0.20)";
+      ctx.fillRect(wx, wy, ww, wh);
+      ctx.strokeStyle = "rgba(255,255,255,0.65)";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(wx, wy, ww, wh);
+      ctx.fillStyle = "rgba(255,255,255,0.80)";
+      ctx.font = `${Math.max(12, ww*0.10)}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(wm.image_path ? "loading…" : "LOGO",
+                    wx + ww/2, wy + wh/2);
+    }
     ctx.globalAlpha = 1;
   }
+}
+
+// Image cache keyed by absolute file path. drawImage needs an HTMLImageElement
+// so we lazily new Image()+load on first sight; once loaded the next paint
+// (250ms tick or any drawOverlay call) draws the real bitmap.
+const _wmImageCache = {};
+function _wmImage(path) {
+  if (!path) return null;
+  const cached = _wmImageCache[path];
+  if (cached) return cached;
+  const img = new Image();
+  // file:// URL — WebView2 allows local images on file:/// pages.
+  img.src = "file:///" + path.replace(/\\/g, "/");
+  img.onload = () => drawOverlay();
+  _wmImageCache[path] = img;
+  return img;
 }
 
 // ── interaction (crop rect drag) ─────────────────────────────────────────

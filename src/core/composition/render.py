@@ -57,12 +57,38 @@ ProgressCallback = Callable[[str, int], None]   # (stage, percent 0-100)
 # ── Public dataclasses ──────────────────────────────────────────────────────
 
 @dataclass
+class ExtraSubtitleSpec:
+    """One additional subtitle track beyond the legacy sub1/sub2 slots.
+
+    Each spec carries its own SRT, SubtitleLineStyle, position and
+    block_margin — i.e. each track is fully independent (no shared
+    track_gap layout). news_desk consumes this path because every
+    subtitle component is a free-standing instance with its own anchor.
+    """
+    srt_path: str
+    line: "SubtitleLineStyle"
+    position: str = "bottom"            # "top" | "bottom"
+    block_margin_pct: float = 0.09      # fraction of frame height
+
+
+@dataclass
 class CompositionRequest:
     """All inputs needed for one render_composition() call.
 
     Built by the consumer (e.g. AI Clip workbench, subtitle burn) from a
     hotclip entry / SRT pair + the user's current CompositionStyle + the
     project's source video.
+
+    Subtitle tracks come in via two paths:
+      - Legacy 2-track shared-layout path: `source_srt` / `source_srt_secondary`
+        plus `style.subtitle.sub1` / `sub2` (clip + bilingual subtitle burn).
+      - N-track independent path: `extra_subtitles` — each entry is an
+        ExtraSubtitleSpec carrying its own SRT/style/position (news_desk).
+    Both paths can coexist in one render; jobs render in declared order.
+
+    Watermarks: legacy `style.watermark` is the singular slot
+    (clip / subtitle); `extra_watermarks` carries any additional
+    WatermarkStyle entries (news_desk emits all of them here).
     """
     source_video: str
     start_sec: float
@@ -75,6 +101,8 @@ class CompositionRequest:
     outro_text: str = ""                # rendered as bottom overlay during outro window
     crop_rect: Optional[dict] = None    # {x,y,w,h} normalized; None = center crop
     overlays: list = field(default_factory=list)    # list[OverlaySpec] — future news_desk overlays
+    extra_subtitles: list = field(default_factory=list)    # list[ExtraSubtitleSpec]
+    extra_watermarks: list = field(default_factory=list)   # list[WatermarkStyle]
 
 
 @dataclass
@@ -350,7 +378,8 @@ def _ass_bgr_with_alpha(hex_color: str, opacity_0_100: int) -> str:
 def _build_subtitle_force_style(line: SubtitleLineStyle,
                                   subtitle: SubtitleStyle,
                                   *, margin_v: int,
-                                  target_h: int) -> str:
+                                  target_h: int,
+                                  position: Optional[str] = None) -> str:
     """ASS force_style string for one subtitle track. When
     `line.bg_opacity > 0` the track switches to libass opaque-box mode
     (BorderStyle=3) — a translucent rectangle is drawn behind each cue
@@ -382,7 +411,7 @@ def _build_subtitle_force_style(line: SubtitleLineStyle,
         ]
     parts += [
         f"Bold={1 if line.bold else 0}",
-        f"Alignment={ass_alignment_for_position(subtitle.position)}",
+        f"Alignment={ass_alignment_for_position(position or subtitle.position)}",
         f"MarginV={margin_v}",
     ]
     return ",".join(parts)
@@ -618,6 +647,7 @@ _news_desk_overlays.register()
 def _named_overlay_jobs(req: CompositionRequest,
                           sub1_srt: Optional[str],
                           sub2_srt: Optional[str],
+                          extra_sub_tmps: list[tuple[str, ExtraSubtitleSpec]],
                           *, target_h: int) -> list[_OverlayJob]:
     """Convert the named style sections + req.hook_text/outro_text into
     _OverlayJob records. z_order chosen so the visible stacking matches
@@ -643,6 +673,17 @@ def _named_overlay_jobs(req: CompositionRequest,
                 margin_v=margin_v2, target_h=target_h),
         }))
 
+    # Extra independent subtitle tracks (news_desk path). Each spec has its
+    # own position + block_margin → its own MarginV + Alignment in libass.
+    for i, (tmp_path, espec) in enumerate(extra_sub_tmps):
+        jobs.append(_OverlayJob(kind="subtitle_libass", z_order=12 + i, data={
+            "srt_path": tmp_path,
+            "force_style": _build_subtitle_force_style(
+                espec.line, style.subtitle,
+                margin_v=libass_margin_v(espec.block_margin_pct),
+                target_h=target_h, position=espec.position),
+        }))
+
     # Watermark — image or text (mutually exclusive). High z_order so the
     # logo / channel bug paints on top of everything else (broadcast
     # convention: corner bugs override L3 banners + chapter strips).
@@ -653,6 +694,16 @@ def _named_overlay_jobs(req: CompositionRequest,
         else:
             jobs.append(_OverlayJob(kind="text_watermark", z_order=61,
                                       data={"watermark": style.watermark}))
+
+    # Extra watermarks (news_desk: N watermark components → N drawtext /
+    # overlay filters chained together). Each one is independent — its own
+    # position + opacity + margins.
+    for i, ewm in enumerate(req.extra_watermarks):
+        if not ewm.enabled:
+            continue
+        kind = "image_watermark" if ewm.type == "image" else "text_watermark"
+        jobs.append(_OverlayJob(kind=kind, z_order=62 + i,
+                                  data={"watermark": ewm}))
 
     # Hook + Outro card.
     if req.hook_text:
@@ -779,6 +830,14 @@ def render_composition(
     tmp_srt2_path = _prepare_track_srt(
         req.source_srt_secondary, style.subtitle.sub2, "sub2")
 
+    # Extra independent subtitle tracks (news_desk N-track path). Each
+    # spec gets its own sliced+wrapped temp SRT keyed by index for cleanup.
+    extra_sub_tmps: list[tuple[str, ExtraSubtitleSpec]] = []
+    for i, espec in enumerate(req.extra_subtitles):
+        tmp = _prepare_track_srt(espec.srt_path, espec.line, f"sub_extra_{i}")
+        if tmp:
+            extra_sub_tmps.append((tmp, espec))
+
     # ── Build filter_complex via overlay dispatch ─────────────────────────
     parts: list[str] = []
     if style.output.mode == "passthrough":
@@ -801,7 +860,7 @@ def render_composition(
     )
 
     jobs = _named_overlay_jobs(req, tmp_srt_path, tmp_srt2_path,
-                                target_h=target_h)
+                                extra_sub_tmps, target_h=target_h)
     for job in jobs:
         renderer = _OVERLAY_RENDERERS.get(job.kind)
         if renderer is None:
@@ -856,7 +915,9 @@ def render_composition(
                         on_progress("encoding", pct)
         proc.wait()
     finally:
-        for p in (tmp_srt_path, tmp_srt2_path):
+        cleanup_paths = [tmp_srt_path, tmp_srt2_path]
+        cleanup_paths.extend(p for p, _ in extra_sub_tmps)
+        for p in cleanup_paths:
             if p and os.path.exists(p):
                 try:
                     os.unlink(p)

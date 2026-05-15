@@ -35,7 +35,8 @@ from core import derivative_types
 from core.composition import presets as comp_presets
 from core.composition.preview import CompositionPreview
 from core.composition.render import (
-    CompositionRequest, prepare_subtitle_cues, render_composition,
+    CompositionRequest, ExtraSubtitleSpec,
+    prepare_subtitle_cues, render_composition,
 )
 from core.composition.style import (
     CompositionStyle, SubtitleLineStyle, SubtitleStyle, WatermarkStyle,
@@ -643,11 +644,14 @@ class NewsDeskApp(ToolBase):
 
     # ── Render translation: components → CompositionRequest fragments ────
 
-    def _build_render_inputs(self) -> tuple[CompositionStyle, str | None,
-                                              str | None, list]:
+    def _build_render_inputs(self) -> tuple[CompositionStyle,
+                                              list[ExtraSubtitleSpec],
+                                              list[WatermarkStyle], list]:
         """Translate the current components list into:
-          (CompositionStyle with subtitle+watermark filled,
-           sub1 SRT path, sub2 SRT path, overlay list).
+          (CompositionStyle with sub1/sub2 + style.watermark disabled,
+           list of ExtraSubtitleSpec — one per enabled subtitle component,
+           list of WatermarkStyle — one per enabled watermark component,
+           overlay list — chapter cards, lower thirds, etc.).
         Renderer + preview are then driven by these uniformly.
         """
         # Start from preset's CompositionStyle but reset the parts
@@ -662,7 +666,7 @@ class NewsDeskApp(ToolBase):
 
         overlays: list = []
         sub_inputs: list[dict] = []     # ordered
-        wm_chosen: WatermarkStyle | None = None
+        wm_inputs: list[WatermarkStyle] = []
 
         for comp in self._components:
             spec = nd_components.spec_for_instance(comp)
@@ -678,37 +682,32 @@ class NewsDeskApp(ToolBase):
             if isinstance(ov, list):
                 overlays.extend(ov)
             wm = frag.get("watermark")
-            if wm is not None and wm_chosen is None:
-                wm_chosen = wm
+            if wm is not None:
+                wm_inputs.append(wm)
             sub = frag.get("subtitle")
             if sub is not None:
                 sub_inputs.append(sub)
 
-        if wm_chosen is not None:
-            style.watermark = wm_chosen
+        # All subtitles + watermarks ride the N-track render path. The
+        # legacy sub1/sub2 + style.watermark slots are kept disabled —
+        # news_desk components are independent instances by design (each
+        # carries its own position + style), not a shared-layout pair.
+        style.subtitle.sub1.enabled = False
+        style.subtitle.sub2.enabled = False
 
-        # Map subtitle inputs to sub1 / sub2. First one dictates shared
-        # position + block_margin. Beyond 2 are silently dropped (UI
-        # surfaces the limit as a hint inside the subtitle panel).
-        srt1 = srt2 = None
-        if sub_inputs:
-            first = sub_inputs[0]
-            style.subtitle.sub1 = first["line"]
-            style.subtitle.position = first.get("position", "bottom")
-            style.subtitle.block_margin_pct = first.get("block_margin_pct", 0.09)
-            srt1 = first.get("srt_path") or None
-        else:
-            # No subtitle component at all — disable both lines.
-            style.subtitle.sub1.enabled = False
-            style.subtitle.sub2.enabled = False
-        if len(sub_inputs) > 1:
-            second = sub_inputs[1]
-            style.subtitle.sub2 = second["line"]
-            srt2 = second.get("srt_path") or None
-        else:
-            style.subtitle.sub2.enabled = False
+        extra_subs: list[ExtraSubtitleSpec] = []
+        for sub in sub_inputs:
+            srt_path = sub.get("srt_path") or ""
+            if not srt_path:
+                continue
+            extra_subs.append(ExtraSubtitleSpec(
+                srt_path=srt_path,
+                line=sub["line"],
+                position=sub.get("position", "bottom"),
+                block_margin_pct=sub.get("block_margin_pct", 0.09),
+            ))
 
-        return style, srt1, srt2, overlays
+        return style, extra_subs, wm_inputs, overlays
 
     # ── Preview push ──────────────────────────────────────────────────────
 
@@ -716,26 +715,52 @@ class NewsDeskApp(ToolBase):
         if self._preview is None:
             return
         try:
-            style, srt1, srt2, overlays = self._build_render_inputs()
+            style, extra_subs, extra_wms, overlays = self._build_render_inputs()
             self._preview.set_style(style)
             self._preview.set_overlays(overlays)
             short = (min(self._src_w, self._src_h)
                       if self._src_w and self._src_h else 1080)
             aspect = (f"{self._src_w}:{self._src_h}"
                        if self._src_w and self._src_h else "16:9")
-            sub = style.subtitle
-            if srt1:
-                cues1 = prepare_subtitle_cues(
-                    srt1, sub.sub1, aspect=aspect, short_edge=short)
-                self._preview.set_cues(cues1)
-            else:
-                self._preview.set_cues([])
-            if srt2:
-                cues2 = prepare_subtitle_cues(
-                    srt2, sub.sub2, aspect=aspect, short_edge=short)
-                self._preview.set_cues_secondary(cues2)
-            else:
-                self._preview.set_cues_secondary([])
+            # Legacy sub1/sub2 stack stays empty — news_desk components
+            # ride the N-track extras path, where each track anchors
+            # independently (no shared track_gap).
+            self._preview.set_cues([])
+            self._preview.set_cues_secondary([])
+            sub_payload = []
+            for es in extra_subs:
+                cues = prepare_subtitle_cues(
+                    es.srt_path, es.line, aspect=aspect, short_edge=short)
+                sub_payload.append({
+                    "line": {
+                        "fontsize": es.line.fontsize,
+                        "color": es.line.color,
+                        "bold": es.line.bold,
+                        "is_chinese": es.line.is_chinese,
+                        "bg_color": es.line.bg_color,
+                        "bg_opacity": es.line.bg_opacity,
+                        "bg_padding_x_pct": es.line.bg_padding_x_pct,
+                    },
+                    "position": es.position,
+                    "block_margin_pct": es.block_margin_pct,
+                    "cues": cues,
+                })
+            self._preview.set_extra_subtitles(sub_payload)
+            wm_payload = [{
+                "enabled": w.enabled,
+                "type": w.type,
+                "text": w.text,
+                "text_fontsize": w.text_fontsize,
+                "text_color": w.text_color,
+                "text_opacity": w.text_opacity,
+                "image_path": w.image_path,
+                "image_scale": w.image_scale,
+                "image_opacity": w.image_opacity,
+                "position": w.position,
+                "margin_x_pct": w.margin_x_pct,
+                "margin_y_pct": w.margin_y_pct,
+            } for w in extra_wms]
+            self._preview.set_extra_watermarks(wm_payload)
         except Exception as e:
             logger.warning(f"news_desk preview push failed: {e}")
 
@@ -776,15 +801,15 @@ class NewsDeskApp(ToolBase):
             text=tr("tool.news_desk.status.rendering"))
         self.progress["value"] = 0
 
-        style, srt1, srt2, overlays = self._build_render_inputs()
+        style, extra_subs, extra_wms, overlays = self._build_render_inputs()
         req = CompositionRequest(
             source_video=src,
             start_sec=0.0, end_sec=self._duration,
             output_path=out,
             style=style,
-            source_srt=srt1,
-            source_srt_secondary=srt2,
             overlays=overlays,
+            extra_subtitles=extra_subs,
+            extra_watermarks=extra_wms,
         )
         threading.Thread(
             target=self._export_thread, args=(req,), daemon=True).start()
@@ -807,7 +832,7 @@ class NewsDeskApp(ToolBase):
             return
 
         # Anchor: first overlay's start_sec, else t=0.
-        style, srt1, srt2, overlays = self._build_render_inputs()
+        style, extra_subs, extra_wms, overlays = self._build_render_inputs()
         anchor = overlays[0].start_sec if overlays else 0.0
         lead_in = 2.0
         window_len = 20.0
@@ -840,9 +865,9 @@ class NewsDeskApp(ToolBase):
             start_sec=ws, end_sec=we,
             output_path=out,
             style=style,
-            source_srt=srt1,
-            source_srt_secondary=srt2,
             overlays=rebased,
+            extra_subtitles=extra_subs,
+            extra_watermarks=extra_wms,
         )
         threading.Thread(
             target=self._export_thread, args=(req,), daemon=True).start()
