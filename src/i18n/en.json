@@ -1978,7 +1978,6 @@
   "tool.news_desk.subtitle.stroke_width": "Width",
   "tool.news_desk.subtitle.backdrop": "Backdrop (libass opaque box)",
   "tool.news_desk.subtitle.bg_color": "Color",
-  "tool.news_desk.subtitle.render_hint": "Note: render layer currently supports up to 2 subtitles. Beyond 2, only the first 2 enabled instances render.",
   "tool.news_desk.text_wm.default_name": "Text watermark",
   "tool.news_desk.text_wm.text": "Text",
   "tool.news_desk.text_wm.import_event_date": "⇩ Import from event date (basic_info)",

@@ -1,9 +1,8 @@
 """Subtitle component — one SRT track + its visual style.
 
 Each instance binds to ONE SRT file. Project may have 0..N subtitle
-components — render layer currently uses the first 2 enabled ones
-(maps to sub1 / sub2 in CompositionStyle). Beyond 2 are silently
-ignored at render time; UI surfaces a hint.
+components; all enabled instances render via the renderer's N-track
+extras path (each track anchors at its own position + block_margin).
 """
 
 from __future__ import annotations
@@ -156,11 +155,6 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
                  ).pack(side="left")
     ttk.Label(row, text="%").pack(side="left")
 
-    # Hint about render layer limit.
-    ttk.Label(parent, text=tr("tool.news_desk.subtitle.render_hint"),
-              foreground="#888", wraplength=240, justify="left"
-              ).pack(anchor="w", pady=(8, 0))
-
     def _commit(*_):
         instance["name"] = name_v.get()
         instance["enabled"] = bool(enabled_v.get())
@@ -186,9 +180,10 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
 
 
 def _to_render_fragment(instance: dict, ctx: ProjectContext) -> dict:
-    """Subtitle contributes (srt_path, SubtitleLineStyle) — host collects
-    all enabled instances and feeds the first two into render layer's
-    sub1 / sub2 slots."""
+    """Subtitle contributes (srt_path, SubtitleLineStyle, position,
+    block_margin_pct). Host packs all enabled instances into the
+    renderer's extra_subtitles list — each rides as an independent
+    libass track."""
     from core.composition.style import SubtitleLineStyle
     if not instance.get("enabled", True) or not instance.get("srt_path"):
         return {"subtitle": None}

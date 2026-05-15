@@ -1978,7 +1978,6 @@
   "tool.news_desk.subtitle.stroke_width": "描边宽",
   "tool.news_desk.subtitle.backdrop": "底衬 (libass opaque box)",
   "tool.news_desk.subtitle.bg_color": "底色",
-  "tool.news_desk.subtitle.render_hint": "提示：当前渲染层最多承载 2 条字幕。多于 2 条时只渲染前 2 条启用的。",
   "tool.news_desk.text_wm.default_name": "文字水印",
   "tool.news_desk.text_wm.text": "文字",
   "tool.news_desk.text_wm.import_event_date": "⇩ 从事件日期 (basic_info) 导入",

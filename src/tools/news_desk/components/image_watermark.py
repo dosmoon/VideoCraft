@@ -127,9 +127,9 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
 
 def _to_render_fragment(instance: dict, _ctx: ProjectContext) -> dict:
     """Translate to a render fragment. Image watermark contributes a
-    WatermarkStyle that the host merges into CompositionStyle.watermark.
-    Render layer currently supports only one watermark — host picks the
-    first enabled instance (this kind or text_watermark)."""
+    WatermarkStyle in image mode. Host packs all enabled watermarks
+    (image + text) into the renderer's extra_watermarks list — each
+    chains as its own movie / overlay pair in filter_complex."""
     from core.composition.style import WatermarkStyle
     if not instance.get("enabled", True) or not instance.get("image_path"):
         return {"watermark": None}

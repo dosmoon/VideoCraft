@@ -5,11 +5,33 @@
 
 ---
 
-## news_desk v0.4 + AI 输出层简化 — 已收尾上线
+## news_desk N-字幕 / N-水印 渲染 + 预览 — 已收尾上线
 
-HEAD: `76c7342` (已 push origin/main)，workspace clean。
+HEAD: `d1ea5da` (已 push origin/main)，workspace clean。
 
 ### 本次会话核心变化
+
+#### 渲染层 N-字幕 / N-水印（d1ea5da）
+
+推翻"前 2 字幕→sub1/sub2，首个水印→style.watermark，其余丢弃"的限制。news_desk 工作台里组件的多实例承诺真正兑现到端到端。
+
+**render.py:**
+- 新 dataclass `ExtraSubtitleSpec`（srt_path + line + position + block_margin_pct），每条独立锚（无共享 track_gap），匹配 news_desk 组件模型
+- `CompositionRequest` 加 `extra_subtitles` / `extra_watermarks` 列表
+- 老 `source_srt` / `source_srt_secondary` + `style.watermark` 不动 — clip + bilingual subtitle burn 继续走 2 轨共享布局路径
+- `_named_overlay_jobs` 每条 extra subtitle 发独立 libass job（自带 MarginV/Alignment），每个 extra watermark 发 drawtext/overlay job
+
+**news_desk_tool:**
+- `_build_render_inputs` 不再 first-2/first-1 截断，全部走 N-track
+- sub1/sub2 + style.watermark 留禁用
+
+**WebView 预览（composition_preview.html + preview.py）:**
+- 新 `setExtraSubtitles` / `setExtraWatermarks` JS API，跟渲染同构
+- `drawSubtitleLine` / `drawSingleWatermark` 抽出复用 helper
+- `drawSubtitles` 不再 sub1+sub2 都 null 时早 return（不然 extras 走不到）
+- 图片水印用 `new Image()` + file:// 真加载，缓存按 path；加载中才显示占位框
+
+### 上次会话遗留（仍生效）
 
 #### 1. news_desk v0.4 components-based 重构（76a65e4）
 
@@ -50,12 +72,9 @@ basic_info.json 重新定位为**用户给 AI 的线索（可能错）**，conte
 
 ### 当前打开的任务（按优先级）
 
-参见任务系统：
-- **#13** ✓ 已完成
-- **#18 [P2]** 渲染层支持 N 条字幕（解锁 subtitle 组件多实例真正发挥）
-- **#19 [P2]** 渲染层支持 N 个水印
-- **#20** 已收尾（按"简化版"路线落地，非原计划"加时间戳"）
+- **#13 / #18 / #19 / #20** ✓ 已完成
 - **#21 [P3]** 章节"结尾小结"模式 + 段落 overlay 渲染
+- **subtitle.py 文案过期** subtitle 组件 property panel 里 `tool.news_desk.subtitle.render_hint` 仍说"前 2 条生效"；text/image_watermark 组件 docstring 也还说"single watermark"。zh+en i18n 同步
 
 ### 名牌组件（延后）
 
@@ -65,9 +84,12 @@ basic_info.json 重新定位为**用户给 AI 的线索（可能错）**，conte
 
 ### 下一步候选
 
-1. **#18 / #19** —— 渲染层 N-字幕 / N-水印，让 v0.4 多实例承诺真正兑现
-2. 真实使用 v0.4 + AI 简化版几天，攒反馈
-3. 拓展到其它工作台（clip_script、bilingual_video 用同一组件框架重构？）
+1. **真实使用攒反馈** — N-字幕/N-水印 + AI 简化版连用几天，看预览/烧录有没有边界 bug
+2. **过期文案清扫**（subtitle.py 的 render_hint + watermark 组件 docstring + i18n zh/en 同步）
+3. **#21 P3** 章节"结尾小结"模式
+4. **章节组件其它视觉模式** v0.4 砍了 `key_points_popup`，可能要补别的章节呈现方式
+5. **组件框架推广** clip_script / bilingual_video 用同一 components-based 重构（大工程，先观察 news_desk 几周再决定）
+6. **多发言人结构化数据 → 名牌组件** 等 AI 提取多发言人或新数据 schema 时再做
 
 让用户决定。
 

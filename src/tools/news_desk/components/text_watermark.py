@@ -142,8 +142,9 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
 
 
 def _to_render_fragment(instance: dict, _ctx: ProjectContext) -> dict:
-    """Text watermark contributes a WatermarkStyle in text mode. Render
-    layer supports one watermark — host picks first enabled."""
+    """Text watermark contributes a WatermarkStyle in text mode. Host
+    packs all enabled watermarks (text + image) into the renderer's
+    extra_watermarks list — each chains as its own drawtext / overlay."""
     from core.composition.style import WatermarkStyle
     if not instance.get("enabled", True) or not instance.get("text", "").strip():
         return {"watermark": None}
