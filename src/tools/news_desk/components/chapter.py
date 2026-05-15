@@ -23,7 +23,7 @@ from tkinter import messagebox, ttk
 from i18n import tr
 from core import chapters_io
 from core.composition.overlays import (
-    ChapterPointCardOverlay, TopicStripOverlay,
+    ChapterHeroCardOverlay, TopicStripOverlay,
 )
 
 from . import ComponentSpec, ImportSource, ProjectContext, register
@@ -31,6 +31,30 @@ from . import ComponentSpec, ImportSource, ProjectContext, register
 
 # Visual mode keys — order matters for default rendering and panel layout.
 MODES = ("top_strip", "start_card", "end_summary")
+
+
+def _fmt_hms(sec) -> str:
+    """Seconds → 'H:MM:SS' (or 'M:SS' under 1 hour). Used in chapter list
+    cells so the user reads time, not raw seconds."""
+    s = max(0, int(round(float(sec or 0))))
+    h, rem = divmod(s, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+
+def _parse_hms(text: str) -> float:
+    """'H:MM:SS' / 'M:SS' / 'S' → seconds. Raises ValueError on bad input."""
+    text = (text or "").strip()
+    if not text:
+        raise ValueError("empty")
+    parts = text.split(":")
+    if len(parts) == 1:
+        return float(parts[0])
+    if len(parts) == 2:
+        return int(parts[0]) * 60 + float(parts[1])
+    if len(parts) == 3:
+        return int(parts[0]) * 3600 + int(parts[1]) * 60 + float(parts[2])
+    raise ValueError(f"bad time: {text}")
 
 
 def _default_instance(_duration: float) -> dict:
@@ -51,11 +75,11 @@ def _default_instance(_duration: float) -> dict:
             },
             "start_card": {
                 "title_color": "#FFFFFF",
-                "title_fontsize": 38,
+                "title_fontsize": 56,
                 "body_color": "#E5E7EB",
-                "body_fontsize": 22,
+                "body_fontsize": 28,
                 "bg_color": "#000000",
-                "bg_opacity": 70,
+                "bg_opacity": 75,
                 "duration_sec": 6,
             },
             "end_summary": {
@@ -180,29 +204,103 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
             on_change()
         v.trace_add("write", _toggle)
 
-    # Chapter list — read-only summary for MVP. Editing chapters lives
-    # in the chapter editor tool; here we just snapshot from analysis.json.
+    # Chapter list — click row to seek the preview, double-click a cell
+    # to edit start/end/title inline. Snapshotted from analysis.json via
+    # the import button; live edits land back in instance["schedule"].
     ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=6)
     ttk.Label(parent, text=tr("tool.news_desk.chapter.list_section"),
               font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
 
-    chapters = instance.get("schedule") or []
+    chapters = instance.setdefault("schedule", [])
     if chapters:
-        # Compact list — start/end + title.
         tree = ttk.Treeview(parent, columns=("start", "end", "title"),
                               show="headings", height=10)
         tree.heading("start", text="起")
         tree.heading("end", text="止")
         tree.heading("title", text="标题")
-        tree.column("start", width=60, anchor="e", stretch=False)
-        tree.column("end", width=60, anchor="e", stretch=False)
+        tree.column("start", width=80, anchor="e", stretch=False)
+        tree.column("end", width=80, anchor="e", stretch=False)
         tree.column("title", width=300, anchor="w")
         tree.pack(fill="x", pady=2)
-        for ch in chapters:
-            tree.insert("", "end", values=(
-                f"{float(ch.get('start_sec', 0)):.0f}",
-                f"{float(ch.get('end_sec', 0)):.0f}",
+        for idx, ch in enumerate(chapters):
+            tree.insert("", "end", iid=str(idx), values=(
+                _fmt_hms(ch.get("start_sec", 0)),
+                _fmt_hms(ch.get("end_sec", 0)),
                 ch.get("title", "")))
+
+        def _on_select(_evt=None):
+            sel = tree.selection()
+            if not sel or not ctx.seek_to:
+                return
+            try:
+                idx = int(sel[0])
+                ctx.seek_to(float(chapters[idx].get("start_sec", 0)))
+            except (ValueError, IndexError, Exception):
+                pass
+        tree.bind("<<TreeviewSelect>>", _on_select)
+
+        def _start_edit(event):
+            region = tree.identify("region", event.x, event.y)
+            if region != "cell":
+                return
+            rowid = tree.identify_row(event.y)
+            colid = tree.identify_column(event.x)
+            if not rowid or not colid:
+                return
+            try:
+                idx = int(rowid)
+            except ValueError:
+                return
+            if not (0 <= idx < len(chapters)):
+                return
+            col_idx = int(colid.replace("#", "")) - 1
+            col_name = ("start", "end", "title")[col_idx]
+            bbox = tree.bbox(rowid, colid)
+            if not bbox:
+                return
+
+            ch = chapters[idx]
+            if col_name == "title":
+                init = ch.get("title", "")
+            else:
+                init = _fmt_hms(ch.get(f"{col_name}_sec", 0))
+
+            entry_var = tk.StringVar(value=init)
+            entry = tk.Entry(tree, textvariable=entry_var)
+            entry.place(x=bbox[0], y=bbox[1],
+                          width=bbox[2], height=bbox[3])
+            entry.focus_set()
+            entry.select_range(0, "end")
+
+            committed = {"done": False}
+            def _commit(*_):
+                if committed["done"]:
+                    return
+                committed["done"] = True
+                new_val = entry_var.get()
+                if col_name == "title":
+                    ch["title"] = new_val
+                    tree.set(rowid, "title", new_val)
+                else:
+                    try:
+                        sec = _parse_hms(new_val)
+                    except ValueError:
+                        entry.destroy()
+                        return
+                    ch[f"{col_name}_sec"] = sec
+                    tree.set(rowid, col_name, _fmt_hms(sec))
+                entry.destroy()
+                on_change()
+            def _cancel(*_):
+                if committed["done"]:
+                    return
+                committed["done"] = True
+                entry.destroy()
+
+            entry.bind("<Return>", _commit)
+            entry.bind("<FocusOut>", _commit)
+            entry.bind("<Escape>", _cancel)
+        tree.bind("<Double-Button-1>", _start_edit)
     else:
         ttk.Label(parent,
                   text=tr("tool.news_desk.chapter.list_empty"),
@@ -269,14 +367,18 @@ def _to_render_fragment(instance: dict, _ctx: ProjectContext) -> dict:
                 topic_text=title, start_sec=s, end_sec=e,
             ))
 
-        # start_card — hero card at chapter start; MVP renders the title
-        # via ChapterPointCardOverlay (refined as a multi-line variant
-        # comes when render layer learns paragraph mode).
+        # start_card — hero card at chapter start (centered, large title +
+        # multi-line refined body on a dark backdrop). Per-instance style
+        # overrides ride along via inline_style so the property panel's
+        # edits actually drive the render.
         if modes.get("start_card") and (title or refined):
-            dur = float(style.get("start_card", {}).get("duration_sec", 6))
-            text = title if title else refined[:60]
-            overlays.append(ChapterPointCardOverlay(
-                text=text, start_sec=s, end_sec=min(e, s + dur),
+            sc = style.get("start_card", {}) or {}
+            dur = float(sc.get("duration_sec", 6))
+            inline = {k: v for k, v in sc.items() if k != "duration_sec"}
+            overlays.append(ChapterHeroCardOverlay(
+                title=title, body=refined,
+                start_sec=s, end_sec=min(e, s + dur),
+                inline_style=inline,
             ))
 
         # end_summary — DEFERRED (renderer doesn't have a recap card kind

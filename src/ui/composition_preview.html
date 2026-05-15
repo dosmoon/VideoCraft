@@ -349,6 +349,8 @@ function drawNewsDeskOverlays() {
       _drawTopicStrip(ov, ox, oy, cw, ch);
     } else if (ov.kind === "chapter_point_card") {
       _drawChapterPointCard(ov, ox, oy, cw, ch);
+    } else if (ov.kind === "chapter_hero_card") {
+      _drawChapterHeroCard(ov, ox, oy, cw, ch);
     } else if (ov.kind === "date_stamp") {
       _drawDateStamp(ov, ox, oy, cw, ch);
     }
@@ -548,6 +550,138 @@ function _drawChapterPointCard(ov, ox, oy, cw, ch) {
   }
 
   ctx.restore();
+}
+
+function _drawChapterHeroCard(ov, ox, oy, cw, ch) {
+  // Centered hero card — large title + multi-line body on a dark backdrop.
+  // Mirrors core/composition/news_desk_overlays.py::_build_chapter_hero_card_dialogues.
+  const baseSt = _resolveOverlayStyle("chapter_hero_card", ov.style_class) || {};
+  // Inline overrides from the chapter component property panel.
+  const st = Object.assign({}, baseSt, ov.inline_style || {});
+
+  const titleSize = st.title_fontsize != null ? st.title_fontsize : 56;
+  const bodySize  = st.body_fontsize  != null ? st.body_fontsize  : 28;
+  const padX = Math.max(8, (st.padding_x_pct != null ? st.padding_x_pct : 0.035) * cw);
+  const padY = Math.max(6, (st.padding_y_pct != null ? st.padding_y_pct : 0.030) * ch);
+  const gap  = Math.max(4, (st.title_body_gap_pct != null ? st.title_body_gap_pct : 0.020) * ch);
+  const yPct = st.y_pct != null ? st.y_pct : 0.45;
+  const maxCardW = Math.max(80, (st.max_width_pct != null ? st.max_width_pct : 0.72) * cw);
+  const bodyMaxChars = Math.max(4, st.body_max_chars_per_line != null ? st.body_max_chars_per_line : 36);
+  const bodyMaxLines = Math.max(1, st.body_max_lines != null ? st.body_max_lines : 4);
+  const titleMaxChars = Math.max(4, Math.floor(bodyMaxChars * 0.7));
+
+  const title = (ov.title || "").trim();
+  const body  = (ov.body  || "").trim();
+  const titleWrapped = title ? _wrapTextCjkN(title, titleMaxChars, 1) : [];
+  const bodyWrapped  = body  ? _wrapTextCjkN(body, bodyMaxChars, bodyMaxLines) : [];
+
+  if (titleWrapped.length === 0 && bodyWrapped.length === 0) return;
+
+  // Animation — fade in/out only; no slide for this size.
+  const t = vid.currentTime || 0;
+  const tIn  = (t - ov.start_sec) * 1000;
+  const tOut = (ov.end_sec - t)   * 1000;
+  if (tIn < 0 || tOut < 0) return;
+  const fadeIn  = st.fade_in_ms  != null ? st.fade_in_ms  : 400;
+  const fadeOut = st.fade_out_ms != null ? st.fade_out_ms : 350;
+  let alpha = 1.0;
+  if (fadeIn > 0 && tIn < fadeIn)   alpha = Math.min(alpha, tIn / fadeIn);
+  if (fadeOut > 0 && tOut < fadeOut) alpha = Math.min(alpha, tOut / fadeOut);
+  if (alpha <= 0.01) return;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  const titleW = titleWrapped.reduce((m, ln) => Math.max(m, _estTextWidthPx(ln, titleSize)), 0);
+  const bodyW  = bodyWrapped.reduce ((m, ln) => Math.max(m, _estTextWidthPx(ln, bodySize)),  0);
+  const textW  = Math.min(maxCardW - padX * 2, Math.max(titleW, bodyW));
+  const nT = titleWrapped.length;
+  const nB = bodyWrapped.length;
+  const textBlockH = nT * titleSize
+                       + ((nT && nB) ? gap : 0)
+                       + nB * bodySize;
+
+  const cardW = Math.min(maxCardW, textW + padX * 2);
+  const cardH = textBlockH + padY * 2;
+  const cardX = ox + (cw - cardW) / 2;
+  const cardY = oy + ch * yPct - cardH / 2;
+  const textCx = cardX + cardW / 2;
+  const titleTop = cardY + padY;
+  const bodyTop  = titleTop + nT * titleSize + ((nT && nB) ? gap : 0);
+
+  // Backdrop card.
+  ctx.fillStyle = _hexToRgba(st.bg_color || "#000000",
+                                st.bg_opacity != null ? st.bg_opacity : 75);
+  ctx.fillRect(cardX, cardY, cardW, cardH);
+
+  ctx.textAlign = "center";
+  ctx.textBaseline = "top";
+  const fontName = st.font || "Microsoft YaHei";
+
+  // Title.
+  if (nT > 0) {
+    ctx.fillStyle = st.title_color || "#FFFFFF";
+    ctx.font = `${st.title_bold === false ? "" : "bold "}${titleSize}px "${fontName}", sans-serif`;
+    for (let i = 0; i < nT; i++) {
+      ctx.fillText(titleWrapped[i], textCx, titleTop + i * titleSize);
+    }
+  }
+  // Body.
+  if (nB > 0) {
+    ctx.fillStyle = st.body_color || "#E5E7EB";
+    ctx.font = `${st.body_bold ? "bold " : ""}${bodySize}px "${fontName}", sans-serif`;
+    for (let i = 0; i < nB; i++) {
+      ctx.fillText(bodyWrapped[i], textCx, bodyTop + i * bodySize);
+    }
+  }
+
+  ctx.restore();
+}
+
+function _wrapTextCjkN(text, maxChars, maxLines) {
+  // Like _wrapTextCjk but with configurable maxLines. Surplus past
+  // maxLines is appended with an ellipsis on the last line.
+  text = (text || "").trim();
+  if (!text || maxChars <= 0 || maxLines <= 0) return [];
+  const cost = (ch) => (ch.charCodeAt(0) > 0x2E80 ? 1.0 : 0.5);
+  const lines = [];
+  let cur = [];
+  let curW = 0;
+  let lastBreak = -1;
+  let overflow = false;
+  for (const ch of text) {
+    const w = cost(ch);
+    if (curW + w > maxChars && cur.length > 0) {
+      if (lastBreak >= 0 && cur[cur.length - 1].charCodeAt(0) <= 0x2E80) {
+        lines.push(cur.slice(0, lastBreak).join("").replace(/\s+$/, ""));
+        cur = cur.slice(lastBreak + 1);
+        curW = cur.reduce((s, c) => s + cost(c), 0);
+        lastBreak = -1;
+      } else {
+        lines.push(cur.join(""));
+        cur = [];
+        curW = 0;
+        lastBreak = -1;
+      }
+      if (lines.length >= maxLines) { overflow = true; break; }
+    }
+    cur.push(ch);
+    curW += w;
+    if (ch === " ") lastBreak = cur.length - 1;
+  }
+  if (cur.length > 0 && lines.length < maxLines) {
+    lines.push(cur.join("").replace(/\s+$/, ""));
+  } else if (cur.length > 0) {
+    overflow = true;
+  }
+  if (overflow && lines.length > 0) {
+    let tail = lines[lines.length - 1];
+    while (tail && [...tail].reduce((s, c) => s + cost(c), 0) > maxChars - 0.5) {
+      tail = tail.slice(0, -1);
+    }
+    lines[lines.length - 1] = (tail.replace(/\s+$/, "") || "") + "…";
+  }
+  return lines;
 }
 
 function _drawDateStamp(ov, ox, oy, cw, ch) {

@@ -41,7 +41,7 @@ from core.subtitle_ops import (
 from .style import CompositionStyle, SubtitleStyle, SubtitleLineStyle, \
     WatermarkStyle, HookOutroStyle, compute_subtitle_max_chars
 from .overlays import (
-    ChapterPointCardOverlay, DateStampOverlay,
+    ChapterHeroCardOverlay, ChapterPointCardOverlay, DateStampOverlay,
     LowerThirdOverlay, OverlaySpec, TopicStripOverlay,
 )
 from .layout import libass_margin_v, pixel_offset
@@ -722,7 +722,8 @@ def _named_overlay_jobs(req: CompositionRequest,
     news_desk_specs: list = []
     for spec in req.overlays:
         if isinstance(spec, (LowerThirdOverlay, TopicStripOverlay,
-                              ChapterPointCardOverlay, DateStampOverlay)):
+                              ChapterPointCardOverlay,
+                              ChapterHeroCardOverlay, DateStampOverlay)):
             news_desk_specs.append(spec)
         elif isinstance(spec, OverlaySpec):
             jobs.append(_OverlayJob(

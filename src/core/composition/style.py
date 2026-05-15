@@ -244,6 +244,42 @@ class ChapterPointCardStyle:
 
 
 @dataclass
+class ChapterHeroCardStyle:
+    """Hero/intro card — large centered card carrying a chapter title +
+    multi-line body. Bigger than ChapterPointCardStyle (a thin L3 band)
+    and centered rather than lower-third anchored.
+
+    Card auto-sizes to fit text + padding, capped at max_width_pct of
+    the frame width. Body text wraps to body_max_lines lines (surplus
+    truncated with …).
+    """
+    # Title (large, top of card).
+    title_color: str = "#FFFFFF"
+    title_fontsize: int = 56
+    title_bold: bool = True
+    # Body (smaller, multi-line under title).
+    body_color: str = "#E5E7EB"
+    body_fontsize: int = 28
+    body_bold: bool = False
+    # Card backdrop.
+    bg_color: str = "#000000"
+    bg_opacity: int = 75
+    # Card geometry — fractions of frame dim.
+    max_width_pct: float = 0.72
+    padding_x_pct: float = 0.035
+    padding_y_pct: float = 0.030
+    title_body_gap_pct: float = 0.020
+    y_pct: float = 0.45               # vertical center; 0.45 sits slightly above middle
+    # Body wrap budget.
+    body_max_chars_per_line: int = 36
+    body_max_lines: int = 4
+    # Animation.
+    fade_in_ms: int = 400
+    fade_out_ms: int = 350
+    font: str = "Microsoft YaHei"
+
+
+@dataclass
 class DateStampStyle:
     """Visual style for DateStampOverlay — small persistent corner label.
 
@@ -273,6 +309,7 @@ OVERLAY_STYLE_CLASSES: dict[str, type] = {
     "lower_third": LowerThirdStyle,
     "topic_strip": TopicStripStyle,
     "chapter_point_card": ChapterPointCardStyle,
+    "chapter_hero_card": ChapterHeroCardStyle,
     "date_stamp": DateStampStyle,
 }
 

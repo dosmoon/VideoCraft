@@ -26,11 +26,11 @@ from typing import Iterable
 from core.subtitle_ops import escape_ffmpeg_path, hex_color_to_ass
 
 from .overlays import (
-    ChapterPointCardOverlay, DateStampOverlay,
+    ChapterHeroCardOverlay, ChapterPointCardOverlay, DateStampOverlay,
     LowerThirdOverlay, TopicStripOverlay,
 )
 from .style import (
-    ChapterPointCardStyle, DateStampStyle,
+    ChapterHeroCardStyle, ChapterPointCardStyle, DateStampStyle,
     LowerThirdStyle, TopicStripStyle,
     resolve_overlay_style,
 )
@@ -172,6 +172,55 @@ def _wrap_text_cjk(text: str, max_chars: int) -> list[str]:
         while tail and sum(_cost(c) for c in tail) > max_chars - 0.5:
             tail = tail[:-1]
         lines[1] = (tail.rstrip() + "…") if tail else "…"
+    return lines
+
+
+def _wrap_text_cjk_n(text: str, max_chars: int, max_lines: int) -> list[str]:
+    """Like _wrap_text_cjk but with configurable max_lines (≥ 1).
+    Surplus past max_lines is appended with an ellipsis on the last line."""
+    text = (text or "").strip()
+    if not text or max_chars <= 0 or max_lines <= 0:
+        return []
+
+    def _cost(ch: str) -> float:
+        return 1.0 if ord(ch) > 0x2E80 else 0.5
+
+    lines: list[str] = []
+    cur: list[str] = []
+    cur_w = 0.0
+    last_break = -1
+    overflow = False
+    for ch in text:
+        w = _cost(ch)
+        if cur_w + w > max_chars and cur:
+            if last_break >= 0 and ord(cur[-1]) <= 0x2E80:
+                lines.append("".join(cur[:last_break]).rstrip())
+                cur = cur[last_break + 1:]
+                cur_w = sum(_cost(c) for c in cur)
+                last_break = -1
+            else:
+                lines.append("".join(cur))
+                cur = []
+                cur_w = 0.0
+                last_break = -1
+            if len(lines) >= max_lines:
+                overflow = True
+                break
+        cur.append(ch)
+        cur_w += w
+        if ch == " ":
+            last_break = len(cur) - 1
+
+    if cur and len(lines) < max_lines:
+        lines.append("".join(cur).rstrip())
+    elif cur:
+        overflow = True
+
+    if overflow and lines:
+        tail = lines[-1]
+        while tail and sum(_cost(c) for c in tail) > max_chars - 0.5:
+            tail = tail[:-1]
+        lines[-1] = (tail.rstrip() + "…") if tail else "…"
     return lines
 
 
@@ -400,6 +449,113 @@ def _build_chapter_point_card_dialogues(
     return lines
 
 
+def _build_chapter_hero_card_dialogues(
+    spec: ChapterHeroCardOverlay, style: ChapterHeroCardStyle,
+    *, target_w: int, target_h: int,
+) -> list[str]:
+    """Centered hero card — title (large) + multi-line body on a
+    semi-transparent backdrop. Used for chapter intro / "now showing"
+    interstitials. Animation: fade in/out (no slide — feels heavier than
+    the L3 card, slide would look fidgety at this size).
+    """
+    title = (spec.title or "").strip()
+    body  = (spec.body  or "").strip()
+    if not (title or body):
+        return []
+
+    title_size = max(12, int(style.title_fontsize))
+    body_size  = max(10, int(style.body_fontsize))
+    pad_x = max(8, int(style.padding_x_pct * target_w))
+    pad_y = max(6, int(style.padding_y_pct * target_h))
+    gap_px = max(4, int(style.title_body_gap_pct * target_h))
+    max_card_w = max(80, int(style.max_width_pct * target_w))
+    max_text_w = max(40, max_card_w - pad_x * 2)
+
+    # Wrap title to 1 line (truncate w/ … if too wide); body to N lines.
+    title_wrapped = _wrap_text_cjk_n(
+        title, max(4, int(style.body_max_chars_per_line * 0.7)), 1
+    ) if title else []
+    body_wrapped = _wrap_text_cjk_n(
+        body, max(4, int(style.body_max_chars_per_line)),
+        max(1, int(style.body_max_lines))
+    ) if body else []
+
+    title_w = max((_est_text_width_px(ln, title_size) for ln in title_wrapped),
+                    default=0.0)
+    body_w = max((_est_text_width_px(ln, body_size) for ln in body_wrapped),
+                   default=0.0)
+    text_w_est = min(max_text_w, max(title_w, body_w))
+
+    n_title = len(title_wrapped)
+    n_body  = len(body_wrapped)
+    text_block_h = (n_title * title_size
+                     + (gap_px if (n_title and n_body) else 0)
+                     + n_body * body_size)
+
+    card_w = int(min(max_card_w, text_w_est + pad_x * 2))
+    card_h = text_block_h + pad_y * 2
+
+    card_x = (target_w - card_w) // 2
+    card_y = int(target_h * style.y_pct) - card_h // 2
+
+    text_cx = card_x + card_w // 2
+    title_top = card_y + pad_y
+    body_top = title_top + n_title * title_size + (gap_px if (n_title and n_body) else 0)
+
+    fade_in  = max(0, int(style.fade_in_ms))
+    fade_out = max(0, int(style.fade_out_ms))
+    fade = (f"\\fad({fade_in},{fade_out})"
+             if (fade_in or fade_out) else "")
+
+    lines: list[str] = []
+
+    # Layer 0 — backdrop card.
+    bg_color = hex_color_to_ass(style.bg_color)
+    bg_alpha = _ass_alpha(style.bg_opacity)
+    band_body = ("{\\an7"
+                  f"\\pos({card_x},{card_y}){fade}"
+                  f"\\bord0\\shad0\\1c{bg_color}\\1a{bg_alpha}\\p1}}"
+                  f"m 0 0 l {card_w} 0 {card_w} {card_h} 0 {card_h}"
+                  "{\\p0}")
+    lines.append(
+        f"Dialogue: 0,{_ass_time(spec.start_sec)},"
+        f"{_ass_time(spec.end_sec)},NewsDeskRect,,0,0,0,,{band_body}"
+    )
+
+    # Layer 1 — title (centered, top of inner block).
+    if title_wrapped:
+        title_color = hex_color_to_ass(style.title_color)
+        # Anchor 8 = top-center; (x, y) is the top-center of the text block.
+        joined = "\\N".join(_ass_escape_text(ln) for ln in title_wrapped)
+        body_str = ("{\\an8"
+                     f"\\pos({text_cx},{title_top}){fade}"
+                     f"\\fn{style.font}\\fs{title_size}"
+                     f"\\1c{title_color}\\bord0\\shad0"
+                     + ("\\b1" if style.title_bold else "")
+                     + "}" + joined)
+        lines.append(
+            f"Dialogue: 1,{_ass_time(spec.start_sec)},"
+            f"{_ass_time(spec.end_sec)},NewsDeskText,,0,0,0,,{body_str}"
+        )
+
+    # Layer 2 — body (centered, below title).
+    if body_wrapped:
+        body_color = hex_color_to_ass(style.body_color)
+        joined = "\\N".join(_ass_escape_text(ln) for ln in body_wrapped)
+        body_str = ("{\\an8"
+                     f"\\pos({text_cx},{body_top}){fade}"
+                     f"\\fn{style.font}\\fs{body_size}"
+                     f"\\1c{body_color}\\bord0\\shad0"
+                     + ("\\b1" if style.body_bold else "")
+                     + "}" + joined)
+        lines.append(
+            f"Dialogue: 2,{_ass_time(spec.start_sec)},"
+            f"{_ass_time(spec.end_sec)},NewsDeskText,,0,0,0,,{body_str}"
+        )
+
+    return lines
+
+
 def _build_date_stamp_dialogues(
     spec: DateStampOverlay, style: DateStampStyle,
     *, target_w: int, target_h: int,
@@ -501,6 +657,19 @@ def build_news_desk_ass(specs: Iterable, *,
             if style is None:
                 style = ChapterPointCardStyle()
             dialogues.extend(_build_chapter_point_card_dialogues(
+                spec, style, target_w=target_w, target_h=target_h))
+        elif isinstance(spec, ChapterHeroCardOverlay):
+            style = resolve_overlay_style(
+                overlay_styles, "chapter_hero_card", spec.style_class)
+            if style is None:
+                style = ChapterHeroCardStyle()
+            # Per-spec inline overrides — chapter component routes its
+            # property panel edits here so changes take effect without
+            # touching the project-wide overlay_styles dict.
+            for k, v in (spec.inline_style or {}).items():
+                if k in ChapterHeroCardStyle.__dataclass_fields__:
+                    setattr(style, k, v)
+            dialogues.extend(_build_chapter_hero_card_dialogues(
                 spec, style, target_w=target_w, target_h=target_h))
         elif isinstance(spec, DateStampOverlay):
             style = resolve_overlay_style(

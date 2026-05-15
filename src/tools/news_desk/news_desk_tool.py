@@ -316,7 +316,8 @@ class NewsDeskApp(ToolBase):
             return
 
         ctx = nd_components.ProjectContext(
-            project=self.project, duration=self._duration)
+            project=self.project, duration=self._duration,
+            seek_to=(self._preview.seek if self._preview else None))
 
         # Spec-built body.
         body = ttk.Frame(self._props_inner)

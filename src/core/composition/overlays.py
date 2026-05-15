@@ -110,6 +110,33 @@ class ChapterPointCardOverlay:
 
 
 @dataclass
+class ChapterHeroCardOverlay:
+    """Chapter intro/hero card — large centered title + multi-line body
+    on a semi-transparent backdrop, shown for the first few seconds of
+    a chapter as a "now showing" interstitial.
+
+    Distinct from ChapterPointCardOverlay (a thin lower-third L3 band):
+    the hero card is bigger, centered, and carries 2 lines of text
+    (chapter title + AI-refined description). The chapter component
+    routes its `start_card` visual mode here.
+
+    inline_style is a per-spec override hatch — chapter.py uses it so
+    the property panel's per-instance style fields actually drive the
+    render instead of being purely cosmetic. Empty dict = use the
+    resolved overlay_styles entry verbatim.
+    """
+    title: str = ""
+    body: str = ""
+    start_sec: float = 0.0
+    end_sec: float = 0.0
+    style_class: str = "default"
+    inline_style: dict = field(default_factory=dict)
+    kind: str = "chapter_hero_card"
+    z_order: int = 46
+    zone: str = "center"
+
+
+@dataclass
 class TopicStripOverlay:
     """Top-edge labeled strip — chapter marker / topic bar.
 
@@ -132,7 +159,7 @@ class TopicStripOverlay:
 # `kind` (str) so this union is purely for static typing convenience.
 OverlayUnion = Union[
     OverlaySpec, LowerThirdOverlay, TopicStripOverlay,
-    ChapterPointCardOverlay, DateStampOverlay,
+    ChapterPointCardOverlay, ChapterHeroCardOverlay, DateStampOverlay,
 ]
 
 
@@ -141,7 +168,7 @@ OverlayUnion = Union[
 # in one shot — extends as new kinds (PullQuote / FullCard / ...) ship.
 TYPED_OVERLAY_KINDS: tuple[type, ...] = (
     OverlaySpec, LowerThirdOverlay, TopicStripOverlay,
-    ChapterPointCardOverlay, DateStampOverlay,
+    ChapterPointCardOverlay, ChapterHeroCardOverlay, DateStampOverlay,
 )
 
 
@@ -168,6 +195,8 @@ def overlay_from_dict(d: dict):
         return TopicStripOverlay(**_filter(d, TopicStripOverlay))
     if kind == "chapter_point_card":
         return ChapterPointCardOverlay(**_filter(d, ChapterPointCardOverlay))
+    if kind == "chapter_hero_card":
+        return ChapterHeroCardOverlay(**_filter(d, ChapterHeroCardOverlay))
     if kind == "date_stamp":
         return DateStampOverlay(**_filter(d, DateStampOverlay))
     return OverlaySpec(**_filter(d, OverlaySpec))

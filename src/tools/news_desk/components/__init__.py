@@ -38,6 +38,10 @@ from tkinter import ttk
 class ProjectContext:
     project: object                  # core.project.Project (duck-typed)
     duration: float                  # full source duration in seconds
+    # Optional preview hooks — host wires these so component panels can
+    # drive the WebView preview (e.g. chapter list click-to-seek).
+    # None when no preview is mounted; callers must guard.
+    seek_to: Callable = None         # (sec: float) -> None
 
 
 # ── Import source declaration ──────────────────────────────────────────────
