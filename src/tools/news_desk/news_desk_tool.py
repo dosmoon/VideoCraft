@@ -176,23 +176,40 @@ class NewsDeskApp(ToolBase):
         self.top_menubtn["menu"] = self.top_menu
         self.top_menubtn.pack(side="left", padx=(8, 0))
 
-        # Middle: list | preview | property panel.
-        pw = ttk.PanedWindow(root, orient="horizontal")
-        pw.pack(side="top", fill="both", expand=True, padx=4, pady=(0, 4))
-        list_outer = ttk.Frame(pw)
-        preview_outer = ttk.Frame(pw)
-        props_outer = ttk.Frame(pw)
-        pw.add(list_outer, weight=2)
-        pw.add(preview_outer, weight=4)
-        pw.add(props_outer, weight=3)
+        # Layout per docs/draft/news_desk-ux-v0.3.md §2 (still valid in
+        # v0.4 — only the bottom-left content changed from "全片属性栏 +
+        # 组件列表" to a single layer list):
+        #
+        #   ┌──────────────────────┬────────────┐
+        #   │   Preview (top)      │ Properties │
+        #   ├──────────────────────┤ (full      │
+        #   │   Layer list (bot)   │  height)   │
+        #   └──────────────────────┴────────────┘
+        #
+        # Outer = horizontal split (left workspace / right inspector).
+        # Left = vertical split (preview on top / list on bottom).
+        outer_pw = ttk.PanedWindow(root, orient="horizontal")
+        outer_pw.pack(side="top", fill="both", expand=True,
+                       padx=4, pady=(0, 4))
 
-        self._build_list_pane(list_outer)
+        left_outer = ttk.Frame(outer_pw)
+        props_outer = ttk.Frame(outer_pw)
+        outer_pw.add(left_outer, weight=4)
+        outer_pw.add(props_outer, weight=3)
+
+        left_pw = ttk.PanedWindow(left_outer, orient="vertical")
+        left_pw.pack(fill="both", expand=True)
+        preview_outer = ttk.Frame(left_pw)
+        list_outer = ttk.Frame(left_pw)
+        left_pw.add(preview_outer, weight=5)
+        left_pw.add(list_outer, weight=4)
 
         self._preview = CompositionPreview(
-            preview_outer, width=520, height=560)
+            preview_outer, width=520, height=400)
         self._preview.widget.pack(fill="both", expand=True, padx=4, pady=4)
         self._preview.enable_crop_drag(False)
 
+        self._build_list_pane(list_outer)
         self._build_property_pane(props_outer)
 
     # ── List pane ──────────────────────────────────────────────────────────

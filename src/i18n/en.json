@@ -1954,7 +1954,7 @@
   "tool.news_desk.add.subtitle": "Subtitle",
   "tool.news_desk.add.text_watermark": "Text watermark",
   "tool.news_desk.add.image_watermark": "Image watermark",
-  "tool.news_desk.list.frame": "Components",
+  "tool.news_desk.list.frame": "Layers",
   "tool.news_desk.list.col.kind": "Type",
   "tool.news_desk.list.col.name": "Name",
   "tool.news_desk.list.add": "+ Add ▾",

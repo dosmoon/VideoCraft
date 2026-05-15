@@ -1954,7 +1954,7 @@
   "tool.news_desk.add.subtitle": "字幕",
   "tool.news_desk.add.text_watermark": "文字水印",
   "tool.news_desk.add.image_watermark": "图片水印",
-  "tool.news_desk.list.frame": "组件",
+  "tool.news_desk.list.frame": "图层",
   "tool.news_desk.list.col.kind": "类型",
   "tool.news_desk.list.col.name": "名字",
   "tool.news_desk.list.add": "+ 添加 ▾",
