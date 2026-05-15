@@ -162,27 +162,20 @@ class NewsDeskApp(ToolBase):
     def _build_ui(self) -> None:
         root = self.master
 
-        # Bottom: export bar (packed first so it never gets squeezed out).
+        # Bottom: status + progress only. Action buttons moved to the
+        # top-bar ⋯ menu (Stage 3a) so the bottom band stays a quiet
+        # feedback strip during render.
         bottom = ttk.Frame(root)
         bottom.pack(side="bottom", fill="x", padx=8, pady=(4, 8))
-        self.btn_export = ttk.Button(
-            bottom, text=tr("tool.news_desk.action.export"),
-            command=self._do_export)
-        self.btn_export.pack(side="right")
-        # 20-second preview render — quick visual verification of styles /
-        # animations without waiting for the full clip. Anchored on the
-        # selected overlay (or t=0 if nothing selected).
-        self.btn_preview_render = ttk.Button(
-            bottom, text=tr("tool.news_desk.action.preview_render"),
-            command=self._do_preview_render)
-        self.btn_preview_render.pack(side="right", padx=(0, 6))
         self.label_status = ttk.Label(bottom, text="", foreground="#666")
         self.label_status.pack(side="left", padx=(0, 8))
         self.progress = ttk.Progressbar(
             bottom, orient=tk.HORIZONTAL, mode="determinate")
         self.progress.pack(side="left", fill="x", expand=True)
 
-        # Top: source video info (read-only).
+        # Top: source video info (read-only) + ⋯ actions menu on the right.
+        # The menu collects all global actions (preset / derive / preview /
+        # export) so the form area stays focused on per-instance editing.
         top = ttk.Frame(root)
         top.pack(side="top", fill="x", padx=8, pady=(8, 4))
         ttk.Label(top, text=tr("tool.news_desk.source.label")
@@ -191,6 +184,12 @@ class NewsDeskApp(ToolBase):
         self.entry_video.pack(side="left", fill="x", expand=True, padx=(4, 8))
         self.label_duration = ttk.Label(top, text="", foreground="#666")
         self.label_duration.pack(side="left")
+
+        self.top_menubtn = ttk.Menubutton(
+            top, text=tr("tool.news_desk.menu.button"), direction="below")
+        self.top_menu = tk.Menu(self.top_menubtn, tearoff=0)
+        self.top_menubtn["menu"] = self.top_menu
+        self.top_menubtn.pack(side="left", padx=(8, 0))
 
         # Middle: form | preview.
         pw = ttk.PanedWindow(root, orient="horizontal")
@@ -209,31 +208,13 @@ class NewsDeskApp(ToolBase):
 
     def _build_form(self, parent: ttk.Frame) -> None:
         # ────────────────────────────────────────────────────────────────────
-        # A-class controls: project-level singletons (preset, subtitle tracks,
+        # A-class controls: project-level singletons (subtitle tracks,
         # subtitle/LT/TS default styles, watermark). One value per project,
-        # `enabled` flags are semantically meaningful here. v0.3 plan moves
-        # these into a collapsible "全片属性栏" + right-side property panel
-        # for the subtitle track. See docs/draft/news_desk-ux-v0.3.md.
+        # `enabled` flags are semantically meaningful here. Preset selection
+        # lives in the top-bar ⋯ menu, not here. v0.3 plan moves these into
+        # collapsible groups + a right-side property panel for the subtitle
+        # track. See docs/draft/news_desk-ux-v0.3.md.
         # ────────────────────────────────────────────────────────────────────
-
-        # Preset.
-        pf = ttk.LabelFrame(parent, text=tr("tool.news_desk.preset.frame"))
-        pf.pack(fill="x", padx=6, pady=(6, 4))
-        self.preset_combo = ttk.Combobox(pf, state="readonly")
-        self.preset_combo.grid(row=0, column=0, columnspan=3,
-                                 padx=4, pady=4, sticky="ew")
-        self.preset_combo.bind("<<ComboboxSelected>>", self._on_preset_pick)
-        ttk.Button(pf, text=tr("tool.news_desk.preset.save"),
-                   command=self._on_preset_save
-                   ).grid(row=1, column=0, padx=2, pady=2, sticky="ew")
-        ttk.Button(pf, text=tr("tool.news_desk.preset.save_as"),
-                   command=self._on_preset_save_as
-                   ).grid(row=1, column=1, padx=2, pady=2, sticky="ew")
-        ttk.Button(pf, text=tr("tool.news_desk.preset.delete"),
-                   command=self._on_preset_delete
-                   ).grid(row=1, column=2, padx=2, pady=2, sticky="ew")
-        for c in range(3):
-            pf.columnconfigure(c, weight=1)
 
         # Subtitles.
         sf = ttk.LabelFrame(parent, text=tr("tool.news_desk.subs.frame"))
@@ -295,7 +276,8 @@ class NewsDeskApp(ToolBase):
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self._seek_to_selected())
 
         # Add buttons + edit/delete — driven by the components/ registry so
-        # adding a new kind requires no edit here.
+        # adding a new kind requires no edit here. Derive entries live in
+        # the top-bar ⋯ menu (registry-driven there too).
         btns = ttk.Frame(of); btns.pack(side="top", fill="x", padx=4, pady=2)
         for spec in nd_components.all_specs():
             ttk.Button(btns, text=tr(spec.label_key),
@@ -305,15 +287,6 @@ class NewsDeskApp(ToolBase):
                    command=self._edit_selected).pack(side="left", padx=2)
         ttk.Button(btns, text=tr("tool.news_desk.delete"),
                    command=self._delete_selected).pack(side="left", padx=2)
-
-        # Derive buttons — one per (component, derive source) pair.
-        btns2 = ttk.Frame(of); btns2.pack(side="top", fill="x", padx=4, pady=2)
-        for spec in nd_components.all_specs():
-            for src in spec.derive_sources:
-                ttk.Button(
-                    btns2, text=tr(src.label_key),
-                    command=lambda s=spec, ds=src: self._derive_component(s, ds)
-                    ).pack(side="left", padx=2)
 
     # ── Style form ──────────────────────────────────────────────────────────
 
@@ -777,7 +750,7 @@ class NewsDeskApp(ToolBase):
                 self.label_duration.config(
                     text=tr("tool.news_desk.duration_fmt", hms=hms))
 
-        self._refresh_preset_combo(select=self._current_preset_name)
+        self._rebuild_top_menu()
         self._apply_style_to_vars(self._current_style)
         self._refresh_overlay_tree()
         self._sync_srt_entries()
@@ -857,18 +830,58 @@ class NewsDeskApp(ToolBase):
         except ValueError:
             return abs_path
 
+    # ── Top-bar ⋯ menu ──────────────────────────────────────────────────────
+
+    def _rebuild_top_menu(self) -> None:
+        """Rebuild the ⋯ menu from current state (preset list, registry,
+        busy flag). Called on init, after preset CRUD, and after registry
+        changes. Cheap enough to fully rebuild every time."""
+        m = self.top_menu
+        m.delete(0, "end")
+
+        # Preset cascade — radio entries for selection + CRUD commands.
+        pmenu = tk.Menu(m, tearoff=0)
+        names = comp_presets.list_news_desk_presets(self._preset_store)
+        cur = self._current_preset_name or ""
+        if cur:
+            pmenu.add_command(
+                label=tr("tool.news_desk.menu.preset.current", name=cur),
+                state="disabled")
+            pmenu.add_separator()
+        for name in names:
+            pmenu.add_radiobutton(
+                label=name,
+                value=name,
+                variable=tk.StringVar(value=cur),  # display-only; click goes via command
+                command=lambda n=name: self._select_preset(n))
+        pmenu.add_separator()
+        pmenu.add_command(label=tr("tool.news_desk.preset.save"),
+                           command=self._on_preset_save)
+        pmenu.add_command(label=tr("tool.news_desk.preset.save_as"),
+                           command=self._on_preset_save_as)
+        pmenu.add_command(label=tr("tool.news_desk.preset.delete"),
+                           command=self._on_preset_delete)
+        m.add_cascade(label=tr("tool.news_desk.menu.preset"), menu=pmenu)
+
+        # Derive cascade — flat, one entry per (component, source) pair.
+        dmenu = tk.Menu(m, tearoff=0)
+        for spec in nd_components.all_specs():
+            for src in spec.derive_sources:
+                dmenu.add_command(
+                    label=tr(src.label_key),
+                    command=lambda s=spec, ds=src: self._derive_component(s, ds))
+        m.add_cascade(label=tr("tool.news_desk.menu.derive"), menu=dmenu)
+
+        m.add_separator()
+        m.add_command(label=tr("tool.news_desk.action.preview_render"),
+                       command=self._do_preview_render)
+        m.add_command(label=tr("tool.news_desk.action.export"),
+                       command=self._do_export)
+
     # ── Preset actions ──────────────────────────────────────────────────────
 
-    def _refresh_preset_combo(self, *, select: str | None = None) -> None:
-        names = comp_presets.list_news_desk_presets(self._preset_store)
-        self.preset_combo["values"] = names
-        if select and select in names:
-            self.preset_combo.set(select)
-        elif names:
-            self.preset_combo.set(names[0])
-
-    def _on_preset_pick(self, _evt=None) -> None:
-        name = self.preset_combo.get()
+    def _select_preset(self, name: str) -> None:
+        """Apply a preset by name (called from menu radio entries)."""
         style = comp_presets.get_news_desk_preset(self._preset_store, name)
         if style is None:
             return
@@ -879,6 +892,7 @@ class NewsDeskApp(ToolBase):
         self._apply_style_to_vars(style)
         self._save_instance_config()
         self._push_preview()
+        self._rebuild_top_menu()
 
     def _on_preset_save(self) -> None:
         name = self._current_preset_name
@@ -899,11 +913,13 @@ class NewsDeskApp(ToolBase):
         comp_presets.set_last_used_news_desk(self._preset_store, name)
         comp_presets.save_news_desk_store(self._preset_store)
         self._current_preset_name = name
-        self._refresh_preset_combo(select=name)
         self._save_instance_config()
+        self._rebuild_top_menu()
 
     def _on_preset_delete(self) -> None:
-        name = self.preset_combo.get()
+        name = self._current_preset_name
+        if not name:
+            return
         if comp_presets.is_builtin_news_desk(name):
             messagebox.showinfo(
                 "VideoCraft",
@@ -913,8 +929,12 @@ class NewsDeskApp(ToolBase):
         if not comp_presets.delete_news_desk_preset(self._preset_store, name):
             return
         comp_presets.save_news_desk_store(self._preset_store)
-        self._refresh_preset_combo()
-        self._on_preset_pick()
+        # Fall back to the first remaining preset (built-in, can't be empty).
+        names = comp_presets.list_news_desk_presets(self._preset_store)
+        if names:
+            self._select_preset(names[0])
+        else:
+            self._rebuild_top_menu()
 
     # ── SRT picking ─────────────────────────────────────────────────────────
 
@@ -1182,8 +1202,7 @@ class NewsDeskApp(ToolBase):
         self._processing = True
         self._skip_sidecar = False
         self.set_busy()
-        self.btn_export.config(state="disabled")
-        self.btn_preview_render.config(state="disabled")
+        self.top_menubtn.config(state="disabled")
         self.label_status.config(
             text=tr("tool.news_desk.status.rendering"))
         self.progress["value"] = 0
@@ -1258,8 +1277,7 @@ class NewsDeskApp(ToolBase):
         self._processing = True
         self._skip_sidecar = True
         self.set_busy()
-        self.btn_export.config(state="disabled")
-        self.btn_preview_render.config(state="disabled")
+        self.top_menubtn.config(state="disabled")
         self.label_status.config(
             text=tr("tool.news_desk.status.preview_rendering",
                     start=f"{ws:.1f}", end=f"{we:.1f}"))
@@ -1294,8 +1312,7 @@ class NewsDeskApp(ToolBase):
     def _on_export_done(self, result) -> None:
         self._processing = False
         self.set_done()
-        self.btn_export.config(state="normal")
-        self.btn_preview_render.config(state="normal")
+        self.top_menubtn.config(state="normal")
         self.label_status.config(
             text=tr("tool.news_desk.status.done", path=result.output_path))
         self.progress["value"] = 100
@@ -1366,8 +1383,7 @@ class NewsDeskApp(ToolBase):
         self._processing = False
         self._skip_sidecar = False
         self.set_error(msg)
-        self.btn_export.config(state="normal")
-        self.btn_preview_render.config(state="normal")
+        self.top_menubtn.config(state="normal")
         self.label_status.config(
             text=tr("tool.news_desk.status.failed"))
         self.progress["value"] = 0
