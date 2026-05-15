@@ -1,16 +1,52 @@
-"""Chapter component — singleton, bound to analysis.json chapters.
+"""Chapter component — singleton.
 
-Each chapter row holds (start, end, title, refined, key_points). Two
-visual modes share this data, multi-select per instance:
-  - top_strip   — top banner, uses `title`
-  - start_card  — chapter-start hero card, uses title + refined
-  - end_summary — chapter-end recap (DEFERRED — needs paragraph overlay)
+Each chapter row holds (start, end, title, refined, key_points) — the
+exact shape of an analysis.json chapter row, but owned by this
+derivative (see ARCHITECTURE NOTE below for the snapshot model).
 
-key_points is text-only enrichment (chapter cards / publish.md /
-hotclip selection inputs). Earlier we tried to render per-point
-popups inside chapters, but asking AI to emit per-point timestamps
-ballooned prompt complexity for negligible UX value — the popups
-themselves were also visually noisy.
+Visual modes are pure render filters on that one schema:
+  - top_strip  — top banner derived from `title`
+  - start_card — centered hero card derived from `title + refined`
+
+A mode is just "render this chapter data this way too" — there's no
+per-row "kind" or extra rows for cards. Adding a hero card means
+ensuring a chapter row exists in the time window where you want the
+hero to appear; toggling start_card on the component decides whether
+heroes get rendered for ALL chapter rows.
+
+key_points is text-only enrichment (publish.md / hotclip selection
+inputs). Earlier we tried per-point popups inside chapters, but asking
+AI to emit per-point timestamps ballooned prompt complexity for
+negligible UX value — the popups themselves were also visually noisy.
+
+═════════════════════════════════════════════════════════════════════
+ARCHITECTURE NOTE — data ownership, current vs target
+═════════════════════════════════════════════════════════════════════
+
+CURRENT (transitional): the schedule entries reuse the analysis.json
+chapter-row shape verbatim (start_sec / end_sec / title / refined /
+key_points). `_import_from_analysis` snapshots that shape into
+instance["schedule"], and the news_desk derivative persists it as-is.
+After import the derivative no longer reads analysis.json — edits to
+schedule live only on this instance.
+
+TARGET: news_desk owns its own independent schema. analysis.json
+becomes one OPTIONAL input among many (alongside SRT, context.json,
+manual entry). Import becomes an explicit conversion step, NOT a
+field-by-field copy. The derivative's data layout is free to diverge
+from analysis.json (e.g. per-row mode toggles, hero/summary as their
+own rows, per-row style overrides).
+
+INDEPENDENCE GOAL: creating a fresh news_desk derivative MUST only
+require a `source` video. SRT, analysis.json, context.json, AI calls —
+all optional enrichments. The user must be able to hand-build a full
+project (add chapters, add hero cards, add end summaries) from an
+empty state and ship it.
+
+KNOWN GAP: `_import_from_analysis` overwrites instance["schedule"]
+wholesale, silently losing any user edits. A future revision needs a
+confirmation prompt + partial-merge strategy (keep manually added
+rows / preserve user-edited titles / detect orphaned rows).
 """
 
 from __future__ import annotations
@@ -29,8 +65,11 @@ from core.composition.overlays import (
 from . import ComponentSpec, ImportSource, ProjectContext, register
 
 
-# Visual mode keys — order matters for default rendering and panel layout.
-MODES = ("top_strip", "start_card", "end_summary")
+# Visual modes — pure render filters on the same chapter data. Each mode
+# decides whether the schedule rows get an additional overlay applied;
+# rows themselves are the single source of truth (title / refined /
+# key_points). Order matters for default rendering + panel layout.
+MODES = ("top_strip", "start_card")
 
 
 def _fmt_hms(sec) -> str:
@@ -65,7 +104,6 @@ def _default_instance(_duration: float) -> dict:
         "modes": {
             "top_strip": True,
             "start_card": False,
-            "end_summary": False,
         },
         "style": {
             "top_strip": {
@@ -82,15 +120,10 @@ def _default_instance(_duration: float) -> dict:
                 "bg_opacity": 75,
                 "duration_sec": 6,
             },
-            "end_summary": {
-                "text_color": "#FFFFFF",
-                "fontsize": 22,
-                "bg_color": "#000000",
-                "bg_opacity": 70,
-                "duration_sec": 5,
-            },
         },
-        # Schedule is the chapters list snapshotted from analysis.json.
+        # Schedule is the chapter rows. Imported from analysis.json or
+        # built by hand via the [+ Add chapter] button — analysis.json is
+        # not required (the news_desk derivative only depends on `source`).
         "schedule": [],
     }
 
@@ -204,108 +237,214 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
             on_change()
         v.trace_add("write", _toggle)
 
-    # Chapter list — click row to seek the preview, double-click a cell
-    # to edit start/end/title inline. Snapshotted from analysis.json via
-    # the import button; live edits land back in instance["schedule"].
+    # Chapter list — toolbar + tree + inline detail editor below.
+    #   click row → seek preview to row.start_sec AND populate detail editor
+    #   detail edits → live-write back into instance["schedule"]
+    # Always rendered (even empty) so the toolbar's [+ Add] is reachable
+    # without analysis.json. No modal dialog — the unused space below the
+    # tree IS the editor surface.
     ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=6)
     ttk.Label(parent, text=tr("tool.news_desk.chapter.list_section"),
               font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
 
     chapters = instance.setdefault("schedule", [])
-    if chapters:
-        tree = ttk.Treeview(parent, columns=("start", "end", "title"),
-                              show="headings", height=10)
-        tree.heading("start", text="起")
-        tree.heading("end", text="止")
-        tree.heading("title", text="标题")
-        tree.column("start", width=80, anchor="e", stretch=False)
-        tree.column("end", width=80, anchor="e", stretch=False)
-        tree.column("title", width=300, anchor="w")
-        tree.pack(fill="x", pady=2)
+
+    toolbar = ttk.Frame(parent); toolbar.pack(fill="x", pady=(2, 0))
+    add_btn = ttk.Button(toolbar, text=tr("tool.news_desk.chapter.add_chapter"))
+    add_btn.pack(side="left")
+    del_btn = ttk.Button(toolbar, text=tr("tool.news_desk.chapter.delete_selected"))
+    del_btn.pack(side="left", padx=(4, 0))
+
+    tree = ttk.Treeview(parent, columns=("start", "end", "title"),
+                          show="headings", height=10)
+    tree.heading("start", text="起")
+    tree.heading("end", text="止")
+    tree.heading("title", text="标题")
+    tree.column("start", width=80, anchor="e", stretch=False)
+    tree.column("end", width=80, anchor="e", stretch=False)
+    tree.column("title", width=300, anchor="w")
+    tree.pack(fill="x", pady=2)
+
+    # ── Detail editor (inline, lives in the dead space below the tree) ──
+    # Single set of widgets shared across rows. _show_row(idx) repopulates
+    # them; user edits flow back via traces. A `loading` guard suppresses
+    # write-traces during repopulation so switching rows isn't recorded
+    # as an edit.
+    detail_frame = ttk.Frame(parent)
+    detail_frame.pack(fill="both", expand=True, pady=(8, 0))
+
+    state = {"idx": None, "loading": False}
+
+    placeholder = ttk.Label(
+        detail_frame,
+        text=tr("tool.news_desk.chapter.detail_placeholder"),
+        foreground="#888")
+    form = ttk.Frame(detail_frame)
+
+    title_v = tk.StringVar()
+    start_v = tk.StringVar()
+    end_v = tk.StringVar()
+
+    row = ttk.Frame(form); row.pack(fill="x", pady=2)
+    ttk.Label(row, text=tr("tool.news_desk.chapter.field.title"),
+              width=8).pack(side="left")
+    ttk.Entry(row, textvariable=title_v).pack(side="left", fill="x", expand=True)
+
+    row = ttk.Frame(form); row.pack(fill="x", pady=2)
+    ttk.Label(row, text=tr("tool.news_desk.chapter.field.start"),
+              width=8).pack(side="left")
+    ttk.Entry(row, textvariable=start_v, width=12).pack(side="left")
+    ttk.Label(row, text=tr("tool.news_desk.chapter.field.end"),
+              width=4).pack(side="left", padx=(12, 0))
+    ttk.Entry(row, textvariable=end_v, width=12).pack(side="left")
+    ttk.Label(row, text="H:MM:SS / M:SS / S",
+              foreground="#888").pack(side="left", padx=(8, 0))
+
+    ttk.Label(form, text=tr("tool.news_desk.chapter.field.refined"),
+              ).pack(anchor="w", pady=(6, 2))
+    refined_text = tk.Text(form, height=4, wrap="word")
+    refined_text.pack(fill="x")
+
+    ttk.Label(form, text=tr("tool.news_desk.chapter.field.key_points"),
+              ).pack(anchor="w", pady=(6, 2))
+    kp_text = tk.Text(form, height=5, wrap="word")
+    kp_text.pack(fill="both", expand=True)
+
+    def _commit_field(*_):
+        if state["loading"]:
+            return
+        idx = state["idx"]
+        if idx is None or not (0 <= idx < len(chapters)):
+            return
+        ch = chapters[idx]
+        ch["title"] = title_v.get()
+        # Times: silently keep prior value when mid-edit string doesn't
+        # parse (e.g. user is typing "1:" before adding minutes). Final
+        # invalid input → tree row falls back to the last good value.
+        try:
+            ch["start_sec"] = _parse_hms(start_v.get())
+        except ValueError:
+            pass
+        try:
+            ch["end_sec"] = _parse_hms(end_v.get())
+        except ValueError:
+            pass
+        ch["refined"] = refined_text.get("1.0", "end-1c")
+        ch["key_points"] = [
+            ln.strip()
+            for ln in kp_text.get("1.0", "end-1c").splitlines()
+            if ln.strip()
+        ]
+        tree.set(str(idx), "start", _fmt_hms(ch["start_sec"]))
+        tree.set(str(idx), "end", _fmt_hms(ch["end_sec"]))
+        tree.set(str(idx), "title", ch["title"])
+        on_change()
+
+    title_v.trace_add("write", _commit_field)
+    start_v.trace_add("write", _commit_field)
+    end_v.trace_add("write", _commit_field)
+
+    def _on_text_modified(widget):
+        if widget.edit_modified():
+            widget.edit_modified(False)
+            _commit_field()
+    refined_text.bind(
+        "<<Modified>>", lambda _e: _on_text_modified(refined_text))
+    kp_text.bind(
+        "<<Modified>>", lambda _e: _on_text_modified(kp_text))
+
+    def _show_row(idx):
+        state["idx"] = idx
+        if idx is None or not (0 <= idx < len(chapters)):
+            form.pack_forget()
+            placeholder.pack(anchor="w", padx=4, pady=8)
+            return
+        placeholder.pack_forget()
+        form.pack(fill="both", expand=True)
+        ch = chapters[idx]
+        state["loading"] = True
+        try:
+            title_v.set(ch.get("title", ""))
+            start_v.set(_fmt_hms(ch.get("start_sec", 0)))
+            end_v.set(_fmt_hms(ch.get("end_sec", 0)))
+            refined_text.delete("1.0", "end")
+            refined_text.insert("1.0", ch.get("refined", ""))
+            refined_text.edit_modified(False)
+            kp_text.delete("1.0", "end")
+            kp_text.insert("1.0", "\n".join(
+                str(s) for s in (ch.get("key_points") or [])))
+            kp_text.edit_modified(False)
+        finally:
+            state["loading"] = False
+
+    def _refresh_tree():
+        for item in tree.get_children():
+            tree.delete(item)
         for idx, ch in enumerate(chapters):
             tree.insert("", "end", iid=str(idx), values=(
                 _fmt_hms(ch.get("start_sec", 0)),
                 _fmt_hms(ch.get("end_sec", 0)),
                 ch.get("title", "")))
 
-        def _on_select(_evt=None):
-            sel = tree.selection()
-            if not sel or not ctx.seek_to:
-                return
+    _refresh_tree()
+    _show_row(None)
+
+    def _on_select(_evt=None):
+        sel = tree.selection()
+        if not sel:
+            _show_row(None)
+            return
+        try:
+            idx = int(sel[0])
+        except ValueError:
+            return
+        if ctx.seek_to:
             try:
-                idx = int(sel[0])
                 ctx.seek_to(float(chapters[idx].get("start_sec", 0)))
-            except (ValueError, IndexError, Exception):
+            except Exception:
                 pass
-        tree.bind("<<TreeviewSelect>>", _on_select)
+        _show_row(idx)
+    tree.bind("<<TreeviewSelect>>", _on_select)
 
-        def _start_edit(event):
-            region = tree.identify("region", event.x, event.y)
-            if region != "cell":
-                return
-            rowid = tree.identify_row(event.y)
-            colid = tree.identify_column(event.x)
-            if not rowid or not colid:
-                return
-            try:
-                idx = int(rowid)
-            except ValueError:
-                return
-            if not (0 <= idx < len(chapters)):
-                return
-            col_idx = int(colid.replace("#", "")) - 1
-            col_name = ("start", "end", "title")[col_idx]
-            bbox = tree.bbox(rowid, colid)
-            if not bbox:
-                return
+    def _add_chapter():
+        # Append a blank row right after the last one (or at t=0). Default
+        # 30s window, capped to source duration when known.
+        last_end = float(chapters[-1].get("end_sec", 0)) if chapters else 0.0
+        dur = float(ctx.duration or 0)
+        end = last_end + 30.0
+        if dur > 0:
+            end = min(end, dur)
+        chapters.append({
+            "start_sec": last_end,
+            "end_sec": end,
+            "title": tr("tool.news_desk.chapter.new_chapter_default"),
+            "refined": "",
+            "key_points": [],
+        })
+        new_idx = len(chapters) - 1
+        _refresh_tree()
+        on_change()
+        tree.selection_set(str(new_idx))
+        # Selection event will populate the detail editor for the new row.
+    add_btn.config(command=_add_chapter)
 
-            ch = chapters[idx]
-            if col_name == "title":
-                init = ch.get("title", "")
-            else:
-                init = _fmt_hms(ch.get(f"{col_name}_sec", 0))
-
-            entry_var = tk.StringVar(value=init)
-            entry = tk.Entry(tree, textvariable=entry_var)
-            entry.place(x=bbox[0], y=bbox[1],
-                          width=bbox[2], height=bbox[3])
-            entry.focus_set()
-            entry.select_range(0, "end")
-
-            committed = {"done": False}
-            def _commit(*_):
-                if committed["done"]:
-                    return
-                committed["done"] = True
-                new_val = entry_var.get()
-                if col_name == "title":
-                    ch["title"] = new_val
-                    tree.set(rowid, "title", new_val)
-                else:
-                    try:
-                        sec = _parse_hms(new_val)
-                    except ValueError:
-                        entry.destroy()
-                        return
-                    ch[f"{col_name}_sec"] = sec
-                    tree.set(rowid, col_name, _fmt_hms(sec))
-                entry.destroy()
-                on_change()
-            def _cancel(*_):
-                if committed["done"]:
-                    return
-                committed["done"] = True
-                entry.destroy()
-
-            entry.bind("<Return>", _commit)
-            entry.bind("<FocusOut>", _commit)
-            entry.bind("<Escape>", _cancel)
-        tree.bind("<Double-Button-1>", _start_edit)
-    else:
-        ttk.Label(parent,
-                  text=tr("tool.news_desk.chapter.list_empty"),
-                  foreground="#666"
-                  ).pack(anchor="w", pady=4)
+    def _delete_selected():
+        sel = tree.selection()
+        if not sel:
+            return
+        if not messagebox.askyesno(
+                "VideoCraft",
+                tr("tool.news_desk.chapter.confirm_delete",
+                    n=len(sel)),
+                parent=parent.winfo_toplevel()):
+            return
+        for i in sorted((int(s) for s in sel), reverse=True):
+            if 0 <= i < len(chapters):
+                chapters.pop(i)
+        _refresh_tree()
+        _show_row(None)
+        on_change()
+    del_btn.config(command=_delete_selected)
 
     def _commit_meta(*_):
         instance["name"] = name_v.get()
@@ -380,9 +519,6 @@ def _to_render_fragment(instance: dict, _ctx: ProjectContext) -> dict:
                 start_sec=s, end_sec=min(e, s + dur),
                 inline_style=inline,
             ))
-
-        # end_summary — DEFERRED (renderer doesn't have a recap card kind
-        # yet; would route to a future EndSummaryOverlay).
 
     return {"overlays": overlays}
 
