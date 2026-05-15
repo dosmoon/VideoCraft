@@ -31,6 +31,7 @@ from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
 from tools.base import ToolBase
 from i18n import tr
 from hub_logger import logger
+from ui.collapsible_frame import CollapsibleFrame, install_style as _install_collapsible_style
 
 from core import derivative_types
 from core.composition import presets as comp_presets
@@ -161,6 +162,7 @@ class NewsDeskApp(ToolBase):
 
     def _build_ui(self) -> None:
         root = self.master
+        _install_collapsible_style(root)
 
         # Bottom: status + progress only. Action buttons moved to the
         # top-bar ⋯ menu (Stage 3a) so the bottom band stays a quiet
@@ -216,11 +218,13 @@ class NewsDeskApp(ToolBase):
         # track. See docs/draft/news_desk-ux-v0.3.md.
         # ────────────────────────────────────────────────────────────────────
 
-        # Subtitles.
-        sf = ttk.LabelFrame(parent, text=tr("tool.news_desk.subs.frame"))
+        # Subtitles. Expanded by default — primary editing surface.
+        sf = CollapsibleFrame(parent, text=tr("tool.news_desk.subs.frame"),
+                                expanded=True)
         sf.pack(fill="x", padx=6, pady=4)
+        body = sf.body
 
-        row = ttk.Frame(sf); row.pack(fill="x", padx=4, pady=2)
+        row = ttk.Frame(body); row.pack(fill="x", padx=4, pady=2)
         ttk.Label(row, text=tr("tool.news_desk.sub1"), width=8
                   ).pack(side="left")
         self.entry_sub1 = ttk.Entry(row, state="readonly")
@@ -231,7 +235,7 @@ class NewsDeskApp(ToolBase):
                    command=lambda: self._pick_srt(1, clear=True)
                    ).pack(side="left", padx=(2, 0))
 
-        row = ttk.Frame(sf); row.pack(fill="x", padx=4, pady=2)
+        row = ttk.Frame(body); row.pack(fill="x", padx=4, pady=2)
         ttk.Label(row, text=tr("tool.news_desk.sub2"), width=8
                   ).pack(side="left")
         self.entry_sub2 = ttk.Entry(row, state="readonly")
@@ -292,14 +296,17 @@ class NewsDeskApp(ToolBase):
 
     def _build_style_form(self, parent: ttk.Frame) -> None:
         # Subtitles section.
-        sf = ttk.LabelFrame(parent, text=tr("tool.news_desk.style.sub.frame"))
+        # Subtitle style — expanded by default (most-edited surface).
+        sf = CollapsibleFrame(parent, text=tr("tool.news_desk.style.sub.frame"),
+                                expanded=True)
         sf.pack(fill="x", padx=6, pady=4)
+        sf_body = sf.body
 
         # Position radio + fine-tune spinboxes. block_margin_pct = distance
         # from the anchored edge (% of frame height); track_gap_pct = gap
         # between sub1 and sub2 baselines. Both let users lift subtitles
         # clear of source-baked chyrons (e.g. White House lower-third).
-        row = ttk.Frame(sf); row.pack(fill="x", padx=4, pady=2)
+        row = ttk.Frame(sf_body); row.pack(fill="x", padx=4, pady=2)
         v_pos = tk.StringVar(value="bottom")
         ttk.Label(row, text=tr("tool.news_desk.style.sub.position"),
                   width=8).pack(side="left")
@@ -333,14 +340,16 @@ class NewsDeskApp(ToolBase):
             (1, True,  28, "#FFFF00", True),
             (2, True,  24, "#FFFFFF", False),
         ):
-            self._build_sub_row(sf, slot,
+            self._build_sub_row(sf_body, slot,
                                   default_show, default_size,
                                   default_color, default_cn)
 
-        # LowerThird default style.
-        lf = ttk.LabelFrame(parent, text=tr("tool.news_desk.style.lt.frame"))
+        # LowerThird default style — collapsed (rarely-edited template).
+        lf = CollapsibleFrame(parent, text=tr("tool.news_desk.style.lt.frame"),
+                                expanded=False)
         lf.pack(fill="x", padx=6, pady=4)
-        row = ttk.Frame(lf); row.pack(fill="x", padx=4, pady=2)
+        lf_body = lf.body
+        row = ttk.Frame(lf_body); row.pack(fill="x", padx=4, pady=2)
         ttk.Label(row, text=tr("tool.news_desk.style.lt.bg"),
                   width=8).pack(side="left")
         self._add_color_picker(row, "lt_bg_color", "#0F172A")
@@ -348,7 +357,7 @@ class NewsDeskApp(ToolBase):
                   width=10).pack(side="left", padx=(8, 0))
         self._add_color_picker(row, "lt_accent_color", "#C8102E")
 
-        row = ttk.Frame(lf); row.pack(fill="x", padx=4, pady=2)
+        row = ttk.Frame(lf_body); row.pack(fill="x", padx=4, pady=2)
         ttk.Label(row, text=tr("tool.news_desk.style.lt.title_size"),
                   width=10).pack(side="left")
         v = tk.IntVar(value=38)
@@ -366,10 +375,11 @@ class NewsDeskApp(ToolBase):
         v2.trace_add("write", lambda *_: self._on_style_var_changed())
         self._style_vars["lt_subtitle_fontsize"] = v2
 
-        # TopicStrip default style.
-        tf = ttk.LabelFrame(parent, text=tr("tool.news_desk.style.ts.frame"))
+        # TopicStrip default style — collapsed.
+        tf = CollapsibleFrame(parent, text=tr("tool.news_desk.style.ts.frame"),
+                                expanded=False)
         tf.pack(fill="x", padx=6, pady=4)
-        row = ttk.Frame(tf); row.pack(fill="x", padx=4, pady=2)
+        row = ttk.Frame(tf.body); row.pack(fill="x", padx=4, pady=2)
         ttk.Label(row, text=tr("tool.news_desk.style.ts.bg"),
                   width=8).pack(side="left")
         self._add_color_picker(row, "ts_bg_color", "#1E40AF")
@@ -386,12 +396,14 @@ class NewsDeskApp(ToolBase):
         self._style_vars["ts_fontsize"] = v
 
         # Watermark — channel name or logo pinned to a corner of the frame.
-        # Exposes the full WatermarkStyle inline: both text + image modes
-        # are visible at once and the `type` radio picks which one renders.
-        wmf = ttk.LabelFrame(parent, text=tr("tool.news_desk.style.wm.frame"))
+        # Collapsed by default; exposes the full WatermarkStyle inline once
+        # opened so both text + image modes are editable in one shot.
+        wmf = CollapsibleFrame(parent, text=tr("tool.news_desk.style.wm.frame"),
+                                 expanded=False)
         wmf.pack(fill="x", padx=6, pady=4)
+        wmf_body = wmf.body
 
-        row = ttk.Frame(wmf); row.pack(fill="x", padx=4, pady=2)
+        row = ttk.Frame(wmf_body); row.pack(fill="x", padx=4, pady=2)
         v_wm_en = tk.BooleanVar(value=False)
         ttk.Checkbutton(row, text=tr("tool.news_desk.style.wm.enabled"),
                          variable=v_wm_en,
@@ -418,7 +430,7 @@ class NewsDeskApp(ToolBase):
         self._style_vars["wm_position"] = v_wm_pos
 
         # Text mode row.
-        row = ttk.Frame(wmf); row.pack(fill="x", padx=4, pady=2)
+        row = ttk.Frame(wmf_body); row.pack(fill="x", padx=4, pady=2)
         ttk.Label(row, text=tr("tool.news_desk.style.wm.text"),
                   width=8).pack(side="left")
         v_wm_text = tk.StringVar(value="")
@@ -447,7 +459,7 @@ class NewsDeskApp(ToolBase):
         self._style_vars["wm_text_opacity"] = v_wm_to
 
         # Image mode row.
-        row = ttk.Frame(wmf); row.pack(fill="x", padx=4, pady=2)
+        row = ttk.Frame(wmf_body); row.pack(fill="x", padx=4, pady=2)
         ttk.Label(row, text=tr("tool.news_desk.style.wm.image"),
                   width=8).pack(side="left")
         v_wm_img = tk.StringVar(value="")
@@ -485,7 +497,7 @@ class NewsDeskApp(ToolBase):
         self._style_vars["wm_image_opacity"] = v_wm_io
 
         # Margins row.
-        row = ttk.Frame(wmf); row.pack(fill="x", padx=4, pady=2)
+        row = ttk.Frame(wmf_body); row.pack(fill="x", padx=4, pady=2)
         ttk.Label(row, text=tr("tool.news_desk.style.wm.margin"),
                   width=8).pack(side="left")
         ttk.Label(row, text="X").pack(side="left", padx=(0, 2))
