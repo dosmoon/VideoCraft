@@ -35,8 +35,7 @@ from hub_logger import logger
 from core import derivative_types
 from core.composition import presets as comp_presets
 from core.composition.overlays import (
-    ChapterPointCardOverlay, DateStampOverlay,
-    LowerThirdOverlay, TopicStripOverlay,
+    LowerThirdOverlay,                    # used by _write_publish_sidecar
     overlay_to_dict, overlay_from_dict,
 )
 from core.composition.preview import CompositionPreview
@@ -49,6 +48,10 @@ from core.composition.style import (
 )
 from core import source_context
 from core import chapters_io
+
+# Importing the package triggers each component module's register() side
+# effect, populating components.REGISTRY before _build_form runs.
+from tools.news_desk import components as nd_components
 
 
 DERIVATIVE_TYPE = "news_desk"
@@ -205,6 +208,14 @@ class NewsDeskApp(ToolBase):
         self._preview.enable_crop_drag(False)
 
     def _build_form(self, parent: ttk.Frame) -> None:
+        # ────────────────────────────────────────────────────────────────────
+        # A-class controls: project-level singletons (preset, subtitle tracks,
+        # subtitle/LT/TS default styles, watermark). One value per project,
+        # `enabled` flags are semantically meaningful here. v0.3 plan moves
+        # these into a collapsible "全片属性栏" + right-side property panel
+        # for the subtitle track. See docs/draft/news_desk-ux-v0.3.md.
+        # ────────────────────────────────────────────────────────────────────
+
         # Preset.
         pf = ttk.LabelFrame(parent, text=tr("tool.news_desk.preset.frame"))
         pf.pack(fill="x", padx=6, pady=(6, 4))
@@ -255,7 +266,15 @@ class NewsDeskApp(ToolBase):
         # via _on_style_var_changed and immediately push the preview.
         self._build_style_form(parent)
 
-        # Overlays.
+        # ────────────────────────────────────────────────────────────────────
+        # B-class controls: time-bound overlay instances (LowerThird /
+        # TopicStrip / ChapterPointCard / DateStamp / ...). Multi-instance,
+        # each carries its own start/end + content. Add/derive buttons +
+        # tree are driven by the components/ registry — adding a new kind
+        # means dropping a new file in components/, not editing this method.
+        # v0.3 plan replaces this Treeview with grouped lists + a right-side
+        # property panel.
+        # ────────────────────────────────────────────────────────────────────
         of = ttk.LabelFrame(parent, text=tr("tool.news_desk.overlays.frame"))
         of.pack(fill="both", expand=True, padx=6, pady=4)
 
@@ -275,33 +294,26 @@ class NewsDeskApp(ToolBase):
         # (handy for jumping straight to the spot you're editing).
         self.tree.bind("<<TreeviewSelect>>", lambda _e: self._seek_to_selected())
 
+        # Add buttons + edit/delete — driven by the components/ registry so
+        # adding a new kind requires no edit here.
         btns = ttk.Frame(of); btns.pack(side="top", fill="x", padx=4, pady=2)
-        ttk.Button(btns, text=tr("tool.news_desk.add.lower_third"),
-                   command=self._add_lower_third).pack(side="left", padx=2)
-        ttk.Button(btns, text=tr("tool.news_desk.add.topic_strip"),
-                   command=self._add_topic_strip).pack(side="left", padx=2)
-        ttk.Button(btns, text=tr("tool.news_desk.add.chapter_point_card"),
-                   command=self._add_chapter_point_card).pack(side="left", padx=2)
-        ttk.Button(btns, text=tr("tool.news_desk.add.date_stamp"),
-                   command=self._add_date_stamp).pack(side="left", padx=2)
+        for spec in nd_components.all_specs():
+            ttk.Button(btns, text=tr(spec.label_key),
+                       command=lambda s=spec: self._add_component(s)
+                       ).pack(side="left", padx=2)
         ttk.Button(btns, text=tr("tool.news_desk.edit"),
                    command=self._edit_selected).pack(side="left", padx=2)
         ttk.Button(btns, text=tr("tool.news_desk.delete"),
                    command=self._delete_selected).pack(side="left", padx=2)
 
+        # Derive buttons — one per (component, derive source) pair.
         btns2 = ttk.Frame(of); btns2.pack(side="top", fill="x", padx=4, pady=2)
-        ttk.Button(btns2, text=tr("tool.news_desk.derive_lt"),
-                   command=self._derive_lower_third_from_basic
-                   ).pack(side="left", padx=2)
-        ttk.Button(btns2, text=tr("tool.news_desk.derive_ts"),
-                   command=self._derive_topic_strips_from_chapters
-                   ).pack(side="left", padx=2)
-        ttk.Button(btns2, text=tr("tool.news_desk.derive_cpc"),
-                   command=self._derive_chapter_cards_from_analysis
-                   ).pack(side="left", padx=2)
-        ttk.Button(btns2, text=tr("tool.news_desk.derive_ds"),
-                   command=self._derive_date_stamp_from_basic
-                   ).pack(side="left", padx=2)
+        for spec in nd_components.all_specs():
+            for src in spec.derive_sources:
+                ttk.Button(
+                    btns2, text=tr(src.label_key),
+                    command=lambda s=spec, ds=src: self._derive_component(s, ds)
+                    ).pack(side="left", padx=2)
 
     # ── Style form ──────────────────────────────────────────────────────────
 
@@ -946,16 +958,8 @@ class NewsDeskApp(ToolBase):
             kind = ov.kind
             start = f"{ov.start_sec:.1f}"
             end = f"{ov.end_sec:.1f}"
-            if isinstance(ov, LowerThirdOverlay):
-                content = f"{ov.title} | {ov.subtitle}"
-            elif isinstance(ov, TopicStripOverlay):
-                content = ov.topic_text
-            elif isinstance(ov, ChapterPointCardOverlay):
-                content = ov.text
-            elif isinstance(ov, DateStampOverlay):
-                content = ov.text
-            else:
-                content = ""
+            spec = nd_components.spec_for(ov)
+            content = spec.format_content(ov) if spec else ""
             self.tree.insert("", "end", iid=str(i),
                               values=(kind, start, end, content))
 
@@ -979,43 +983,13 @@ class NewsDeskApp(ToolBase):
         except ValueError:
             return -1
 
-    def _add_lower_third(self) -> None:
-        spec = LowerThirdOverlay(
-            title="", subtitle="",
-            start_sec=0.0, end_sec=max(10.0, self._duration),
-            position="bottom-left",
-        )
-        if self._edit_overlay_dialog(spec):
-            self._overlays.append(spec)
-            self._after_overlays_changed()
-
-    def _add_topic_strip(self) -> None:
-        spec = TopicStripOverlay(
-            topic_text="",
-            start_sec=0.0, end_sec=max(10.0, self._duration),
-        )
-        if self._edit_overlay_dialog(spec):
-            self._overlays.append(spec)
-            self._after_overlays_changed()
-
-    def _add_chapter_point_card(self) -> None:
-        spec = ChapterPointCardOverlay(
-            text="",
-            start_sec=0.0, end_sec=max(6.0, min(self._duration, 6.0)),
-        )
-        if self._edit_overlay_dialog(spec):
-            self._overlays.append(spec)
-            self._after_overlays_changed()
-
-    def _add_date_stamp(self) -> None:
-        spec = DateStampOverlay(
-            text="",
-            start_sec=0.0,
-            end_sec=max(60.0, self._duration),    # persistent full-length
-            position="bottom-left",
-        )
-        if self._edit_overlay_dialog(spec):
-            self._overlays.append(spec)
+    def _add_component(self, spec: nd_components.ComponentSpec) -> None:
+        """Generic add path — used by every registry button. Creates a
+        default instance via spec.default_factory then opens the edit
+        dialog so the user can fill in content/time before commit."""
+        ov = spec.default_factory(self._duration)
+        if self._edit_overlay_dialog(ov):
+            self._overlays.append(ov)
             self._after_overlays_changed()
 
     def _edit_selected(self) -> None:
@@ -1037,17 +1011,19 @@ class NewsDeskApp(ToolBase):
         self._save_instance_config()
         self._push_preview()
 
-    def _edit_overlay_dialog(self, spec) -> bool:
-        """Modal editor for one overlay. Mutates `spec` in place. Returns
-        True on OK, False on Cancel."""
+    def _edit_overlay_dialog(self, ov) -> bool:
+        """Modal editor for one overlay. Mutates `ov` in place. Returns
+        True on OK, False on Cancel. Common time fields are owned here;
+        the per-kind body is delegated to the component spec so each
+        component file owns its own form."""
         win = tk.Toplevel(self.master)
         win.title(tr("tool.news_desk.dialog.edit"))
         win.transient(self.master); win.grab_set(); win.resizable(False, False)
         body = ttk.Frame(win, padding=12); body.pack(fill="both", expand=True)
 
         # Common time fields.
-        start_v = tk.DoubleVar(value=spec.start_sec)
-        end_v   = tk.DoubleVar(value=spec.end_sec)
+        start_v = tk.DoubleVar(value=ov.start_sec)
+        end_v   = tk.DoubleVar(value=ov.end_sec)
 
         row = ttk.Frame(body); row.pack(fill="x", pady=2)
         ttk.Label(row, text=tr("tool.news_desk.field.start"), width=10
@@ -1059,74 +1035,15 @@ class NewsDeskApp(ToolBase):
         ttk.Spinbox(row, from_=0.0, to=99999.0, increment=0.5,
                     textvariable=end_v, width=10).pack(side="left")
 
-        if isinstance(spec, LowerThirdOverlay):
-            title_v = tk.StringVar(value=spec.title)
-            sub_v = tk.StringVar(value=spec.subtitle)
-            pos_v = tk.StringVar(value=spec.position)
-
-            row = ttk.Frame(body); row.pack(fill="x", pady=2)
-            ttk.Label(row, text=tr("tool.news_desk.field.title"), width=10
-                      ).pack(side="left")
-            ttk.Entry(row, textvariable=title_v, width=42
-                      ).pack(side="left", fill="x", expand=True)
-
-            row = ttk.Frame(body); row.pack(fill="x", pady=2)
-            ttk.Label(row, text=tr("tool.news_desk.field.subtitle"), width=10
-                      ).pack(side="left")
-            ttk.Entry(row, textvariable=sub_v, width=42
-                      ).pack(side="left", fill="x", expand=True)
-
-            row = ttk.Frame(body); row.pack(fill="x", pady=2)
-            ttk.Label(row, text=tr("tool.news_desk.field.position"), width=10
-                      ).pack(side="left")
-            ttk.Combobox(row, textvariable=pos_v, state="readonly",
-                          values=["bottom-left", "bottom-right"], width=20
-                          ).pack(side="left")
-        elif isinstance(spec, TopicStripOverlay):
-            topic_v = tk.StringVar(value=spec.topic_text)
-            row = ttk.Frame(body); row.pack(fill="x", pady=2)
-            ttk.Label(row, text=tr("tool.news_desk.field.topic"), width=10
-                      ).pack(side="left")
-            ttk.Entry(row, textvariable=topic_v, width=42
-                      ).pack(side="left", fill="x", expand=True)
-        elif isinstance(spec, ChapterPointCardOverlay):
-            text_v = tk.StringVar(value=spec.text)
-            row = ttk.Frame(body); row.pack(fill="x", pady=2)
-            ttk.Label(row, text=tr("tool.news_desk.field.card_text"), width=10
-                      ).pack(side="left")
-            ttk.Entry(row, textvariable=text_v, width=42
-                      ).pack(side="left", fill="x", expand=True)
-        elif isinstance(spec, DateStampOverlay):
-            ds_text_v = tk.StringVar(value=spec.text)
-            ds_pos_v = tk.StringVar(value=spec.position)
-            row = ttk.Frame(body); row.pack(fill="x", pady=2)
-            ttk.Label(row, text=tr("tool.news_desk.field.date_text"), width=10
-                      ).pack(side="left")
-            ttk.Entry(row, textvariable=ds_text_v, width=42
-                      ).pack(side="left", fill="x", expand=True)
-            row = ttk.Frame(body); row.pack(fill="x", pady=2)
-            ttk.Label(row, text=tr("tool.news_desk.field.position"), width=10
-                      ).pack(side="left")
-            ttk.Combobox(row, textvariable=ds_pos_v, state="readonly",
-                          values=["bottom-left", "bottom-right",
-                                  "top-left", "top-right"], width=20
-                          ).pack(side="left")
+        spec = nd_components.spec_for(ov)
+        commit_body = (spec.build_edit_fields(body, ov, (start_v, end_v))
+                       if spec else lambda: None)
 
         result = {"ok": False}
         def _ok():
-            spec.start_sec = float(start_v.get())
-            spec.end_sec = float(end_v.get())
-            if isinstance(spec, LowerThirdOverlay):
-                spec.title = title_v.get().strip()
-                spec.subtitle = sub_v.get().strip()
-                spec.position = pos_v.get() or "bottom-left"
-            elif isinstance(spec, TopicStripOverlay):
-                spec.topic_text = topic_v.get().strip()
-            elif isinstance(spec, ChapterPointCardOverlay):
-                spec.text = text_v.get().strip()
-            elif isinstance(spec, DateStampOverlay):
-                spec.text = ds_text_v.get().strip()
-                spec.position = ds_pos_v.get() or "bottom-left"
+            ov.start_sec = float(start_v.get())
+            ov.end_sec = float(end_v.get())
+            commit_body()
             result["ok"] = True
             win.destroy()
         def _cancel():
@@ -1148,120 +1065,42 @@ class NewsDeskApp(ToolBase):
 
     # ── Auto-derive ─────────────────────────────────────────────────────────
 
-    def _derive_lower_third_from_basic(self) -> None:
-        info = source_context.read_basic_info(self.project.source_dir)
-        ctx = source_context.read_context(self.project.source_dir)
-        if info.is_empty() and ctx.is_empty():
-            messagebox.showinfo(
-                "VideoCraft",
-                tr("tool.news_desk.derive.no_basic"),
-                parent=self.master)
-            return
-        title = info.host or ""
-        # subtitle line: host_bio + host_affiliation + event_date.
-        # Embedding the date here is the lightest-weight way to put the
-        # broadcast date on screen; combine with a DateStampOverlay if
-        # you want a persistent corner stamp too.
-        parts: list[str] = []
-        if info.host_bio:
-            parts.append(info.host_bio)
-        if ctx.host_affiliation:
-            parts.append(ctx.host_affiliation)
-        if info.event_date:
-            parts.append(info.event_date)
-        sub = " · ".join(parts)
-        spec = LowerThirdOverlay(
-            title=title, subtitle=sub,
-            start_sec=2.0, end_sec=max(12.0, min(self._duration, 30.0)),
-            position="bottom-left",
+    def _derive_component(
+        self,
+        spec: nd_components.ComponentSpec,
+        source: nd_components.DeriveSource,
+    ) -> None:
+        """Generic derive path — used by every registry-built derive button.
+        Hands the component a DeriveContext and appends whatever overlays
+        it produces. Empty result → user-facing "nothing to derive" dialog
+        keyed off the source kind."""
+        ctx = nd_components.DeriveContext(
+            project=self.project,
+            duration=self._duration,
+            chapters_loader=lambda: self._load_any_chapters(
+                self.project.subtitles_dir),
         )
-        self._overlays.append(spec)
-        self._after_overlays_changed()
-
-    def _derive_topic_strips_from_chapters(self) -> None:
-        # Find any analysis.json in subtitles/.
-        subs_dir = self.project.subtitles_dir
-        chapters = self._load_any_chapters(subs_dir)
-        if not chapters:
-            messagebox.showinfo(
-                "VideoCraft",
-                tr("tool.news_desk.derive.no_chapters"),
-                parent=self.master)
+        try:
+            produced = source.handler(ctx)
+        except Exception as e:
+            logger.warning(f"news_desk derive {spec.kind}/{source.kind} failed: {e}")
+            produced = []
+        if not produced:
+            # Source-kind specific empty-state message — keeps the i18n
+            # phrasing the user already saw before the refactor.
+            msg_key = {
+                nd_components.DERIVE_BASIC_INFO: (
+                    "tool.news_desk.derive.no_date"
+                    if spec.kind == "date_stamp"
+                    else "tool.news_desk.derive.no_basic"),
+                nd_components.DERIVE_ANALYSIS: "tool.news_desk.derive.no_chapters",
+            }.get(source.kind, "tool.news_desk.derive.no_basic")
+            messagebox.showinfo("VideoCraft", tr(msg_key), parent=self.master)
             return
-        added = 0
-        for ch in chapters:
-            start_s = chapters_io.parse_time_str(ch.get("start", ""))
-            end_s = chapters_io.parse_time_str(ch.get("end", ""))
-            title = (ch.get("title") or "").strip()
-            if not title or end_s <= start_s:
-                continue
-            self._overlays.append(TopicStripOverlay(
-                topic_text=title, start_sec=start_s, end_sec=end_s))
-            added += 1
-        if added:
-            self._after_overlays_changed()
-
-    def _derive_chapter_cards_from_analysis(self) -> None:
-        """One Hero callout per chapter, using `key_points[0]` if present
-        else a truncated `refined`. Each callout lives ~6 s starting at
-        the chapter boundary; the Hero zone (upper third) does not clash
-        with LowerThird (lower) or subtitles (bottom)."""
-        subs_dir = self.project.subtitles_dir
-        chapters = self._load_any_chapters(subs_dir)
-        if not chapters:
-            messagebox.showinfo(
-                "VideoCraft",
-                tr("tool.news_desk.derive.no_chapters"),
-                parent=self.master)
-            return
-        added = 0
-        for ch in chapters:
-            start_s = chapters_io.parse_time_str(ch.get("start", ""))
-            end_s = chapters_io.parse_time_str(ch.get("end", ""))
-            if end_s <= start_s:
-                continue
-            text = ""
-            kps = ch.get("key_points")
-            if isinstance(kps, list) and kps:
-                cand = str(kps[0]).strip()
-                if cand:
-                    text = cand
-            if not text:
-                refined = str(ch.get("refined", "")).strip()
-                if refined:
-                    text = refined[:40]
-            if not text:
-                continue
-            card_dur = 6.0
-            card_end = min(end_s, start_s + card_dur)
-            self._overlays.append(ChapterPointCardOverlay(
-                text=text,
-                start_sec=start_s, end_sec=card_end,
-            ))
-            added += 1
-        if added:
-            self._after_overlays_changed()
-
-    def _derive_date_stamp_from_basic(self) -> None:
-        """One persistent corner date stamp pulled from
-        basic_info.event_date. Spans the full video. Default bottom-left
-        to stay clear of the top-right watermark zone."""
-        info = source_context.read_basic_info(self.project.source_dir)
-        date = (info.event_date or "").strip()
-        if not date:
-            messagebox.showinfo(
-                "VideoCraft",
-                tr("tool.news_desk.derive.no_date"),
-                parent=self.master)
-            return
-        # Drop any existing DateStamp overlays so re-derive is idempotent.
-        self._overlays = [o for o in self._overlays
-                            if not isinstance(o, DateStampOverlay)]
-        self._overlays.append(DateStampOverlay(
-            text=date,
-            start_sec=0.0, end_sec=max(60.0, self._duration),
-            position="bottom-left",
-        ))
+        if source.replace_existing:
+            self._overlays = [o for o in self._overlays
+                              if not isinstance(o, spec.dataclass_type)]
+        self._overlays.extend(produced)
         self._after_overlays_changed()
 
     def _load_any_chapters(self, subs_dir: str) -> list[dict]:
