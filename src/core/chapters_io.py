@@ -87,14 +87,19 @@ def _now_iso() -> str:
 
 
 def _coerce_key_points(value) -> list[str]:
-    """Strip non-string entries, drop empties, return clean list."""
+    """Normalize key_points to list[str]. Tolerates the brief-lived dict
+    shape from a v3 schema attempt (extracts the .text field) so any
+    analysis.json written during that window still loads cleanly."""
     if not isinstance(value, list):
         return []
     out: list[str] = []
     for item in value:
-        s = str(item or "").strip()
-        if s:
-            out.append(s)
+        if isinstance(item, dict):
+            text = str(item.get("text") or "").strip()
+        else:
+            text = str(item or "").strip()
+        if text:
+            out.append(text)
     return out
 
 

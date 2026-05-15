@@ -37,6 +37,13 @@ SUBTITLE_PACK_SCHEMA: dict = {
                     "time_str":   {"type": "string"},
                     "title":      {"type": "string"},
                     "refined":    {"type": "string"},
+                    # key_points: simple list of short bullet strings.
+                    # Originally tried object items with timestamps but
+                    # asking AI to compute per-point start/end from SRT
+                    # cues blew up the prompt complexity (Sonnet thinking
+                    # ballooned, Haiku undersegmented). key_points are
+                    # text-only enrichment for chapter cards / publish.md
+                    # / hotclip selection — they don't drive video popups.
                     "key_points": {
                         "type": "array",
                         "items": {"type": "string"},

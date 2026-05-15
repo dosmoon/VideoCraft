@@ -1999,7 +1999,7 @@
   "tool.news_desk.chapter.mode.top_strip": "Top banner (uses title)",
   "tool.news_desk.chapter.mode.start_card": "Start card (uses title + refined)",
   "tool.news_desk.chapter.mode.end_summary": "End recap (uses refined) — not yet supported",
-  "tool.news_desk.chapter.mode.key_points_popup": "Key-point popups — requires AI timestamps (task #20)",
+  "tool.news_desk.chapter.mode.key_points_popup": "Key-point popups (uses key_points timestamps)",
   "tool.news_desk.props.empty": "No component selected. Pick one on the left to edit its properties.",
   "tool.news_desk.props.frame": "Properties",
   "tool.news_desk.props.summary": "Project summary",

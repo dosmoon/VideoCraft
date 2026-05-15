@@ -1,15 +1,16 @@
 """Chapter component — singleton, bound to analysis.json chapters.
 
-Each chapter row holds (start, end, title, refined, key_points). Four
+Each chapter row holds (start, end, title, refined, key_points). Two
 visual modes share this data, multi-select per instance:
-  - top_strip       — top banner, uses `title`
-  - start_card      — chapter-start hero card, uses title + refined
-  - end_summary     — chapter-end recap card, uses refined (DEFERRED)
-  - key_points_popup — bullet pop-ups within chapter, uses `key_points`
+  - top_strip   — top banner, uses `title`
+  - start_card  — chapter-start hero card, uses title + refined
+  - end_summary — chapter-end recap (DEFERRED — needs paragraph overlay)
 
-For key_points_popup, key_points currently lack per-point timestamps
-(known data gap, see task #13). MVP distributes them evenly across
-the chapter duration. Long-term: AI-generated timestamps.
+key_points is text-only enrichment (chapter cards / publish.md /
+hotclip selection inputs). Earlier we tried to render per-point
+popups inside chapters, but asking AI to emit per-point timestamps
+ballooned prompt complexity for negligible UX value — the popups
+themselves were also visually noisy.
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from . import ComponentSpec, ImportSource, ProjectContext, register
 
 
 # Visual mode keys — order matters for default rendering and panel layout.
-MODES = ("top_strip", "start_card", "end_summary", "key_points_popup")
+MODES = ("top_strip", "start_card", "end_summary")
 
 
 def _default_instance(_duration: float) -> dict:
@@ -41,7 +42,6 @@ def _default_instance(_duration: float) -> dict:
             "top_strip": True,
             "start_card": False,
             "end_summary": False,
-            "key_points_popup": False,
         },
         "style": {
             "top_strip": {
@@ -64,13 +64,6 @@ def _default_instance(_duration: float) -> dict:
                 "bg_color": "#000000",
                 "bg_opacity": 70,
                 "duration_sec": 5,
-            },
-            "key_points_popup": {
-                "text_color": "#FFFFFF",
-                "fontsize": 24,
-                "bg_color": "#000000",
-                "bg_opacity": 60,
-                "duration_sec": 4,
             },
         },
         # Schedule is the chapters list snapshotted from analysis.json.
@@ -267,7 +260,6 @@ def _to_render_fragment(instance: dict, _ctx: ProjectContext) -> dict:
         e = float(ch.get("end_sec", 0))
         title = str(ch.get("title", "")).strip()
         refined = str(ch.get("refined", "")).strip()
-        key_points = ch.get("key_points") or []
         if e <= s:
             continue
 
@@ -289,26 +281,6 @@ def _to_render_fragment(instance: dict, _ctx: ProjectContext) -> dict:
 
         # end_summary — DEFERRED (renderer doesn't have a recap card kind
         # yet; would route to a future EndSummaryOverlay).
-
-        # key_points_popup — REQUIRES per-point timestamps from AI.
-        # No uniform-distribution fallback: aligning bullets to wall-
-        # clock matters too much to fake. Until the analysis prompt
-        # emits {text, start_sec, end_sec} for each point (task #20),
-        # this mode silently produces no overlays even when ticked.
-        if modes.get("key_points_popup") and key_points:
-            dur = float(style.get("key_points_popup", {}).get("duration_sec", 4))
-            for pt in key_points:
-                if not isinstance(pt, dict):
-                    continue   # legacy str entries — wait for AI upgrade
-                pt_text = str(pt.get("text", "")).strip()
-                pt_s = float(pt.get("start_sec", 0))
-                pt_e = float(pt.get("end_sec", 0))
-                if not pt_text or pt_e <= pt_s:
-                    continue
-                pt_e = min(pt_e, pt_s + dur)
-                overlays.append(ChapterPointCardOverlay(
-                    text=pt_text, start_sec=pt_s, end_sec=pt_e,
-                ))
 
     return {"overlays": overlays}
 

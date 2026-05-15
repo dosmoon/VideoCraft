@@ -1999,7 +1999,7 @@
   "tool.news_desk.chapter.mode.top_strip": "顶部条 (用 title)",
   "tool.news_desk.chapter.mode.start_card": "起始大卡 (用 title + refined)",
   "tool.news_desk.chapter.mode.end_summary": "结尾小结 (用 refined) — 暂不支持",
-  "tool.news_desk.chapter.mode.key_points_popup": "要点弹出 (用 key_points) — 需 AI 时间戳支持 (任务 #20)",
+  "tool.news_desk.chapter.mode.key_points_popup": "要点弹出 (用 key_points 的时间戳)",
   "tool.news_desk.props.empty": "未选中组件。在左侧列表选择一个组件以编辑属性。",
   "tool.news_desk.props.frame": "属性",
   "tool.news_desk.props.summary": "项目摘要",

@@ -59,7 +59,7 @@ def _call_json_plain(cfg: dict, model_id: str, prompt: str, schema: dict,
     The envelope's `result` field is the model's raw text; since we ask the
     model to emit JSON, we parse that string a second time.
     """
-    cmd = _cmd(cfg, model_id, output_format="json")
+    cmd = _cmd(cfg, model_id, output_format="json", lean=True)
     full_prompt = (
         f"{prompt}\n\n"
         "Respond with ONLY a single JSON object that strictly matches "
@@ -216,13 +216,24 @@ def _log_entry(model_id: str, task: str, endpoint: str,
 
 def _cmd(cfg: dict, model_id: str, *,
          output_format: str,
-         tools: list[str] | None = None) -> list:
+         tools: list[str] | None = None,
+         lean: bool = False) -> list:
     """Build the argv list for a headless `claude -p` invocation.
 
     `tools`: optional list of built-in tool names to enable. The CLI
     defaults to all tools when --tools is omitted; passing an explicit
     list restricts to that subset, which we use to enable WebSearch
     only when news.realtime calls in.
+
+    `lean`: when True, add `--effort low` to cap the extended-thinking
+    budget. Used for high-volume structured-output tasks like
+    subtitle.post where Sonnet's default thinking dominates wall clock
+    without lifting quality. Search-required calls keep the default
+    effort since they actually benefit from reasoning.
+
+    NOTE: `--bare` was tried but breaks the OAuth/keychain auth path
+    (it forces ANTHROPIC_API_KEY only). Don't add it back here unless
+    the auth model changes.
     """
     executable = cfg.get("executable") or "claude"
     cmd = [
@@ -230,6 +241,8 @@ def _cmd(cfg: dict, model_id: str, *,
         "--output-format", output_format,
         "--permission-mode", "bypassPermissions",
     ]
+    if lean:
+        cmd += ["--effort", "low"]
     if tools is not None:
         cmd += ["--tools", ",".join(tools)]
     if model_id:
