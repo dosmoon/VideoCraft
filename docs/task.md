@@ -7,9 +7,17 @@
 
 ## news_desk N-字幕 / N-水印 渲染 + 预览 — 已收尾上线
 
-HEAD: `d1ea5da` (已 push origin/main)，workspace clean。
+HEAD: `60bb0f0` (已 push origin/main)，workspace clean。
 
 ### 本次会话核心变化
+
+#### 过期文案清扫（60bb0f0）
+
+N-字幕/N-水印上线后,组件 docstring + UI hint label + zh/en i18n 仍说"前 2 条字幕、首个水印"——对用户和未来 Claude 都是误导。
+
+- subtitle.py: 模块 + `_to_render_fragment` docstring 改写;property panel 底部的 `render_hint` Label 删掉
+- text_watermark.py / image_watermark.py: docstring 改写为"全部走 extra_watermarks"
+- i18n zh/en: 删除 `tool.news_desk.subtitle.render_hint` key
 
 #### 渲染层 N-字幕 / N-水印（d1ea5da）
 
@@ -72,9 +80,8 @@ basic_info.json 重新定位为**用户给 AI 的线索（可能错）**，conte
 
 ### 当前打开的任务（按优先级）
 
-- **#13 / #18 / #19 / #20** ✓ 已完成
+- **#13 / #18 / #19 / #20 / 文案清扫** ✓ 已完成
 - **#21 [P3]** 章节"结尾小结"模式 + 段落 overlay 渲染
-- **subtitle.py 文案过期** subtitle 组件 property panel 里 `tool.news_desk.subtitle.render_hint` 仍说"前 2 条生效"；text/image_watermark 组件 docstring 也还说"single watermark"。zh+en i18n 同步
 
 ### 名牌组件（延后）
 
@@ -85,11 +92,10 @@ basic_info.json 重新定位为**用户给 AI 的线索（可能错）**，conte
 ### 下一步候选
 
 1. **真实使用攒反馈** — N-字幕/N-水印 + AI 简化版连用几天，看预览/烧录有没有边界 bug
-2. **过期文案清扫**（subtitle.py 的 render_hint + watermark 组件 docstring + i18n zh/en 同步）
-3. **#21 P3** 章节"结尾小结"模式
-4. **章节组件其它视觉模式** v0.4 砍了 `key_points_popup`，可能要补别的章节呈现方式
-5. **组件框架推广** clip_script / bilingual_video 用同一 components-based 重构（大工程，先观察 news_desk 几周再决定）
-6. **多发言人结构化数据 → 名牌组件** 等 AI 提取多发言人或新数据 schema 时再做
+2. **#21 P3** 章节"结尾小结"模式
+3. **章节组件其它视觉模式** v0.4 砍了 `key_points_popup`，可能要补别的章节呈现方式
+4. **组件框架推广** clip_script / bilingual_video 用同一 components-based 重构（大工程，先观察 news_desk 几周再决定）
+5. **多发言人结构化数据 → 名牌组件** 等 AI 提取多发言人或新数据 schema 时再做
 
 让用户决定。
 
