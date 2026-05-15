@@ -62,7 +62,7 @@ from core.composition.overlays import (
     ChapterHeroCardOverlay, TopicStripOverlay,
 )
 
-from . import ComponentSpec, ImportSource, ProjectContext, register
+from . import ComponentSpec, ProjectContext, register
 
 
 # Visual modes — pure render filters on the same chapter data. Each mode
@@ -254,6 +254,9 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
     add_btn.pack(side="left")
     del_btn = ttk.Button(toolbar, text=tr("tool.news_desk.chapter.delete_selected"))
     del_btn.pack(side="left", padx=(4, 0))
+    import_btn = ttk.Button(
+        toolbar, text=tr("tool.news_desk.chapter.import_analysis"))
+    import_btn.pack(side="left", padx=(12, 0))
 
     tree = ttk.Treeview(parent, columns=("start", "end", "title"),
                           show="headings", height=10)
@@ -446,6 +449,108 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
         on_change()
     del_btn.config(command=_delete_selected)
 
+    def _do_import_analysis():
+        # Scan project's subtitles dir for analysis files first — drives
+        # the dialog's "what we found" line.
+        subs_dir = getattr(ctx.project, "subtitles_dir", "") or ""
+        found: list[str] = []
+        if subs_dir and os.path.isdir(subs_dir):
+            for fn in sorted(os.listdir(subs_dir)):
+                if fn.endswith(".analysis.json"):
+                    found.append(fn)
+
+        # Build the explanation dialog. ALWAYS show it (even when there's
+        # nothing to import) so the user learns where the file would
+        # come from.
+        dlg = tk.Toplevel(parent)
+        dlg.title(tr("tool.news_desk.chapter.import_dialog_title"))
+        dlg.transient(parent.winfo_toplevel())
+        dlg.grab_set()
+        dlg.geometry("560x420")
+
+        body = ttk.Frame(dlg); body.pack(fill="both", expand=True,
+                                          padx=12, pady=10)
+
+        # What this is.
+        ttk.Label(body,
+                   text=tr("tool.news_desk.chapter.import_what_label"),
+                   font=("TkDefaultFont", 9, "bold")
+                   ).pack(anchor="w")
+        ttk.Label(body,
+                   text=tr("tool.news_desk.chapter.import_what_body"),
+                   wraplength=520, justify="left", foreground="#444"
+                   ).pack(anchor="w", pady=(2, 8))
+
+        # Where it lives.
+        ttk.Label(body,
+                   text=tr("tool.news_desk.chapter.import_where_label"),
+                   font=("TkDefaultFont", 9, "bold")
+                   ).pack(anchor="w")
+        where_text = tr("tool.news_desk.chapter.import_where_body",
+                         path=(subs_dir or "—"))
+        ttk.Label(body, text=where_text, wraplength=520, justify="left",
+                   foreground="#444"
+                   ).pack(anchor="w", pady=(2, 8))
+
+        # Scan result.
+        ttk.Label(body,
+                   text=tr("tool.news_desk.chapter.import_found_label"),
+                   font=("TkDefaultFont", 9, "bold")
+                   ).pack(anchor="w")
+        if found:
+            scan_text = tr("tool.news_desk.chapter.import_found_body",
+                            n=len(found),
+                            files=", ".join(found))
+            scan_color = "#444"
+        else:
+            scan_text = tr("tool.news_desk.chapter.import_found_none")
+            scan_color = "#a00"
+        ttk.Label(body, text=scan_text, wraplength=520, justify="left",
+                   foreground=scan_color
+                   ).pack(anchor="w", pady=(2, 8))
+
+        # What import will do (incl. overwrite warning when applicable).
+        ttk.Label(body,
+                   text=tr("tool.news_desk.chapter.import_effect_label"),
+                   font=("TkDefaultFont", 9, "bold")
+                   ).pack(anchor="w")
+        if chapters:
+            effect_text = tr(
+                "tool.news_desk.chapter.import_effect_overwrite",
+                n=len(chapters))
+            effect_color = "#a00"
+        else:
+            effect_text = tr("tool.news_desk.chapter.import_effect_fresh")
+            effect_color = "#444"
+        ttk.Label(body, text=effect_text, wraplength=520, justify="left",
+                   foreground=effect_color
+                   ).pack(anchor="w", pady=(2, 8))
+
+        # Buttons.
+        btns = ttk.Frame(dlg); btns.pack(fill="x", padx=12, pady=(0, 10))
+
+        def _do_import():
+            _import_from_analysis(instance, ctx)
+            _refresh_tree()
+            _show_row(None)
+            on_change()
+            dlg.destroy()
+
+        confirm_btn = ttk.Button(
+            btns,
+            text=tr("tool.news_desk.chapter.import_confirm"),
+            command=_do_import)
+        confirm_btn.pack(side="right")
+        if not found:
+            confirm_btn.config(state="disabled")
+        ttk.Button(btns,
+                    text=tr("tool.news_desk.chapter.cancel_btn"),
+                    command=dlg.destroy
+                    ).pack(side="right", padx=(0, 8))
+
+        dlg.bind("<Escape>", lambda _e: dlg.destroy())
+    import_btn.config(command=_do_import_analysis)
+
     def _commit_meta(*_):
         instance["name"] = name_v.get()
         instance["enabled"] = bool(enabled_v.get())
@@ -532,10 +637,7 @@ register(ComponentSpec(
     default_instance=_default_instance,
     build_property_panel=_build_property_panel,
     to_overlays=_to_render_fragment,
-    import_sources=[
-        ImportSource(
-            label_key="tool.news_desk.chapter.import_analysis",
-            handler=_import_from_analysis,
-        ),
-    ],
+    # No host-rendered import buttons — chapter owns its own [Import]
+    # button inline in the toolbar (with explanation dialog).
+    import_sources=[],
 ))
