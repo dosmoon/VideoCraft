@@ -102,12 +102,9 @@ class SubsLangPicker(tk.Toplevel):
             self._refilter()
             self._update_status()
 
-        # Center over parent
-        self.update_idletasks()
+        from ui.dialog_utils import center_dialog_on_parent
         try:
-            px = parent.winfo_rootx() + parent.winfo_width() // 2 - self.winfo_width() // 2
-            py = parent.winfo_rooty() + parent.winfo_height() // 2 - self.winfo_height() // 2
-            self.geometry(f"+{max(px, 0)}+{max(py, 0)}")
+            center_dialog_on_parent(self, parent)
         except Exception:
             pass
 

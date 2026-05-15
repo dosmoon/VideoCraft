@@ -61,6 +61,7 @@ from core import chapters_io
 from core.composition.overlays import (
     ChapterHeroCardOverlay, TopicStripOverlay,
 )
+from ui.dialog_utils import center_dialog_on_parent
 
 from . import ComponentSpec, ProjectContext, register
 
@@ -467,6 +468,7 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
         dlg.transient(parent.winfo_toplevel())
         dlg.grab_set()
         dlg.geometry("560x420")
+        center_dialog_on_parent(dlg, parent)
 
         body = ttk.Frame(dlg); body.pack(fill="both", expand=True,
                                           padx=12, pady=10)

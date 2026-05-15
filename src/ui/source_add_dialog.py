@@ -283,13 +283,8 @@ class _SourceAddDialog:
         self._error_var.set("")
 
     def _center_over(self, parent: tk.Misc) -> None:
-        self.win.update_idletasks()
-        w = self.win.winfo_width()
-        h = self.win.winfo_height()
-        pw = parent.winfo_toplevel()
-        x = pw.winfo_rootx() + (pw.winfo_width() - w) // 2
-        y = pw.winfo_rooty() + (pw.winfo_height() - h) // 2
-        self.win.geometry(f"+{max(0, x)}+{max(0, y)}")
+        from ui.dialog_utils import center_dialog_on_parent
+        center_dialog_on_parent(self.win, parent)
 
     def run(self) -> Optional[Source]:
         self.win.wait_window()

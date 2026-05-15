@@ -173,13 +173,8 @@ class _AsrDialog:
         self.win.destroy()
 
     def _center(self, parent: tk.Misc) -> None:
-        self.win.update_idletasks()
-        w = self.win.winfo_width()
-        h = self.win.winfo_height()
-        pw = parent.winfo_toplevel()
-        x = pw.winfo_rootx() + (pw.winfo_width() - w) // 2
-        y = pw.winfo_rooty() + (pw.winfo_height() - h) // 2
-        self.win.geometry(f"+{max(0, x)}+{max(0, y)}")
+        from ui.dialog_utils import center_dialog_on_parent
+        center_dialog_on_parent(self.win, parent)
 
     def run(self) -> Optional[dict]:
         self.win.wait_window()
@@ -255,11 +250,8 @@ def show_translate_dialog(
                ).pack(side="right")
     win.protocol("WM_DELETE_WINDOW", on_cancel)
 
-    win.update_idletasks()
-    pw = parent.winfo_toplevel()
-    x = pw.winfo_rootx() + (pw.winfo_width() - win.winfo_width()) // 2
-    y = pw.winfo_rooty() + (pw.winfo_height() - win.winfo_height()) // 2
-    win.geometry(f"+{max(0, x)}+{max(0, y)}")
+    from ui.dialog_utils import center_dialog_on_parent
+    center_dialog_on_parent(win, parent)
     win.wait_window()
     return result[0]
 
