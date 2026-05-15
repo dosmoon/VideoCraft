@@ -11,7 +11,7 @@ from core.composition.overlays import ChapterPointCardOverlay
 
 from . import (
     ComponentSpec, DeriveContext, DeriveSource,
-    DERIVE_ANALYSIS, register,
+    DERIVE_ANALYSIS, install_live_traces, register,
 )
 
 
@@ -26,7 +26,8 @@ def _format(ov: ChapterPointCardOverlay) -> str:
     return ov.text
 
 
-def _build_edit_fields(parent: ttk.Frame, ov: ChapterPointCardOverlay, _time_vars):
+def _build_edit_fields(parent: ttk.Frame, ov: ChapterPointCardOverlay,
+                         _time_vars, on_change=None):
     text_v = tk.StringVar(value=ov.text)
     row = ttk.Frame(parent); row.pack(fill="x", pady=2)
     ttk.Label(row, text=tr("tool.news_desk.field.card_text"), width=10
@@ -36,6 +37,8 @@ def _build_edit_fields(parent: ttk.Frame, ov: ChapterPointCardOverlay, _time_var
 
     def _commit() -> None:
         ov.text = text_v.get().strip()
+    if on_change is not None:
+        install_live_traces([text_v], _commit, on_change)
     return _commit
 
 

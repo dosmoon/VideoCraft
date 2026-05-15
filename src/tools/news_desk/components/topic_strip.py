@@ -11,7 +11,7 @@ from core.composition.overlays import TopicStripOverlay
 
 from . import (
     ComponentSpec, DeriveContext, DeriveSource,
-    DERIVE_ANALYSIS, register,
+    DERIVE_ANALYSIS, install_live_traces, register,
 )
 
 
@@ -26,7 +26,8 @@ def _format(ov: TopicStripOverlay) -> str:
     return ov.topic_text
 
 
-def _build_edit_fields(parent: ttk.Frame, ov: TopicStripOverlay, _time_vars):
+def _build_edit_fields(parent: ttk.Frame, ov: TopicStripOverlay,
+                         _time_vars, on_change=None):
     topic_v = tk.StringVar(value=ov.topic_text)
     row = ttk.Frame(parent); row.pack(fill="x", pady=2)
     ttk.Label(row, text=tr("tool.news_desk.field.topic"), width=10
@@ -36,6 +37,8 @@ def _build_edit_fields(parent: ttk.Frame, ov: TopicStripOverlay, _time_vars):
 
     def _commit() -> None:
         ov.topic_text = topic_v.get().strip()
+    if on_change is not None:
+        install_live_traces([topic_v], _commit, on_change)
     return _commit
 
 

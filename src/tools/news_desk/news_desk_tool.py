@@ -193,13 +193,18 @@ class NewsDeskApp(ToolBase):
         self.top_menubtn["menu"] = self.top_menu
         self.top_menubtn.pack(side="left", padx=(8, 0))
 
-        # Middle: form | preview.
+        # Middle: form | preview | property panel. The property panel
+        # follows the current B-class list selection — instance shows a
+        # live editor, group shows add/derive buttons, no selection
+        # shows the project summary.
         pw = ttk.PanedWindow(root, orient="horizontal")
         pw.pack(side="top", fill="both", expand=True, padx=4, pady=(0, 4))
         form_outer = ttk.Frame(pw)
         preview_outer = ttk.Frame(pw)
+        props_outer = ttk.Frame(pw)
         pw.add(form_outer, weight=2)
         pw.add(preview_outer, weight=3)
+        pw.add(props_outer, weight=2)
 
         self._build_form(form_outer)
 
@@ -207,6 +212,8 @@ class NewsDeskApp(ToolBase):
             preview_outer, width=520, height=560)
         self._preview.widget.pack(fill="both", expand=True, padx=4, pady=4)
         self._preview.enable_crop_drag(False)
+
+        self._build_property_panel(props_outer)
 
     def _build_form(self, parent: ttk.Frame) -> None:
         # ────────────────────────────────────────────────────────────────────
@@ -281,8 +288,9 @@ class NewsDeskApp(ToolBase):
         self.tree.pack(side="top", fill="both", expand=True, padx=4, pady=4)
         self.tree.bind("<Double-1>", lambda _e: self._edit_selected())
         # Single-click any row → preview seeks to that overlay's start_sec
-        # (handy for jumping straight to the spot you're editing).
-        self.tree.bind("<<TreeviewSelect>>", lambda _e: self._seek_to_selected())
+        # (handy for jumping straight to the spot you're editing) and
+        # the right-side property panel rebuilds for that selection.
+        self.tree.bind("<<TreeviewSelect>>", self._on_tree_select)
 
         # Add buttons + edit/delete — driven by the components/ registry so
         # adding a new kind requires no edit here. Derive entries live in
@@ -1042,6 +1050,168 @@ class NewsDeskApp(ToolBase):
         except Exception as e:
             logger.warning(f"news_desk seek failed: {e}")
 
+    def _on_tree_select(self, _evt=None) -> None:
+        self._seek_to_selected()
+        self._refresh_property_panel()
+
+    # ── Property panel (right column) ───────────────────────────────────────
+    # Renders one of three states based on tree selection:
+    #   no selection      → project summary
+    #   group iid g:<k>   → kind name + add/derive shortcuts
+    #   instance iid i:N  → live editor (in/out + spec fields + delete)
+    # Live edits flow through _on_panel_changed which patches just the
+    # affected tree row in place — no full rebuild — so the user can keep
+    # typing without losing focus.
+
+    def _build_property_panel(self, parent: ttk.Frame) -> None:
+        wrap = ttk.LabelFrame(parent, text=tr("tool.news_desk.props.frame"))
+        wrap.pack(fill="both", expand=True, padx=4, pady=4)
+        self._props_container = ttk.Frame(wrap)
+        self._props_container.pack(fill="both", expand=True, padx=6, pady=6)
+        self._refresh_property_panel()
+
+    def _refresh_property_panel(self) -> None:
+        for child in self._props_container.winfo_children():
+            child.destroy()
+        sel = self.tree.selection()
+        iid = sel[0] if sel else ""
+        if iid.startswith("i:"):
+            try:
+                idx = int(iid[2:])
+            except ValueError:
+                idx = -1
+            if 0 <= idx < len(self._overlays):
+                self._render_instance_props(self._props_container, idx)
+                return
+        if iid.startswith("g:"):
+            spec = nd_components.REGISTRY.get(iid[2:])
+            if spec is not None:
+                self._render_group_props(self._props_container, spec)
+                return
+        self._render_project_summary(self._props_container)
+
+    def _render_project_summary(self, parent: ttk.Frame) -> None:
+        ttk.Label(parent, text=tr("tool.news_desk.props.summary"),
+                  font=("TkDefaultFont", 10, "bold")
+                  ).pack(anchor="w")
+        if self._duration > 0:
+            hms = time.strftime("%H:%M:%S", time.gmtime(self._duration))
+            ttk.Label(parent, text=f"{tr('tool.news_desk.props.duration')}: {hms}"
+                      ).pack(anchor="w", pady=(4, 0))
+        # Counts per registered kind. Empty kinds still listed so the user
+        # can see what's available without scrolling the tree.
+        counts: dict[str, int] = {s.kind: 0 for s in nd_components.all_specs()}
+        for ov in self._overlays:
+            spec = nd_components.spec_for(ov)
+            if spec is not None:
+                counts[spec.kind] += 1
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=8)
+        for spec in nd_components.all_specs():
+            ttk.Label(parent, text=tr("tool.news_desk.props.kind_count",
+                                        name=tr(spec.name_key),
+                                        count=counts[spec.kind])
+                      ).pack(anchor="w")
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=8)
+        ttk.Label(parent, text=tr("tool.news_desk.props.no_selection_hint"),
+                  foreground="#666", wraplength=240, justify="left"
+                  ).pack(anchor="w")
+
+    def _render_group_props(
+        self, parent: ttk.Frame, spec: nd_components.ComponentSpec,
+    ) -> None:
+        ttk.Label(parent, text=tr(spec.name_key),
+                  font=("TkDefaultFont", 11, "bold")
+                  ).pack(anchor="w")
+        ttk.Label(parent, text=tr("tool.news_desk.props.group"),
+                  foreground="#666"
+                  ).pack(anchor="w")
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=8)
+        ttk.Button(parent, text=tr(spec.label_key),
+                   command=lambda s=spec: self._add_component(s)
+                   ).pack(fill="x", pady=2)
+        for src in spec.derive_sources:
+            ttk.Button(parent, text=tr(src.label_key),
+                       command=lambda s=spec, d=src: self._derive_component(s, d)
+                       ).pack(fill="x", pady=2)
+
+    def _render_instance_props(self, parent: ttk.Frame, idx: int) -> None:
+        ov = self._overlays[idx]
+        spec = nd_components.spec_for(ov)
+        if spec is None:
+            return
+
+        ttk.Label(parent, text=tr(spec.name_key),
+                  font=("TkDefaultFont", 11, "bold")
+                  ).pack(anchor="w")
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=6)
+
+        # in/out spinboxes — live commit on every keystroke. A guard skips
+        # the trace fired by initial .set() so we don't push a redundant
+        # preview render at panel-build time.
+        start_v = tk.DoubleVar(value=ov.start_sec)
+        end_v = tk.DoubleVar(value=ov.end_sec)
+
+        def _commit_time(*_):
+            try:
+                ov.start_sec = float(start_v.get())
+                ov.end_sec = float(end_v.get())
+            except (tk.TclError, ValueError):
+                return
+            self._on_panel_changed()
+
+        row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+        ttk.Label(row, text=tr("tool.news_desk.field.start"), width=8
+                  ).pack(side="left")
+        ttk.Spinbox(row, from_=0.0, to=99999.0, increment=0.5,
+                    textvariable=start_v, width=10).pack(side="left")
+
+        row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+        ttk.Label(row, text=tr("tool.news_desk.field.end"), width=8
+                  ).pack(side="left")
+        ttk.Spinbox(row, from_=0.0, to=99999.0, increment=0.5,
+                    textvariable=end_v, width=10).pack(side="left")
+
+        # Spec-specific fields with the same live-commit wiring. The spec
+        # owns its own var traces — see install_live_traces in components/.
+        spec.build_edit_fields(parent, ov, (start_v, end_v),
+                                 on_change=self._on_panel_changed)
+
+        # Time-var traces attached AFTER spec fields so initial `set()`
+        # in either path doesn't fire spurious commits.
+        start_v.trace_add("write", _commit_time)
+        end_v.trace_add("write", _commit_time)
+
+        # Action row — modal editor as the "advanced" fallback, delete in
+        # the same place it lives in the bottom toolbar so users have
+        # both paths.
+        btns = ttk.Frame(parent); btns.pack(fill="x", pady=(10, 0))
+        ttk.Button(btns, text=tr("tool.news_desk.delete"),
+                   command=self._delete_selected
+                   ).pack(side="left")
+        ttk.Button(btns, text=tr("tool.news_desk.edit"),
+                   command=self._edit_selected
+                   ).pack(side="right")
+
+    def _on_panel_changed(self) -> None:
+        """Live-edit notification from the property panel: dataclass
+        already mutated by the spec, push the change to preview + disk
+        and patch just the affected tree row (full rebuild would yank
+        focus from the user's input)."""
+        sel = self.tree.selection()
+        if sel and sel[0].startswith("i:"):
+            try:
+                idx = int(sel[0][2:])
+            except ValueError:
+                idx = -1
+            if 0 <= idx < len(self._overlays):
+                ov = self._overlays[idx]
+                spec = nd_components.spec_for(ov)
+                content = spec.format_content(ov) if spec else ""
+                self.tree.item(sel[0], values=(
+                    f"{ov.start_sec:.1f}", f"{ov.end_sec:.1f}", content))
+        self._save_instance_config()
+        self._push_preview()
+
     def _selected_index(self) -> int:
         """Return the overlay index for the selected instance row, or -1
         if nothing or a group header is selected. Instance iids are
@@ -1082,6 +1252,7 @@ class NewsDeskApp(ToolBase):
 
     def _after_overlays_changed(self) -> None:
         self._refresh_overlay_tree()
+        self._refresh_property_panel()
         self._save_instance_config()
         self._push_preview()
 

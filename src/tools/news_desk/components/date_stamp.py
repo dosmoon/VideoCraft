@@ -11,7 +11,7 @@ from core.composition.overlays import DateStampOverlay
 
 from . import (
     ComponentSpec, DeriveContext, DeriveSource,
-    DERIVE_BASIC_INFO, register,
+    DERIVE_BASIC_INFO, install_live_traces, register,
 )
 
 
@@ -28,7 +28,8 @@ def _format(ov: DateStampOverlay) -> str:
     return ov.text
 
 
-def _build_edit_fields(parent: ttk.Frame, ov: DateStampOverlay, _time_vars):
+def _build_edit_fields(parent: ttk.Frame, ov: DateStampOverlay,
+                         _time_vars, on_change=None):
     text_v = tk.StringVar(value=ov.text)
     pos_v = tk.StringVar(value=ov.position)
 
@@ -49,6 +50,8 @@ def _build_edit_fields(parent: ttk.Frame, ov: DateStampOverlay, _time_vars):
     def _commit() -> None:
         ov.text = text_v.get().strip()
         ov.position = pos_v.get() or "bottom-left"
+    if on_change is not None:
+        install_live_traces([text_v, pos_v], _commit, on_change)
     return _commit
 
 

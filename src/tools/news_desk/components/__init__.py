@@ -76,11 +76,16 @@ class ComponentSpec:
                         defaults. Called when the user clicks "+ Add".
       format_content  — (overlay) -> str. One-line content summary shown
                         in the list/tree.
-      build_edit_fields — (parent_frame, overlay, time_vars) -> commit_cb.
-                        Builds the type-specific portion of the edit
-                        dialog (start/end are owned by the host). Returns
-                        a no-arg commit() that mutates `overlay` in place
-                        with the dialog's current Tk var values.
+      build_edit_fields — (parent, overlay, time_vars, on_change=None)
+                        -> commit_cb. Builds the type-specific portion
+                        of the edit form (start/end are owned by the
+                        host). Returns a no-arg commit() that mutates
+                        `overlay` in place from the form's current Tk
+                        var values. If `on_change` is provided (live
+                        property-panel mode), the spec attaches write
+                        traces to its vars that call commit + on_change
+                        on every edit; if None (modal-dialog mode), the
+                        host calls commit() once on OK.
       derive_sources  — list of DeriveSource. May be empty.
     """
     kind: str
@@ -101,6 +106,23 @@ def register(spec: ComponentSpec) -> None:
     useful for in-place hot reload during dev, harmless in production
     because each component module registers once at import time."""
     REGISTRY[spec.kind] = spec
+
+
+def install_live_traces(
+    variables: list,
+    commit: Callable[[], None],
+    on_change: Callable[[], None],
+) -> None:
+    """Attach write-traces to a list of Tk variables so that any user
+    edit immediately calls commit() (mutating the dataclass) and then
+    on_change() (notifying the host). Call this AFTER setting initial
+    var values so init writes don't fire spurious events.
+    """
+    def _fire(*_):
+        commit()
+        on_change()
+    for v in variables:
+        v.trace_add("write", _fire)
 
 
 def all_specs() -> list[ComponentSpec]:

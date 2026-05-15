@@ -11,7 +11,7 @@ from core.composition.overlays import LowerThirdOverlay
 
 from . import (
     ComponentSpec, DeriveContext, DeriveSource,
-    DERIVE_BASIC_INFO, register,
+    DERIVE_BASIC_INFO, install_live_traces, register,
 )
 
 
@@ -27,7 +27,8 @@ def _format(ov: LowerThirdOverlay) -> str:
     return f"{ov.title} | {ov.subtitle}"
 
 
-def _build_edit_fields(parent: ttk.Frame, ov: LowerThirdOverlay, _time_vars):
+def _build_edit_fields(parent: ttk.Frame, ov: LowerThirdOverlay,
+                         _time_vars, on_change=None):
     title_v = tk.StringVar(value=ov.title)
     sub_v = tk.StringVar(value=ov.subtitle)
     pos_v = tk.StringVar(value=ov.position)
@@ -55,6 +56,8 @@ def _build_edit_fields(parent: ttk.Frame, ov: LowerThirdOverlay, _time_vars):
         ov.title = title_v.get().strip()
         ov.subtitle = sub_v.get().strip()
         ov.position = pos_v.get() or "bottom-left"
+    if on_change is not None:
+        install_live_traces([title_v, sub_v, pos_v], _commit, on_change)
     return _commit
 
 
