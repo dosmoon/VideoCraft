@@ -20,6 +20,9 @@ from core.source_context import (
 
 
 _FIELDS = (
+    # Anchor fields (AI-verified canonical version of user's basic_info)
+    "host", "host_bio", "event_date", "event_location", "episode_topic",
+    # AI-derived extras
     "host_affiliation", "guests",
     "event_time",
     "show_type", "event_summary", "key_points",
@@ -39,21 +42,17 @@ def extract(source_dir: str,
             subtitles_dir: str | None = None,
             cancel_token=None) -> SourceContext:
     """Run the realtime-news AI task and return a fresh SourceContext
-    (10 AI-owned fields). Caller is expected to write_context() the result.
+    (15 fields: 5 verified anchors + 10 derived). Caller writes the
+    result to context.json.
 
-    basic_info.json is read but NOT modified — its 5 anchor fields are
-    fed into the prompt as authoritative seed; AI must respect them.
+    basic_info.json is read as a HINT — possibly misspelled / incomplete /
+    out-of-date. AI must verify each anchor field via web search and
+    emit the canonical version (e.g. user types "Vance" → AI emits
+    "James David Vance"). basic_info.json itself is NOT modified.
 
     Replacement semantics (not merge): the returned SourceContext is
-    the AI's fresh output. Any prior context.json content is discarded.
-    Manual user tweaks belong in basic_info.json (preserved by design)
-    or should be redone after AI Fill via the manual-edit dialog.
-
-    Rationale: a previous merge-preserve rule caused a wedged state
-    where bad content (e.g. from a failed-fallback DeepSeek hallucination)
-    was kept across subsequent AI Fill attempts, so the user could not
-    recover by clicking AI Fill again. Replace semantics make the
-    button do what its label says: fill the archive afresh.
+    the AI's fresh output. Any prior context.json content is discarded
+    so the user can recover from a bad earlier run by clicking again.
 
     Raises core.ai.AIError when no provider is configured for
     task=news.realtime or the API call fails.
@@ -69,9 +68,9 @@ def extract(source_dir: str,
            or platform.get("original_url")
            or platform.get("url") or "").strip()
 
-    # Seed: only basic_info anchor fields. These are the user's
-    # ground-truth knowledge; the AI must reflect them and not contradict.
-    # Past context.json content is intentionally NOT fed back in.
+    # Seed: basic_info anchors as user-provided HINTS. AI verifies them
+    # via web search and emits the corrected canonical version in its
+    # output. Past context.json content intentionally NOT fed back in.
     template = prompts.get("news.source_context")
     filled = template.format(
         url=url or "—",

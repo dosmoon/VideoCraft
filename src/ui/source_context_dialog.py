@@ -31,11 +31,13 @@ _SHOW_TYPES = ["", "新闻发布会", "演讲", "访谈", "直播切片",
                "课程", "评论", "解说", "纪录片", "其他"]
 _PLATFORM_TONES = ["", "YouTube", "B 站", "抖音", "小红书", "TikTok", "Reels"]
 
-# Single-line StringVar fields (key). Reduced 2026-05-14: 5 anchor fields
-# (host / host_bio / event_date / event_location / episode_topic) moved
-# to source_basic_info_dialog.py; this dialog now edits the 10 AI-owned
-# fields of SourceContext.
+# Single-line StringVar fields (key). Includes the 5 AI-verified anchor
+# fields (host / host_bio / event_date / event_location / episode_topic)
+# now stored in context.json as the canonical version. Original hint
+# entry stays in source_basic_info_dialog.py — that dialog still feeds
+# the AI; this one shows + edits AI's corrected output.
 _ENTRY_FIELDS = (
+    "host", "host_bio", "event_date", "event_location", "episode_topic",
     "host_affiliation", "guests", "event_time",
 )
 # Multi-line Text fields (key, line height in dialog).
@@ -133,20 +135,25 @@ class _ContextDialog:
 
         # ── Section: People ──
         sec = self._section(body, tr("dialog.source_context.sec_people"))
-        self._entry_row(sec, 0, "host_affiliation")
-        self._entry_row(sec, 1, "guests")
+        self._entry_row(sec, 0, "host")
+        self._entry_row(sec, 1, "host_bio")
+        self._entry_row(sec, 2, "host_affiliation")
+        self._entry_row(sec, 3, "guests")
         sec.columnconfigure(1, weight=1)
 
-        # ── Section: Time ──
+        # ── Section: Time + Location ──
         sec = self._section(body, tr("dialog.source_context.sec_when_where"))
-        self._entry_row(sec, 0, "event_time")
+        self._entry_row(sec, 0, "event_date")
+        self._entry_row(sec, 1, "event_time")
+        self._entry_row(sec, 2, "event_location")
         sec.columnconfigure(1, weight=1)
 
         # ── Section: Event ──
         sec = self._section(body, tr("dialog.source_context.sec_event"))
-        self._combo_row(sec, 0, "show_type", _SHOW_TYPES)
-        self._text_row(sec, 1, "event_summary", height=3)
-        self._text_row(sec, 2, "key_points", height=4,
+        self._entry_row(sec, 0, "episode_topic")
+        self._combo_row(sec, 1, "show_type", _SHOW_TYPES)
+        self._text_row(sec, 2, "event_summary", height=3)
+        self._text_row(sec, 3, "key_points", height=4,
                        hint=tr("dialog.source_context.hint_key_points"))
         sec.columnconfigure(1, weight=1)
 

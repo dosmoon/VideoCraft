@@ -880,8 +880,12 @@ class NewsDeskApp(ToolBase):
         from tools.news_desk.publish import render_news_desk_publish
         from datetime import datetime as _dt
         from core import chapters_io
-        bi = source_context.read_basic_info(self.project.source_dir)
-        ctx = source_context.read_context(self.project.source_dir)
+        # Canonical view: context.json (AI-corrected) wins; basic_info
+        # falls back for fields context hasn't filled yet. publish.md
+        # consumers should always see the same truth as renderers.
+        merged = source_context.combined_dict(self.project.source_dir)
+        bi = source_context.SourceBasicInfo.from_dict(merged)
+        ctx = source_context.SourceContext.from_dict(merged)
 
         # Pull chapters from the source project's analysis.json if any.
         chapters: list[dict] = []

@@ -164,10 +164,11 @@ def _to_render_fragment(instance: dict, _ctx: ProjectContext) -> dict:
 
 
 def _import_event_date(instance: dict, ctx: ProjectContext) -> None:
-    """[⇩ Import event date] — fill text from basic_info.event_date and
+    """[⇩ Import event date] — pull date from the canonical combined view
+    (context.json's AI-corrected value wins, basic_info as fallback) and
     nudge defaults toward the date-stamp look (smaller, bottom-left)."""
-    info = source_context.read_basic_info(ctx.project.source_dir)
-    date = (info.event_date or "").strip()
+    merged = source_context.combined_dict(ctx.project.source_dir)
+    date = (merged.get("event_date") or "").strip()
     if not date:
         return
     instance["text"] = date

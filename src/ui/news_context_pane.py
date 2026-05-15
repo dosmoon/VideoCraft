@@ -28,18 +28,25 @@ from i18n import tr
 _EMPTY = "—"
 
 
-# Field groups — only the 10 AI-owned fields. Anchor fields (host,
-# host_bio, event_date, event_location, episode_topic) live in
-# basic_info.json and render in source_preview_pane.
+# Field groups — all 15 fields including the AI-verified anchor fields
+# (host / host_bio / event_date / event_location / episode_topic).
+# This pane shows the canonical view the user sees when inspecting
+# what AI produced; basic_info.json is now treated as a hint and the
+# AI's corrected anchors land here.
 _GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
     ("dialog.source_context.sec_people", (
+        ("host",             "dialog.source_context.host"),
+        ("host_bio",         "dialog.source_context.host_bio"),
         ("host_affiliation", "dialog.source_context.host_affiliation"),
         ("guests",           "dialog.source_context.guests"),
     )),
     ("dialog.source_context.sec_when_where", (
+        ("event_date",     "dialog.source_context.event_date"),
         ("event_time",     "dialog.source_context.event_time"),
+        ("event_location", "dialog.source_context.event_location"),
     )),
     ("dialog.source_context.sec_event", (
+        ("episode_topic", "dialog.source_context.episode_topic"),
         ("show_type",     "dialog.source_context.show_type"),
         ("event_summary", "dialog.source_context.event_summary"),
         ("key_points",    "dialog.source_context.key_points"),

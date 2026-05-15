@@ -1,22 +1,28 @@
-"""Source content context — split into two ownership zones.
-
-Two on-disk files share the prompt-context responsibility. They have
-DISJOINT field sets and are intentionally not merged into one dataclass
-so the editing surfaces (UI panes) have unambiguous ownership:
+"""Source content context — two on-disk files, single source of truth.
 
   source/basic_info.json   — SourceBasicInfo (5 fields)
-      Hand-filled ground truth. Source pane owns it. AI never writes
-      here; AI READS it as authoritative seed during news.realtime
-      extraction (preserved verbatim in merge).
+      User-provided HINTS. Source pane owns it. The user fills these
+      in 30 seconds based on what they think they see in the first 5
+      seconds of the video. THEY CAN BE WRONG (misspelled names,
+      out-of-date titles, approximate dates). AI reads them as a
+      seed for its search, NOT as ground truth.
 
-  source/context.json      — SourceContext (10 fields)
-      AI-generated event archive. news_context pane owns it. Manual
-      edit possible (via dialog) but typical flow is AI Fill.
+  source/context.json      — SourceContext (15 fields)
+      AI-generated canonical archive. Includes the 5 anchor fields
+      (host / host_bio / event_date / event_location / episode_topic)
+      that the AI verified + corrected against its searches, PLUS
+      10 AI-derived fields (host_affiliation / guests / event_time
+      / show_type / event_summary / key_points / background /
+      audience / platform_tone / notes). news_context pane owns it.
+      Manual edit possible via dialog; typical flow is AI Fill.
 
-Downstream consumers (subtitle_analysis_runners, future news_desk
-overlays) call `combined_prompt_block(source_dir)` to get a unified
-markdown block covering both. They should NOT read either file
-directly — the combined view is the contract.
+Downstream consumers (subtitle_analysis_runners, news_desk components,
+publish renderers) call `combined_dict(source_dir)` /
+`combined_prompt_block(source_dir)`. The combined view honors
+context.json's values when populated (= AI-verified canonical) and
+falls back to basic_info.json only for fields context hasn't filled
+yet (legacy projects + before first AI Fill). Consumers SHOULD NOT
+read either file directly — the combined view is the contract.
 """
 
 from __future__ import annotations
@@ -61,10 +67,20 @@ class SourceBasicInfo:
 
 @dataclass
 class SourceContext:
-    """10 AI-generated fields. Owned by news.realtime extraction; user can
-    still hand-edit via the manual-edit dialog in the news pane.
+    """15 fields owned by news.realtime extraction. The 5 anchor fields
+    (host / host_bio / event_date / event_location / episode_topic) are
+    the AI's CORRECTED version of basic_info — user may have misspelled
+    or guessed; AI verifies against web search and emits the canonical
+    form. The other 10 fields are derived insights AI generates. User
+    can still hand-edit via the news_context pane dialog.
     """
-    # — People —
+    # — Anchor fields (AI-verified canonical version of basic_info) —
+    host: str = ""               # 主讲人姓名 (官方写法)
+    host_bio: str = ""           # 一行身份 (例: "美国副总统")
+    event_date: str = ""         # YYYY-MM-DD
+    event_location: str = ""     # 地点 + 城市
+    episode_topic: str = ""      # 整集主题 (≤30 字)
+    # — People (AI extras) —
     host_affiliation: str = ""   # 主讲人所属机构
     guests: str = ""             # other on-screen people (顿号 separated)
     # — Time —
@@ -191,12 +207,19 @@ _COMBINED_LABELS = (
 
 
 def combined_dict(source_dir: str) -> dict[str, str]:
-    """Merged 15-field dict for inspection / dialog editing / serialization
-    into AI prompts. basic_info fields take priority on the (rare) chance
-    a name collision is reintroduced."""
-    out = {}
-    out.update(read_context(source_dir).to_dict())
-    out.update(read_basic_info(source_dir).to_dict())
+    """Merged view for downstream consumers. context.json's non-empty
+    values WIN — they're the AI-verified canonical form. basic_info
+    only fills slots context hasn't populated yet (legacy projects /
+    pre-AI-Fill state). This priority enables AI to correct user typos
+    like "Vance" → "James David Vance" — once AI Fill runs, the
+    corrected value is what downstream sees.
+    """
+    out: dict[str, str] = {}
+    out.update(read_basic_info(source_dir).to_dict())  # baseline (hint)
+    ctx_dict = read_context(source_dir).to_dict()
+    for k, v in ctx_dict.items():
+        if isinstance(v, str) and v.strip():
+            out[k] = v
     return out
 
 
