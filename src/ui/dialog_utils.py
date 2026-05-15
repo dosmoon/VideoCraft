@@ -14,11 +14,27 @@ Convention for new dialogs:
     dlg.title(...)
     dlg.transient(parent.winfo_toplevel())
     dlg.grab_set()
-    # ... pack widgets, optionally dlg.geometry("WxH") for a fixed size
-    center_dialog_on_parent(dlg, parent)
+    dlg.minsize(W, H)              # fallback floor; let content drive natural size
 
-Always call AFTER widgets are packed; the helper runs update_idletasks
-internally so winfo_width/height return real values.
+    # Pack the action row FIRST at the bottom so it's pinned and never
+    # clipped when body content grows. This is the #1 dialog bug:
+    # body.pack(expand=True) followed by btns.pack() pushes the buttons
+    # outside the window when the body's natural height exceeds the
+    # initial geometry.
+    btns = ttk.Frame(dlg); btns.pack(side="bottom", fill="x", padx=12, pady=10)
+
+    body = ttk.Frame(dlg); body.pack(fill="both", expand=True, padx=12, pady=10)
+    # ... build body content into body, build buttons into btns
+
+    center_dialog_on_parent(dlg, parent)   # AFTER widgets are packed
+
+Prefer auto-sizing (no `dlg.geometry("WxH")`) for info / confirm
+dialogs — text length is hard to predict across i18n. Use minsize for
+a sensible floor. Reach for an explicit geometry only when the dialog
+hosts widgets that need a specific size (canvas previews, large forms).
+
+`center_dialog_on_parent` runs update_idletasks internally so calling
+it after widgets are packed measures the real natural size.
 """
 
 from __future__ import annotations

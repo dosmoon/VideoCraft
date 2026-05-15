@@ -467,8 +467,13 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
         dlg.title(tr("tool.news_desk.chapter.import_dialog_title"))
         dlg.transient(parent.winfo_toplevel())
         dlg.grab_set()
-        dlg.geometry("560x420")
-        center_dialog_on_parent(dlg, parent)
+        dlg.minsize(560, 480)
+
+        # Pack the action row FIRST at the bottom so it's never clipped
+        # when body content is taller than the window. Body then fills
+        # whatever's left — and the dialog auto-sizes to fit text.
+        btns = ttk.Frame(dlg)
+        btns.pack(side="bottom", fill="x", padx=12, pady=(0, 10))
 
         body = ttk.Frame(dlg); body.pack(fill="both", expand=True,
                                           padx=12, pady=10)
@@ -528,9 +533,7 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
                    foreground=effect_color
                    ).pack(anchor="w", pady=(2, 8))
 
-        # Buttons.
-        btns = ttk.Frame(dlg); btns.pack(fill="x", padx=12, pady=(0, 10))
-
+        # `btns` was packed at the very top so it pins to the bottom.
         def _do_import():
             _import_from_analysis(instance, ctx)
             _refresh_tree()
@@ -551,6 +554,9 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
                     ).pack(side="right", padx=(0, 8))
 
         dlg.bind("<Escape>", lambda _e: dlg.destroy())
+        # Center AFTER widgets are packed so the helper measures real
+        # natural size (we let the dialog auto-size to text content).
+        center_dialog_on_parent(dlg, parent)
     import_btn.config(command=_do_import_analysis)
 
     def _commit_meta(*_):
