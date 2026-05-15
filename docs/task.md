@@ -5,99 +5,44 @@
 
 ---
 
-## news_desk N-字幕 / N-水印 渲染 + 预览 — 已收尾上线
+## news_desk 章节体验全面收尾 + 布局回正 — 已上线
 
-HEAD: `60bb0f0` (已 push origin/main)，workspace clean。
+HEAD: `0088edd` (已 push origin/main)，workspace clean。
 
-### 本次会话核心变化
+### 本次会话的 commit 串
 
-#### 过期文案清扫（60bb0f0）
+| commit | 内容 |
+|---|---|
+| `0ff9da9` | Hero Card overlay：新 ChapterHeroCardOverlay/Style，ass renderer + WebView 镜像；chapter `start_card` 路由到 hero（不再用 ChapterPointCardOverlay）；inline_style 字段允许 per-spec style override |
+| `8ed2db4` | chapter 单一 kind 模型：删 end_summary mode；inline 详情面板替换模态对话框（点 row → seek + 填详情 + 实时回写） |
+| `3f3f458` | 章节导入按钮挪到工具栏 + 弹窗解释 4 段（用 UI 实际词汇 📑「标题与章节」，不再用代码内部名 subtitle.pack/refined/key_points） |
+| `6a737c9` | `src/ui/dialog_utils.py::center_dialog_on_parent` canonical helper + 收编 11 个历史拷贝粘贴 |
+| `df134dd` | dialog auto-size + minsize + 按钮先 pack bottom（修被裁掉的按钮） |
+| `0088edd` | 布局回正：v0.3 设计文档 §2 — 左竖向 (preview 上 / list 下) + 右属性满高；「组件」→「图层」 |
 
-N-字幕/N-水印上线后,组件 docstring + UI hint label + zh/en i18n 仍说"前 2 条字幕、首个水印"——对用户和未来 Claude 都是误导。
+### 关键模型/文档变更
 
-- subtitle.py: 模块 + `_to_render_fragment` docstring 改写;property panel 底部的 `render_hint` Label 删掉
-- text_watermark.py / image_watermark.py: docstring 改写为"全部走 extra_watermarks"
-- i18n zh/en: 删除 `tool.news_desk.subtitle.render_hint` key
+- **章节是唯一 kind，模式是 view filter**：起始大卡 = "用 chapter 数据渲一次 hero card"，不是单独"大卡数据"。end_summary 删除（曾 DEFERRED，单一 kind 模型下没必要）
+- **chapter.py 模块 docstring 写明**：news_desk 当前**复用 analysis.json schema**（过渡设计），未来会拥有自己的 schema（参见模块顶部 ARCHITECTURE NOTE）
+- **独立性目标**：news_desk 派生**只需 source 视频**，SRT/analysis.json/context.json 都是可选；手工建一个完整章节列表 + 添加水印 + 跑通 MP4 必须能走通——这是接下来要验证的
+- **WebView 修复**：N 字幕路径下 sub1+sub2 都 disabled 时，`drawSubtitles` 早 return 导致 extras 也不画 → 删掉 early return（对应历史会话）
+- **图片水印真加载**：`new Image()` + file:// 缓存（早先是占位框）
 
-#### 渲染层 N-字幕 / N-水印（d1ea5da）
+### 学到的元规则（已存为 memory）
 
-推翻"前 2 字幕→sub1/sub2，首个水印→style.watermark，其余丢弃"的限制。news_desk 工作台里组件的多实例承诺真正兑现到端到端。
+- `feedback_check_design_docs` — 改 UI 前 grep `docs/draft/` 和 `docs/design/`，别拍脑袋
+- `feedback_user_facing_naming` — UI 文案绝不用代码内部名（task / field / class），先 grep i18n 找 UI 实际叫什么
+- `reference_dialog_pattern` — 弹窗标准模板在 `src/ui/dialog_utils.py` docstring，照着抄
 
-**render.py:**
-- 新 dataclass `ExtraSubtitleSpec`（srt_path + line + position + block_margin_pct），每条独立锚（无共享 track_gap），匹配 news_desk 组件模型
-- `CompositionRequest` 加 `extra_subtitles` / `extra_watermarks` 列表
-- 老 `source_srt` / `source_srt_secondary` + `style.watermark` 不动 — clip + bilingual subtitle burn 继续走 2 轨共享布局路径
-- `_named_overlay_jobs` 每条 extra subtitle 发独立 libass job（自带 MarginV/Alignment），每个 extra watermark 发 drawtext/overlay job
+## 下一步候选
 
-**news_desk_tool:**
-- `_build_render_inputs` 不再 first-2/first-1 截断，全部走 N-track
-- sub1/sub2 + style.watermark 留禁用
+1. **真实使用攒反馈** — 拿一个真实新闻视频跑一遍：3+ 字幕 + 2+ 水印 + 章节起始大卡，预览 vs 烧录对比
+2. **chapter 导入合并策略** — 当前 `_import_from_analysis` 整个覆盖（有红字警告但仍危险），加 partial-merge：保留用户手工添加 / 编辑过的 row
+3. **多发言人 → 名牌组件** — 等 AI 提取多发言人 schema 出现
+4. **章节其它视觉模式** — 如果 dogfood 后觉得 hero / top_strip 不够
+5. **组件框架推广** — clip_script / bilingual_video 用同一 components-based 重构（大工程，先观察 news_desk 几周）
 
-**WebView 预览（composition_preview.html + preview.py）:**
-- 新 `setExtraSubtitles` / `setExtraWatermarks` JS API，跟渲染同构
-- `drawSubtitleLine` / `drawSingleWatermark` 抽出复用 helper
-- `drawSubtitles` 不再 sub1+sub2 都 null 时早 return（不然 extras 走不到）
-- 图片水印用 `new Image()` + file:// 真加载，缓存按 path；加载中才显示占位框
-
-### 上次会话遗留（仍生效）
-
-#### 1. news_desk v0.4 components-based 重构（76a65e4）
-
-推翻了 v0.3 的"全片属性 vs 时间组件 (A/B 类)"假分类。整个工作台收敛到一个原语：**组件**。
-
-UI 三栏：list / preview / property panel。绝不再加折叠组、按类型分组、"默认样式"框。
-
-4 个组件实现：
-| kind | 实例数 | 数据源 | 视觉 |
-|---|---|---|---|
-| chapter | singleton | analysis.json chapters | top_strip / start_card 多选 |
-| subtitle | N | 各 1 SRT | 1 |
-| text_watermark | N | 字面值 | 1 |
-| image_watermark | N | 图片路径 | 1 |
-
-延后：**名牌**（等 context.json 真有结构化发言人数据）
-
-详见 `[[project_news_desk_status]]`、`[[feedback_no_code_structure_in_ux]]`。
-
-#### 2. context.json 升级（fe8b3d1）
-
-basic_info.json 重新定位为**用户给 AI 的线索（可能错）**，context.json 是**AI 校正后的权威版本**。
-- SourceContext 加 5 个 anchor 字段（host / host_bio / event_date / event_location / episode_topic）
-- 总 15 字段
-- AI 必须搜索核实并输出权威值（"Vance" → "JD Vance"）
-- combined_dict 优先级翻转：context 非空胜 basic_info
-- 下游统一读 combined_dict
-
-#### 3. AI 输出层简化（76c7342）
-
-`subtitle.pack` 任务从"一锅 5+ 分钟"降到 "2.1 分钟"：
-- key_points 从 list[dict{text, start_sec, end_sec}] **回退**到 list[str]（移除时间戳要求）
-- 章节组件砍掉 `key_points_popup` 视觉模式
-- ClaudeCode 提供商加 `--effort low` lean 模式（subtitle.post 走它）
-- 实测全片 53 分钟 SRT：Sonnet + low effort + 简化 prompt = **125.9s, 29 章节, 90 key_points**
-
-经验：不要让单次 AI 调用做太多事；不要硬要 AI 做"程序工种"（如逐 cue 找时间戳），AI 会逃避或思考爆炸。
-
-### 当前打开的任务（按优先级）
-
-- **#13 / #18 / #19 / #20 / 文案清扫** ✓ 已完成
-- **#21 [P3]** 章节"结尾小结"模式 + 段落 overlay 渲染
-
-### 名牌组件（延后）
-
-#13 完成后，context.json 有了 host/host_bio/host_affiliation。但仍缺**多发言人结构化数据**（speakers 列表 + 出场时段）。等到 AI 提取多发言人或新数据 schema 出现时再做。
-
-参见 `[[project_news_desk_status]]` 关于"名牌延后"原因。
-
-### 下一步候选
-
-1. **真实使用攒反馈** — N-字幕/N-水印 + AI 简化版连用几天，看预览/烧录有没有边界 bug
-2. **#21 P3** 章节"结尾小结"模式
-3. **章节组件其它视觉模式** v0.4 砍了 `key_points_popup`，可能要补别的章节呈现方式
-4. **组件框架推广** clip_script / bilingual_video 用同一 components-based 重构（大工程，先观察 news_desk 几周再决定）
-5. **多发言人结构化数据 → 名牌组件** 等 AI 提取多发言人或新数据 schema 时再做
-
-让用户决定。
+我建议 **1 → 2**：先 dogfood，再补 import 安全网。
 
 ---
 
@@ -106,11 +51,14 @@ basic_info.json 重新定位为**用户给 AI 的线索（可能错）**，conte
 - prompt 改动必须 git commit（不能只改 src/core/prompts.py 不刷盘 prompts/*.md，反过来也是）
 - 修 ComponentSpec 改组件原语前回看 `[[feedback_no_code_structure_in_ux]]`
 - AI 任务设计前看 `[[feedback_ai_call_budget]]` + `[[reference_claude_cli_options]]`
+- 改 UI 布局/模块结构前 grep `docs/`（`[[feedback_check_design_docs]]`）
+- UI 文案先 grep `src/i18n/*.json` 找用户实际看见的词（`[[feedback_user_facing_naming]]`）
+- 新 `tk.Toplevel` 弹窗照 `src/ui/dialog_utils.py` docstring 模板写
 
 ---
 
 ## 不在本任务范围（备忘）
 
-- v0.3 设计文档 `docs/draft/news_desk-ux-v0.3.md` **已被 v0.4 模型推翻**——A/B 分类、模式选择那部分错了
+- v0.3 设计文档 `docs/draft/news_desk-ux-v0.3.md` **A/B 类分类那部分**已被 v0.4 推翻；**布局那部分仍生效**（已对齐）
 - timeline 拖拽编辑——v0.4 砍掉了，列表顺序 = z-order，足够
 - 名牌 / PullQuote / 引文 / 数据卡 等新组件——等需求清楚再加
