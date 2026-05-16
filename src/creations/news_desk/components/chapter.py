@@ -583,30 +583,30 @@ def _import_from_analysis(instance: dict, ctx: ProjectContext) -> None:
             continue
         if not isinstance(env, dict):
             continue
-            chs = env.get("chapters") or []
-            titles = env.get("titles") or []
-            if isinstance(chs, list):
-                schedule = instance.setdefault("schedule", [])
-                schedule.clear()
-                schedule.extend({
-                    "start_sec": float(ch.get("start_sec", 0.0)
-                                        or chapters_io.parse_time_str(ch.get("start", ""))),
-                    "end_sec":   float(ch.get("end_sec", 0.0)
-                                        or chapters_io.parse_time_str(ch.get("end", ""))),
-                    "title":     str(ch.get("title", "")),
-                    "refined":   str(ch.get("refined", "")),
-                    "key_points": list(ch.get("key_points") or []),
-                } for ch in chs)
-                # Snapshot candidate titles alongside chapters — same
-                # AI call produced both, so re-importing chapters
-                # refreshes titles too.
-                title_buf = instance.setdefault("titles", [])
-                title_buf.clear()
-                if isinstance(titles, list):
-                    title_buf.extend(str(t).strip()
-                                      for t in titles
-                                      if str(t).strip())
-                return
+        chs = env.get("chapters") or []
+        titles = env.get("titles") or []
+        if not isinstance(chs, list):
+            continue
+        schedule = instance.setdefault("schedule", [])
+        schedule.clear()
+        schedule.extend({
+            "start_sec": float(ch.get("start_sec", 0.0)
+                                or chapters_io.parse_time_str(ch.get("start", ""))),
+            "end_sec":   float(ch.get("end_sec", 0.0)
+                                or chapters_io.parse_time_str(ch.get("end", ""))),
+            "title":     str(ch.get("title", "")),
+            "refined":   str(ch.get("refined", "")),
+            "key_points": list(ch.get("key_points") or []),
+        } for ch in chs)
+        # Snapshot candidate titles alongside chapters — same AI call
+        # produced both, so re-importing chapters refreshes titles too.
+        title_buf = instance.setdefault("titles", [])
+        title_buf.clear()
+        if isinstance(titles, list):
+            title_buf.extend(str(t).strip()
+                              for t in titles
+                              if str(t).strip())
+        return
 
 
 def _to_render_fragment(instance: dict, _ctx: ProjectContext) -> dict:
