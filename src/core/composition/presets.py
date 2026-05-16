@@ -35,11 +35,9 @@ from .style import (
 PRESET_DIR = user_data.path("presets")
 PROJECT_PRESETS_PATH = os.path.join(PRESET_DIR, "clip_project.json")
 HOOK_OUTRO_PRESETS_PATH = os.path.join(PRESET_DIR, "clip_hook_outro.json")
-NEWS_DESK_PRESETS_PATH = os.path.join(PRESET_DIR, "news_desk.json")
 
 BUILTIN_DEFAULT_PROJECT = "Default 9:16"
 BUILTIN_DEFAULT_HOOK_OUTRO = "默认 / Default"
-BUILTIN_DEFAULT_NEWS_DESK = "Default"
 
 
 # ── Schema-strict dict → dataclass conversion ──────────────────────────────
@@ -418,107 +416,3 @@ def set_last_used_hook_outro(store: dict, name: str) -> None:
         store["last_used"] = name
 
 
-# ── News-desk store API (passthrough + bilingual subs + overlay style lib) ─
-#
-# news_desk derivative produces a long-form speaker / press-briefing video.
-# Defaults: passthrough output (preserve source 1080p/4K), bilingual
-# subtitles bottom, news_desk overlay style library seeded with a default
-# LowerThirdStyle + TopicStripStyle so newly created instances have
-# something to render without requiring the user to pick a class first.
-
-BUILTIN_NEWS_DESK_PRESETS: dict[str, CompositionStyle] = {
-    BUILTIN_DEFAULT_NEWS_DESK: CompositionStyle(
-        output=OutputGeometry(mode="passthrough"),
-        subtitle=SubtitleStyle(
-            sub1=SubtitleLineStyle(
-                enabled=True, fontsize=24, color="#FFFF00",
-                bold=True, is_chinese=True),
-            sub2=SubtitleLineStyle(
-                enabled=True, fontsize=22, color="#FFFFFF",
-                bold=False, is_chinese=False),
-            stroke_color="#000000", stroke_width=2, position="bottom",
-        ),
-        watermark=WatermarkStyle(enabled=False),
-        encode_preset="veryfast",
-        overlay_styles=default_overlay_styles(),
-    ),
-}
-
-
-def _seed_news_desk_store() -> dict:
-    return {
-        "last_used": BUILTIN_DEFAULT_NEWS_DESK,
-        "presets": {n: composition_style_to_dict(s)
-                     for n, s in BUILTIN_NEWS_DESK_PRESETS.items()},
-    }
-
-
-def load_news_desk_store() -> dict:
-    raw = _read_json(NEWS_DESK_PRESETS_PATH)
-    if raw is None or "presets" not in raw:
-        return _seed_news_desk_store()
-    kept, _dropped = _validate_project_presets(raw.get("presets") or {})
-    for name, style in BUILTIN_NEWS_DESK_PRESETS.items():
-        if name not in kept:
-            kept[name] = composition_style_to_dict(style)
-    last_used = raw.get("last_used", BUILTIN_DEFAULT_NEWS_DESK)
-    if last_used not in kept:
-        last_used = BUILTIN_DEFAULT_NEWS_DESK
-    return {"last_used": last_used, "presets": kept}
-
-
-def save_news_desk_store(store: dict) -> None:
-    _write_json(NEWS_DESK_PRESETS_PATH, store)
-
-
-def list_news_desk_presets(store: dict) -> list[str]:
-    presets = store.get("presets", {})
-    builtin_order = [n for n in BUILTIN_NEWS_DESK_PRESETS if n in presets]
-    user_names = sorted(
-        (n for n in presets if n not in BUILTIN_NEWS_DESK_PRESETS),
-        key=lambda s: s.lower(),
-    )
-    return builtin_order + user_names
-
-
-def get_news_desk_preset(store: dict, name: str):
-    raw = store.get("presets", {}).get(name)
-    if raw is None:
-        return None
-    try:
-        return composition_style_from_dict(raw)
-    except (PresetSchemaError, TypeError, ValueError):
-        return None
-
-
-def upsert_news_desk_preset(store: dict, name: str,
-                              style: CompositionStyle) -> None:
-    store.setdefault("presets", {})[name] = composition_style_to_dict(style)
-
-
-def delete_news_desk_preset(store: dict, name: str) -> bool:
-    if name in BUILTIN_NEWS_DESK_PRESETS:
-        return False
-    presets = store.get("presets", {})
-    if name not in presets:
-        return False
-    del presets[name]
-    if store.get("last_used") == name:
-        store["last_used"] = BUILTIN_DEFAULT_NEWS_DESK
-    return True
-
-
-def is_builtin_news_desk(name: str) -> bool:
-    return name in BUILTIN_NEWS_DESK_PRESETS
-
-
-def get_last_used_news_desk(store: dict) -> str:
-    name = store.get("last_used", BUILTIN_DEFAULT_NEWS_DESK)
-    if name not in store.get("presets", {}):
-        return BUILTIN_DEFAULT_NEWS_DESK
-    return name
-
-
-def set_last_used_news_desk(store: dict, name: str) -> None:
-    if name in store.get("presets", {}):
-        store["last_used"] = name

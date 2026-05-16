@@ -32,15 +32,16 @@ from i18n import tr
 from hub_logger import logger
 
 import creations
-from core.composition import presets as comp_presets
 from core.composition.preview import CompositionPreview
 from core.composition.render import (
     CompositionRequest, ExtraSubtitleSpec, ExtraWatermarkSpec,
     prepare_subtitle_cues, probe_video_resolution, render_composition,
 )
+from creations.news_desk import presets as nd_presets
 from materials.news_video.model import NewsVideoModel
 from core.composition.style import (
-    CompositionStyle, SubtitleLineStyle, SubtitleStyle, WatermarkStyle,
+    CompositionStyle, OutputGeometry, SubtitleStyle, WatermarkStyle,
+    default_overlay_styles,
 )
 from ui.dialog_utils import center_dialog_on_parent
 
@@ -50,6 +51,20 @@ from creations.news_desk import components as nd_components
 
 
 DERIVATIVE_TYPE = "news_desk"
+
+
+def _default_render_style() -> CompositionStyle:
+    """News-desk's fixed CompositionStyle — passthrough geometry +
+    veryfast encode + the standard overlay style library. Components
+    own subtitle / watermark / overlays at render time; this style is
+    only the scaffolding the renderer needs around them."""
+    return CompositionStyle(
+        output=OutputGeometry(mode="passthrough"),
+        subtitle=SubtitleStyle(),                       # blanked — components own subs
+        watermark=WatermarkStyle(enabled=False),        # blanked — components own watermarks
+        encode_preset="veryfast",
+        overlay_styles=default_overlay_styles(),
+    )
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -155,21 +170,10 @@ class NewsDeskApp(ToolBase):
         self._processing = False
         self._skip_sidecar = False
 
-        # Preset store + style resolution. config.preset_name (when
-        # restoring an existing instance) wins; fresh instances fall
-        # back to the store's "last used", then to the builtin default.
-        self._preset_store = comp_presets.load_news_desk_store()
-        if not self.config.preset_name:
-            self.config.preset_name = comp_presets.get_last_used_news_desk(
-                self._preset_store)
-        self._current_style: CompositionStyle = (
-            comp_presets.get_news_desk_preset(
-                self._preset_store, self.config.preset_name)
-            or comp_presets.get_news_desk_preset(
-                self._preset_store, comp_presets.BUILTIN_DEFAULT_NEWS_DESK)
-            or CompositionStyle()
-        )
-
+        # Render style is a fixed shape for news_desk — passthrough
+        # geometry (preserve source resolution), veryfast encode,
+        # default overlay style library. Components own everything
+        # else (subtitle / watermark / overlays).
         self._preview: CompositionPreview | None = None
 
         self._build_ui()
@@ -482,22 +486,19 @@ class NewsDeskApp(ToolBase):
         m = self.top_menu
         m.delete(0, "end")
 
+        # Preset submenu: Apply → (one entry per preset),
+        # then Save as / Delete. The selected preset is a soft tag —
+        # users can edit components after applying without disturbing
+        # the preset library.
         pmenu = tk.Menu(m, tearoff=0)
-        names = comp_presets.list_news_desk_presets(self._preset_store)
-        cur = self.config.preset_name or ""
-        if cur:
-            pmenu.add_command(
-                label=tr("tool.news_desk.menu.preset.current", name=cur),
-                state="disabled")
-            pmenu.add_separator()
-        for name in names:
-            pmenu.add_radiobutton(
-                label=name, value=name,
-                variable=tk.StringVar(value=cur),
-                command=lambda n=name: self._select_preset(n))
+        apply_menu = tk.Menu(pmenu, tearoff=0)
+        for name in nd_presets.list_preset_names():
+            apply_menu.add_command(
+                label=name,
+                command=lambda n=name: self._on_preset_apply(n))
+        pmenu.add_cascade(label=tr("tool.news_desk.preset.apply"),
+                           menu=apply_menu)
         pmenu.add_separator()
-        pmenu.add_command(label=tr("tool.news_desk.preset.save"),
-                           command=self._on_preset_save)
         pmenu.add_command(label=tr("tool.news_desk.preset.save_as"),
                            command=self._on_preset_save_as)
         pmenu.add_command(label=tr("tool.news_desk.preset.delete"),
@@ -510,25 +511,26 @@ class NewsDeskApp(ToolBase):
         m.add_command(label=tr("tool.news_desk.action.export"),
                        command=self._do_export)
 
-    def _select_preset(self, name: str) -> None:
-        style = comp_presets.get_news_desk_preset(self._preset_store, name)
-        if style is None:
+    def _on_preset_apply(self, name: str) -> None:
+        """Wholesale replace components with the preset's. Confirms
+        first when there's anything to lose; never merges."""
+        preset = nd_presets.get_preset(name)
+        if preset is None:
             return
-        self._current_style = style
+        if self.config.components:
+            if not messagebox.askyesno(
+                    "VideoCraft",
+                    tr("tool.news_desk.preset.apply.confirm",
+                        name=name, n=len(self.config.components)),
+                    parent=self.master):
+                return
+        self.config.components = nd_presets.fresh_components_for(preset)
         self.config.preset_name = name
-        comp_presets.set_last_used_news_desk(self._preset_store, name)
-        comp_presets.save_news_desk_store(self._preset_store)
         self._save_instance_config()
+        self._refresh_list()
+        self._refresh_property_pane()
         self._push_preview()
         self._rebuild_top_menu()
-
-    def _on_preset_save(self) -> None:
-        name = self.config.preset_name
-        if not name or comp_presets.is_builtin_news_desk(name):
-            return self._on_preset_save_as()
-        comp_presets.upsert_news_desk_preset(
-            self._preset_store, name, self._current_style)
-        comp_presets.save_news_desk_store(self._preset_store)
 
     def _on_preset_save_as(self) -> None:
         name = simpledialog.askstring(
@@ -536,32 +538,48 @@ class NewsDeskApp(ToolBase):
             parent=self.master)
         if not name:
             return
-        comp_presets.upsert_news_desk_preset(
-            self._preset_store, name, self._current_style)
-        comp_presets.set_last_used_news_desk(self._preset_store, name)
-        comp_presets.save_news_desk_store(self._preset_store)
+        name = name.strip()
+        if not name:
+            return
+        if nd_presets.is_builtin(name):
+            messagebox.showinfo(
+                "VideoCraft",
+                tr("tool.news_desk.preset.save_as.builtin_protected",
+                    name=name),
+                parent=self.master)
+            return
+        preset = nd_presets.NewsDeskPreset(
+            name=name, components=list(self.config.components))
+        nd_presets.save_user_preset(preset)
         self.config.preset_name = name
         self._save_instance_config()
         self._rebuild_top_menu()
 
     def _on_preset_delete(self) -> None:
-        name = self.config.preset_name
-        if not name:
-            return
-        if comp_presets.is_builtin_news_desk(name):
+        # Pick one to delete from the user-preset list (builtins
+        # excluded). Skip silently when no user presets exist.
+        user_names = [n for n in nd_presets.list_preset_names()
+                      if not nd_presets.is_builtin(n)]
+        if not user_names:
             messagebox.showinfo(
                 "VideoCraft",
-                tr("tool.news_desk.preset.delete.builtin_protected"),
+                tr("tool.news_desk.preset.delete.no_user_presets"),
                 parent=self.master)
             return
-        if not comp_presets.delete_news_desk_preset(self._preset_store, name):
+        # Prompt the user with a simple input — list available names
+        # in the prompt body so they can copy-paste.
+        prompt = tr("tool.news_desk.preset.delete.prompt",
+                     names="\n".join(f"  · {n}" for n in user_names))
+        name = simpledialog.askstring(
+            "VideoCraft", prompt, parent=self.master)
+        if not name or name.strip() not in user_names:
             return
-        comp_presets.save_news_desk_store(self._preset_store)
-        names = comp_presets.list_news_desk_presets(self._preset_store)
-        if names:
-            self._select_preset(names[0])
-        else:
-            self._rebuild_top_menu()
+        nd_presets.delete_user_preset(name.strip())
+        # If the deleted preset was the instance's tag, clear it.
+        if self.config.preset_name == name.strip():
+            self.config.preset_name = ""
+            self._save_instance_config()
+        self._rebuild_top_menu()
 
     # ── Project mode ──────────────────────────────────────────────────────
 
@@ -597,8 +615,6 @@ class NewsDeskApp(ToolBase):
                 logger.warning(f"news_desk: preview set_source failed: {e}")
         self._push_preview()
 
-        comp_presets.save_news_desk_store(self._preset_store)
-
     # ── Per-instance paths + config ───────────────────────────────────────
 
     def _instance_dir(self) -> str:
@@ -628,12 +644,10 @@ class NewsDeskApp(ToolBase):
            overlay list — chapter cards, lower thirds, etc.).
         Renderer + preview are then driven by these uniformly.
         """
-        # Start from preset's CompositionStyle but reset the parts
-        # components own (subtitle + watermark). Preserves output
-        # geometry, encode preset, hook/outro, overlay style library.
-        style = replace(self._current_style,
-                          subtitle=SubtitleStyle(),
-                          watermark=WatermarkStyle(enabled=False))
+        # News-desk has a fixed render style (passthrough + veryfast +
+        # default overlay library). Subtitles and watermarks are
+        # contributed by components below.
+        style = _default_render_style()
 
         ctx = nd_components.ProjectContext(
             project=self.project,
