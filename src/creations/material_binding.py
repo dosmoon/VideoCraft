@@ -1,72 +1,20 @@
-"""Creation ↔ material binding (ADR-0005 slice Q).
+"""Material picker UI (ADR-0005).
 
-Each creation instance declares which material instance it consumes
-via `bound_material: {type_name, instance_name, bound_at}` inside its
-config.json. The picker is shown the first time a workbench opens for
-an unbound creation; the binding is persisted so subsequent opens go
-straight to work.
-
-Per ADR-0003, the creation still snapshots material data into its own
-instance dir for actual render/export. `bound_material` is the
-audit pointer + the "where to re-import from" handle, not a runtime
-link.
+This module is a pure UI helper — it shows a modal listbox of every
+material instance in the project and returns the user's choice. It
+does NOT read or write any config file. Persistence is the host
+creation's responsibility (each creation has its own InstanceConfig
+schema that owns bound_material as one field among many).
 """
 
 from __future__ import annotations
 
-import json
-import os
 import tkinter as tk
 from tkinter import ttk
-from datetime import datetime, timezone
 from typing import Optional
 
 from i18n import tr
 
-
-# ── Config-level helpers ─────────────────────────────────────────────────────
-
-def _read_config(config_path: str) -> dict:
-    if not os.path.isfile(config_path):
-        return {}
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def _write_config(config_path: str, data: dict) -> None:
-    os.makedirs(os.path.dirname(config_path), exist_ok=True)
-    tmp = config_path + ".tmp"
-    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, config_path)
-
-
-def read_bound_material(config_path: str) -> Optional[dict]:
-    """Returns {'type_name', 'instance_name', 'bound_at'} or None."""
-    cfg = _read_config(config_path)
-    bm = cfg.get("bound_material")
-    if isinstance(bm, dict) and bm.get("type_name") and bm.get("instance_name"):
-        return bm
-    return None
-
-
-def write_bound_material(config_path: str, type_name: str,
-                          instance_name: str) -> None:
-    """Persist the binding. Merges into existing config (preserves other fields)."""
-    cfg = _read_config(config_path)
-    cfg["bound_material"] = {
-        "type_name": type_name,
-        "instance_name": instance_name,
-        "bound_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    }
-    _write_config(config_path, cfg)
-
-
-# ── Picker dialog ────────────────────────────────────────────────────────────
 
 class _MaterialPickerDialog:
     def __init__(self, parent: tk.Misc, project) -> None:
@@ -171,22 +119,10 @@ class _MaterialPickerDialog:
 
 
 def show_material_picker(parent: tk.Misc, project) -> Optional[tuple[str, str]]:
-    """Modal: show picker over all material instances. Returns
-    (type_name, instance_name) or None on cancel / no available materials."""
+    """Modal picker over all material instances. Returns
+    (type_name, instance_name) or None on cancel / no materials.
+
+    Pure UI — does NOT touch any config file. The caller persists the
+    selection into its own creation-specific InstanceConfig.
+    """
     return _MaterialPickerDialog(parent, project).run()
-
-
-# ── Orchestration ────────────────────────────────────────────────────────────
-
-def get_or_bind(parent: tk.Misc, project, config_path: str
-                 ) -> Optional[tuple[str, str]]:
-    """If config has bound_material, return (type, instance). Otherwise
-    show picker, persist, return result. None on cancel."""
-    bound = read_bound_material(config_path)
-    if bound is not None:
-        return (bound["type_name"], bound["instance_name"])
-    res = show_material_picker(parent, project)
-    if res is None:
-        return None
-    write_bound_material(config_path, res[0], res[1])
-    return res

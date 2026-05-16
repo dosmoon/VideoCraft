@@ -160,11 +160,11 @@ def test_news_desk_app_inherits_tool_base():
 
 # ── D. ADR-0005 material binding ────────────────────────────────────────────
 
-def test_news_desk_app_init_calls_material_binding():
-    """Slice Q: NewsDeskApp.__init__ MUST call material_binding.get_or_bind."""
+def test_news_desk_app_init_loads_instance_config():
+    """__init__ MUST load NewsDeskInstanceConfig — the single owner of
+    config.json. No ad-hoc json reads of the file."""
     with open(NEWS_DESK_TOOL_PATH, "r", encoding="utf-8") as f:
         src = f.read()
-    # Find __init__ body
     tree = ast.parse(src)
     init_src: str | None = None
     for node in ast.walk(tree):
@@ -175,8 +175,33 @@ def test_news_desk_app_init_calls_material_binding():
                     init_src = ast.unparse(sub)
                     break
     assert init_src is not None
-    assert "material_binding" in init_src
-    assert "get_or_bind" in init_src
+    assert "NewsDeskInstanceConfig" in init_src
+    assert "NewsDeskInstanceConfig.load" in init_src
+
+
+def test_news_desk_app_init_uses_picker_when_unbound():
+    """__init__ MUST call show_material_picker when the loaded config
+    has no bound_material. The picker is the ONLY UI path that asks
+    the user; orchestration / persistence lives in the host."""
+    with open(NEWS_DESK_TOOL_PATH, "r", encoding="utf-8") as f:
+        src = f.read()
+    assert "show_material_picker" in src
+    assert "bound_material is None" in src
+
+
+def test_material_binding_module_is_picker_only():
+    """material_binding.py exposes ONLY show_material_picker — no config
+    IO functions. The previous read_bound_material / write_bound_material
+    / get_or_bind helpers were retired when news_desk_tool took over
+    persistence via NewsDeskInstanceConfig."""
+    import creations.material_binding as mb
+    publicish = [n for n in dir(mb)
+                 if not n.startswith("_") and callable(getattr(mb, n))]
+    # show_material_picker is the only legitimate public callable.
+    forbidden = {"read_bound_material", "write_bound_material",
+                  "get_or_bind"}
+    leaked = forbidden & set(publicish)
+    assert not leaked, f"material_binding leaks config-IO API: {leaked}"
 
 
 def test_news_desk_app_stores_material_instance_id():
@@ -186,13 +211,13 @@ def test_news_desk_app_stores_material_instance_id():
         "NewsDeskApp doesn't store material_instance_id")
 
 
-def test_nv_paths_calls_pass_material_instance_id_in_tool():
-    """Every _nv_paths.X(self.project) MUST also pass
-    self.material_instance_id. No silent fallback."""
+def test_news_desk_tool_does_not_call_nv_paths():
+    """The workbench host accesses upstream material data through
+    self.material_model. Direct _nv_paths.X calls are forbidden."""
     with open(NEWS_DESK_TOOL_PATH, "r", encoding="utf-8") as f:
         src = f.read()
-    bare = re.findall(r"_nv_paths\.\w+\(self\.project\)(?!\s*,)", src)
-    assert not bare, f"_nv_paths called without material_instance_id: {bare}"
+    assert "_nv_paths." not in src, (
+        "news_desk_tool must not call _nv_paths.*")
 
 
 def test_project_context_has_material_model():

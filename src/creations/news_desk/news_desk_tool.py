@@ -114,15 +114,31 @@ class NewsDeskApp(ToolBase):
         self.project = project
         self.instance_name = instance_name
 
-        # Slice Q (ADR-0005): pick or recall the bound material instance.
-        from creations import material_binding
-        config_path = os.path.join(
+        # Single in-memory representation of config.json. All reads /
+        # writes funnel through this object — no other code path may
+        # construct dicts and dump to the file.
+        from creations.news_desk.config import (
+            NewsDeskInstanceConfig, BoundMaterial, now_iso,
+        )
+        self._instance_config_path = os.path.join(
             project.creation_instance_dir("news_desk", instance_name),
             "config.json")
-        bound = material_binding.get_or_bind(master, project, config_path)
-        if bound is None:
-            raise RuntimeError("News desk: material binding cancelled.")
-        self.material_type, self.material_instance_id = bound
+        self.config = NewsDeskInstanceConfig.load(self._instance_config_path)
+
+        # ADR-0005: bind a material instance on first open; persisted
+        # state lets reopens skip the picker.
+        if self.config.bound_material is None:
+            from creations import material_binding
+            sel = material_binding.show_material_picker(master, project)
+            if sel is None:
+                raise RuntimeError("News desk: material binding cancelled.")
+            self.config.bound_material = BoundMaterial(
+                type_name=sel[0], instance_name=sel[1],
+                bound_at=now_iso())
+            self.config.save(self._instance_config_path)
+
+        self.material_type = self.config.bound_material.type_name
+        self.material_instance_id = self.config.bound_material.instance_name
         # Single handle the workbench + every component uses to read
         # upstream material data. Components must NOT reach into the
         # material plugin's path helpers directly — ask the model.
@@ -139,22 +155,20 @@ class NewsDeskApp(ToolBase):
         self._processing = False
         self._skip_sidecar = False
 
-        # Components — the editable model. Each entry is a dict the
-        # owning spec understands. Order is z-order: index 0 = topmost.
-        self._components: list[dict] = []
-
-        # Preset still stored (mostly preserves output geometry / fonts);
-        # subtitle / watermark / overlay_styles fields are now
-        # superseded by components and ignored at render time.
+        # Preset store + style resolution. config.preset_name (when
+        # restoring an existing instance) wins; fresh instances fall
+        # back to the store's "last used", then to the builtin default.
         self._preset_store = comp_presets.load_news_desk_store()
-        last_name = comp_presets.get_last_used_news_desk(self._preset_store)
+        if not self.config.preset_name:
+            self.config.preset_name = comp_presets.get_last_used_news_desk(
+                self._preset_store)
         self._current_style: CompositionStyle = (
-            comp_presets.get_news_desk_preset(self._preset_store, last_name)
+            comp_presets.get_news_desk_preset(
+                self._preset_store, self.config.preset_name)
             or comp_presets.get_news_desk_preset(
                 self._preset_store, comp_presets.BUILTIN_DEFAULT_NEWS_DESK)
             or CompositionStyle()
         )
-        self._current_preset_name = last_name
 
         self._preview: CompositionPreview | None = None
 
@@ -259,7 +273,7 @@ class NewsDeskApp(ToolBase):
     def _rebuild_add_menu(self) -> None:
         m = self.add_menu
         m.delete(0, "end")
-        existing_kinds = {c.get("kind") for c in self._components}
+        existing_kinds = {c.get("kind") for c in self.config.components}
         for spec in nd_components.all_specs():
             label = tr(spec.add_label_key)
             if not spec.multi_instance and spec.kind in existing_kinds:
@@ -273,7 +287,7 @@ class NewsDeskApp(ToolBase):
     def _refresh_list(self) -> None:
         prev_iid = self.list_tree.selection()[0] if self.list_tree.selection() else None
         self.list_tree.delete(*self.list_tree.get_children())
-        for i, comp in enumerate(self._components):
+        for i, comp in enumerate(self.config.components):
             spec = nd_components.spec_for_instance(comp)
             kind_label = tr(spec.name_key) if spec else comp.get("kind", "?")
             name = comp.get("name", "")
@@ -331,14 +345,14 @@ class NewsDeskApp(ToolBase):
         for child in self._props_inner.winfo_children():
             child.destroy()
         idx = self._selected_index()
-        if idx < 0 or idx >= len(self._components):
+        if idx < 0 or idx >= len(self.config.components):
             ttk.Label(self._props_inner,
                       text=tr("tool.news_desk.props.empty"),
                       foreground="#666", wraplength=240, justify="left"
                       ).pack(anchor="w", padx=8, pady=8)
             return
 
-        comp = self._components[idx]
+        comp = self.config.components[idx]
         spec = nd_components.spec_for_instance(comp)
         if spec is None:
             ttk.Label(self._props_inner,
@@ -372,8 +386,8 @@ class NewsDeskApp(ToolBase):
         row + preview + persist. Avoid full list rebuild so user keeps
         focus on the field they're editing."""
         idx = self._selected_index()
-        if 0 <= idx < len(self._components):
-            comp = self._components[idx]
+        if 0 <= idx < len(self.config.components):
+            comp = self.config.components[idx]
             spec = nd_components.spec_for_instance(comp)
             kind_label = tr(spec.name_key) if spec else comp.get("kind", "?")
             name = comp.get("name", "")
@@ -385,9 +399,9 @@ class NewsDeskApp(ToolBase):
 
     def _run_import(self, spec, source) -> None:
         idx = self._selected_index()
-        if idx < 0 or idx >= len(self._components):
+        if idx < 0 or idx >= len(self.config.components):
             return
-        comp = self._components[idx]
+        comp = self.config.components[idx]
         ctx = nd_components.ProjectContext(
             project=self.project,
             material_model=self.material_model, duration=self._duration,
@@ -408,20 +422,20 @@ class NewsDeskApp(ToolBase):
 
     def _add_component(self, spec: nd_components.ComponentSpec) -> None:
         if not spec.multi_instance:
-            for c in self._components:
+            for c in self.config.components:
                 if c.get("kind") == spec.kind:
                     return
         instance = spec.default_instance(self._duration)
         # Insert at z position dictated by spec.default_z. List order:
         # higher default_z → closer to top of list (earlier index).
         # Find first existing component whose default_z is lower.
-        insert_at = len(self._components)
-        for i, c in enumerate(self._components):
+        insert_at = len(self.config.components)
+        for i, c in enumerate(self.config.components):
             other_spec = nd_components.spec_for_instance(c)
             if other_spec and other_spec.default_z < spec.default_z:
                 insert_at = i
                 break
-        self._components.insert(insert_at, instance)
+        self.config.components.insert(insert_at, instance)
         self._refresh_list()
         self.list_tree.selection_set(f"i:{insert_at}")
         self._refresh_property_pane()
@@ -430,9 +444,9 @@ class NewsDeskApp(ToolBase):
 
     def _delete_selected(self) -> None:
         idx = self._selected_index()
-        if idx < 0 or idx >= len(self._components):
+        if idx < 0 or idx >= len(self.config.components):
             return
-        del self._components[idx]
+        del self.config.components[idx]
         self._refresh_list()
         self._refresh_property_pane()
         self._save_instance_config()
@@ -442,8 +456,8 @@ class NewsDeskApp(ToolBase):
         idx = self._selected_index()
         if idx <= 0:
             return
-        self._components[idx - 1], self._components[idx] = \
-            self._components[idx], self._components[idx - 1]
+        self.config.components[idx - 1], self.config.components[idx] = \
+            self.config.components[idx], self.config.components[idx - 1]
         self._refresh_list()
         self.list_tree.selection_set(f"i:{idx - 1}")
         self._refresh_property_pane()
@@ -452,10 +466,10 @@ class NewsDeskApp(ToolBase):
 
     def _move_selected_down(self) -> None:
         idx = self._selected_index()
-        if idx < 0 or idx >= len(self._components) - 1:
+        if idx < 0 or idx >= len(self.config.components) - 1:
             return
-        self._components[idx + 1], self._components[idx] = \
-            self._components[idx], self._components[idx + 1]
+        self.config.components[idx + 1], self.config.components[idx] = \
+            self.config.components[idx], self.config.components[idx + 1]
         self._refresh_list()
         self.list_tree.selection_set(f"i:{idx + 1}")
         self._refresh_property_pane()
@@ -470,7 +484,7 @@ class NewsDeskApp(ToolBase):
 
         pmenu = tk.Menu(m, tearoff=0)
         names = comp_presets.list_news_desk_presets(self._preset_store)
-        cur = self._current_preset_name or ""
+        cur = self.config.preset_name or ""
         if cur:
             pmenu.add_command(
                 label=tr("tool.news_desk.menu.preset.current", name=cur),
@@ -501,7 +515,7 @@ class NewsDeskApp(ToolBase):
         if style is None:
             return
         self._current_style = style
-        self._current_preset_name = name
+        self.config.preset_name = name
         comp_presets.set_last_used_news_desk(self._preset_store, name)
         comp_presets.save_news_desk_store(self._preset_store)
         self._save_instance_config()
@@ -509,7 +523,7 @@ class NewsDeskApp(ToolBase):
         self._rebuild_top_menu()
 
     def _on_preset_save(self) -> None:
-        name = self._current_preset_name
+        name = self.config.preset_name
         if not name or comp_presets.is_builtin_news_desk(name):
             return self._on_preset_save_as()
         comp_presets.upsert_news_desk_preset(
@@ -526,12 +540,12 @@ class NewsDeskApp(ToolBase):
             self._preset_store, name, self._current_style)
         comp_presets.set_last_used_news_desk(self._preset_store, name)
         comp_presets.save_news_desk_store(self._preset_store)
-        self._current_preset_name = name
+        self.config.preset_name = name
         self._save_instance_config()
         self._rebuild_top_menu()
 
     def _on_preset_delete(self) -> None:
-        name = self._current_preset_name
+        name = self.config.preset_name
         if not name:
             return
         if comp_presets.is_builtin_news_desk(name):
@@ -563,8 +577,6 @@ class NewsDeskApp(ToolBase):
         self.entry_video.config(state="readonly")
 
         os.makedirs(self._instance_dir(), exist_ok=True)
-
-        self._load_instance_config()
 
         if os.path.isfile(src):
             self._duration = _probe_duration(src)
@@ -598,56 +610,11 @@ class NewsDeskApp(ToolBase):
     def _output_path(self) -> str:
         return os.path.join(self._instance_dir(), "output.mp4")
 
-    def _load_instance_config(self) -> None:
-        path = self._config_path()
-        if not os.path.isfile(path):
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
-            logger.warning(f"news_desk config load failed: {e}")
-            return
-        if not isinstance(cfg, dict):
-            return
-
-        # Restore preset (may have been deleted between sessions).
-        name = cfg.get("preset_name")
-        if isinstance(name, str):
-            style = comp_presets.get_news_desk_preset(self._preset_store, name)
-            if style is not None:
-                self._current_style = style
-                self._current_preset_name = name
-
-        # Components list — pre-alpha schema is just `components: [...]`.
-        components = cfg.get("components")
-        if isinstance(components, list):
-            self._components = [c for c in components if isinstance(c, dict)]
-        else:
-            self._components = []
-
     def _save_instance_config(self) -> None:
-        """Persist workbench-owned keys without trampling fields owned
-        by other writers (notably bound_material, written by
-        material_binding.get_or_bind on first open and otherwise opaque
-        to this code path)."""
-        path = self._config_path()
-        cfg: dict = {}
-        if os.path.isfile(path):
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    existing = json.load(f)
-                if isinstance(existing, dict):
-                    cfg = existing
-            except (OSError, json.JSONDecodeError):
-                cfg = {}
-        cfg["preset_name"] = self._current_preset_name
-        cfg["components"] = self._components
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(cfg, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
+        """Thin wrapper around the config object's save. Kept so existing
+        call sites read like "save my state"; the actual IO is the
+        single path on the config dataclass."""
+        self.config.save(self._instance_config_path)
 
     # ── Render translation: components → CompositionRequest fragments ────
 
@@ -681,9 +648,9 @@ class NewsDeskApp(ToolBase):
         overlays: list = []
         extra_subs: list[ExtraSubtitleSpec] = []
         extra_wms: list[ExtraWatermarkSpec] = []
-        total = len(self._components)
+        total = len(self.config.components)
 
-        for index, comp in enumerate(self._components):
+        for index, comp in enumerate(self.config.components):
             spec = nd_components.spec_for_instance(comp)
             if spec is None:
                 continue
@@ -800,7 +767,7 @@ class NewsDeskApp(ToolBase):
         text generation: the first enabled subtitle in list order. Users
         with multiple subtitle tracks (e.g. zh+en) disable the one they
         don't want as the transcript source."""
-        for comp in self._components:
+        for comp in self.config.components:
             if (comp.get("kind") == "subtitle"
                     and comp.get("enabled", True)
                     and comp.get("srt_path")):
@@ -811,7 +778,7 @@ class NewsDeskApp(ToolBase):
         """The chapter component's snapshotted schedule, or [] when no
         chapter component exists / it's empty. Per ADR-0003 we read this
         instead of touching upstream analysis.json."""
-        for comp in self._components:
+        for comp in self.config.components:
             if comp.get("kind") == "chapter":
                 return list(comp.get("schedule") or [])
         return []
@@ -821,7 +788,7 @@ class NewsDeskApp(ToolBase):
         Same upstream source (analysis.json) as schedule, snapshotted
         together at import time. Empty list when user hasn't imported
         or analysis had no titles."""
-        for comp in self._components:
+        for comp in self.config.components:
             if comp.get("kind") == "chapter":
                 titles = comp.get("titles") or []
                 return [str(t).strip() for t in titles if str(t).strip()]
@@ -1231,7 +1198,7 @@ class NewsDeskApp(ToolBase):
 
         # adapted subtitles: only the local snapshot for this derivative.
         adapted: list[str] = []
-        for comp in self._components:
+        for comp in self.config.components:
             if comp.get("kind") == "subtitle" and comp.get("srt_path"):
                 adapted.append(comp["srt_path"])
 
