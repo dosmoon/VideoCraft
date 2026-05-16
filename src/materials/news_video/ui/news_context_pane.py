@@ -22,6 +22,7 @@ from tkinter import messagebox, ttk
 from materials.news_video.schema import (
     SourceContext, read_context, read_platform_metadata,
 )
+from materials.news_video import paths as _nv_paths
 from i18n import tr
 
 
@@ -123,13 +124,13 @@ def build_news_context_preview(parent: tk.Frame, project) -> tk.Frame:
     def _refresh():
         for child in body.winfo_children():
             child.destroy()
-        _render_groups(body, project.source_dir)
+        _render_groups(body, _nv_paths.source_dir(project))
     _refresh()
 
     # Handlers — defined after _refresh so they can call it.
     def _on_edit():
         from materials.news_video.ui.source_context_dialog import show_source_context_dialog
-        if show_source_context_dialog(outer, project.source_dir):
+        if show_source_context_dialog(outer, _nv_paths.source_dir(project)):
             _refresh()
     edit_btn.configure(command=_on_edit)
 
@@ -144,7 +145,7 @@ def build_news_context_preview(parent: tk.Frame, project) -> tk.Frame:
             ctx: SourceContext | None = None
             try:
                 from materials.news_video.ai_fill import extract
-                ctx = extract(project.source_dir, project.subtitles_dir)
+                ctx = extract(_nv_paths.source_dir(project), _nv_paths.subtitles_dir(project))
             except Exception as e:
                 err = e
 
@@ -162,7 +163,7 @@ def build_news_context_preview(parent: tk.Frame, project) -> tk.Frame:
                     return
                 # Persist merged context then re-render.
                 from materials.news_video.schema import write_context
-                write_context(project.source_dir, ctx)
+                write_context(_nv_paths.source_dir(project), ctx)
                 status_lbl.configure(text=tr("news_context.ai_done"),
                                       fg="#2a7")
                 _refresh()

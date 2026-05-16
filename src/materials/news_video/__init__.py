@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from materials import MaterialType, register
 from materials.news_video import sidebar as _sidebar_module
+from materials.news_video import paths as _nv_paths
 
 
 def _create_handler(hub) -> None:
@@ -40,8 +41,8 @@ def _create_handler(hub) -> None:
 
     modal = SourcePrepareModal(
         hub.root, src,
-        dest_video_path=hub.project.source_video_path,
-        dest_meta_path=hub.project.source_meta_path,
+        dest_video_path=hub._nv_paths.source_video_path(project),
+        dest_meta_path=hub._nv_paths.source_meta_path(project),
     )
     try:
         result = modal.run()
@@ -77,7 +78,7 @@ def _has_instance(project) -> bool:
     source video is present. The 素材 tab paints the panel only after
     this returns True.
     """
-    return project.source_status() == "ready"
+    return _nv_paths.source_status(project) == "ready"
 
 
 register(MaterialType(

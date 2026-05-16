@@ -39,6 +39,7 @@ from core.composition.render import (
     CompositionRequest, ExtraSubtitleSpec, ExtraWatermarkSpec,
     prepare_subtitle_cues, probe_video_resolution, render_composition,
 )
+from materials.news_video import paths as _nv_paths
 from core.composition.style import (
     CompositionStyle, SubtitleLineStyle, SubtitleStyle, WatermarkStyle,
 )
@@ -540,7 +541,7 @@ class NewsDeskApp(ToolBase):
         self.master.title(tr("tool.news_desk.project.title",
                               type=type_disp, instance=self.instance_name))
 
-        src = self.project.source_video_path
+        src = _nv_paths.source_video_path(self.project)
         self.entry_video.config(state="normal")
         self.entry_video.delete(0, tk.END)
         self.entry_video.insert(0, src)
@@ -574,7 +575,7 @@ class NewsDeskApp(ToolBase):
     # ── Per-instance paths + config ───────────────────────────────────────
 
     def _instance_dir(self) -> str:
-        return self.project.derivative_dir(DERIVATIVE_TYPE, self.instance_name)
+        return self.project.creation_instance_dir(DERIVATIVE_TYPE, self.instance_name)
 
     def _config_path(self) -> str:
         return os.path.join(self._instance_dir(), "config.json")
@@ -960,7 +961,7 @@ class NewsDeskApp(ToolBase):
     def _do_export(self) -> None:
         if self._processing:
             return
-        src = self.project.source_video_path
+        src = _nv_paths.source_video_path(self.project)
         if not os.path.isfile(src):
             messagebox.showerror("VideoCraft",
                                   tr("tool.news_desk.error.source_missing"),
@@ -1013,7 +1014,7 @@ class NewsDeskApp(ToolBase):
     def _do_preview_render(self) -> None:
         if self._processing:
             return
-        src = self.project.source_video_path
+        src = _nv_paths.source_video_path(self.project)
         if not os.path.isfile(src):
             messagebox.showerror("VideoCraft",
                                   tr("tool.news_desk.error.source_missing"),
@@ -1223,7 +1224,7 @@ class NewsDeskApp(ToolBase):
         # Canonical view: context.json (AI-corrected) wins; basic_info
         # falls back for fields context hasn't filled yet. publish.md
         # consumers should always see the same truth as renderers.
-        merged = source_context.combined_dict(self.project.source_dir)
+        merged = source_context.combined_dict(_nv_paths.source_dir(self.project))
         bi = source_context.SourceBasicInfo.from_dict(merged)
         ctx = source_context.SourceContext.from_dict(merged)
 

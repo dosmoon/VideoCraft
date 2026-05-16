@@ -4,8 +4,8 @@ Two operations that always read from / write to a project's canonical
 locations (no manual file picking, no merged "bilingual.srt"):
 
   run_asr(project, source_lang=...) → subtitles/<src>.srt
-      Calls core.asr.transcribe_audio on project.source_video_path,
-      writes the result into project.subtitles_dir/<lang>.srt, and
+      Calls core.asr.transcribe_audio on _nv_paths.source_video_path(project),
+      writes the result into _nv_paths.subtitles_dir(project)/<lang>.srt, and
       updates project.meta.language.source.
 
   run_translate(project, target_lang=...) → subtitles/<target>.srt
@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from core.ai.cancellation import CancellationToken
+from materials.news_video import paths as _nv_paths
 
 
 @dataclass
@@ -49,7 +50,7 @@ def run_asr(
     progress_cb: ProgressCb = None,
     cancel_token: CancellationToken | None = None,
 ) -> dict:
-    """Transcribe project.source_video_path → subtitles/<lang>.srt.
+    """Transcribe _nv_paths.source_video_path(project) → subtitles/<lang>.srt.
 
     Args:
         project: a Project instance (must have source_status() == "ready").
@@ -69,18 +70,18 @@ def run_asr(
     """
     from core import asr as core_asr
 
-    if project.source_status() != "ready":
+    if _nv_paths.source_status(project) != "ready":
         raise FileNotFoundError(
-            f"Source video missing at {project.source_video_path}"
+            f"Source video missing at {_nv_paths.source_video_path(project)}"
         )
 
-    os.makedirs(project.subtitles_dir, exist_ok=True)
+    os.makedirs(_nv_paths.subtitles_dir(project), exist_ok=True)
 
     # Provisional output name; transcribe_audio may rewrite the suffix
     # when the detected language differs from what was requested.
     provisional_lang = source_lang_iso or "auto"
     output_srt_path = os.path.join(
-        project.subtitles_dir, f"{provisional_lang}.srt"
+        _nv_paths.subtitles_dir(project), f"{provisional_lang}.srt"
     )
 
     _emit(progress_cb, ProgressInfo(
@@ -173,7 +174,7 @@ def run_asr(
         ))
 
     result = core_asr.transcribe_audio(
-        project.source_video_path,
+        _nv_paths.source_video_path(project),
         output_srt_path,
         expected_lang_iso=source_lang_iso,
         language=source_lang_iso,
@@ -192,7 +193,7 @@ def run_asr(
 
     final_path = raw_srt
     if final_lang:
-        canonical_srt = os.path.join(project.subtitles_dir, f"{final_lang}.srt")
+        canonical_srt = os.path.join(_nv_paths.subtitles_dir(project), f"{final_lang}.srt")
         if os.path.abspath(raw_srt) != os.path.abspath(canonical_srt):
             try:
                 if os.path.exists(canonical_srt):
@@ -206,7 +207,7 @@ def run_asr(
         # Same rename for the sibling JSON.
         if raw_json and os.path.isfile(raw_json):
             canonical_json = os.path.join(
-                project.subtitles_dir, f"{final_lang}.json")
+                _nv_paths.subtitles_dir(project), f"{final_lang}.json")
             if os.path.abspath(raw_json) != os.path.abspath(canonical_json):
                 try:
                     if os.path.exists(canonical_json):
@@ -266,7 +267,7 @@ def run_translate(
     if not src_lang:
         raise ValueError("project.meta.language.source is unset; run ASR first")
 
-    src_path = os.path.join(project.subtitles_dir, f"{src_lang}.srt")
+    src_path = os.path.join(_nv_paths.subtitles_dir(project), f"{src_lang}.srt")
     if not os.path.isfile(src_path):
         raise FileNotFoundError(f"Source SRT missing: {src_path}")
 
@@ -300,7 +301,7 @@ def run_translate(
 
     # Normalize the output name to <iso>.srt next to the source. core.translate
     # names it after target language's English name; we want ISO consistency.
-    final_path = os.path.join(project.subtitles_dir, f"{target_lang_iso}.srt")
+    final_path = os.path.join(_nv_paths.subtitles_dir(project), f"{target_lang_iso}.srt")
     if os.path.abspath(written_path) != os.path.abspath(final_path):
         try:
             if os.path.exists(final_path):

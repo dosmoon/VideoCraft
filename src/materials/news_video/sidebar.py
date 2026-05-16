@@ -19,6 +19,7 @@ from tkinter import messagebox
 from typing import TYPE_CHECKING
 
 from i18n import tr
+from materials.news_video import paths as _nv_paths
 
 if TYPE_CHECKING:
     from VideoCraftHub import VideoCraftHub
@@ -146,7 +147,7 @@ class NewsVideoSidebar:
         self._source_primary_btn.pack(side="left")
 
     def _refresh_source_section(self) -> None:
-        if self.project.source_status() == "ready":
+        if _nv_paths.source_status(self.project) == "ready":
             meta = self.project.meta.source
             label = "✓ " + (meta.title or "video.mp4")
             extras = []
@@ -173,7 +174,7 @@ class NewsVideoSidebar:
         from core.project_schema import ORIGIN_LINK
 
         current_meta = self.project.meta
-        preset = current_meta.source if self.project.source_status() == "ready" else None
+        preset = current_meta.source if _nv_paths.source_status(self.project) == "ready" else None
         title = tr("hub.dialog.source.title_modify") if preset else tr("hub.dialog.source.title_add")
 
         src = show_source_add_dialog(self.root, title=title, preset=preset)
@@ -186,8 +187,8 @@ class NewsVideoSidebar:
 
         modal = SourcePrepareModal(
             self.root, src,
-            dest_video_path=self.project.source_video_path,
-            dest_meta_path=self.project.source_meta_path,
+            dest_video_path=_nv_paths.source_video_path(self.project),
+            dest_meta_path=_nv_paths.source_meta_path(self.project),
         )
         try:
             result = modal.run()
@@ -238,14 +239,14 @@ class NewsVideoSidebar:
     def _refresh_news_context_section(self) -> None:
         if not hasattr(self, "_news_context_status_var"):
             return
-        if self.project.source_status() != "ready":
+        if _nv_paths.source_status(self.project) != "ready":
             self._news_context_status_var.set(
                 tr("hub.sidebar.news_context.locked"))
             self._news_context_status_lbl.configure(fg="#999", cursor="")
             return
         try:
             from materials.news_video.schema import read_context, SourceContext
-            ctx = read_context(self.project.source_dir).to_dict()
+            ctx = read_context(_nv_paths.source_dir(self.project)).to_dict()
             total = len(SourceContext.__dataclass_fields__)
             filled = sum(1 for v in ctx.values()
                          if isinstance(v, str) and v.strip())
@@ -290,9 +291,9 @@ class NewsVideoSidebar:
         for child in self._subtitles_lang_box.winfo_children():
             child.destroy()
 
-        srt_files = _list_subtitle_srts(self.project.subtitles_dir)
+        srt_files = _list_subtitle_srts(_nv_paths.subtitles_dir(self.project))
         meta = self.project.meta.language
-        source_ready = self.project.source_status() == "ready"
+        source_ready = _nv_paths.source_status(self.project) == "ready"
 
         if not srt_files:
             tk.Label(self._subtitles_lang_box, text=tr("hub.status.none"),
@@ -306,7 +307,7 @@ class NewsVideoSidebar:
             return
 
         source_lang = meta.source
-        ref_path = (os.path.join(self.project.subtitles_dir, f"{source_lang}.srt")
+        ref_path = (os.path.join(_nv_paths.subtitles_dir(self.project), f"{source_lang}.srt")
                     if source_lang else None)
 
         for lang in sorted(srt_files):
@@ -315,7 +316,7 @@ class NewsVideoSidebar:
             except Exception:
                 lang_label = lang
             role = tr("hub.subtitle.role_source") if meta.source == lang else tr("hub.subtitle.role_translated")
-            srt_path = os.path.join(self.project.subtitles_dir, f"{lang}.srt")
+            srt_path = os.path.join(_nv_paths.subtitles_dir(self.project), f"{lang}.srt")
 
             ref = ref_path if (lang != source_lang and ref_path
                                and os.path.isfile(ref_path)) else None
@@ -372,7 +373,7 @@ class NewsVideoSidebar:
 
     def _subtitles_section_snapshot(self) -> tuple:
         result: list = []
-        subs_dir = self.project.subtitles_dir
+        subs_dir = _nv_paths.subtitles_dir(self.project)
         try:
             for name in os.listdir(subs_dir):
                 p = os.path.join(subs_dir, name)
@@ -385,11 +386,11 @@ class NewsVideoSidebar:
             pass
         result.sort()
         src_lang = self.project.meta.language.source or ""
-        return (tuple(result), src_lang, self.project.source_status())
+        return (tuple(result), src_lang, _nv_paths.source_status(self.project))
 
     def _populate_analysis_rows(self, lang_iso: str) -> None:
         from core.subtitle_analysis import existing_artifacts
-        artifacts = existing_artifacts(self.project.subtitles_dir, lang_iso)
+        artifacts = existing_artifacts(_nv_paths.subtitles_dir(self.project), lang_iso)
         for art in artifacts:
             row = tk.Frame(self._subtitles_lang_box, bg="#f5f5f5")
             row.pack(fill="x", pady=0)
@@ -405,7 +406,7 @@ class NewsVideoSidebar:
                 w.configure(cursor="hand2")
 
     def _on_subtitles_primary(self) -> None:
-        srt_files = _list_subtitle_srts(self.project.subtitles_dir)
+        srt_files = _list_subtitle_srts(_nv_paths.subtitles_dir(self.project))
         if not srt_files:
             self._invoke_asr()
         else:
@@ -503,8 +504,8 @@ class NewsVideoSidebar:
 
     def _import_subtitle_file(self, src_path: str, lang_iso: str) -> None:
         import shutil
-        dst = os.path.join(self.project.subtitles_dir, f"{lang_iso}.srt")
-        os.makedirs(self.project.subtitles_dir, exist_ok=True)
+        dst = os.path.join(_nv_paths.subtitles_dir(self.project), f"{lang_iso}.srt")
+        os.makedirs(_nv_paths.subtitles_dir(self.project), exist_ok=True)
         try:
             shutil.copy2(src_path, dst)
         except OSError as e:
@@ -541,12 +542,12 @@ class NewsVideoSidebar:
         from core.ai.errors import AIError, Kind as AIKind
         from materials.news_video.ui.subtitles_progress_modal import SubtitlesProgressModal
 
-        srt_path = os.path.join(self.project.subtitles_dir, f"{lang_iso}.srt")
+        srt_path = os.path.join(_nv_paths.subtitles_dir(self.project), f"{lang_iso}.srt")
         if not os.path.isfile(srt_path):
             messagebox.showerror("VideoCraft", tr("analysis.error.srt_missing"), parent=self.root)
             return
 
-        out_path = analysis_path(self.project.subtitles_dir, lang_iso, kind)
+        out_path = analysis_path(_nv_paths.subtitles_dir(self.project), lang_iso, kind)
         if os.path.isfile(out_path):
             display = tr(f"analysis.kind.{kind}")
             if not messagebox.askyesno(
@@ -556,7 +557,7 @@ class NewsVideoSidebar:
                 return
 
         def worker(progress_cb, cancel_token):
-            return run_analysis(kind, srt_path, self.project.subtitles_dir,
+            return run_analysis(kind, srt_path, _nv_paths.subtitles_dir(self.project),
                                 lang_iso, progress_cb, cancel_token)
 
         modal = SubtitlesProgressModal(

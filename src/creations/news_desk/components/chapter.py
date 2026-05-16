@@ -61,6 +61,7 @@ from core import chapters_io
 from core.composition.overlays import (
     ChapterHeroCardOverlay, TopicStripOverlay,
 )
+from materials.news_video import paths as _nv_paths
 from ui.dialog_utils import center_dialog_on_parent
 
 from . import ComponentSpec, ProjectContext, register
@@ -579,7 +580,7 @@ def _import_from_analysis(instance: dict, ctx: ProjectContext) -> None:
     UI bindings pointing at the stale empty list until the workbench
     is reopened.
     """
-    subs_dir = ctx.project.subtitles_dir
+    subs_dir = _nv_paths.subtitles_dir(ctx.project)
     if not os.path.isdir(subs_dir):
         return
     for fn in sorted(os.listdir(subs_dir)):

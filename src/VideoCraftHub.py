@@ -14,6 +14,7 @@ import sys
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
+from materials.news_video import paths as _nv_paths
 
 # Windows GBK stdout/stderr → UTF-8，防止工具内 print(emoji) 抛 UnicodeEncodeError
 if sys.stdout and hasattr(sys.stdout, "buffer"):
@@ -244,6 +245,11 @@ class VideoCraftHub:
         """
         self.root = root
         self.project: Project = project
+        # Slice M (ADR-0005): single-instance projects auto-bootstrap a
+        # default news_video material so existing single-source code paths
+        # have a writable instance to land data in. Slice P replaces this
+        # with user-driven [+] instance creation.
+        _nv_paths.ensure_default_instance(project)
         # Signals to the main loop after Hub destroys itself:
         #   reopen_launcher=True + requested_project_path=None → show launcher
         #   reopen_launcher=True + requested_project_path=<p>  → open that project directly
@@ -632,7 +638,7 @@ class VideoCraftHub:
             source_lang = meta.source
             ref_path = None
             if source_lang and lang_iso != source_lang:
-                cand = os.path.join(self.project.subtitles_dir,
+                cand = os.path.join(_nv_paths.subtitles_dir(self.project),
                                      f"{source_lang}.srt")
                 if os.path.isfile(cand):
                     ref_path = cand
@@ -671,7 +677,7 @@ class VideoCraftHub:
             cache_dir = os.path.join(self.project.videocraft_dir, "cache")
             # Pick a derived title: "<type>/<inst>/<filename>"
             try:
-                rel = os.path.relpath(video_path, self.project.derivatives_dir)
+                rel = os.path.relpath(video_path, self.project.creations_dir)
             except ValueError:
                 rel = os.path.basename(video_path)
             frame = build_video_preview(
@@ -685,7 +691,7 @@ class VideoCraftHub:
 
     def show_source_preview(self) -> None:
         """Sidebar click handler: show source/video.mp4 in the preview tab."""
-        if self.project.source_status() != "ready":
+        if _nv_paths.source_status(self.project) != "ready":
             return
         from materials.news_video.ui.source_preview_pane import build_source_preview
         key = "source"
@@ -705,7 +711,7 @@ class VideoCraftHub:
 
     def show_news_context_preview(self) -> None:
         """Sidebar click handler: show the AI-generated event context pane."""
-        if self.project.source_status() != "ready":
+        if _nv_paths.source_status(self.project) != "ready":
             return
         from materials.news_video.ui.news_context_pane import build_news_context_preview
         key = "news_context"
@@ -942,8 +948,8 @@ class VideoCraftHub:
         if not hasattr(self, "_project_tree"):
             return
 
-        source_ready = self.project.source_status() == "ready"
-        srt_files = _list_subtitle_srts(self.project.subtitles_dir)
+        source_ready = _nv_paths.source_status(self.project) == "ready"
+        srt_files = _list_subtitle_srts(_nv_paths.subtitles_dir(self.project))
         subs_ready = bool(srt_files)
 
         # Toggle the [+ 添加] button
@@ -960,7 +966,7 @@ class VideoCraftHub:
         self._project_tree.delete(*self._project_tree.get_children())
         self._derivative_empty_lbl.pack_forget()
 
-        derivatives = self.project.list_derivatives()
+        derivatives = self.project.list_creations()
         any_instance = False
 
         # ADR-0004: flat instance list, no per-type group nodes. Each row
@@ -1023,7 +1029,7 @@ class VideoCraftHub:
         """Insert child rows for shippable artifacts under a derivative
         instance: output video first, then any sibling SRT files. Skips
         silently if the instance hasn't produced anything yet."""
-        inst_dir = self.project.derivative_dir(type_name, instance_name)
+        inst_dir = self.project.creation_instance_dir(type_name, instance_name)
         if not os.path.isdir(inst_dir):
             return
         try:
@@ -1066,7 +1072,7 @@ class VideoCraftHub:
         type_name, _, instance_name = inst_part.partition("/")
         if not (type_name and instance_name and filename):
             return None
-        inst_dir = self.project.derivative_dir(type_name, instance_name)
+        inst_dir = self.project.creation_instance_dir(type_name, instance_name)
         abs_path = os.path.join(inst_dir, filename)
         kind = "video" if "artifact_video" in tags else "srt"
         return (kind, abs_path)
@@ -1143,7 +1149,7 @@ class VideoCraftHub:
             type_name, inst_name = picked
 
         try:
-            self.project.create_derivative_instance(type_name, inst_name)
+            self.project.create_creation_instance(type_name, inst_name)
         except FileExistsError as e:
             messagebox.showerror("VideoCraft", str(e))
             return
@@ -1165,7 +1171,7 @@ class VideoCraftHub:
                 default="no"):
             return
         import shutil
-        inst_dir = self.project.derivative_dir(type_name, instance_name)
+        inst_dir = self.project.creation_instance_dir(type_name, instance_name)
         try:
             shutil.rmtree(inst_dir)
         except OSError as e:

@@ -28,6 +28,8 @@ from tkinter import (
 )
 from typing import Optional
 
+from materials.news_video import paths as _nv_paths
+
 from tools.base import ToolBase
 from core.composition import (
     CompositionRequest, CompositionStyle, render_composition,
@@ -765,7 +767,7 @@ class ClipToolApp(ToolBase):
     # ── Data accessors ───────────────────────────────────────────────────
 
     def _instance_dir(self) -> str:
-        return self.project.derivative_dir("clip", self.instance_name)
+        return self.project.creation_instance_dir("clip", self.instance_name)
 
     # ── Clip file naming ─────────────────────────────────────────────────
     #
@@ -1001,7 +1003,7 @@ class ClipToolApp(ToolBase):
         # Hotclips — required
         hot_snap = self._hotclips_snapshot_path(lang)
         if not os.path.isfile(hot_snap):
-            upstream = os.path.join(self.project.subtitles_dir,
+            upstream = os.path.join(_nv_paths.subtitles_dir(self.project),
                                       f"{lang}.hotclips.json")
             if not os.path.isfile(upstream):
                 return None
@@ -1014,7 +1016,7 @@ class ClipToolApp(ToolBase):
         # cannot affect this instance's renders.
         srt_snap = self._srt_snapshot_path(lang)
         if not os.path.isfile(srt_snap):
-            upstream_srt = os.path.join(self.project.subtitles_dir,
+            upstream_srt = os.path.join(_nv_paths.subtitles_dir(self.project),
                                           f"{lang}.srt")
             if os.path.isfile(upstream_srt):
                 try:
@@ -1038,7 +1040,7 @@ class ClipToolApp(ToolBase):
         except OSError:
             pass
         try:
-            for name in os.listdir(self.project.subtitles_dir):
+            for name in os.listdir(_nv_paths.subtitles_dir(self.project)):
                 if name.endswith(".hotclips.json"):
                     langs.add(name[:-len(".hotclips.json")])
         except OSError:
@@ -1195,7 +1197,7 @@ class ClipToolApp(ToolBase):
         # Push preview source
         if self._clip_preview is not None:
             start, end = self._effective_start_end(idx)
-            video_path = self.project.source_video_path
+            video_path = _nv_paths.source_video_path(self.project)
             if os.path.isfile(video_path):
                 self._clip_preview.set_source(video_path, start, end)
                 hook = self._effective_hook(idx)
@@ -1265,7 +1267,7 @@ class ClipToolApp(ToolBase):
         snap = self._srt_snapshot_path(lang)
         if os.path.isfile(snap):
             return snap
-        upstream = os.path.join(self.project.subtitles_dir, f"{lang}.srt")
+        upstream = os.path.join(_nv_paths.subtitles_dir(self.project), f"{lang}.srt")
         return upstream if os.path.isfile(upstream) else None
 
     # ── Detail field handlers ────────────────────────────────────────────
@@ -1447,7 +1449,7 @@ class ClipToolApp(ToolBase):
         if self._global_crop_rect is not None:
             self._style_preview.set_crop(self._global_crop_rect)
         # Load source video (whole file) as preview backdrop
-        video_path = self.project.source_video_path
+        video_path = _nv_paths.source_video_path(self.project)
         if os.path.isfile(video_path):
             self._style_preview.set_source(video_path, 0.0, 0.0)
             # Push the full SRT so the subtitle layer shows real text as
@@ -1772,7 +1774,7 @@ class ClipToolApp(ToolBase):
                 "VideoCraft", tr("clip_tool.warn_no_selection"),
                 parent=self.master)
             return
-        video_path = self.project.source_video_path
+        video_path = _nv_paths.source_video_path(self.project)
         if not os.path.isfile(video_path):
             messagebox.showerror(
                 "VideoCraft", tr("clip_tool.err_no_source"),
@@ -2094,7 +2096,7 @@ class ClipToolApp(ToolBase):
             return
         out_idx, src_idx = row
         # Single-clip render: build one request, run worker on it
-        video_path = self.project.source_video_path
+        video_path = _nv_paths.source_video_path(self.project)
         if not os.path.isfile(video_path):
             return
         start, end = self._effective_start_end(src_idx)

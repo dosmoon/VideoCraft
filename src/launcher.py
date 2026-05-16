@@ -25,6 +25,7 @@ from tkinter import filedialog, messagebox, ttk
 from project import Project, get_recent_projects, add_recent_project
 from ui.new_project_dialog import show_new_project_dialog
 from i18n import tr
+from materials.news_video import paths as _nv_paths
 
 
 # ── Visual constants ──────────────────────────────────────────────────────────
@@ -230,5 +231,5 @@ if __name__ == "__main__":
         print("Launcher closed without selecting a project.")
     else:
         print(f"Selected project: {project.name} @ {project.folder}")
-        print(f"  source_status: {project.source_status()}")
-        print(f"  derivatives:   {project.list_derivatives()}")
+        print(f"  source_status: {_nv_paths.source_status(project)}")
+        print(f"  derivatives:   {project.list_creations()}")

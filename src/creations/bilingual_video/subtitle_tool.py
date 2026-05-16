@@ -18,6 +18,7 @@ import json
 import srt
 from datetime import timedelta, datetime
 from hub_logger import logger
+from materials.news_video import paths as _nv_paths
 
 
 # ── 纯工具函数（从 core 导入）───────────────────────────────────────────────
@@ -569,7 +570,7 @@ class SubtitleToolApp(ToolBase):
         """Source video is locked to the project. "Browse" opens the source
         folder so the user can verify which file the project points at."""
         try:
-            os.startfile(os.path.dirname(self.project.source_video_path))
+            os.startfile(os.path.dirname(_nv_paths.source_video_path(self.project)))
         except OSError:
             pass
 
@@ -613,11 +614,11 @@ class SubtitleToolApp(ToolBase):
         # Lock the source video field.
         self.entry_video.config(state="normal")
         self.entry_video.delete(0, tk.END)
-        self.entry_video.insert(0, self.project.source_video_path)
+        self.entry_video.insert(0, _nv_paths.source_video_path(self.project))
         self.entry_video.config(state="readonly")
 
         # Lock the output field to derivatives/<type>/<instance>/output.mp4.
-        inst_dir = self.project.derivative_dir(
+        inst_dir = self.project.creation_instance_dir(
             "bilingual_video", self.instance_name)
         os.makedirs(inst_dir, exist_ok=True)
         output_path = os.path.join(inst_dir, "output.mp4")
@@ -632,9 +633,9 @@ class SubtitleToolApp(ToolBase):
         # Probe duration + resolution so the top bar shows duration and the
         # preview/burn passthrough path knows the effective aspect (= source
         # dims) without re-probing per refresh.
-        self.video_duration = _probe_video_duration(self.project.source_video_path)
+        self.video_duration = _probe_video_duration(_nv_paths.source_video_path(self.project))
         self._src_w, self._src_h = _probe_video_resolution(
-            self.project.source_video_path)
+            _nv_paths.source_video_path(self.project))
         if self.video_duration > 0:
             hms = time.strftime('%H:%M:%S', time.gmtime(self.video_duration))
             self.label_duration.config(
@@ -644,7 +645,7 @@ class SubtitleToolApp(ToolBase):
         # current style + cues so the user sees their preset choices land.
         if self._preview is not None:
             try:
-                self._preview.set_source(self.project.source_video_path, 0.0, 0.0)
+                self._preview.set_source(_nv_paths.source_video_path(self.project), 0.0, 0.0)
             except Exception as e:
                 logger.debug(f"Preview set_source failed: {e}")
             self._push_preview()
@@ -655,7 +656,7 @@ class SubtitleToolApp(ToolBase):
         Returns absolute path of the picked SRT or None if cancelled.
         """
         from core import lang_names
-        subs_dir = self.project.subtitles_dir
+        subs_dir = _nv_paths.subtitles_dir(self.project)
         files = []
         try:
             for fn in sorted(os.listdir(subs_dir)):
@@ -738,7 +739,7 @@ class SubtitleToolApp(ToolBase):
         return chosen[0]
 
     def _instance_dir(self) -> str:
-        return self.project.derivative_dir(
+        return self.project.creation_instance_dir(
             "bilingual_video", self.instance_name)
 
     def _instance_config_path(self) -> str:
@@ -820,7 +821,7 @@ class SubtitleToolApp(ToolBase):
                 # Lazy backfill: pre-snapshot-principle instances (and
                 # instances whose dir got cleaned) get a one-shot copy
                 # from upstream on first re-open.
-                upstream = os.path.join(self.project.subtitles_dir,
+                upstream = os.path.join(_nv_paths.subtitles_dir(self.project),
                                           f"{iso}.srt")
                 self._ensure_srt_snapshot(upstream)
             chosen = snap if os.path.isfile(snap) else None
@@ -934,7 +935,7 @@ class SubtitleToolApp(ToolBase):
             # — publish.md then renders without a chapter block.
             chapters: list[dict] = []
             ch_path = os.path.join(
-                self.project.subtitles_dir,
+                _nv_paths.subtitles_dir(self.project),
                 f"{lang_iso}.analysis.json")
             if os.path.isfile(ch_path):
                 try:
@@ -1288,7 +1289,7 @@ class SubtitleToolApp(ToolBase):
             prefix = "source-subtitles."
             if stem.startswith(prefix):
                 stem = stem[len(prefix):]
-            inst_dir = self.project.derivative_dir(
+            inst_dir = self.project.creation_instance_dir(
                 "bilingual_video", self.instance_name)
             os.makedirs(inst_dir, exist_ok=True)
             return os.path.join(inst_dir, f"subtitles_{stem}.srt")

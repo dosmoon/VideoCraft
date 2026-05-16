@@ -12,6 +12,7 @@ from i18n import tr
 from materials.news_video import schema as source_context
 
 from . import ComponentSpec, ImportSource, ProjectContext, register
+from materials.news_video import paths as _nv_paths
 
 
 _POSITIONS = ["top-left", "top-right", "bottom-left", "bottom-right"]
@@ -168,7 +169,7 @@ def _import_event_date(instance: dict, ctx: ProjectContext) -> None:
     """[⇩ Import event date] — pull date from the canonical combined view
     (context.json's AI-corrected value wins, basic_info as fallback) and
     nudge defaults toward the date-stamp look (smaller, bottom-left)."""
-    merged = source_context.combined_dict(ctx.project.source_dir)
+    merged = source_context.combined_dict(_nv_paths.source_dir(ctx.project))
     date = (merged.get("event_date") or "").strip()
     if not date:
         return

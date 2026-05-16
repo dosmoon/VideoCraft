@@ -12,9 +12,9 @@ Two entry points:
     「创作」 menu (each menu item targets one type). Wired in P4/P5
     when the workbenches start using the new model.
 
-Both dialogs validate name uniqueness inside <project>/derivatives/<type>/
+Both dialogs validate name uniqueness inside <project>/creations/<type>/
 before returning so the caller (Sidebar / menu handler) can safely
-hand the name straight to Project.create_derivative_instance.
+hand the name straight to Project.create_creation_instance.
 """
 
 from __future__ import annotations
@@ -133,7 +133,7 @@ class _TypePickerDialog:
         """Re-suggest instance name when the type changes (if user hasn't
         typed something custom yet)."""
         type_name = self._type_var.get()
-        existing = self.project.list_derivative_instances(type_name)
+        existing = self.project.list_creation_instances(type_name)
         suggested = creations.suggest_instance_name(type_name, existing)
         # Only overwrite if the field is empty or contains a prior auto suggestion.
         cur = self._name_var.get().strip()
@@ -189,7 +189,7 @@ class _InstanceNamerDialog:
         self.win.grab_set()
         self.win.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
-        existing = project.list_derivative_instances(type_name)
+        existing = project.list_creation_instances(type_name)
         suggested = creations.suggest_instance_name(type_name, existing)
         self._name_var = tk.StringVar(value=suggested)
         self._error_var = tk.StringVar()
@@ -274,7 +274,7 @@ def _validate_instance_name(project: Project, type_name: str, name: str) -> str:
         return tr("dialog.new_creation.err_leading_dot")
     if len(name) > 64:
         return tr("dialog.new_creation.err_name_too_long")
-    existing = project.list_derivative_instances(type_name)
+    existing = project.list_creation_instances(type_name)
     if name in existing:
         return tr("dialog.new_creation.err_name_exists", name=name)
     return ""

@@ -1,17 +1,23 @@
 """
 project.py - VideoCraft Project model.
 
-Project = a folder with metadata in `.videocraft/project.json`. One
-project = one source video + N derivative works. See
-docs/draft/project-restructure.md and memory project_create_milestone.md.
+Project = a folder with metadata in `.videocraft/project.json` and a
+symmetric pair of plugin containers (ADR-0005):
 
   <project>/
-    .videocraft/project.json   ← serialized ProjectMeta (core/project_schema.py)
+    .videocraft/project.json     ← serialized ProjectMeta
     .videocraft/background.json
-    source/video.mp4
-    source/meta.json
-    subtitles/<iso>.srt
-    derivatives/<type>/<instance>/...
+    materials/<type>/<instance>/ ← N material instances (e.g. news_video/news-1/)
+    creations/<type>/<instance>/ ← N creation instances (e.g. news_desk/default/)
+
+The old `source/` and `subtitles/` direct-children layout is retired
+(ADR-0005). All source video / SRT / analysis data now lives inside a
+material instance's directory.
+
+Filenames used inside instances are defined by the plugin
+schemas (materials/news_video/schema.py defines what 'source/video.mp4'
+and 'subtitles/<iso>.srt' mean for that material type). Project itself
+is plugin-agnostic.
 """
 
 import json
@@ -20,13 +26,34 @@ from datetime import date
 
 from core.project_schema import ProjectMeta, Source, ClipRange, now_iso
 
-# Filename used for the source video inside source/.
-# Fixed name (not "<title>.mp4") so all downstream code can reference
-# a predictable path. Extension stays .mp4 even for non-mp4 originals;
-# yt-dlp / ffmpeg writes mp4-compatible by default.
-SOURCE_VIDEO_FILENAME = "video.mp4"
-SOURCE_META_FILENAME = "meta.json"
+# Project-level (cross-instance) metadata filename only.
 BACKGROUND_FILENAME = "background.json"
+
+
+def _create_instance(inst_dir: str, instance_name: str,
+                     initial_config: dict | None,
+                     config_filename: str) -> str:
+    """Shared instance-directory creation for materials + creations.
+
+    Validates instance_name against filesystem rules. Raises
+    FileExistsError if the directory already exists, ValueError on
+    bad name. Returns the absolute path to the new instance folder.
+    """
+    if (not instance_name
+            or instance_name != instance_name.strip()
+            or any(c in instance_name for c in r'\/:*?"<>|')
+            or instance_name.startswith(".")):
+        raise ValueError(f"Invalid instance name: {instance_name!r}")
+    if len(instance_name) > 64:
+        raise ValueError(f"Instance name too long: {len(instance_name)} > 64")
+    if os.path.exists(inst_dir):
+        raise FileExistsError(f"Instance directory already exists: {inst_dir}")
+    os.makedirs(inst_dir, exist_ok=True)
+    if initial_config is not None:
+        config_path = os.path.join(inst_dir, config_filename)
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(initial_config, f, ensure_ascii=False, indent=2)
+    return inst_dir
 
 # ── 版本迁移 ──────────────────────────────────────────────────────────────────
 
@@ -69,9 +96,8 @@ class Project:
     MARKER_DIR  = ".videocraft"
     MARKER_FILE = "project.json"
 
-    SOURCE_DIR_NAME = "source"
-    SUBTITLES_DIR_NAME = "subtitles"
-    DERIVATIVES_DIR_NAME = "derivatives"
+    MATERIALS_DIR_NAME = "materials"
+    CREATIONS_DIR_NAME = "creations"
 
     def __init__(self, folder: str, data: dict):
         self.folder = os.path.abspath(folder)
@@ -171,57 +197,35 @@ class Project:
         return os.path.join(self.folder, Project.MARKER_DIR)
 
     @property
-    def source_dir(self) -> str:
-        return os.path.join(self.folder, Project.SOURCE_DIR_NAME)
-
-    @property
-    def source_video_path(self) -> str:
-        return os.path.join(self.source_dir, SOURCE_VIDEO_FILENAME)
-
-    @property
-    def source_meta_path(self) -> str:
-        return os.path.join(self.source_dir, SOURCE_META_FILENAME)
-
-    @property
-    def subtitles_dir(self) -> str:
-        return os.path.join(self.folder, Project.SUBTITLES_DIR_NAME)
-
-    @property
-    def derivatives_dir(self) -> str:
-        return os.path.join(self.folder, Project.DERIVATIVES_DIR_NAME)
-
-    @property
     def background_path(self) -> str:
         return os.path.join(self.videocraft_dir, BACKGROUND_FILENAME)
 
-    def source_status(self) -> str:
-        """Returns "ready" if source/video.mp4 exists with non-zero size,
-        else "missing". Computed at call time (no persisted state)."""
-        path = self.source_video_path
-        try:
-            return "ready" if os.path.isfile(path) and os.path.getsize(path) > 0 else "missing"
-        except OSError:
-            return "missing"
+    # ── Materials (plugin instance container) ─────────────────────────────────
 
-    def derivative_dir(self, type_name: str, instance_name: str) -> str:
-        """Returns <project>/derivatives/<type>/<instance>/, NOT created."""
-        return os.path.join(self.derivatives_dir, type_name, instance_name)
+    @property
+    def materials_dir(self) -> str:
+        return os.path.join(self.folder, Project.MATERIALS_DIR_NAME)
 
-    def list_derivative_types(self) -> list[str]:
-        """List type subdirectories under derivatives/ (e.g. ['ai_clip', 'bilingual_video'])."""
-        if not os.path.isdir(self.derivatives_dir):
+    def material_type_dir(self, type_name: str) -> str:
+        return os.path.join(self.materials_dir, type_name)
+
+    def material_instance_dir(self, type_name: str, instance_name: str) -> str:
+        """Returns <project>/materials/<type>/<instance>/, NOT created."""
+        return os.path.join(self.materials_dir, type_name, instance_name)
+
+    def list_material_types(self) -> list[str]:
+        if not os.path.isdir(self.materials_dir):
             return []
         try:
             return sorted(
-                n for n in os.listdir(self.derivatives_dir)
-                if os.path.isdir(os.path.join(self.derivatives_dir, n))
+                n for n in os.listdir(self.materials_dir)
+                if os.path.isdir(os.path.join(self.materials_dir, n))
             )
         except OSError:
             return []
 
-    def list_derivative_instances(self, type_name: str) -> list[str]:
-        """List instance subdirectories under derivatives/<type>/."""
-        type_dir = os.path.join(self.derivatives_dir, type_name)
+    def list_material_instances(self, type_name: str) -> list[str]:
+        type_dir = self.material_type_dir(type_name)
         if not os.path.isdir(type_dir):
             return []
         try:
@@ -232,47 +236,71 @@ class Project:
         except OSError:
             return []
 
-    def list_derivatives(self) -> dict[str, list[str]]:
-        """Returns {type_name: [instance_name, ...]} for all derivatives."""
-        return {
-            t: self.list_derivative_instances(t)
-            for t in self.list_derivative_types()
-        }
+    def list_materials(self) -> dict[str, list[str]]:
+        return {t: self.list_material_instances(t) for t in self.list_material_types()}
 
-    def create_derivative_instance(
+    def create_material_instance(
+        self,
+        type_name: str,
+        instance_name: str,
+        initial_config: dict | None = None,
+        config_filename: str = "instance.json",
+    ) -> str:
+        return _create_instance(
+            self.material_instance_dir(type_name, instance_name),
+            instance_name, initial_config, config_filename,
+        )
+
+    # ── Creations (plugin instance container; renamed from derivatives) ───────
+
+    @property
+    def creations_dir(self) -> str:
+        return os.path.join(self.folder, Project.CREATIONS_DIR_NAME)
+
+    def creation_type_dir(self, type_name: str) -> str:
+        return os.path.join(self.creations_dir, type_name)
+
+    def creation_instance_dir(self, type_name: str, instance_name: str) -> str:
+        """Returns <project>/creations/<type>/<instance>/, NOT created."""
+        return os.path.join(self.creations_dir, type_name, instance_name)
+
+    def list_creation_types(self) -> list[str]:
+        if not os.path.isdir(self.creations_dir):
+            return []
+        try:
+            return sorted(
+                n for n in os.listdir(self.creations_dir)
+                if os.path.isdir(os.path.join(self.creations_dir, n))
+            )
+        except OSError:
+            return []
+
+    def list_creation_instances(self, type_name: str) -> list[str]:
+        type_dir = self.creation_type_dir(type_name)
+        if not os.path.isdir(type_dir):
+            return []
+        try:
+            return sorted(
+                n for n in os.listdir(type_dir)
+                if os.path.isdir(os.path.join(type_dir, n))
+            )
+        except OSError:
+            return []
+
+    def list_creations(self) -> dict[str, list[str]]:
+        return {t: self.list_creation_instances(t) for t in self.list_creation_types()}
+
+    def create_creation_instance(
         self,
         type_name: str,
         instance_name: str,
         initial_config: dict | None = None,
         config_filename: str = "config.json",
     ) -> str:
-        """Create derivatives/<type_name>/<instance_name>/ + initial config.
-
-        Validates instance_name against filesystem rules. Raises
-        FileExistsError if the instance already exists, ValueError on
-        bad name. Returns the absolute path to the new instance folder.
-        """
-        if (not instance_name
-                or instance_name != instance_name.strip()
-                or any(c in instance_name for c in r'\/:*?"<>|')
-                or instance_name.startswith(".")):
-            raise ValueError(f"Invalid instance name: {instance_name!r}")
-        if len(instance_name) > 64:
-            raise ValueError(f"Instance name too long: {len(instance_name)} > 64")
-
-        inst_dir = self.derivative_dir(type_name, instance_name)
-        if os.path.exists(inst_dir):
-            raise FileExistsError(
-                f"Derivative instance already exists: {type_name}/{instance_name}"
-            )
-        os.makedirs(inst_dir, exist_ok=True)
-
-        if initial_config is not None:
-            config_path = os.path.join(inst_dir, config_filename)
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(initial_config, f, ensure_ascii=False, indent=2)
-
-        return inst_dir
+        return _create_instance(
+            self.creation_instance_dir(type_name, instance_name),
+            instance_name, initial_config, config_filename,
+        )
 
     # -- 文件列表 ---------------------------------------------------------------
 

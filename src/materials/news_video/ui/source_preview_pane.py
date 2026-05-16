@@ -27,6 +27,7 @@ from core.project_schema import ORIGIN_LINK, ORIGIN_LOCAL
 from materials.news_video.schema import read_basic_info
 from ui.web_preview import WebPreviewFrame
 from i18n import tr
+from materials.news_video import paths as _nv_paths
 
 
 _HTML_TEMPLATE = """<!doctype html>
@@ -84,7 +85,7 @@ def build_source_preview(
     outer = tk.Frame(parent, bg="white")
 
     src = project.meta.source
-    video_path = project.source_video_path
+    video_path = _nv_paths.source_video_path(project)
     ready = os.path.isfile(video_path) and os.path.getsize(video_path) > 0
 
     # Resizable horizontal split.
@@ -221,7 +222,7 @@ def build_source_preview(
 
     def _on_edit_context():
         from materials.news_video.ui.source_basic_info_dialog import show_source_basic_info_dialog
-        if show_source_basic_info_dialog(outer, project.source_dir):
+        if show_source_basic_info_dialog(outer, _nv_paths.source_dir(project)):
             _refresh_manual()
     tk.Button(header, text=tr("source_preview.btn_edit_context"), relief="flat",
               bg="#e8e8e8", command=_on_edit_context, padx=8,
@@ -238,7 +239,7 @@ def build_source_preview(
     def _refresh_manual():
         for child in manual_block.winfo_children():
             child.destroy()
-        _render_anchor_fields(manual_block, project.source_dir)
+        _render_anchor_fields(manual_block, _nv_paths.source_dir(project))
     _refresh_manual()
 
     ttk.Separator(inner, orient="horizontal").pack(fill="x", pady=(12, 8))
@@ -254,7 +255,7 @@ def build_source_preview(
 
     def _on_open_folder():
         try:
-            os.startfile(project.source_dir)
+            os.startfile(_nv_paths.source_dir(project))
         except OSError as e:
             messagebox.showerror(tr("source_preview.err_open_folder"), str(e), parent=outer)
     tk.Button(actions, text=tr("source_preview.btn_show_in_explorer"), relief="flat",
