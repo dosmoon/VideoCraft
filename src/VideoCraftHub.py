@@ -823,6 +823,14 @@ class VideoCraftHub:
         y = btn.winfo_rooty() + btn.winfo_height()
         menu.tk_popup(x, y)
 
+    def _build_creations_tab(self, parent: tk.Frame) -> None:
+        """创作 tab — flat list of creation instances. [+] sits at tab head,
+        no per-type分栏 (per ADR-0004). Instance row shows type via badge."""
+        self._derivatives_section = tk.Frame(parent, bg="#f5f5f5")
+        self._derivatives_section.pack(fill="both", expand=True,
+                                       padx=4, pady=(4, 4))
+        self._build_derivatives_section(self._derivatives_section)
+
     # ── Creations list ────────────────────────────────────────────────────────
     # Per ADR-0004 slice J: no redundant section title (tab itself is
     # labeled 创作); [+] sits at tab head as the sole top control.
