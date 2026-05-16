@@ -9,7 +9,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from i18n import tr
-from core import source_context
+from materials.news_video import schema as source_context
 
 from . import ComponentSpec, ImportSource, ProjectContext, register
 

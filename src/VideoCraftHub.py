@@ -38,6 +38,8 @@ import creations.bilingual_video   # noqa: F401
 import creations.clip              # noqa: F401
 import creations.news_desk         # noqa: F401
 import creations
+import materials.news_video        # noqa: F401
+import materials
 
 # ── 工具注册表 ────────────────────────────────────────────────────────────────
 # class: None → 用 subprocess 启动；有 class 名 → Toplevel 内嵌
@@ -857,7 +859,7 @@ class VideoCraftHub:
             self._news_context_status_lbl.configure(fg="#999", cursor="")
             return
         try:
-            from core.source_context import read_context, SourceContext
+            from materials.news_video.schema import read_context, SourceContext
             ctx = read_context(self.project.source_dir).to_dict()
             total = len(SourceContext.__dataclass_fields__)
             filled = sum(1 for v in ctx.values()

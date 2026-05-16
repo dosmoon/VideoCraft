@@ -42,7 +42,7 @@ from core.composition.render import (
 from core.composition.style import (
     CompositionStyle, SubtitleLineStyle, SubtitleStyle, WatermarkStyle,
 )
-from core import source_context
+from materials.news_video import schema as source_context
 from ui.dialog_utils import center_dialog_on_parent
 
 # Importing the package triggers each component module's register()
