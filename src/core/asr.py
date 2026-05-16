@@ -18,11 +18,11 @@ Every ASR provider returns verbose_json with these two timestamp layers:
   words[]    OPTIONAL. Word-level (or character-level for CJK) timestamps.
              Backend-dependent — some Whisper exports lack cross-attention
              outputs and return [] here. Not consumed by translation;
-             reserved for the burn-subtitles module's future aspect-ratio-
-             aware cue-sizer (karaoke highlight, multi-line wrap aligned
-             with word boundaries). The current SRT writer below is a
+             reserved as raw timing material for whatever future burn-time
+             cue-sizer wants karaoke highlight / multi-line wrap aligned
+             with word boundaries. The current SRT writer below is a
              one-segment-one-row passthrough — sophisticated cue-sizing
-             belongs in burn_subs.py and runs AFTER translation.
+             belongs at burn time and runs AFTER translation.
 
 So: ASR → sentence segments (always) + word timestamps (when available);
 translate at sentence granularity; cue-size at burn time. Three stages,
@@ -202,8 +202,8 @@ def _verbose_json_to_srt(data: dict) -> str:
     Intentionally a passthrough: each sentence-level segment becomes one
     SRT row. See module docstring for the full contract — short version:
     translate_srt.py is row-by-row, so cue-splitting here would break LLM
-    translation; broadcast-style cue-sizing belongs in burn_subs.py and
-    runs AFTER translation using both segments[] and words[].
+    translation; broadcast-style cue-sizing belongs at burn time and runs
+    AFTER translation using both segments[] and words[].
 
     Segments with a `speaker` field get a [SPEAKER_xx] prefix.
     """
