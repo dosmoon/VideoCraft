@@ -1077,14 +1077,13 @@ class VideoCraftHub:
         self.project.update_meta(meta)
         self._refresh_project_tab()
 
-    # ── Derivatives section ───────────────────────────────────────────────────
+    # ── Creations list ────────────────────────────────────────────────────────
+    # Per ADR-0004 slice J: no redundant section title (tab itself is
+    # labeled 创作); [+] sits at tab head as the sole top control.
 
     def _build_derivatives_section(self, parent: tk.Frame) -> None:
         head = tk.Frame(parent, bg="#f5f5f5")
-        head.pack(fill="x", padx=2, pady=(2, 2))
-        tk.Label(head, text=tr("hub.sidebar.creations.title"), font=("", 9, "bold"),
-                 bg="#f5f5f5", fg="#555"
-                 ).pack(side="left")
+        head.pack(fill="x", padx=2, pady=(2, 4))
         self._derivative_add_btn = tk.Button(
             head, text=tr("hub.button.add"), relief="flat", bg="#e8e8e8",
             command=self._on_new_derivative_hub,

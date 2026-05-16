@@ -5,73 +5,59 @@
 
 ---
 
-## 本会话主题：插件化大重构（ADR-0004 落地）
+## 本会话主题：插件化大重构（ADR-0004）— 已收尾
 
 会话起点 HEAD: `7d2e603`。
+会话结尾 HEAD: 待 commit slice J。
 
-### 决定
+10 个 slice (A→J) 全部落地。完整决策见 [docs/adr/0004-three-tier-plugin-architecture.md](adr/0004-three-tier-plugin-architecture.md)。
 
-升级到**三层插件架构**——`Base / Materials / Creations`。完整 why + how 见 [docs/adr/0004-three-tier-plugin-architecture.md](adr/0004-three-tier-plugin-architecture.md)。
+### 已完成 slice
 
-核心动作：
-- 新建 `src/materials/` 和 `src/creations/`，都是 type-extensible 自注册插件包
-- 把当前唯一的素材类型「**新闻视频素材**」（源视频 + 字幕 + AI 分析 + 章节 + context）聚合进 `materials/news_video/`
-- 把三个创作类型（news_desk / clip / bilingual_video）从 `tools/` 迁到 `creations/`
-- 删 `core/derivative_types.py`，注册机制改成插件自报家门
-- 重写 `VideoCraftHub.py`：2 tab → 3 tab（**素材 / 创作 / 文件**），preview tab 0 改名「**主窗口**」，所有插件特有 sidebar section 由插件自渲染
-- 「派生作品」字面全清零，UI 改叫「创作」
-
-### Slice 推进计划
-
-| Slice | 内容 | 状态 |
+| Slice | HEAD | 内容 |
 |---|---|---|
-| A | ADR-0004 + 本 task.md handoff | ✅ |
-| B | `creations/` + `materials/` 空骨架 + abstract base | ⬜ |
-| C | 迁 `creations/news_desk` ← `tools/news_desk` | ⬜ |
-| D | 迁 `creations/clip` + `creations/bilingual_video`（← `tools/subtitle`） | ⬜ |
-| E | 删 `core/derivative_types.py`，调用切到 creations registry | ⬜ |
-| F | 建 `materials/news_video/` 骨架 + 迁 `SourceContext` (15 字段) | ⬜ |
-| G | 插件特有 UI 文件从 `src/ui/` 迁到插件包 | ⬜ |
-| H | 重写 `VideoCraftHub.py` — 三 tab + 插件自渲染 + 主窗口改名 | ⬜ |
-| I | i18n key 全量改名 derivative → creation；「派生作品」字面清零 | ⬜ |
-| J | tab 级 [+] 收口 + type-picker 通用化（素材/创作共用） | ⬜ |
+| A | `9edfd1e` | ADR-0004 写入 + task.md 计划版交接锚 |
+| B | `bba5dda` | `creations/` + `materials/` 空骨架 + abstract base |
+| C | `743e9a5` | 迁 `creations/news_desk` ← `tools/news_desk` |
+| D | `3f99c1b` | 迁 `creations/clip` + `creations/bilingual_video` ← `tools/{clip,subtitle}` |
+| E | `6dd8933` | 删 `core/derivative_types.py`；调用切到 `creations` registry；插件自报家门 |
+| F | `8154221` | 建 `materials/news_video/`；迁 `SourceContext` (15 字段) + AI fill |
+| G | `156feed` | 12 个插件特有 UI 文件从 `src/ui/` 迁到 `materials/news_video/ui/`；删 shim |
+| H | `ee1e00f` | sidebar 2 tab → 3 tab（**素材/创作/文件**）；preview tab 0 → 「主窗口」；创作 tab 平铺、无 type 分栏 |
+| I | `6b63743` | i18n key 全量改名 `derivative` → `creation`；「派生作品」字面清零 |
+| J | 本 commit | 去掉创作 section 内冗余「创作」标题（tab 标签已经叫创作）；[+] 留在 tab 顶 |
 
-依赖链：A → B → (C ∥ D) → E → F → G → H → I → J
+### 关键不变量已守住
 
-### 关键不变量（实施时必须守住）
+- ✅ `core/` 无 Tk、无插件 type 名字
+- ✅ 素材/创作两套 type registry 独立，机制泛型、条目插件自注册
+- ✅ 素材 plugin 跟 base 解耦；创作 plugin 跟素材通过显式契约消费（artifact_resolver 字段已声明，实际 wiring 留待消费端首次需要）
+- ✅ UI 文件归属：通用工具留 `src/ui/`；插件特有迁到插件包
+- ✅ 三栏 sidebar = 素材 / 创作 / 文件
+- ✅ preview tab 0 = 主窗口
 
-- `core/` 零 Tk，零插件名字
-- 各插件 sidebar 渲染必须**自己**画自己的节点，Hub 不再有 `_build_<插件特有>_section`
-- 素材→创作的数据流通过 `MaterialType.artifact_resolver(instance, key) → Path`，创作插件按 [[ADR-0003]] 做快照
-- UI 文件归属：只有一种插件用 = 归该插件；多种/框架级 = 归 `src/ui/`
-- 三栏 sidebar 命名：**素材 / 创作 / 文件**（不是「资源/项目/文件」，不是「派生作品」）
-- preview tab 0 改名「**主窗口**」（不再叫「项目」）
-- 创作 tab 内 **不按 type 分栏**，instance 平铺；type 信息靠 instance 行体现
-- `[+]` 按钮上移到 tab 级，由两个 tab 各自的 tab header 区域承担
+### 已知 warts（这次没修，留 TODO）
 
-### UI 文件归属表（slice G 用）
+- **`core/subtitle_analysis_runners.py:33` 直接 import `materials.news_video.schema.combined_prompt_block`** — core/ 不该认识插件 schema。`# TODO(ADR-0004)` 注释在位。cleanest fix = 参数化 runner，让调用方（知道 material 类型的那一层）注入 prompt block。等第二种素材类型出现或字幕分析消费端重构时一并做
+- **Plugin self-render via `MaterialType.sidebar_renderer` / `create_handler` / `artifact_resolver` 未 wire** — 字段已经声明在 `materials.MaterialType` dataclass 上，Hub 还是自己 hard-code 着 `_build_source_section` / `_build_news_context_section` / `_build_subtitles_section`。MaterialType.sidebar_renderer 是 None。等下一次"sidebar 渲染要改动"时连 wiring 一起做，或者第二种素材类型登场时强制做
+- **素材 tab 没有 tab 级 [+]** — Source section 自带 [+]，但 ADR-0004 的对称设计是 tab 级 [+]。当前只有 1 种素材类型，tab 级 [+] 等同于 Source [+]，所以这步留到 第二种素材类型出现时一并做
 
-| 现位置 (src/ui/) | 目标位置 |
-|---|---|
-| source_preview_pane.py | materials/news_video/ui/ |
-| srt_preview_pane.py | materials/news_video/ui/ |
-| news_context_pane.py | materials/news_video/ui/ |
-| source_basic_info_dialog.py | materials/news_video/ui/ |
-| source_context_dialog.py | materials/news_video/ui/ |
-| source_add_dialog.py | materials/news_video/ui/ |
-| source_prepare_modal.py | materials/news_video/ui/ |
-| subs_lang_picker.py | materials/news_video/ui/ |
-| subtitles_dialogs.py | materials/news_video/ui/ |
-| subtitles_progress_modal.py | materials/news_video/ui/ |
-| subtitle_analysis_preview.py | materials/news_video/ui/ |
-| chapter_editor.py | materials/news_video/ui/ |
-| new_derivative_dialog.py | **留 `ui/` 但改名 + 通用化**（slice J） |
-| composition_preview.html | 跟 core/composition/ 走（slice B 时移） |
-| dialog_utils.py / collapsible_frame.py / web_preview*.py / vlc_player.py / video_preview_pane.py / ai_error_dialog.py / disclaimer_dialog.py / new_project_dialog.py | **留 `src/ui/`**（真通用） |
+### 已知小不一致
 
-### 接力起点（每片完成后更新这行）
+- `dialog.new_creation.title_typed` 的 `{type}` 参数当前传的是已经 i18n 过的 display name（`creations.display_name(type_name)`），与原 `dialog.new_derivative.title_typed` 行为一致。但 ADR-0004 模型下，「类型」概念展示词应该是 `material.<x>` / `creation.<x>` 双重 namespace。slice 重命名只 touched creation 命名空间，材料命名空间还没有用例。等第二种素材或创作类型登场时补
+- 老 instance 在 `<project>/derivatives/<type>/<inst>/` 下不动；目录名沿用 `derivatives/`（不改成 `creations/` 是为避免破坏既有 project 的兼容；用户磁盘上的目录不能 hot-rename）。代码层概念已经全切到 creations
 
-- Slice A 完成 → HEAD: 待 commit；下一步开 Slice B
+---
+
+## 下一手 — 待定
+
+本会话定的几个候选方向（按强度排序）：
+
+1. **真实使用攒反馈** — 现在三栏 UI 就位，跑完整素材 + 创作流程，看哪里别扭。最高 ROI
+2. **subtitle Phase 2/3**（[[ADR-0003]] 残留）：cue 内联编辑 / 增删 cue / 重新导入按钮
+3. **第二种素材类型尝试**（普通视频素材，无新闻 context）— 一旦立项，可同时清掉上面三个 warts（runner 参数化、sidebar_renderer wiring、素材 tab 级 [+]）。是个干净的"插件化跑通"验证
+4. **第二种创作类型**（比如"短视频合集"等）— 同上效果
+5. **AI 调用预算治理** — [[feedback_ai_call_budget]] 已经记着；可以系统性扫一遍现有 prompt 看哪些 lean 化收益高
 
 ---
 
@@ -82,14 +68,5 @@
 - UI 文案先 grep `src/i18n/*.json` 找用户实际看见的词（[[feedback_user_facing_naming]]）
 - 新 `tk.Toplevel` 弹窗照 `src/ui/dialog_utils.py` docstring 模板写
 - 创作（前「派生作品」）**任何**新代码必须遵守 [[ADR-0003]]——render/export 只读 instance 状态，不回扫上游
+- 新代码必须遵守 [[ADR-0004]]——core/ 零 Tk 零插件名；插件 self-register；UI 文件按归属规则放
 - pre-alpha 阶段，命名/迁移不要套"用户习惯/保守方案"（[[feedback_pre_alpha_no_legacy]]）
-
----
-
-## 不在本会话范围（备忘）
-
-- 第二种素材类型的拆分（普通视频素材 / 访谈视频素材）——等真出现再做
-- 通用插件 manifest.json schema——当前 Python 自注册够用
-- chapter_editor 双击迟钝是 WebView2 焦点系统级问题（已 focus_force 修过）
-- subtitle Phase 2/3：cue 编辑能力
-- image_watermark 还在引用模式（ADR-0003 灰区）
