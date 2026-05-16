@@ -627,11 +627,22 @@ class NewsDeskApp(ToolBase):
             self._components = []
 
     def _save_instance_config(self) -> None:
-        cfg = {
-            "preset_name": self._current_preset_name,
-            "components": self._components,
-        }
+        """Persist workbench-owned keys without trampling fields owned
+        by other writers (notably bound_material, written by
+        material_binding.get_or_bind on first open and otherwise opaque
+        to this code path)."""
         path = self._config_path()
+        cfg: dict = {}
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    existing = json.load(f)
+                if isinstance(existing, dict):
+                    cfg = existing
+            except (OSError, json.JSONDecodeError):
+                cfg = {}
+        cfg["preset_name"] = self._current_preset_name
+        cfg["components"] = self._components
         os.makedirs(os.path.dirname(path), exist_ok=True)
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
