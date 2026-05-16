@@ -16,8 +16,7 @@ from core.ai.tiers import TIER_PREMIUM, TIER_STANDARD, TIER_ECONOMY
 
 
 # ── Default LLM providers ────────────────────────────────────────────────────
-# Provider keys must match the names used in providers.json and in legacy
-# callers (e.g. srt_tools.py's AI_PROVIDERS).
+# Provider keys must match the names used in providers.json.
 
 _DEFAULT_PROVIDERS = {
     "Gemini": {

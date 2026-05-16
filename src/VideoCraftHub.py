@@ -53,12 +53,6 @@ TOOL_MAP = {
     "clip":        {"file": "creations/clip/clip_tool.py",          "class": "ClipToolApp"},
     "news-desk":   {"file": "creations/news_desk/news_desk_tool.py", "class": "NewsDeskApp"},
     "word-subtitle": {"file": "tools/subtitle/word_subtitle.py",   "class": "WordSubtitleApp"},
-    "srt-extract-subtitles":  {"file": "tools/subtitle/srt_tools.py", "class": "SrtExtractSubtitlesApp"},
-    "srt-gen-segments":       {"file": "tools/subtitle/srt_tools.py", "class": "SrtGenerateSegmentsApp"},
-    "srt-extract-paragraphs": {"file": "tools/subtitle/srt_tools.py", "class": "SrtExtractParagraphsApp"},
-    "srt-refine":             {"file": "tools/subtitle/srt_tools.py", "class": "SrtRefineSegmentsApp"},
-    "srt-gen-titles":         {"file": "tools/subtitle/srt_tools.py", "class": "SrtGenerateTitlesApp"},
-    "srt-gen-pack":           {"file": "tools/subtitle/srt_tools.py", "class": "SrtGeneratePackApp"},
     "split-workbench": {"file": "tools/video/split_workbench.py",  "class": "SplitWorkbenchApp"},
     "concat-workbench": {"file": "tools/video/concat_workbench.py", "class": "ConcatWorkbenchApp"},
     "videotools":       {"file": "tools/video/video_tools.py", "class": "VideoToolsGUI"},
@@ -436,24 +430,6 @@ class VideoCraftHub:
                              command=lambda: self.open_tool("auto-split"))
         vid_menu.add_command(label=tr("menu.video.convert_bitrate"),
                              command=lambda: self.open_tool("convert-bitrate"))
-
-        # Subtitle — pack (one-shot recommended) at top, single-step legacy
-        # entries below as fallback for debugging or rerunning a single phase.
-        sub_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label=tr("menu.subtitle"), menu=sub_menu)
-        sub_menu.add_command(label=tr("menu.subtitle.gen_pack"),
-                             command=lambda: self.open_tool("srt-gen-pack"))
-        sub_menu.add_separator()
-        sub_menu.add_command(label=tr("menu.subtitle.extract_all"),
-                             command=lambda: self.open_tool("srt-extract-subtitles"))
-        sub_menu.add_command(label=tr("menu.subtitle.gen_segments"),
-                             command=lambda: self.open_tool("srt-gen-segments"))
-        sub_menu.add_command(label=tr("menu.subtitle.extract_paragraphs"),
-                             command=lambda: self.open_tool("srt-extract-paragraphs"))
-        sub_menu.add_command(label=tr("menu.subtitle.refine_segments"),
-                             command=lambda: self.open_tool("srt-refine"))
-        sub_menu.add_command(label=tr("menu.subtitle.gen_titles"),
-                             command=lambda: self.open_tool("srt-gen-titles"))
 
         # Text to Video
         t2v_menu = tk.Menu(menubar, tearoff=0)
