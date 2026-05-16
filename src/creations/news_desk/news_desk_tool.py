@@ -616,63 +616,12 @@ class NewsDeskApp(ToolBase):
                 self._current_style = style
                 self._current_preset_name = name
 
-        # New shape: components list. Old shape: sub1_srt / sub2_srt /
-        # overlays — migrate to subtitle / image-or-text watermark
-        # components. Old overlays (LowerThird/TopicStrip/CPC/DateStamp)
-        # are dropped — chapters can be re-imported via the chapter
-        # component's [⇩ Import] button.
+        # Components list — pre-alpha schema is just `components: [...]`.
         components = cfg.get("components")
-        if isinstance(components, list) and components:
+        if isinstance(components, list):
             self._components = [c for c in components if isinstance(c, dict)]
-            return
-
-        # Detect "fresh instance" — the slice Q binding writes a
-        # bound_material into config.json BEFORE any components exist.
-        # Without this guard the migration block below conjures an
-        # image-watermark component from the preset's WatermarkStyle and
-        # mutates a brand-new instance to look like a legacy one.
-        # Migration only runs when the config carries actual legacy keys.
-        legacy_keys = ("sub1_srt", "sub2_srt", "overlays")
-        if not any(k in cfg for k in legacy_keys):
+        else:
             self._components = []
-            return
-
-        # Migration path.
-        migrated: list[dict] = []
-        for slot, key in ((1, "sub1_srt"), (2, "sub2_srt")):
-            srt_rel = cfg.get(key) or ""
-            if not srt_rel:
-                continue
-            sub_spec = nd_components.spec_for_kind("subtitle")
-            inst = sub_spec.default_instance(self._duration)
-            inst["srt_path"] = srt_rel
-            inst["name"] = f"Subtitle {slot}"
-            migrated.append(inst)
-        # Watermark from old preset's WatermarkStyle.
-        wm = self._current_style.watermark
-        if wm and wm.enabled:
-            if wm.type == "image" and wm.image_path:
-                spec = nd_components.spec_for_kind("image_watermark")
-                inst = spec.default_instance(self._duration)
-                inst["image_path"] = wm.image_path
-                inst["scale_pct"] = int(round((wm.image_scale or 0.15) * 100))
-                inst["opacity"] = int(wm.image_opacity)
-                inst["position"] = wm.position or "top-right"
-                inst["margin_x_pct"] = int(round((wm.margin_x_pct or 0.025) * 100))
-                inst["margin_y_pct"] = int(round((wm.margin_y_pct or 0.025) * 100))
-                migrated.insert(0, inst)
-            elif wm.type == "text" and wm.text:
-                spec = nd_components.spec_for_kind("text_watermark")
-                inst = spec.default_instance(self._duration)
-                inst["text"] = wm.text
-                inst["fontsize"] = int(wm.text_fontsize)
-                inst["color"] = wm.text_color or "#FFFFFF"
-                inst["opacity"] = int(wm.text_opacity)
-                inst["position"] = wm.position or "top-right"
-                inst["margin_x_pct"] = int(round((wm.margin_x_pct or 0.025) * 100))
-                inst["margin_y_pct"] = int(round((wm.margin_y_pct or 0.025) * 100))
-                migrated.insert(0, inst)
-        self._components = migrated
 
     def _save_instance_config(self) -> None:
         cfg = {
