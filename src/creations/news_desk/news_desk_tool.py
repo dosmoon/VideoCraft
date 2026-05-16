@@ -1,4 +1,4 @@
-"""News-desk workbench v0.4 — components-based editing.
+"""News-desk workbench — components-based editing.
 
 The window has three middle panes:
   - Component list (left): all project components, ordered top→bottom = z
@@ -12,9 +12,8 @@ spec for its render fragment, and assembles a CompositionRequest the
 existing renderer consumes.
 
 Per-instance config persisted at
-  derivatives/news_desk/<instance>/config.json
-holding preset name + components list. Old format (sub1_srt /
-sub2_srt / overlays) is migrated on first load.
+  creations/news_desk/<instance>/config.json
+holding preset name, components list, and bound_material (ADR-0005).
 """
 
 from __future__ import annotations

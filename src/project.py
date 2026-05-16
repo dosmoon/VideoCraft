@@ -55,23 +55,6 @@ def _create_instance(inst_dir: str, instance_name: str,
             json.dump(initial_config, f, ensure_ascii=False, indent=2)
     return inst_dir
 
-# ── 版本迁移 ──────────────────────────────────────────────────────────────────
-
-CURRENT_VERSION = 1
-
-MIGRATIONS = {
-    # 示例：1: _migrate_v1_to_v2,
-}
-
-def _load_and_migrate(data: dict) -> dict:
-    version = data.get("version", 1)
-    while version < CURRENT_VERSION:
-        data = MIGRATIONS[version](data)
-        version += 1
-    data["version"] = CURRENT_VERSION
-    return data
-
-
 # ── 文件图标映射 ──────────────────────────────────────────────────────────────
 
 _ICONS = {
@@ -118,21 +101,19 @@ class Project:
         if os.path.exists(new_path):
             try:
                 with open(new_path, "r", encoding="utf-8") as f:
-                    raw = json.load(f)
-                data = _load_and_migrate(raw)
-            except (json.JSONDecodeError, KeyError):
+                    data = json.load(f)
+            except (json.JSONDecodeError, OSError):
                 data = Project._default_data()
         else:
             data = Project._default_data()
 
         project = Project(folder, data)
-        project.save()   # ensure file written (new project or post-migration)
+        project.save()
         return project
 
     @staticmethod
     def _default_data() -> dict:
         return {
-            "version": CURRENT_VERSION,
             "created": date.today().isoformat(),
         }
 

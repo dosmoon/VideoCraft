@@ -7,21 +7,12 @@ Design principles (see docs/design/04-ai-router.md):
   3. Feature layer (core/translate.py, core/asr.py, etc.) is the proper
      consumer of this facade.
 
-Phase 1 scope (current):
-  - Router + stats + config split out of the old ai_router.py monolith.
-  - LLM provider adapters extracted (gemini / openai_compat / claude_code).
-  - AIError + CancellationToken contracts scaffolded (implementation in
-    Phase 7).
-  - describe() returns Phase 1 placeholder capability metadata.
-  - ASR / TTS dispatch NOT yet folded in — those migrations happen in
-    M4 / M5 respectively. For now, callers continue to use
-    `router.get_asr_key(...)` / `router.get_tts_key(...)` and make their
-    own HTTP/SDK calls.
-
-Legacy compatibility:
-  - `src/ai_router.py` is a thin shim that re-exports `router`, `TIER_*`,
-    and the legacy constants so existing `import ai_router` callers keep
-    working unchanged.
+Module layout:
+  - router.py: AIRouter class + singleton
+  - tiers.py: TIER_* constants + Tier enum
+  - config.py: providers.json loader
+  - errors.py / cancellation.py: cross-cutting contracts
+  - providers/: per-provider adapters (gemini / openai_compat / claude_code / ...)
 """
 
 from core.ai.router import router, AIRouter
