@@ -649,20 +649,6 @@ class VideoCraftHub:
             self._preview_key = key
         self._select_tab(PREVIEW_TAB_KEY)
 
-    def show_analysis_preview(self, artifact) -> None:
-        """Sidebar click handler: preview a subtitle analysis artifact in tab 0."""
-        from materials.news_video.ui.subtitle_analysis_preview import build_analysis_preview
-        key = f"analysis:{artifact.lang_iso}:{artifact.type.kind}"
-        if self._preview_key != key:
-            self._clear_preview_tab()
-            frame = build_analysis_preview(
-                self._preview_tab, artifact,
-                on_saved=self._refresh_project_tab,
-            )
-            frame.pack(fill="both", expand=True)
-            self._preview_key = key
-        self._select_tab(PREVIEW_TAB_KEY)
-
     def show_derivative_video_preview(self, video_path: str) -> None:
         """Sidebar click handler: preview a derivative output video."""
         if not os.path.isfile(video_path):
@@ -682,39 +668,6 @@ class VideoCraftHub:
                 cache_dir=cache_dir,
                 title=rel,
             )
-            frame.pack(fill="both", expand=True)
-            self._preview_key = key
-        self._select_tab(PREVIEW_TAB_KEY)
-
-    def show_source_preview(self) -> None:
-        """Sidebar click handler: show source/video.mp4 in the preview tab."""
-        if _nv_paths.source_status(self.project) != "ready":
-            return
-        from materials.news_video.ui.source_preview_pane import build_source_preview
-        key = "source"
-        if self._preview_key != key:
-            self._clear_preview_tab()
-            # Modify-source action routes back into the news_video panel,
-            # which owns the source-button handler (ADR-0004).
-            def _on_modify():
-                panel = self._material_panels.get("news_video")
-                if panel is not None:
-                    panel._action_source_button()
-            frame = build_source_preview(self._preview_tab, self.project,
-                                          on_modify=_on_modify)
-            frame.pack(fill="both", expand=True)
-            self._preview_key = key
-        self._select_tab(PREVIEW_TAB_KEY)
-
-    def show_news_context_preview(self) -> None:
-        """Sidebar click handler: show the AI-generated event context pane."""
-        if _nv_paths.source_status(self.project) != "ready":
-            return
-        from materials.news_video.ui.news_context_pane import build_news_context_preview
-        key = "news_context"
-        if self._preview_key != key:
-            self._clear_preview_tab()
-            frame = build_news_context_preview(self._preview_tab, self.project)
             frame.pack(fill="both", expand=True)
             self._preview_key = key
         self._select_tab(PREVIEW_TAB_KEY)

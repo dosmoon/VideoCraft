@@ -26,6 +26,12 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from core.ai.cancellation import CancellationToken
+# TODO(ADR-0005): core/ should not import from a specific material plugin.
+# Cleanest fix: parameterize run_asr / run_translate so callers (which
+# know the material instance) inject source_video_path / subtitles_dir
+# rather than have us look them up from the project's "first" material
+# instance. Documented wart until a second material type forces the
+# abstraction.
 from materials.news_video import paths as _nv_paths
 
 
