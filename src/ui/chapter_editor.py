@@ -304,6 +304,18 @@ class ChapterEditor(tk.Frame):
         self._key_points_text.bind("<<Modified>>",
                                     self._on_key_points_modified)
 
+        # WebView2 focus-grab workaround:
+        # When the WebView2 child HWND has focus, clicking a Tk widget in
+        # the same toplevel often gets "absorbed" by the WebView's input
+        # thread and the Entry/Text never sees the focus shift, so the
+        # next keystrokes go nowhere. AttachThreadInput merges the input
+        # queues but doesn't actually force a focus change. We install a
+        # <Button-1> shim on every editable widget that explicitly
+        # focus_forces it before the click is processed.
+        for w in (self._start_entry, self._title_entry,
+                  self._refined_text, self._key_points_text):
+            w.bind("<Button-1>", self._force_focus_on_click, add="+")
+
     # ── Tree ─────────────────────────────────────────────────────────────
 
     def _reload_tree(self) -> None:
@@ -473,6 +485,23 @@ class ChapterEditor(tk.Frame):
             # at save time.
             self._tree.set(str(self._selected), "start", text)
         self._refresh_button_states()
+
+    def _force_focus_on_click(self, event) -> None:
+        """Hard-yank focus into the clicked widget.
+
+        WebView2 child HWND tends to retain the Win32 keyboard focus
+        even after the user clicks a Tk widget in the same toplevel —
+        AttachThreadInput merges the input queues but doesn't force
+        the focus change itself. Calling focus_force on the clicked
+        widget bumps Tk's focus model AND issues a Win32 SetFocus,
+        which the merged input queue then honors. Returning None
+        (not "break") lets Tk's normal click handling proceed for
+        cursor placement / selection.
+        """
+        try:
+            event.widget.focus_force()
+        except Exception:
+            pass
 
     def _on_title_changed(self) -> None:
         if self._suppress_trace or self._selected is None:
