@@ -1907,6 +1907,7 @@
   "chapter_editor.col_start": "起点",
   "chapter_editor.col_title": "章节标题",
   "chapter_editor.field_start": "起点",
+  "chapter_editor.field_title": "标题",
   "chapter_editor.btn_save": "💾 保存",
   "chapter_editor.btn_undo": "↺ 撤销",
   "chapter_editor.saved": "已保存",

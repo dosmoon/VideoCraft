@@ -172,10 +172,8 @@ class ChapterEditor(tk.Frame):
         vsb.pack(side="right", fill="y")
         self._tree.pack(side="left", fill="both", expand=True)
         self._tree.bind("<<TreeviewSelect>>", self._on_select)
-        self._tree.bind("<Double-1>", self._on_double_click)
         self._tree.bind("<Delete>", lambda _e: self._on_delete_chapter())
         self._tree.bind("<Button-3>", self._on_right_click)
-        self._title_editor: Optional[tk.Entry] = None
 
         self._tree_menu = tk.Menu(self._tree, tearoff=0)
         self._tree_menu.add_command(
@@ -203,52 +201,31 @@ class ChapterEditor(tk.Frame):
                                     on_message=self._on_web_message)
         self._web.pack(fill="both", expand=True)
 
-        # Edit controls
-        ctrl = tk.Frame(right, bg="white")
-        ctrl.pack(fill="x", pady=(8, 4), padx=8)
+        # Top button row — save / undo / add / delete only. The actual
+        # field editors all live in the details panel below.
+        btnbar = tk.Frame(right, bg="white")
+        btnbar.pack(fill="x", pady=(8, 4), padx=8)
 
-        tk.Label(ctrl, text=tr("chapter_editor.field_start"),
-                 bg="white", fg="#666",
-                 font=("Microsoft YaHei UI", 9)
-                 ).grid(row=0, column=0, sticky="w", padx=(0, 6))
-
-        self._start_var = tk.StringVar()
-        self._start_entry = tk.Entry(ctrl, textvariable=self._start_var,
-                                     font=("Consolas", 10), width=12,
-                                     state="disabled")
-        self._start_entry.grid(row=0, column=1, sticky="w", padx=(0, 6))
-        self._start_var.trace_add("write", lambda *_: self._on_start_changed())
-        self._start_entry.bind("<Return>", lambda _e: self._seek_to_entry())
-
-        self._set_cur_btn = tk.Button(ctrl, text="🎯 0s", relief="flat",
-                                      bg="#e8e8e8", state="disabled",
-                                      command=self._on_set_from_current)
-        self._set_cur_btn.grid(row=0, column=2, sticky="w", padx=(0, 12))
-
-        self._save_btn = tk.Button(ctrl, text=tr("chapter_editor.btn_save"),
+        self._save_btn = tk.Button(btnbar, text=tr("chapter_editor.btn_save"),
                                    relief="flat", bg="#0078d4", fg="white",
                                    state="disabled", padx=10,
                                    command=self._on_save)
-        self._save_btn.grid(row=0, column=3, sticky="w", padx=(0, 6))
+        self._save_btn.pack(side="left", padx=(0, 6))
 
-        self._undo_btn = tk.Button(ctrl, text=tr("chapter_editor.btn_undo"),
+        self._undo_btn = tk.Button(btnbar, text=tr("chapter_editor.btn_undo"),
                                    relief="flat", bg="#e8e8e8",
                                    state="disabled", padx=10,
                                    command=self._on_undo)
-        self._undo_btn.grid(row=0, column=4, sticky="w")
-
-        # Second row: add / delete
-        ctrl2 = tk.Frame(right, bg="white")
-        ctrl2.pack(fill="x", pady=(0, 4), padx=8)
+        self._undo_btn.pack(side="left", padx=(0, 16))
 
         self._add_btn = tk.Button(
-            ctrl2, text=tr("chapter_editor.btn_add_at", t="0s"),
+            btnbar, text=tr("chapter_editor.btn_add_at", t="0s"),
             relief="flat", bg="#e8e8e8", padx=10,
             command=self._on_add_chapter)
         self._add_btn.pack(side="left", padx=(0, 6))
 
         self._del_btn = tk.Button(
-            ctrl2, text=tr("chapter_editor.btn_delete"),
+            btnbar, text=tr("chapter_editor.btn_delete"),
             relief="flat", bg="#e8e8e8", padx=10,
             state="disabled",
             command=self._on_delete_chapter)
@@ -259,19 +236,52 @@ class ChapterEditor(tk.Frame):
                                 anchor="w")
         self._status.pack(fill="x", padx=8, pady=(0, 6))
 
-        # AI details — editable. Splitting a chapter at a new timestamp
-        # inherits the source chapter's refined + key_points; the user
-        # then trims each half to its actual content here.
+        # Editable details — all per-chapter fields live here.
+        # First row: start + title; below: refined; below: key_points.
         details = tk.LabelFrame(
             right, text=tr("chapter_editor.details_frame"),
             bg="white", fg="#444",
             font=("Microsoft YaHei UI", 9))
         details.pack(fill="both", expand=False, padx=8, pady=(0, 8))
 
+        # — start + title row —
+        top = tk.Frame(details, bg="white")
+        top.pack(fill="x", padx=6, pady=(6, 6))
+
+        tk.Label(top, text=tr("chapter_editor.field_start"),
+                 bg="white", fg="#666",
+                 font=("Microsoft YaHei UI", 9)
+                 ).grid(row=0, column=0, sticky="w", padx=(0, 6))
+        self._start_var = tk.StringVar()
+        self._start_entry = tk.Entry(top, textvariable=self._start_var,
+                                     font=("Consolas", 10), width=12,
+                                     state="disabled")
+        self._start_entry.grid(row=0, column=1, sticky="w", padx=(0, 6))
+        self._start_var.trace_add("write", lambda *_: self._on_start_changed())
+        self._start_entry.bind("<Return>", lambda _e: self._seek_to_entry())
+
+        self._set_cur_btn = tk.Button(top, text="🎯 0s", relief="flat",
+                                      bg="#e8e8e8", state="disabled",
+                                      command=self._on_set_from_current)
+        self._set_cur_btn.grid(row=0, column=2, sticky="w", padx=(0, 16))
+
+        tk.Label(top, text=tr("chapter_editor.field_title"),
+                 bg="white", fg="#666",
+                 font=("Microsoft YaHei UI", 9)
+                 ).grid(row=0, column=3, sticky="w", padx=(0, 6))
+        self._title_var = tk.StringVar()
+        self._title_entry = tk.Entry(top, textvariable=self._title_var,
+                                     font=("Microsoft YaHei UI", 10),
+                                     state="disabled")
+        self._title_entry.grid(row=0, column=4, sticky="ew")
+        top.columnconfigure(4, weight=1)
+        self._title_var.trace_add("write", lambda *_: self._on_title_changed())
+
+        # — refined —
         tk.Label(details, text=tr("chapter_editor.refined_label"),
                  bg="white", fg="#666",
                  font=("Microsoft YaHei UI", 9, "bold"), anchor="w"
-                 ).pack(fill="x", padx=6, pady=(4, 0))
+                 ).pack(fill="x", padx=6, pady=(2, 0))
         self._refined_text = tk.Text(
             details, height=3, wrap="word",
             font=("Microsoft YaHei UI", 9),
@@ -280,6 +290,7 @@ class ChapterEditor(tk.Frame):
         self._refined_text.pack(fill="x", padx=6, pady=(2, 6))
         self._refined_text.bind("<<Modified>>", self._on_refined_modified)
 
+        # — key_points —
         tk.Label(details, text=tr("chapter_editor.key_points_label"),
                  bg="white", fg="#666",
                  font=("Microsoft YaHei UI", 9, "bold"), anchor="w"
@@ -302,8 +313,12 @@ class ChapterEditor(tk.Frame):
                               values=(ch.get("start", ""),
                                       ch.get("title", "")))
         self._selected = None
+        self._suppress_trace = True
         self._start_var.set("")
+        self._title_var.set("")
+        self._suppress_trace = False
         self._start_entry.configure(state="disabled")
+        self._title_entry.configure(state="disabled")
         # Clear the details panel — selecting a row will repopulate it.
         # _selected is None here so the <<Modified>> handler is a no-op.
         if hasattr(self, "_refined_text"):
@@ -325,13 +340,17 @@ class ChapterEditor(tk.Frame):
         self._selected = idx
         ch = self._working[idx]
         start_str = ch.get("start", "00:00:00")
-        # Suppress write-callback while we sync the entry to the row.
+        title_str = ch.get("title", "")
+        # Suppress write-callbacks while we sync entries to the row.
         self._suppress_trace = True
         self._start_var.set(start_str)
+        self._title_var.set(title_str)
         self._suppress_trace = False
         # First chapter is locked at 00:00:00 (intro or real first @0).
+        # Title is editable on every row including the intro.
         is_first = idx == 0
         self._start_entry.configure(state="disabled" if is_first else "normal")
+        self._title_entry.configure(state="normal")
         self._seek_to_str(start_str)
         self._refresh_button_states()
         self._refresh_details(ch)
@@ -377,78 +396,6 @@ class ChapterEditor(tk.Frame):
             })
         out.sort(key=lambda c: c["s"])
         return _json.dumps(out, ensure_ascii=False)
-
-    # ── Title inline edit ────────────────────────────────────────────────
-
-    def _on_double_click(self, event) -> None:
-        """Title column → inline title editor.
-        Start column → focus the right-side start entry (first row's
-        start is locked at 00:00:00 and stays disabled there).
-        """
-        region = self._tree.identify_region(event.x, event.y)
-        if region != "cell":
-            return
-        col = self._tree.identify_column(event.x)
-        row_id = self._tree.identify_row(event.y)
-        if not row_id:
-            return
-        if col == "#2":
-            self._open_title_editor(row_id)
-        elif col == "#1":
-            self._tree.selection_set(row_id)
-            self._tree.focus(row_id)
-            self._on_select()
-            if str(self._start_entry.cget("state")) == "normal":
-                self._start_entry.focus_force()
-                self._start_entry.select_range(0, "end")
-                self._start_entry.icursor("end")
-
-    def _open_title_editor(self, row_id: str) -> None:
-        """Place a transient Entry over the title cell for inline edit."""
-        idx = int(row_id)
-        col = "#2"
-        bbox = self._tree.bbox(row_id, col)
-        if not bbox:
-            return
-        x, y, w, h = bbox
-        current_title = self._working[idx].get("title", "")
-        self._close_title_editor()
-        entry = tk.Entry(self._tree, font=("Microsoft YaHei UI", 10),
-                         borderwidth=0, highlightthickness=1,
-                         highlightcolor="#0078d4")
-        entry.insert(0, current_title)
-        entry.select_range(0, "end")
-        entry.place(x=x, y=y, width=w, height=h)
-        # focus_force is needed under WebView2-embedded Tk; AttachThreadInput
-        # in web_preview already wires the keyboard but focus_set alone is
-        # sometimes ignored after a double-click — force the focus shift.
-        entry.focus_force()
-        entry.icursor("end")
-        self._title_editor = entry
-        self._title_editor_idx = idx
-
-        def commit(_e=None):
-            new_val = entry.get().strip()
-            self._close_title_editor()
-            if new_val != current_title:
-                self._working[idx]["title"] = new_val
-                self._tree.set(row_id, "title", new_val)
-                self._refresh_button_states()
-
-        def cancel(_e=None):
-            self._close_title_editor()
-
-        entry.bind("<Return>", commit)
-        entry.bind("<FocusOut>", commit)
-        entry.bind("<Escape>", cancel)
-
-    def _close_title_editor(self) -> None:
-        if self._title_editor is not None:
-            try:
-                self._title_editor.destroy()
-            except Exception:
-                pass
-            self._title_editor = None
 
     # ── WebView messages ─────────────────────────────────────────────────
 
@@ -525,6 +472,14 @@ class ChapterEditor(tk.Frame):
             # ordering they're producing — final normalization happens
             # at save time.
             self._tree.set(str(self._selected), "start", text)
+        self._refresh_button_states()
+
+    def _on_title_changed(self) -> None:
+        if self._suppress_trace or self._selected is None:
+            return
+        val = self._title_var.get()
+        self._working[self._selected]["title"] = val
+        self._tree.set(str(self._selected), "title", val)
         self._refresh_button_states()
 
     def _on_set_from_current(self) -> None:
@@ -609,8 +564,17 @@ class ChapterEditor(tk.Frame):
         self._tree.focus(new_iid)
         self._tree.see(new_iid)
         self._on_select()
-        # Open title editor on the new row after Tk paints the row.
-        self.after(50, lambda: self._open_title_editor(new_iid))
+        # Focus the title entry so the user can rename the new chapter
+        # right away (was an in-tree inline editor before).
+        self.after(50, self._focus_title_entry)
+
+    def _focus_title_entry(self) -> None:
+        try:
+            self._title_entry.focus_force()
+            self._title_entry.select_range(0, "end")
+            self._title_entry.icursor("end")
+        except Exception:
+            pass
 
     def _on_delete_chapter(self) -> None:
         if self._selected is None:

@@ -1907,6 +1907,7 @@
   "chapter_editor.col_start": "Start",
   "chapter_editor.col_title": "Title",
   "chapter_editor.field_start": "Start",
+  "chapter_editor.field_title": "Title",
   "chapter_editor.btn_save": "💾 Save",
   "chapter_editor.btn_undo": "↺ Undo",
   "chapter_editor.saved": "Saved",
