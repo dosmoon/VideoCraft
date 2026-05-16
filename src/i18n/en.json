@@ -2092,7 +2092,10 @@
   "tool.news_desk.style.color_picker_title": "Pick color",
   "analysis.kind.analysis": "Titles & Chapters",
   "analysis_preview.titles_section": "Candidate Titles (AI generated)",
-  "chapter_editor.details_frame": "AI Details (read-only)",
+  "chapter_editor.details_frame": "Chapter Details",
+  "chapter_editor.refined_label": "Refined Summary",
+  "chapter_editor.key_points_label": "Key Points (one per line)",
   "chapter_editor.refined_empty": "(no refined summary)",
-  "chapter_editor.key_points_empty": "(no key points)"
+  "chapter_editor.key_points_empty": "(no key points)",
+  "chapter_editor.add_duplicate": "A chapter already exists at this timestamp"
 }

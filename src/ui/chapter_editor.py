@@ -259,26 +259,39 @@ class ChapterEditor(tk.Frame):
                                 anchor="w")
         self._status.pack(fill="x", padx=8, pady=(0, 6))
 
-        # AI details panel — read-only, shows the refined summary +
-        # key_points generated when the analysis was created. User can
-        # see what AI thought this chapter is about; full editing of
-        # refined / key_points is a v0.3 enrichment.
+        # AI details — editable. Splitting a chapter at a new timestamp
+        # inherits the source chapter's refined + key_points; the user
+        # then trims each half to its actual content here.
         details = tk.LabelFrame(
             right, text=tr("chapter_editor.details_frame"),
             bg="white", fg="#444",
             font=("Microsoft YaHei UI", 9))
         details.pack(fill="both", expand=False, padx=8, pady=(0, 8))
+
+        tk.Label(details, text=tr("chapter_editor.refined_label"),
+                 bg="white", fg="#666",
+                 font=("Microsoft YaHei UI", 9, "bold"), anchor="w"
+                 ).pack(fill="x", padx=6, pady=(4, 0))
         self._refined_text = tk.Text(
             details, height=3, wrap="word",
             font=("Microsoft YaHei UI", 9),
-            bg="#fafafa", fg="#333",
-            relief="flat", state="disabled")
-        self._refined_text.pack(fill="x", padx=6, pady=(4, 2))
-        self._key_points_label = tk.Label(
-            details, text="", bg="white", fg="#444",
-            font=("Microsoft YaHei UI", 9), anchor="w",
-            justify="left", wraplength=480)
-        self._key_points_label.pack(fill="x", padx=6, pady=(0, 6))
+            bg="white", fg="#222",
+            relief="solid", borderwidth=1, state="disabled")
+        self._refined_text.pack(fill="x", padx=6, pady=(2, 6))
+        self._refined_text.bind("<<Modified>>", self._on_refined_modified)
+
+        tk.Label(details, text=tr("chapter_editor.key_points_label"),
+                 bg="white", fg="#666",
+                 font=("Microsoft YaHei UI", 9, "bold"), anchor="w"
+                 ).pack(fill="x", padx=6, pady=(0, 0))
+        self._key_points_text = tk.Text(
+            details, height=5, wrap="word",
+            font=("Microsoft YaHei UI", 9),
+            bg="white", fg="#222",
+            relief="solid", borderwidth=1, state="disabled")
+        self._key_points_text.pack(fill="x", padx=6, pady=(2, 6))
+        self._key_points_text.bind("<<Modified>>",
+                                    self._on_key_points_modified)
 
     # ── Tree ─────────────────────────────────────────────────────────────
 
@@ -291,6 +304,17 @@ class ChapterEditor(tk.Frame):
         self._selected = None
         self._start_var.set("")
         self._start_entry.configure(state="disabled")
+        # Clear the details panel — selecting a row will repopulate it.
+        # _selected is None here so the <<Modified>> handler is a no-op.
+        if hasattr(self, "_refined_text"):
+            self._refined_text.configure(state="normal")
+            self._refined_text.delete("1.0", "end")
+            self._refined_text.edit_modified(False)
+            self._refined_text.configure(state="disabled")
+            self._key_points_text.configure(state="normal")
+            self._key_points_text.delete("1.0", "end")
+            self._key_points_text.edit_modified(False)
+            self._key_points_text.configure(state="disabled")
         self._refresh_button_states()
 
     def _on_select(self, _e=None) -> None:
@@ -314,23 +338,20 @@ class ChapterEditor(tk.Frame):
 
     def _refresh_details(self, ch: dict) -> None:
         """Push the selected chapter's refined + key_points into the
-        read-only details panel."""
-        refined = (ch.get("refined") or "").strip()
+        editable details panel. <<Modified>> fired by these inserts is
+        harmless — the handler writes the same value back to _working
+        (idempotent), and dirty is computed against _baseline anyway."""
+        refined = (ch.get("refined") or "")
         self._refined_text.configure(state="normal")
         self._refined_text.delete("1.0", "end")
-        if refined:
-            self._refined_text.insert("1.0", refined)
-        else:
-            self._refined_text.insert("1.0", tr("chapter_editor.refined_empty"))
-        self._refined_text.configure(state="disabled")
+        self._refined_text.insert("1.0", refined)
+        self._refined_text.edit_modified(False)
 
         kps = ch.get("key_points") or []
-        if kps:
-            self._key_points_label.configure(
-                text="\n".join(f"• {kp}" for kp in kps))
-        else:
-            self._key_points_label.configure(
-                text=tr("chapter_editor.key_points_empty"))
+        self._key_points_text.configure(state="normal")
+        self._key_points_text.delete("1.0", "end")
+        self._key_points_text.insert("1.0", "\n".join(kps))
+        self._key_points_text.edit_modified(False)
 
     # ── Subtitle overlay ─────────────────────────────────────────────────
 
@@ -360,17 +381,27 @@ class ChapterEditor(tk.Frame):
     # ── Title inline edit ────────────────────────────────────────────────
 
     def _on_double_click(self, event) -> None:
-        """Double-click on the title cell opens an overlay Entry."""
+        """Title column → inline title editor.
+        Start column → focus the right-side start entry (first row's
+        start is locked at 00:00:00 and stays disabled there).
+        """
         region = self._tree.identify_region(event.x, event.y)
         if region != "cell":
             return
         col = self._tree.identify_column(event.x)
-        if col != "#2":  # title column
-            return
         row_id = self._tree.identify_row(event.y)
         if not row_id:
             return
-        self._open_title_editor(row_id)
+        if col == "#2":
+            self._open_title_editor(row_id)
+        elif col == "#1":
+            self._tree.selection_set(row_id)
+            self._tree.focus(row_id)
+            self._on_select()
+            if str(self._start_entry.cget("state")) == "normal":
+                self._start_entry.focus_force()
+                self._start_entry.select_range(0, "end")
+                self._start_entry.icursor("end")
 
     def _open_title_editor(self, row_id: str) -> None:
         """Place a transient Entry over the title cell for inline edit."""
@@ -388,7 +419,11 @@ class ChapterEditor(tk.Frame):
         entry.insert(0, current_title)
         entry.select_range(0, "end")
         entry.place(x=x, y=y, width=w, height=h)
-        entry.focus_set()
+        # focus_force is needed under WebView2-embedded Tk; AttachThreadInput
+        # in web_preview already wires the keyboard but focus_set alone is
+        # sometimes ignored after a double-click — force the focus shift.
+        entry.focus_force()
+        entry.icursor("end")
         self._title_editor = entry
         self._title_editor_idx = idx
 
@@ -450,6 +485,33 @@ class ChapterEditor(tk.Frame):
 
     _suppress_trace = False
 
+    def _on_refined_modified(self, _e=None) -> None:
+        if not self._refined_text.edit_modified():
+            return
+        self._refined_text.edit_modified(False)
+        if self._selected is None:
+            return
+        val = self._refined_text.get("1.0", "end-1c")
+        self._working[self._selected]["refined"] = val
+        self._refresh_button_states()
+
+    def _on_key_points_modified(self, _e=None) -> None:
+        if not self._key_points_text.edit_modified():
+            return
+        self._key_points_text.edit_modified(False)
+        if self._selected is None:
+            return
+        raw = self._key_points_text.get("1.0", "end-1c")
+        # One bullet per non-empty line; strip any leading "• " markers
+        # the user may have pasted in.
+        kps = []
+        for line in raw.splitlines():
+            s = line.strip().lstrip("•·-*").strip()
+            if s:
+                kps.append(s)
+        self._working[self._selected]["key_points"] = kps
+        self._refresh_button_states()
+
     def _on_start_changed(self) -> None:
         if self._suppress_trace or self._selected is None:
             return
@@ -482,6 +544,10 @@ class ChapterEditor(tk.Frame):
                 return True
             if a.get("title") != b.get("title"):
                 return True
+            if (a.get("refined") or "") != (b.get("refined") or ""):
+                return True
+            if list(a.get("key_points") or []) != list(b.get("key_points") or []):
+                return True
         return False
 
     def _refresh_button_states(self) -> None:
@@ -502,18 +568,42 @@ class ChapterEditor(tk.Frame):
     # ── Add / delete ─────────────────────────────────────────────────────
 
     def _on_add_chapter(self) -> None:
-        """Insert a chapter at the video's current playback second.
+        """Split the chapter containing the playback head at that point.
 
-        Order is irrelevant in working set — save normalization sorts
-        before writing. We append and select; user tweaks title inline.
+        We find the chapter whose start <= T < next_start, insert a new
+        chapter right after it, and inherit its refined + key_points so
+        the user can trim each half down to its actual content. We insert
+        at the correct sorted position so the tree mirrors what save
+        would produce — no surprise rows at the bottom.
         """
         sec = self._current_video_sec
+        ts = fmt_time_str(sec)
+        # Avoid creating an exact-duplicate row.
+        for ch in self._working:
+            if parse_time_str(str(ch.get("start", ""))) == sec:
+                self._flash_status(tr("chapter_editor.add_duplicate"))
+                return
+
+        # Find the chapter being split: highest start_sec <= sec.
+        insert_after = -1
+        for i, ch in enumerate(self._working):
+            ch_sec = parse_time_str(str(ch.get("start", "")))
+            if ch_sec <= sec:
+                insert_after = i
+        if insert_after < 0:
+            # Shouldn't happen — first chapter is always 00:00 — but be safe.
+            insert_after = 0
+
+        parent = self._working[insert_after]
         new_ch = {
-            "start": fmt_time_str(sec),
-            "title": tr("chapter_editor.new_default"),
+            "start":      ts,
+            "title":      tr("chapter_editor.new_default"),
+            "refined":    parent.get("refined") or "",
+            "key_points": list(parent.get("key_points") or []),
         }
-        self._working.append(new_ch)
-        new_iid = str(len(self._working) - 1)
+        insert_idx = insert_after + 1
+        self._working.insert(insert_idx, new_ch)
+        new_iid = str(insert_idx)
         self._reload_tree()
         self._tree.selection_set(new_iid)
         self._tree.focus(new_iid)

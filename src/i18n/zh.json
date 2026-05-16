@@ -2092,7 +2092,10 @@
   "tool.news_desk.style.color_picker_title": "选择颜色",
   "analysis.kind.analysis": "标题与章节",
   "analysis_preview.titles_section": "候选标题 (AI 生成)",
-  "chapter_editor.details_frame": "AI 详情 (只读)",
+  "chapter_editor.details_frame": "章节详情",
+  "chapter_editor.refined_label": "精炼摘要",
+  "chapter_editor.key_points_label": "核心要点 (一行一条)",
   "chapter_editor.refined_empty": "（无精炼摘要）",
-  "chapter_editor.key_points_empty": "（无核心要点）"
+  "chapter_editor.key_points_empty": "（无核心要点）",
+  "chapter_editor.add_duplicate": "已存在相同起点的章节"
 }
