@@ -2003,7 +2003,7 @@ class ClipToolApp(ToolBase):
         already on disk; .md files are nice-to-have.
         """
         try:
-            from tools.clip.publish import (
+            from creations.clip.publish import (
                 render_clip_publish,
                 render_clip_index,
                 collect_clip_sidecars,

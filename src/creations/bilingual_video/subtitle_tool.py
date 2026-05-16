@@ -518,7 +518,7 @@ class SubtitleToolApp(ToolBase):
     @staticmethod
     def _project_root():
         """返回项目根目录（Logo/ 所在目录）。"""
-        # __file__ = .../src/tools/subtitle/subtitle_tool.py → 上移4级
+        # __file__ = .../src/creations/bilingual_video/subtitle_tool.py → up 4 levels
         return os.path.dirname(os.path.dirname(os.path.dirname(
             os.path.dirname(os.path.abspath(__file__)))))
 
@@ -916,7 +916,7 @@ class SubtitleToolApp(ToolBase):
         any failure is swallowed and logged.
         """
         try:
-            from tools.subtitle.publish import render_bilingual_publish
+            from creations.bilingual_video.publish import render_bilingual_publish
 
             cfg_path = self._instance_config_path()
             inst_dir = os.path.dirname(cfg_path)
