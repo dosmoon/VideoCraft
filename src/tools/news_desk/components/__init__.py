@@ -38,6 +38,11 @@ from tkinter import ttk
 class ProjectContext:
     project: object                  # core.project.Project (duck-typed)
     duration: float                  # full source duration in seconds
+    # Per ADR-0003 derivatives own their data; components that snapshot
+    # upstream materials write into <instance_dir>/. Host wires this so
+    # property panels can write local files; empty string when host
+    # hasn't established a per-instance directory yet.
+    instance_dir: str = ""
     # Optional preview hooks — host wires these so component panels can
     # drive the WebView preview (e.g. chapter list click-to-seek).
     # None when no preview is mounted; callers must guard.

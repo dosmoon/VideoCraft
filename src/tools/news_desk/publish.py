@@ -37,6 +37,7 @@ def render_news_desk_publish(
     adapted_srts: list[str],
     rendered_at: str,
     lang_iso: str,
+    transcript_srt_path: Optional[str] = None,
 ) -> str:
     """Markdown for derivatives/news_desk/<instance>/publish.md.
 
@@ -167,4 +168,93 @@ def render_news_desk_publish(
             lines.append(f"- `{name}`")
         lines.append("")
 
+    # Per-chapter detail: refined + key_points + verbatim transcript.
+    # Folded into publish.md (vs a separate chapters.md) so everything
+    # the user needs lives in one place. Requires both a chapter list
+    # and the snapshotted SRT (transcript source).
+    if chapters and transcript_srt_path:
+        detail = _build_chapter_detail_section(
+            chapters, transcript_srt_path, lang_iso)
+        if detail:
+            lines.append("---")
+            lines.append("")
+            lines.extend(detail)
+
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _build_chapter_detail_section(chapters: list[dict],
+                                    srt_path: str,
+                                    lang_iso: str) -> list[str]:
+    """Build the "章节详情 / Chapter Details" section. Each chapter
+    becomes a `### start–end title` block with refined + key_points +
+    verbatim transcript pulled from the SRT. Returns an empty list on
+    any failure (missing srt, etc) — never raises."""
+    import os
+    if not srt_path or not os.path.isfile(srt_path):
+        return []
+    try:
+        import srt as _srt
+        from core.chapters_io import parse_time_str
+        with open(srt_path, "r", encoding="utf-8", errors="replace") as f:
+            subs = list(_srt.parse(f.read()))
+    except Exception:
+        return []
+
+    # Group cues into chapter buckets by start time.
+    buckets: list[tuple[dict, list[str]]] = [(c, []) for c in chapters]
+    for sub in subs:
+        tt = sub.start.total_seconds()
+        text = sub.content.replace("\n", " ").strip()
+        if not text:
+            continue
+        for ch, bucket in buckets:
+            s = float(ch.get("start_sec")
+                      or parse_time_str(str(ch.get("start", ""))) or 0.0)
+            e = float(ch.get("end_sec")
+                      or parse_time_str(str(ch.get("end", ""))) or 0.0)
+            in_range = (s <= tt < e) if e > s else (tt >= s)
+            if in_range:
+                bucket.append(text)
+                break
+
+    section_label = t(lang_iso, "章节详情", "Chapter Details")
+    summary_label = t(lang_iso, "摘要", "Summary")
+    keypoints_label = t(lang_iso, "要点", "Key points")
+    body_label = t(lang_iso, "文字稿", "Transcript")
+    empty_body = t(lang_iso, "（此章节内无字幕）",
+                    "(no subtitle in this chapter)")
+
+    out: list[str] = [f"## {section_label}", ""]
+    for i, (ch, bucket) in enumerate(buckets):
+        start = (ch.get("start") or "").strip()
+        end = (ch.get("end") or "").strip()
+        title = (ch.get("title") or "").strip()
+        timeline = f"{start}–{end}" if end else start
+        out.append(f"### {timeline}  {title}".rstrip())
+        out.append("")
+
+        refined = (ch.get("refined") or "").strip()
+        if refined:
+            out.append(f"**{summary_label}**: {refined}")
+            out.append("")
+
+        kps = ch.get("key_points") or []
+        clean_kps = [str(p).strip() for p in kps if str(p).strip()]
+        if clean_kps:
+            out.append(f"**{keypoints_label}**:")
+            for p in clean_kps:
+                out.append(f"- {p}")
+            out.append("")
+
+        out.append(f"**{body_label}**:")
+        out.append("")
+        if bucket:
+            out.append(" ".join(bucket))
+        else:
+            out.append(empty_body)
+        out.append("")
+        if i < len(buckets) - 1:
+            out.append("---")
+            out.append("")
+    return out

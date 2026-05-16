@@ -334,6 +334,7 @@ class NewsDeskApp(ToolBase):
 
         ctx = nd_components.ProjectContext(
             project=self.project, duration=self._duration,
+            instance_dir=self._instance_dir(),
             seek_to=(self._preview.seek if self._preview else None))
 
         # Spec-built body.
@@ -373,7 +374,8 @@ class NewsDeskApp(ToolBase):
             return
         comp = self._components[idx]
         ctx = nd_components.ProjectContext(
-            project=self.project, duration=self._duration)
+            project=self.project, duration=self._duration,
+            instance_dir=self._instance_dir())
         try:
             source.handler(comp, ctx)
         except Exception as e:
@@ -680,7 +682,8 @@ class NewsDeskApp(ToolBase):
                           watermark=WatermarkStyle(enabled=False))
 
         ctx = nd_components.ProjectContext(
-            project=self.project, duration=self._duration)
+            project=self.project, duration=self._duration,
+            instance_dir=self._instance_dir())
 
         # Component list position drives z-order: top of list = topmost
         # render layer. We assign z = (N - index) * 1000 so each
@@ -804,46 +807,76 @@ class NewsDeskApp(ToolBase):
 
     # ── Export ─────────────────────────────────────────────────────────────
 
-    def _available_subtitle_langs(self) -> list[str]:
-        """Return sorted lang_iso list for SRT files found in the project's
-        subtitles_dir. Empty list if the dir is missing / has none."""
-        out: list[str] = []
-        subs_dir = self.project.subtitles_dir
-        if not os.path.isdir(subs_dir):
-            return out
-        for fn in sorted(os.listdir(subs_dir)):
-            if not fn.endswith(".srt"):
-                continue
-            iso = fn[:-len(".srt")].strip()
-            # Skip nested patterns like "zh.something.srt" — the analysis
-            # pipeline only writes flat "<iso>.srt" at the dir top.
-            if "." in iso or not iso:
-                continue
-            out.append(iso)
+    def _first_enabled_subtitle_comp(self) -> dict | None:
+        """Pick the canonical subtitle component for transcript/chapter
+        text generation: the first enabled subtitle in list order. Users
+        with multiple subtitle tracks (e.g. zh+en) disable the one they
+        don't want as the transcript source."""
+        for comp in self._components:
+            if (comp.get("kind") == "subtitle"
+                    and comp.get("enabled", True)
+                    and comp.get("srt_path")):
+                return comp
+        return None
+
+    def _chapter_schedule(self) -> list[dict]:
+        """The chapter component's snapshotted schedule, or [] when no
+        chapter component exists / it's empty. Per ADR-0003 we read this
+        instead of touching upstream analysis.json."""
+        for comp in self._components:
+            if comp.get("kind") == "chapter":
+                return list(comp.get("schedule") or [])
+        return []
+
+    @staticmethod
+    def _chapters_for_publish(schedule: list[dict]) -> list[dict]:
+        """Convert chapter component's schedule dicts to the shape
+        publish.py / build_chapter_transcript_text expect.
+
+        Schedule entries carry start_sec/end_sec (floats) + title +
+        refined + key_points. Publish wants start/end as HH:MM:SS
+        strings on top of that, so callers can render YouTube-style
+        timestamp lines. We add the strings here (chapters_io has the
+        canonical formatter)."""
+        from core.chapters_io import fmt_time_str
+        out: list[dict] = []
+        for ch in schedule:
+            start_sec = float(ch.get("start_sec") or 0.0)
+            end_sec = float(ch.get("end_sec") or 0.0)
+            out.append({
+                "start":      fmt_time_str(start_sec),
+                "end":        fmt_time_str(end_sec),
+                "start_sec":  start_sec,
+                "end_sec":    end_sec,
+                "title":      str(ch.get("title", "")),
+                "refined":    str(ch.get("refined", "")),
+                "key_points": list(ch.get("key_points") or []),
+            })
         return out
 
     def _show_export_options_dialog(self) -> dict | None:
-        """Ask the user which deliverables to include in this export and
-        which subtitle language drives the transcript / chapter split.
+        """Ask the user which deliverables to include in this export.
 
-        Returns a dict {publish, transcript, chapters_md, chapter_videos,
-        lang_iso} on confirm, or None on cancel. The main mp4 is not
-        gated — it's the export's primary product, always produced.
+        Per ADR-0003 the dialog reads off instance state — there's no
+        "pick a subtitle language" question because the user already
+        picked when they imported subtitle components. Options that
+        depend on missing inputs (transcript with no subtitle, chapter
+        split with no chapter component) get disabled with an
+        explanatory hint.
+
+        Returns {publish, transcript, chapter_videos} on confirm,
+        None on cancel. The main mp4 is always produced.
         """
-        langs = self._available_subtitle_langs()
-        # Preselect source-language SRT if it exists; otherwise first.
-        try:
-            default_lang = self.project.meta.language.source or ""
-        except AttributeError:
-            default_lang = ""
-        if default_lang not in langs:
-            default_lang = langs[0] if langs else ""
+        sub_comp = self._first_enabled_subtitle_comp()
+        schedule = self._chapter_schedule()
+        has_subtitle = sub_comp is not None
+        has_chapters = bool(schedule)
 
         dlg = tk.Toplevel(self.master)
         dlg.title(tr("tool.news_desk.export_dialog.title"))
         dlg.transient(self.master.winfo_toplevel())
         dlg.grab_set()
-        dlg.minsize(500, 340)
+        dlg.minsize(500, 300)
 
         # Pack actions FIRST so they pin to the bottom even if body grows.
         btns = ttk.Frame(dlg)
@@ -857,42 +890,36 @@ class NewsDeskApp(ToolBase):
                   wraplength=460, justify="left", foreground="#444"
                   ).pack(anchor="w", pady=(0, 10))
 
-        # Language picker — combobox so 2+ langs read cleanly without
-        # forcing N radio rows. Hidden when only one lang exists.
-        lang_var = tk.StringVar(value=default_lang)
-        if langs:
-            lang_row = ttk.Frame(body)
-            lang_row.pack(anchor="w", fill="x", pady=(0, 4))
-            ttk.Label(lang_row,
-                      text=tr("tool.news_desk.export_dialog.lang_label")
-                      ).pack(side="left")
-            cb = ttk.Combobox(lang_row, textvariable=lang_var,
-                              values=langs, state="readonly", width=10)
-            cb.pack(side="left", padx=(6, 0))
-            ttk.Label(body,
-                      text=tr("tool.news_desk.export_dialog.lang_hint"),
-                      wraplength=460, justify="left", foreground="#888",
-                      font=("TkDefaultFont", 8)
-                      ).pack(anchor="w", pady=(0, 10))
-        else:
-            ttk.Label(body,
-                      text=tr("tool.news_desk.export_dialog.lang_none"),
-                      foreground="#a00"
-                      ).pack(anchor="w", pady=(0, 10))
-
         v_publish        = tk.BooleanVar(value=True)
         v_transcript     = tk.BooleanVar(value=False)
-        v_chapters_md    = tk.BooleanVar(value=False)
         v_chapter_videos = tk.BooleanVar(value=False)
 
-        for var, key in (
-            (v_publish,        "tool.news_desk.export_dialog.opt_publish"),
-            (v_transcript,     "tool.news_desk.export_dialog.opt_transcript"),
-            (v_chapters_md,    "tool.news_desk.export_dialog.opt_chapters_md"),
-            (v_chapter_videos, "tool.news_desk.export_dialog.opt_chapter_videos"),
-        ):
-            ttk.Checkbutton(body, text=tr(key), variable=var
-                            ).pack(anchor="w", pady=3)
+        opts_spec = [
+            (v_publish,
+             "tool.news_desk.export_dialog.opt_publish",
+             True, ""),
+            (v_transcript,
+             "tool.news_desk.export_dialog.opt_transcript",
+             has_subtitle,
+             "" if has_subtitle else tr("tool.news_desk.export_dialog.no_subtitle_hint")),
+            (v_chapter_videos,
+             "tool.news_desk.export_dialog.opt_chapter_videos",
+             has_chapters,
+             "" if has_chapters else tr("tool.news_desk.export_dialog.no_chapter_hint")),
+        ]
+
+        for var, key, enabled, hint in opts_spec:
+            row = ttk.Frame(body)
+            row.pack(anchor="w", pady=3, fill="x")
+            cb = ttk.Checkbutton(row, text=tr(key), variable=var)
+            cb.pack(side="left")
+            if not enabled:
+                var.set(False)
+                cb.configure(state="disabled")
+                if hint:
+                    ttk.Label(row, text=hint, foreground="#888",
+                              font=("TkDefaultFont", 8)
+                              ).pack(side="left", padx=(8, 0))
 
         result: dict | None = None
 
@@ -901,9 +928,7 @@ class NewsDeskApp(ToolBase):
             result = {
                 "publish":        v_publish.get(),
                 "transcript":     v_transcript.get(),
-                "chapters_md":    v_chapters_md.get(),
                 "chapter_videos": v_chapter_videos.get(),
-                "lang_iso":       lang_var.get(),
             }
             dlg.destroy()
 
@@ -1058,73 +1083,59 @@ class NewsDeskApp(ToolBase):
             return
 
         opts = getattr(self, "_export_opts", None) or {}
-        lang_iso = (opts.get("lang_iso") or "").strip()
+
+        # Per ADR-0003: read everything from instance state.
+        sub_comp = self._first_enabled_subtitle_comp()
+        srt_path = self._srt_path_for_subtitle_comp(sub_comp)
+        sub_is_chinese = bool((sub_comp or {}).get("is_chinese", False))
+        sub_lang_iso = self._lang_iso_for_subtitle_comp(sub_comp)
+        chapters = self._chapter_schedule()
 
         if opts.get("publish", True):
             try:
-                self._write_publish_sidecar(lang_iso)
+                self._write_publish_sidecar(
+                    chapters=chapters,
+                    srt_path=srt_path,
+                    sub_lang_iso=sub_lang_iso)
             except Exception as e:
                 logger.warning(f"news_desk publish.md write skipped: {e}")
 
-        # The deliverables below all share a source-SRT + chapters lookup.
-        # Resolve once; each writer checks what it needs and logs+skips
-        # rather than failing the whole export when inputs are missing.
-        # Language comes from the export dialog so chapters and transcript
-        # match — picking zh gives Chinese chapters + Chinese transcript.
-        srt_path = self._srt_path_for_lang(lang_iso)
-        chapters = self._load_chapters_for_lang(lang_iso)
-
         if opts.get("transcript"):
-            self._write_transcript_artifact(srt_path, lang_iso)
-        if opts.get("chapters_md"):
-            self._write_chapters_md_artifact(srt_path, chapters, lang_iso)
+            self._write_transcript_artifact(srt_path, sub_lang_iso)
         if opts.get("chapter_videos"):
             self._write_chapter_videos_artifact(
                 result.output_path, chapters)
 
     # ── Optional artifacts ────────────────────────────────────────────────
 
-    def _srt_path_for_lang(self, lang_iso: str) -> str:
-        return os.path.join(self.project.subtitles_dir, f"{lang_iso}.srt")
+    def _srt_path_for_subtitle_comp(self, comp: dict | None) -> str:
+        """Resolve a subtitle component's snapshot SRT to an absolute
+        filesystem path. Returns "" when comp is None/no path."""
+        if not comp:
+            return ""
+        from tools.news_desk.components.subtitle import _resolve_srt_path
+        ctx = nd_components.ProjectContext(
+            project=self.project, duration=self._duration,
+            instance_dir=self._instance_dir())
+        return _resolve_srt_path(comp, ctx)
 
-    def _load_chapters_for_lang(self, lang_iso: str) -> list[dict]:
-        """Return chapters from `<subs>/<iso>.analysis.json`. Falls back to
-        any analysis.json in the dir when the chosen lang's envelope is
-        missing — so a project with chapters only in zh.analysis.json
-        still yields chapter splits even when user picked en SRT for
-        transcript. Empty list when nothing's available."""
-        from core import chapters_io
-        subs_dir = self.project.subtitles_dir
-        if not os.path.isdir(subs_dir):
-            return []
-        # Prefer the picked lang's envelope.
-        primary = os.path.join(subs_dir, f"{lang_iso}.analysis.json")
-        if os.path.isfile(primary):
+    def _lang_iso_for_subtitle_comp(self, comp: dict | None) -> str:
+        """Best-effort lang_iso for the chosen subtitle. We don't store
+        the iso on the component (the SRT is the snapshot — language is
+        a label, not a join key). is_chinese boolean → "zh" / "en"
+        approximation is good enough for transcript headers."""
+        if not comp:
             try:
-                env = chapters_io.load_analysis(primary)
-                chs = env.get("chapters") if isinstance(env, dict) else []
-                if isinstance(chs, list) and chs:
-                    return chs
-            except (OSError, json.JSONDecodeError):
-                pass
-        # Fallback: any analysis.json.
-        for fn in sorted(os.listdir(subs_dir)):
-            if not fn.endswith(".analysis.json"):
-                continue
-            try:
-                env = chapters_io.load_analysis(os.path.join(subs_dir, fn))
-            except (OSError, json.JSONDecodeError):
-                continue
-            chs = env.get("chapters") if isinstance(env, dict) else []
-            if isinstance(chs, list) and chs:
-                return chs
-        return []
+                return self.project.meta.language.source or "zh"
+            except AttributeError:
+                return "zh"
+        return "zh" if comp.get("is_chinese") else "en"
 
     def _write_transcript_artifact(self, srt_path: str,
                                      lang_iso: str) -> None:
         from core.subtitle_analysis_runners import build_transcript_text
         from core.io_utils import atomic_write_text
-        if not os.path.isfile(srt_path):
+        if not srt_path or not os.path.isfile(srt_path):
             logger.warning(
                 "news_desk: " + tr("tool.news_desk.export.transcript_skipped",
                                     reason=tr("tool.news_desk.export.no_srt")))
@@ -1136,30 +1147,6 @@ class NewsDeskApp(ToolBase):
         except Exception as e:
             logger.warning(
                 "news_desk: " + tr("tool.news_desk.export.transcript_skipped",
-                                    reason=str(e)))
-
-    def _write_chapters_md_artifact(self, srt_path: str,
-                                      chapters: list[dict],
-                                      lang_iso: str) -> None:
-        from core.subtitle_analysis_runners import build_chapter_transcript_text
-        from core.io_utils import atomic_write_text
-        if not os.path.isfile(srt_path):
-            logger.warning(
-                "news_desk: " + tr("tool.news_desk.export.chapters_md_skipped",
-                                    reason=tr("tool.news_desk.export.no_srt")))
-            return
-        if not chapters:
-            logger.warning(
-                "news_desk: " + tr("tool.news_desk.export.chapters_md_skipped",
-                                    reason=tr("tool.news_desk.export.no_chapters")))
-            return
-        try:
-            text = build_chapter_transcript_text(srt_path, chapters, lang_iso)
-            out = os.path.join(self._instance_dir(), "chapters.md")
-            atomic_write_text(out, text)
-        except Exception as e:
-            logger.warning(
-                "news_desk: " + tr("tool.news_desk.export.chapters_md_skipped",
                                     reason=str(e)))
 
     def _write_chapter_videos_artifact(self, main_mp4: str,
@@ -1209,7 +1196,17 @@ class NewsDeskApp(ToolBase):
                 logger.warning(
                     f"news_desk: chapter {i} split failed: {e}")
 
-    def _write_publish_sidecar(self, lang_iso: str = "") -> None:
+    def _write_publish_sidecar(self, *,
+                                  chapters: list[dict] | None = None,
+                                  srt_path: str = "",
+                                  sub_lang_iso: str = "") -> None:
+        """Render publish.md. Per ADR-0003 inputs come from the export
+        flow (instance state), not from re-scanning upstream.
+
+        - chapters: snapshotted schedule from chapter component
+        - srt_path: snapshot SRT (for per-chapter transcript section)
+        - sub_lang_iso: zh/en — drives headers / chapter detail text
+        """
         from tools.news_desk.publish import render_news_desk_publish
         from datetime import datetime as _dt
         # Canonical view: context.json (AI-corrected) wins; basic_info
@@ -1225,16 +1222,15 @@ class NewsDeskApp(ToolBase):
             source_url = self.project.meta.source.url
         except AttributeError:
             fallback_lang, project_title, source_url = "zh", None, None
-        effective_lang = lang_iso or fallback_lang
+        effective_lang = sub_lang_iso or fallback_lang
 
-        # Chapters source matches the selected SRT lang for consistency
-        # with transcript.md / chapters.md. Falls back to any envelope
-        # in the dir if the picked lang has none.
-        chapters = self._load_chapters_for_lang(effective_lang)
+        # Chapters come from the chapter component's snapshotted schedule.
+        # Normalize to the same shape publish.py / chapter_transcript
+        # builder expect (start/end/start_sec/end_sec/title/refined/...).
+        chapters = chapters if chapters is not None else self._chapter_schedule()
+        chapters = self._chapters_for_publish(chapters)
 
-        # No structured "lower thirds" in the new model — the publish
-        # renderer just gets an empty list; chapter data carries the
-        # weight of the markdown.
+        # adapted subtitles: only the local snapshot for this derivative.
         adapted: list[str] = []
         for comp in self._components:
             if comp.get("kind") == "subtitle" and comp.get("srt_path"):
@@ -1250,6 +1246,7 @@ class NewsDeskApp(ToolBase):
             adapted_srts=adapted,
             rendered_at=_dt.now().strftime("%Y-%m-%d %H:%M"),
             lang_iso=effective_lang,
+            transcript_srt_path=srt_path,
         )
         out = os.path.join(self._instance_dir(), "publish.md")
         with open(out, "w", encoding="utf-8", newline="\n") as f:
