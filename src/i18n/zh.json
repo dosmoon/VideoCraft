@@ -2098,5 +2098,6 @@
   "chapter_editor.key_points_label": "核心要点 (一行一条)",
   "chapter_editor.refined_empty": "（无精炼摘要）",
   "chapter_editor.key_points_empty": "（无核心要点）",
-  "chapter_editor.add_duplicate": "已存在相同起点的章节"
+  "chapter_editor.add_duplicate": "已存在相同起点的章节",
+  "chapter_editor.subtitle_size": "字幕字号"
 }

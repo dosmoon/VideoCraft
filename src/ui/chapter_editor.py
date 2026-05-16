@@ -44,13 +44,21 @@ from core.chapters_io import (
     fmt_time_str,
 )
 from core.composition import (
+    CompositionStyle,
+    OutputGeometry,
     SubtitleLineStyle,
+    SubtitleStyle,
     prepare_subtitle_cues,
     probe_video_resolution,
 )
 from core.composition.preview import CompositionPreview
 from core.subtitle_ops import srt_end_seconds
 from i18n import tr
+
+
+_SUBTITLE_FONTSIZE_DEFAULT = 14
+_SUBTITLE_FONTSIZE_MIN = 10
+_SUBTITLE_FONTSIZE_MAX = 32
 
 
 def _is_valid_ts(text: str) -> bool:
@@ -94,6 +102,13 @@ class ChapterEditor(tk.Frame):
         self._working: list[dict] = copy.deepcopy(self._baseline)
         self._selected: Optional[int] = None
         self._current_video_sec: int = 0
+
+        # Probe real source dims once — subtitle wrap budget is driven
+        # by actual pixel width, not assumed aspect.
+        w, h = probe_video_resolution(source_video)
+        self._video_w = w if w > 0 else 1920
+        self._video_h = h if h > 0 else 1080
+        self._is_chinese = (lang_iso or "").lower().startswith("zh")
 
         self._build_ui()
         self._reload_tree()
@@ -148,7 +163,8 @@ class ChapterEditor(tk.Frame):
         self._preview.widget.pack(fill="both", expand=True)
         self._preview.set_source(
             os.path.abspath(self._source_video), 0.0, 0.0)
-        self._preview.set_cues(self._build_cues_list())
+        # Style + cues pushed together after the Spinbox is wired (the
+        # apply method reads its current value).
 
         # Top button row — save / undo / add / delete only. The actual
         # field editors all live in the details panel below.
@@ -179,6 +195,22 @@ class ChapterEditor(tk.Frame):
             state="disabled",
             command=self._on_delete_chapter)
         self._del_btn.pack(side="left")
+
+        # Subtitle font size knob — chapter_editor's subtitle is only a
+        # boundary reference, so a smaller default than the burn-ready
+        # 24 makes sense. Change re-runs prepare_subtitle_cues so the
+        # wrap budget tracks the new size.
+        tk.Label(btnbar, text=tr("chapter_editor.subtitle_size"),
+                 bg="white", fg="#666",
+                 font=("Microsoft YaHei UI", 9)
+                 ).pack(side="left", padx=(24, 4))
+        self._sub_size_var = tk.IntVar(value=_SUBTITLE_FONTSIZE_DEFAULT)
+        tk.Spinbox(btnbar, from_=_SUBTITLE_FONTSIZE_MIN,
+                    to=_SUBTITLE_FONTSIZE_MAX,
+                    textvariable=self._sub_size_var, width=4,
+                    command=self._apply_subtitle_style,
+                    font=("Microsoft YaHei UI", 9),
+                    ).pack(side="left")
 
         self._status = tk.Label(right, text="", bg="white", fg="#888",
                                 font=("Microsoft YaHei UI", 9),
@@ -265,6 +297,9 @@ class ChapterEditor(tk.Frame):
                   self._refined_text, self._key_points_text):
             w.bind("<Button-1>", self._force_focus_on_click, add="+")
 
+        # Initial style + cues push now that the fontsize var is ready.
+        self._apply_subtitle_style()
+
     # ── Tree ─────────────────────────────────────────────────────────────
 
     def _reload_tree(self) -> None:
@@ -335,29 +370,53 @@ class ChapterEditor(tk.Frame):
 
     # ── Subtitle overlay ─────────────────────────────────────────────────
 
-    def _build_cues_list(self) -> list[dict]:
+    def _build_cues_list(self, fontsize: int) -> list[dict]:
         """Cue list for the preview overlay — goes through the canonical
         prepare_subtitle_cues helper so long cues get time-sliced into
         single-line short cues (same wrap budget the ffmpeg burn would
-        use). Reads real video dims via ffprobe so the wrap budget
-        matches what would actually render on this video — no hardcoded
-        16:9 / 1080p assumption."""
-        w, h = probe_video_resolution(self._source_video)
-        if w <= 0 or h <= 0:
-            # ffprobe failed — fall back to source aspect we can't know.
-            # Better to render unwrapped than crash; HTML clips invisibly.
-            w, h = 1920, 1080
-        aspect = f"{w}:{h}"
-        short_edge = min(w, h)
-        is_chinese = (self._lang_iso or "").lower().startswith("zh")
+        use). Wrap budget tracks `fontsize` and the real source dims
+        (probed once at init), so a smaller font fits more chars."""
+        aspect = f"{self._video_w}:{self._video_h}"
+        short_edge = min(self._video_w, self._video_h)
         line = SubtitleLineStyle(
-            enabled=True, fontsize=24, is_chinese=is_chinese)
+            enabled=True, fontsize=fontsize, is_chinese=self._is_chinese)
         try:
             return prepare_subtitle_cues(
                 self._srt_path, line,
                 aspect=aspect, short_edge=short_edge)
         except Exception:
             return []
+
+    def _apply_subtitle_style(self) -> None:
+        """Push subtitle styling + recomputed cue list to the preview.
+        Called on init and whenever the fontsize Spinbox changes.
+
+        Output mode is locked to passthrough — chapter_editor never
+        reframes the source. Style explicitly overrides SubtitleStyle's
+        default sub1 (which is yellow-bold for clip burns) to a neutral
+        white-with-black-stroke look suitable for boundary reference."""
+        try:
+            fontsize = int(self._sub_size_var.get())
+        except (tk.TclError, ValueError):
+            fontsize = _SUBTITLE_FONTSIZE_DEFAULT
+        fontsize = max(_SUBTITLE_FONTSIZE_MIN,
+                       min(_SUBTITLE_FONTSIZE_MAX, fontsize))
+
+        sub_style = SubtitleStyle(
+            sub1=SubtitleLineStyle(
+                enabled=True, fontsize=fontsize,
+                color="#FFFFFF", bold=False,
+                is_chinese=self._is_chinese),
+            sub2=SubtitleLineStyle(enabled=False),
+            stroke_color="#000000",
+            stroke_width=3,
+        )
+        style = CompositionStyle(
+            output=OutputGeometry(mode="passthrough"),
+            subtitle=sub_style,
+        )
+        self._preview.set_style(style)
+        self._preview.set_cues(self._build_cues_list(fontsize))
 
     # ── Preview callbacks ────────────────────────────────────────────────
 

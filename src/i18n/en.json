@@ -2098,5 +2098,6 @@
   "chapter_editor.key_points_label": "Key Points (one per line)",
   "chapter_editor.refined_empty": "(no refined summary)",
   "chapter_editor.key_points_empty": "(no key points)",
-  "chapter_editor.add_duplicate": "A chapter already exists at this timestamp"
+  "chapter_editor.add_duplicate": "A chapter already exists at this timestamp",
+  "chapter_editor.subtitle_size": "Subtitle size"
 }
