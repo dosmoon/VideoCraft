@@ -53,6 +53,7 @@
   "hub.sidebar.tab.files": "文件",
   "hub.preview_tab.title": "主窗口",
   "material.news_video": "新闻视频",
+  "hub.materials.empty_hint": "点击右上 [+ 添加] 创建第一个素材",
   "hub.sidebar.refresh_tooltip": "刷新",
   "tool.preferences.title": "设置",
   "tool.preferences.section_language": "界面语言",

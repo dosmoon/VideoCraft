@@ -35,6 +35,7 @@ class MaterialType:
     sidebar_renderer: Optional[Callable] = None   # renders this material's tree node in 素材 tab; slice H
     create_handler: Optional[Callable] = None     # handles 素材 tab [+] click; slice F
     artifact_resolver: Optional[Callable] = None  # (instance, key) -> Path | None; slice F
+    has_instance: Optional[Callable] = None       # (project) -> bool; gates whether the sidebar paints this material
 
 
 _REGISTRY: dict[str, MaterialType] = {}

@@ -792,17 +792,62 @@ class VideoCraftHub:
         )
         self._material_add_btn.pack(side="right", padx=2)
 
-        # Body: vertical stack of per-material panels.
-        body = tk.Frame(parent, bg="#f5f5f5")
-        body.pack(fill="both", expand=True)
+        # Body: vertical stack of per-material panels. Only materials whose
+        # has_instance(project) returns True get rendered — empty state
+        # leaves the tab showing just the [+] button + a hint.
+        self._materials_body = tk.Frame(parent, bg="#f5f5f5")
+        self._materials_body.pack(fill="both", expand=True)
 
         self._material_panels: dict[str, object] = {}
+        self._materials_fingerprint: tuple = ()
+        self._populate_materials_body()
+
+    def _populate_materials_body(self) -> None:
+        """(Re)render the materials tab body to match current instance state."""
+        # Tear down anything already in the body.
+        for child in self._materials_body.winfo_children():
+            child.destroy()
+        self._material_panels.clear()
+
+        any_rendered = False
         for mt in materials.all_types():
             if mt.sidebar_renderer is None:
                 continue
-            panel_frame = tk.Frame(body, bg="#f5f5f5")
+            exists = True
+            if mt.has_instance is not None:
+                try:
+                    exists = bool(mt.has_instance(self.project))
+                except Exception:
+                    exists = False
+            if not exists:
+                continue
+            panel_frame = tk.Frame(self._materials_body, bg="#f5f5f5")
             panel_frame.pack(fill="both", expand=True)
             self._material_panels[mt.type_name] = mt.sidebar_renderer(panel_frame, self)
+            any_rendered = True
+
+        if not any_rendered:
+            tk.Label(
+                self._materials_body, text=tr("hub.materials.empty_hint"),
+                bg="#f5f5f5", fg="#999", font=("", 9),
+                justify="center", wraplength=260,
+            ).pack(fill="x", padx=12, pady=24)
+
+        self._materials_fingerprint = self._compute_materials_fingerprint()
+
+    def _compute_materials_fingerprint(self) -> tuple:
+        """Cheap state hash: which materials currently have instances.
+        Drives whether _refresh_project_tab needs to rebuild the body."""
+        out = []
+        for mt in materials.all_types():
+            if mt.sidebar_renderer is None:
+                continue
+            try:
+                ok = bool(mt.has_instance(self.project)) if mt.has_instance else True
+            except Exception:
+                ok = False
+            out.append((mt.type_name, ok))
+        return tuple(out)
 
     def _show_add_material_menu(self) -> None:
         """Drop-down menu under the 素材 tab [+] button: one entry per
@@ -870,12 +915,17 @@ class VideoCraftHub:
     # ── State refresh ─────────────────────────────────────────────────────────
 
     def _refresh_project_tab(self) -> None:
-        # Materials: delegate to each registered plugin's refresh.
-        for panel in getattr(self, "_material_panels", {}).values():
-            try:
-                panel.refresh()
-            except Exception:
-                pass
+        # Materials: rebuild body if any instance came/went; else just refresh.
+        if hasattr(self, "_materials_body"):
+            current = self._compute_materials_fingerprint()
+            if current != getattr(self, "_materials_fingerprint", ()):
+                self._populate_materials_body()
+            else:
+                for panel in self._material_panels.values():
+                    try:
+                        panel.refresh()
+                    except Exception:
+                        pass
         # Creations tab (still Hub-owned)
         self._refresh_derivatives_section()
 

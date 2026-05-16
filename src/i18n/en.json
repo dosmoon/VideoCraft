@@ -53,6 +53,7 @@
   "hub.sidebar.tab.files": "Files",
   "hub.preview_tab.title": "Main",
   "material.news_video": "News Video",
+  "hub.materials.empty_hint": "Click [+ Add] above to create your first material",
   "hub.sidebar.refresh_tooltip": "Refresh",
   "tool.preferences.title": "Settings",
   "tool.preferences.section_language": "Interface Language",
