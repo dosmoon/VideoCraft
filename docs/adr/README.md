@@ -71,3 +71,4 @@ memory 里对应的 `project_*.md` 改成**指针**，正文不重复：
 - [0001 - 章节 analysis.json envelope](0001-chapters-envelope.md)
 - [0002 - 字幕单行不变量](0002-subtitle-oneline-invariant.md)
 - [0003 - 派生作品全面解耦](0003-editor-modules-decoupling.md)
+- [0004 - 三层架构（Base / Materials / Creations 插件化）](0004-three-tier-plugin-architecture.md)

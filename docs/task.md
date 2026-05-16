@@ -5,96 +5,73 @@
 
 ---
 
-## news_desk dogfood 第二轮 — 已收尾
+## 本会话主题：插件化大重构（ADR-0004 落地）
 
-HEAD: `983e11f` (已 push origin/main)，workspace clean。
+会话起点 HEAD: `7d2e603`。
 
-这轮从 chapter_editor 修 bug 开始，一路走到导出全链路重塑，落了一个**架构级 ADR**。
+### 决定
 
-### 本次会话的 commit 串
+升级到**三层插件架构**——`Base / Materials / Creations`。完整 why + how 见 [docs/adr/0004-three-tier-plugin-architecture.md](adr/0004-three-tier-plugin-architecture.md)。
 
-| commit | 内容 |
+核心动作：
+- 新建 `src/materials/` 和 `src/creations/`，都是 type-extensible 自注册插件包
+- 把当前唯一的素材类型「**新闻视频素材**」（源视频 + 字幕 + AI 分析 + 章节 + context）聚合进 `materials/news_video/`
+- 把三个创作类型（news_desk / clip / bilingual_video）从 `tools/` 迁到 `creations/`
+- 删 `core/derivative_types.py`，注册机制改成插件自报家门
+- 重写 `VideoCraftHub.py`：2 tab → 3 tab（**素材 / 创作 / 文件**），preview tab 0 改名「**主窗口**」，所有插件特有 sidebar section 由插件自渲染
+- 「派生作品」字面全清零，UI 改叫「创作」
+
+### Slice 推进计划
+
+| Slice | 内容 | 状态 |
+|---|---|---|
+| A | ADR-0004 + 本 task.md handoff | ✅ |
+| B | `creations/` + `materials/` 空骨架 + abstract base | ⬜ |
+| C | 迁 `creations/news_desk` ← `tools/news_desk` | ⬜ |
+| D | 迁 `creations/clip` + `creations/bilingual_video`（← `tools/subtitle`） | ⬜ |
+| E | 删 `core/derivative_types.py`，调用切到 creations registry | ⬜ |
+| F | 建 `materials/news_video/` 骨架 + 迁 `SourceContext` (15 字段) | ⬜ |
+| G | 插件特有 UI 文件从 `src/ui/` 迁到插件包 | ⬜ |
+| H | 重写 `VideoCraftHub.py` — 三 tab + 插件自渲染 + 主窗口改名 | ⬜ |
+| I | i18n key 全量改名 derivative → creation；「派生作品」字面清零 | ⬜ |
+| J | tab 级 [+] 收口 + type-picker 通用化（素材/创作共用） | ⬜ |
+
+依赖链：A → B → (C ∥ D) → E → F → G → H → I → J
+
+### 关键不变量（实施时必须守住）
+
+- `core/` 零 Tk，零插件名字
+- 各插件 sidebar 渲染必须**自己**画自己的节点，Hub 不再有 `_build_<插件特有>_section`
+- 素材→创作的数据流通过 `MaterialType.artifact_resolver(instance, key) → Path`，创作插件按 [[ADR-0003]] 做快照
+- UI 文件归属：只有一种插件用 = 归该插件；多种/框架级 = 归 `src/ui/`
+- 三栏 sidebar 命名：**素材 / 创作 / 文件**（不是「资源/项目/文件」，不是「派生作品」）
+- preview tab 0 改名「**主窗口**」（不再叫「项目」）
+- 创作 tab 内 **不按 type 分栏**，instance 平铺；type 信息靠 instance 行体现
+- `[+]` 按钮上移到 tab 级，由两个 tab 各自的 tab header 区域承担
+
+### UI 文件归属表（slice G 用）
+
+| 现位置 (src/ui/) | 目标位置 |
 |---|---|
-| `9e5a547` | 修 sidebar「新闻背景 (AI)」5/5 误显示（用 read_context 而非 combined_dict） |
-| `0513206` | chapter_editor 加可编辑详情 + 拆分语义新增章节 + 双击起点列 |
-| `ff56ccf` | chapter_editor 字段编辑全收进底部详情面板 |
-| `eacc1e9` | chapter_editor 用 focus_force 治 WebView2 焦点 |
-| `ed613ad` | chapter_editor 接入 core.composition.CompositionPreview（不再自造 video HTML） |
-| `ae9ef1b` | composition.preview 默认 = 最小行为（[[feedback_minimal_defaults]]） |
-| `8a104c5` | chapter_editor 用 ffprobe 真实尺寸算字幕 wrap budget |
-| `509cd10` | chapter_editor 字幕字号调小 + 加 stroke + Spinbox |
-| `bca3c8f` | news_desk/chapter import 用 clear+extend 不替换 list 对象 |
-| `85e69dd` | composition.preview 画图层顺序对齐 burn z_order |
-| `2340ba2` | news_desk 列表 UI 顺序真正驱动 render z-order，端到端 |
-| `c99c4aa` | news_desk 导出 bundle 初版（publish/transcript/chapters_md/chapter_videos 4 勾） |
-| `b8968b1` | 导出对话框加字幕语言下拉 |
-| `4957b39` | **ADR-0003 派生作品全面解耦** |
-| `43b72d6` | **Phase 1**: subtitle 组件改快照模式 + 导出全部从 instance 派生 |
-| `02c798a` | "snapshot" 字面去 jargon |
-| `983e11f` | candidate titles 一起从 chapter 快照 + publish.md 第一个 section |
+| source_preview_pane.py | materials/news_video/ui/ |
+| srt_preview_pane.py | materials/news_video/ui/ |
+| news_context_pane.py | materials/news_video/ui/ |
+| source_basic_info_dialog.py | materials/news_video/ui/ |
+| source_context_dialog.py | materials/news_video/ui/ |
+| source_add_dialog.py | materials/news_video/ui/ |
+| source_prepare_modal.py | materials/news_video/ui/ |
+| subs_lang_picker.py | materials/news_video/ui/ |
+| subtitles_dialogs.py | materials/news_video/ui/ |
+| subtitles_progress_modal.py | materials/news_video/ui/ |
+| subtitle_analysis_preview.py | materials/news_video/ui/ |
+| chapter_editor.py | materials/news_video/ui/ |
+| new_derivative_dialog.py | **留 `ui/` 但改名 + 通用化**（slice J） |
+| composition_preview.html | 跟 core/composition/ 走（slice B 时移） |
+| dialog_utils.py / collapsible_frame.py / web_preview*.py / vlc_player.py / video_preview_pane.py / ai_error_dialog.py / disclaimer_dialog.py / new_project_dialog.py | **留 `src/ui/`**（真通用） |
 
-### 关键架构变更
+### 接力起点（每片完成后更新这行）
 
-- **[[ADR-0003]]**：派生作品全面解耦——源层 = 数据准备工坊，派生层 = N 个独立编辑器
-- **subtitle 组件**：路径引用 → 本地快照（`<instance_dir>/subtitles/<id>.srt`）。Phase 2/3（cue 编辑、增删）没做，独立 session
-- **chapter 组件** import 现在一次同时快照 `schedule` + `titles`（同源 analysis.json）
-- **导出对话框**：3 勾选项（publish/transcript/chapter_videos），全部从 instance 状态派生
-- **publish.md**：候选标题首屏 + 章节详情（refined + key_points + 文字稿）合并成一个文件
-
-### 学到的元规则（已存为 memory）
-
-- [[feedback_minimal_defaults]] — 共享模块默认 = 最小行为；看见多个消费者 opt-out 就是默认选错的信号
-
----
-
-## 下一手 — 已选定：sidebar 三栏拆分
-
-**践行 [[ADR-0003]] 的可视化对齐**：左边栏拆成 3 个 tab，对应数据层 vs 编辑器层 vs 文件层。
-
-```
-┌─[资源]─[项目]─[文件]─┐
-│                       │
-└───────────────────────┘
-```
-
-### 三栏内容定义
-
-1. **资源 (Resources)** — 以源视频为根的"梳状 AI 分析数据树"
-   - 当前 sidebar 里这些归这里：源视频卡 / 新闻背景(AI) / 字幕列表（含 +生成 menu）/ 标题与章节子节点
-   - 本质：**source 层数据准备工坊的产出**——多个独立编辑器可共享消费的标准化资产
-   - 跟编辑器层无运行时耦合
-
-2. **项目 (Projects)** — 独立编辑器模块实例
-   - 当前的「派生作品」整段挪过来——news_desk / clip_script / bilingual_video / 未来更多形态
-   - **改名建议**：「派生作品」→「项目」（跟 [[ADR-0003]] 一致：派生作品不是派生，是独立编辑器实例）
-   - 每个实例展开 = 实例下的可见 artifacts（output.mp4 / publish.md 等）
-
-3. **文件 (Files)** — 文件资源管理器视图
-   - 项目目录树（folder 结构）
-   - 方便用户跳过模型直接看磁盘上的东西
-
-### 关键设计点（开工前讨论）
-
-- **空状态**：没源视频时「资源」tab 长什么样？引导用户先「下载」/「转字幕」？
-- **跨 tab 跳转**：点「资源」里某个 artifact，是否在「项目」tab 里高亮用到它的项目？目前所有 artifact 都属 source 层，没显式 binding——但 subtitle 组件按 ADR-0003 现在快照了，跟 source 字幕不一定一致。怎么显示这种漂移？
-- **预览 tab 0 的关系**：右栏 preview tab 0 跟左侧三 tab 怎么联动？目前是单击 sidebar artifact = 切 preview tab 0 内容，需要扩展到三 tab 各自的选中物
-- **改名「派生作品」**：UI 文案改不改？memory `feedback_user_facing_naming` 提醒过用户实际看见的词要 grep i18n。这次改名是个 i18n 级动作
-
-### 接力起点
-
-- HEAD `2387735` (workspace clean)
-- 关键代码定位：`src/VideoCraftHub.py` 的 sidebar 构造（grep `_build_sidebar`、`_build_news_context_section`、`派生作品`/derivative）
-- ADR-0003 在 `docs/adr/0003-editor-modules-decoupling.md`，开工前重读
-
-### 其它候选（次优先级）
-
-- 真实使用攒反馈（跑完整素材跑一遍 publish.md / chapter videos）
-- subtitle Phase 2（cue 内联编辑）
-- subtitle Phase 3（增删 cue + 重新导入按钮）
-- 多发言人 → 名牌组件
-- 组件框架推广到 clip_script
-
-老 instance 没 titles 字段——用户必须重新点一次 chapter import 才能在 publish.md 看到候选标题。是 ADR-0003 一致性的代价。
+- Slice A 完成 → HEAD: 待 commit；下一步开 Slice B
 
 ---
 
@@ -104,13 +81,15 @@ HEAD: `983e11f` (已 push origin/main)，workspace clean。
 - 改 UI 布局/模块结构前 grep `docs/`（[[feedback_check_design_docs]]）
 - UI 文案先 grep `src/i18n/*.json` 找用户实际看见的词（[[feedback_user_facing_naming]]）
 - 新 `tk.Toplevel` 弹窗照 `src/ui/dialog_utils.py` docstring 模板写
-- 派生作品**任何**新代码必须遵守 [[ADR-0003]]——render/export 只读 instance 状态，不回扫上游
+- 创作（前「派生作品」）**任何**新代码必须遵守 [[ADR-0003]]——render/export 只读 instance 状态，不回扫上游
+- pre-alpha 阶段，命名/迁移不要套"用户习惯/保守方案"（[[feedback_pre_alpha_no_legacy]]）
 
 ---
 
-## 不在本任务范围（备忘）
+## 不在本会话范围（备忘）
 
-- chapter_editor 双击迟钝是 WebView2 焦点系统级问题，focus_force 已尽可能修，剩余偶发不彻底
-- subtitle Phase 2/3：cue 编辑能力。今天没做
+- 第二种素材类型的拆分（普通视频素材 / 访谈视频素材）——等真出现再做
+- 通用插件 manifest.json schema——当前 Python 自注册够用
+- chapter_editor 双击迟钝是 WebView2 焦点系统级问题（已 focus_force 修过）
+- subtitle Phase 2/3：cue 编辑能力
 - image_watermark 还在引用模式（ADR-0003 灰区）
-- chapter `_import_from_analysis` 整覆盖：保留 partial-merge 的需求记着
