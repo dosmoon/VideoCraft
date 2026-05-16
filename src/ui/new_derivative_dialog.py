@@ -24,7 +24,7 @@ from tkinter import ttk
 from typing import Optional, Tuple
 
 from project import Project
-from core import derivative_types
+import creations
 from i18n import tr
 
 
@@ -60,7 +60,7 @@ class _TypePickerDialog:
         self.win.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
         # State
-        types = derivative_types.all_types()
+        types = creations.all_types()
         default_type = types[0].type_name if types else ""
         self._type_var = tk.StringVar(value=default_type)
         self._name_var = tk.StringVar()
@@ -81,11 +81,11 @@ class _TypePickerDialog:
         # Type radios with descriptions
         types_box = ttk.LabelFrame(body, text=tr("dialog.new_derivative.section_type"), padding=10)
         types_box.pack(fill="x", pady=(0, 12))
-        for t in derivative_types.all_types():
+        for t in creations.all_types():
             row = ttk.Frame(types_box)
             row.pack(fill="x", pady=4)
             rb = ttk.Radiobutton(
-                row, text=derivative_types.display_name(t.type_name),
+                row, text=creations.display_name(t.type_name),
                 value=t.type_name, variable=self._type_var,
                 command=self._auto_name,
             )
@@ -134,7 +134,7 @@ class _TypePickerDialog:
         typed something custom yet)."""
         type_name = self._type_var.get()
         existing = self.project.list_derivative_instances(type_name)
-        suggested = derivative_types.suggest_instance_name(type_name, existing)
+        suggested = creations.suggest_instance_name(type_name, existing)
         # Only overwrite if the field is empty or contains a prior auto suggestion.
         cur = self._name_var.get().strip()
         if not cur or cur in _all_possible_auto_names(type_name, existing):
@@ -182,7 +182,7 @@ class _InstanceNamerDialog:
         self._result: Optional[str] = None
 
         self.win = tk.Toplevel(parent)
-        title = tr("dialog.new_derivative.title_typed", type=derivative_types.display_name(type_name))
+        title = tr("dialog.new_derivative.title_typed", type=creations.display_name(type_name))
         self.win.title(title)
         self.win.transient(parent.winfo_toplevel())
         self.win.resizable(False, False)
@@ -190,7 +190,7 @@ class _InstanceNamerDialog:
         self.win.protocol("WM_DELETE_WINDOW", self._on_cancel)
 
         existing = project.list_derivative_instances(type_name)
-        suggested = derivative_types.suggest_instance_name(type_name, existing)
+        suggested = creations.suggest_instance_name(type_name, existing)
         self._name_var = tk.StringVar(value=suggested)
         self._error_var = tk.StringVar()
 
@@ -285,7 +285,7 @@ def _all_possible_auto_names(type_name: str, existing: list[str]) -> set[str]:
     decide whether to overwrite the field when the user changes type.
     Cheap superset — generates up to 32 candidates."""
     out: set[str] = set()
-    t = derivative_types.get(type_name)
+    t = creations.get(type_name)
     if t is None:
         for i in range(1, 32):
             out.add(f"v{i}")

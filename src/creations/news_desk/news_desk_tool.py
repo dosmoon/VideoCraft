@@ -32,7 +32,7 @@ from tools.base import ToolBase
 from i18n import tr
 from hub_logger import logger
 
-from core import derivative_types
+import creations
 from core.composition import presets as comp_presets
 from core.composition.preview import CompositionPreview
 from core.composition.render import (
@@ -536,7 +536,7 @@ class NewsDeskApp(ToolBase):
     # ── Project mode ──────────────────────────────────────────────────────
 
     def _enter_project_mode(self) -> None:
-        type_disp = derivative_types.display_name(DERIVATIVE_TYPE)
+        type_disp = creations.display_name(DERIVATIVE_TYPE)
         self.master.title(tr("tool.news_desk.project.title",
                               type=type_disp, instance=self.instance_name))
 

@@ -605,9 +605,9 @@ class SubtitleToolApp(ToolBase):
     def _enter_project_mode(self) -> None:
         """Lock paths to project canonical locations + restore prior config.
         Called from __init__ after the base UI is built."""
-        # Window title shows the derivative type + instance for clarity.
-        from core import derivative_types
-        type_disp = derivative_types.display_name("bilingual_video")
+        # Window title shows the creation type + instance for clarity.
+        import creations
+        type_disp = creations.display_name("bilingual_video")
         self.master.title(tr("subtitle_tool.project.title", type=type_disp, instance=self.instance_name))
 
         # Lock the source video field.

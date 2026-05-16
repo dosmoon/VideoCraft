@@ -31,6 +31,14 @@ from project import Project, get_recent_projects, file_icon
 from operations import get_operations
 from i18n import tr
 
+# Plugin self-registration. Importing each creation plugin package
+# triggers its register() call, populating the creations registry
+# (see ADR-0004). Materials follow the same pattern in slice F.
+import creations.bilingual_video   # noqa: F401
+import creations.clip              # noqa: F401
+import creations.news_desk         # noqa: F401
+import creations
+
 # ── 工具注册表 ────────────────────────────────────────────────────────────────
 # class: None → 用 subprocess 启动；有 class 名 → Toplevel 内嵌
 
@@ -1400,7 +1408,6 @@ class VideoCraftHub:
             self.show_subtitle_preview(srt_path, base[:-4])
 
     def _refresh_derivatives_section(self) -> None:
-        from core import derivative_types
         if not hasattr(self, "_project_tree"):
             return
 
@@ -1425,14 +1432,14 @@ class VideoCraftHub:
         derivatives = self.project.list_derivatives()
         any_instance = False
 
-        for t in derivative_types.all_types():
+        for t in creations.all_types():
             instances = derivatives.get(t.type_name, [])
             if not instances:
                 continue  # type group only shown when non-empty
             group_iid = f"type:{t.type_name}"
             self._project_tree.insert(
                 "", "end", iid=group_iid, open=True,
-                text=f"  {derivative_types.display_name(t.type_name)}",
+                text=f"  {creations.display_name(t.type_name)}",
                 tags=("group",),
             )
             for inst in instances:
@@ -1446,7 +1453,7 @@ class VideoCraftHub:
 
         # Orphan types (forward-compat)
         for type_name, instances in derivatives.items():
-            if derivative_types.get(type_name) is not None:
+            if creations.get(type_name) is not None:
                 continue
             group_iid = f"type:{type_name}"
             self._project_tree.insert(
@@ -1593,10 +1600,9 @@ class VideoCraftHub:
         menu.tk_popup(event.x_root, event.y_root)
 
     def _on_new_derivative_hub(self):
-        from core import derivative_types
         from ui.new_derivative_dialog import show_type_picker, show_instance_namer
 
-        types = derivative_types.all_types()
+        types = creations.all_types()
         if not types:
             messagebox.showinfo("VideoCraft", tr("hub.derivative.no_types"), parent=self.root)
             return
@@ -1647,8 +1653,7 @@ class VideoCraftHub:
     def _open_workbench_for_type(
         self, type_name: str, instance_name: str | None = None,
     ) -> None:
-        from core import derivative_types
-        t = derivative_types.get(type_name)
+        t = creations.get(type_name)
         if t is None:
             messagebox.showerror(
                 "VideoCraft", tr("hub.derivative.unknown_type", type=type_name))
