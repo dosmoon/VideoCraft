@@ -47,7 +47,7 @@ from ui.dialog_utils import center_dialog_on_parent
 
 # Importing the package triggers each component module's register()
 # side effect, populating components.REGISTRY before _build_ui runs.
-from tools.news_desk import components as nd_components
+from creations.news_desk import components as nd_components
 
 
 DERIVATIVE_TYPE = "news_desk"
@@ -1124,7 +1124,7 @@ class NewsDeskApp(ToolBase):
         filesystem path. Returns "" when comp is None/no path."""
         if not comp:
             return ""
-        from tools.news_desk.components.subtitle import _resolve_srt_path
+        from creations.news_desk.components.subtitle import _resolve_srt_path
         ctx = nd_components.ProjectContext(
             project=self.project, duration=self._duration,
             instance_dir=self._instance_dir())
@@ -1218,7 +1218,7 @@ class NewsDeskApp(ToolBase):
         - srt_path: snapshot SRT (for per-chapter transcript section)
         - sub_lang_iso: zh/en — drives headers / chapter detail text
         """
-        from tools.news_desk.publish import render_news_desk_publish
+        from creations.news_desk.publish import render_news_desk_publish
         from datetime import datetime as _dt
         # Canonical view: context.json (AI-corrected) wins; basic_info
         # falls back for fields context hasn't filled yet. publish.md

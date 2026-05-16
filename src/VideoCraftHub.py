@@ -42,7 +42,7 @@ TOOL_MAP = {
     "translate":   {"file": "tools/translate/translate_srt.py",    "class": "TranslateApp"},
     "subtitle":    {"file": "tools/subtitle/subtitle_tool.py",     "class": "SubtitleToolApp"},
     "clip":        {"file": "tools/clip/clip_tool.py",             "class": "ClipToolApp"},
-    "news-desk":   {"file": "tools/news_desk/news_desk_tool.py",   "class": "NewsDeskApp"},
+    "news-desk":   {"file": "creations/news_desk/news_desk_tool.py", "class": "NewsDeskApp"},
     "word-subtitle": {"file": "tools/subtitle/word_subtitle.py",   "class": "WordSubtitleApp"},
     "srt-extract-subtitles":  {"file": "tools/subtitle/srt_tools.py", "class": "SrtExtractSubtitlesApp"},
     "srt-gen-segments":       {"file": "tools/subtitle/srt_tools.py", "class": "SrtGenerateSegmentsApp"},
