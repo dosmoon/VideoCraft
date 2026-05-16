@@ -63,9 +63,19 @@ _GROUPS: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = (
 )
 
 
-def build_news_context_preview(parent: tk.Frame, project) -> tk.Frame:
-    """Build the news-context preview UI inside `parent`."""
+def build_news_context_preview(parent: tk.Frame, model_or_project) -> tk.Frame:
+    """Build the news-context preview UI inside `parent`. Accepts either a
+    NewsVideoModel or (legacy) a Project — uses the model's source_dir
+    when given, else falls back to first-instance via paths.py."""
     outer = tk.Frame(parent, bg="white")
+    if hasattr(model_or_project, "instance_id"):
+        source_dir = model_or_project.source_dir
+        subtitles_dir = model_or_project.subtitles_dir
+        project = model_or_project.project
+    else:
+        project = model_or_project
+        source_dir = _nv_paths.source_dir(project)
+        subtitles_dir = _nv_paths.subtitles_dir(project)
 
     # Header: title + action buttons + status.
     header = tk.Frame(outer, bg="white", padx=20, pady=14)
@@ -124,13 +134,13 @@ def build_news_context_preview(parent: tk.Frame, project) -> tk.Frame:
     def _refresh():
         for child in body.winfo_children():
             child.destroy()
-        _render_groups(body, _nv_paths.source_dir(project))
+        _render_groups(body, source_dir)
     _refresh()
 
     # Handlers — defined after _refresh so they can call it.
     def _on_edit():
         from materials.news_video.ui.source_context_dialog import show_source_context_dialog
-        if show_source_context_dialog(outer, _nv_paths.source_dir(project)):
+        if show_source_context_dialog(outer, source_dir):
             _refresh()
     edit_btn.configure(command=_on_edit)
 
@@ -145,7 +155,7 @@ def build_news_context_preview(parent: tk.Frame, project) -> tk.Frame:
             ctx: SourceContext | None = None
             try:
                 from materials.news_video.ai_fill import extract
-                ctx = extract(_nv_paths.source_dir(project), _nv_paths.subtitles_dir(project))
+                ctx = extract(source_dir, subtitles_dir)
             except Exception as e:
                 err = e
 
@@ -163,7 +173,7 @@ def build_news_context_preview(parent: tk.Frame, project) -> tk.Frame:
                     return
                 # Persist merged context then re-render.
                 from materials.news_video.schema import write_context
-                write_context(_nv_paths.source_dir(project), ctx)
+                write_context(source_dir, ctx)
                 status_lbl.configure(text=tr("news_context.ai_done"),
                                       fg="#2a7")
                 _refresh()

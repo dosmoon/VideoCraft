@@ -77,15 +77,23 @@ def _fmt_duration(sec: float | None) -> str:
 
 def build_source_preview(
     parent: tk.Frame,
-    project,
+    model_or_project,
     on_modify=None,
 ) -> tk.Frame:
-    """Build the source preview UI inside parent. on_modify is invoked when
-    the user clicks the [Modify] button (Hub re-uses its source-add flow)."""
+    """Build the source preview UI inside parent. Accepts either a
+    NewsVideoModel or (legacy) a Project — extracts paths via the
+    model when given, else falls back to first-instance via paths.py.
+    on_modify is invoked when the user clicks [Modify]."""
     outer = tk.Frame(parent, bg="white")
 
+    # Duck-type: model has instance_id; project doesn't.
+    if hasattr(model_or_project, "instance_id"):
+        project = model_or_project.project
+        video_path = model_or_project.source_video_path
+    else:
+        project = model_or_project
+        video_path = _nv_paths.source_video_path(project)
     src = project.meta.source
-    video_path = _nv_paths.source_video_path(project)
     ready = os.path.isfile(video_path) and os.path.getsize(video_path) > 0
 
     # Resizable horizontal split.
