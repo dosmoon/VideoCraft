@@ -1242,12 +1242,19 @@ class VideoCraftHub:
 
     def _on_subtitle_analysis_menu(self, lang_iso: str, anchor: tk.Widget) -> None:
         """Pop the [+] menu next to a subtitle row. Each item dispatches to
-        the corresponding analysis runner. Hotclips lives here too but is
-        disabled until P4."""
+        the corresponding analysis runner.
+        transcript / chapter_transcript are excluded here — those outputs
+        are now produced as part of news_desk's export bundle (per-derivative
+        deliverables), not standalone subtitle-side artifacts. The runners
+        themselves remain for backward compat (legacy files still readable).
+        """
         from core.subtitle_analysis import all_types
 
+        hidden = {"transcript", "chapter_transcript"}
         menu = tk.Menu(self.root, tearoff=0)
         for t in all_types():
+            if t.kind in hidden:
+                continue
             label = "+ " + tr(f"analysis.kind.{t.kind}")
             menu.add_command(
                 label=label,

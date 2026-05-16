@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import threading
 import time
 import tkinter as tk
@@ -42,6 +43,7 @@ from core.composition.style import (
     CompositionStyle, SubtitleLineStyle, SubtitleStyle, WatermarkStyle,
 )
 from core import source_context
+from ui.dialog_utils import center_dialog_on_parent
 
 # Importing the package triggers each component module's register()
 # side effect, populating components.REGISTRY before _build_ui runs.
@@ -52,6 +54,21 @@ DERIVATIVE_TYPE = "news_desk"
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
+
+_FS_BAD_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def _sanitize_filename(name: str, *, max_len: int = 60) -> str:
+    """Strip filesystem-unfriendly characters from a chapter title so it
+    can be embedded in a per-chapter mp4 filename. Returns the cleaned
+    name, trimmed to max_len chars. Empty input → empty string."""
+    s = (name or "").strip()
+    s = _FS_BAD_CHARS.sub("", s)
+    s = s.replace(" ", "_")
+    if len(s) > max_len:
+        s = s[:max_len].rstrip("_")
+    return s
+
 
 def _probe_duration(video_path: str) -> float:
     import subprocess
@@ -787,6 +804,71 @@ class NewsDeskApp(ToolBase):
 
     # ── Export ─────────────────────────────────────────────────────────────
 
+    def _show_export_options_dialog(self) -> dict | None:
+        """Ask the user which deliverables to include in this export.
+
+        Returns a dict of bool flags {publish, transcript, chapters_md,
+        chapter_videos} on confirm, or None on cancel. The main mp4 is
+        not gated — it's the export's primary product, always produced.
+        """
+        dlg = tk.Toplevel(self.master)
+        dlg.title(tr("tool.news_desk.export_dialog.title"))
+        dlg.transient(self.master.winfo_toplevel())
+        dlg.grab_set()
+        dlg.minsize(480, 280)
+
+        # Pack actions FIRST so they pin to the bottom even if body grows.
+        btns = ttk.Frame(dlg)
+        btns.pack(side="bottom", fill="x", padx=12, pady=(0, 10))
+
+        body = ttk.Frame(dlg)
+        body.pack(fill="both", expand=True, padx=14, pady=12)
+
+        ttk.Label(body,
+                  text=tr("tool.news_desk.export_dialog.intro"),
+                  wraplength=440, justify="left", foreground="#444"
+                  ).pack(anchor="w", pady=(0, 10))
+
+        v_publish        = tk.BooleanVar(value=True)
+        v_transcript     = tk.BooleanVar(value=False)
+        v_chapters_md    = tk.BooleanVar(value=False)
+        v_chapter_videos = tk.BooleanVar(value=False)
+
+        for var, key in (
+            (v_publish,        "tool.news_desk.export_dialog.opt_publish"),
+            (v_transcript,     "tool.news_desk.export_dialog.opt_transcript"),
+            (v_chapters_md,    "tool.news_desk.export_dialog.opt_chapters_md"),
+            (v_chapter_videos, "tool.news_desk.export_dialog.opt_chapter_videos"),
+        ):
+            ttk.Checkbutton(body, text=tr(key), variable=var
+                            ).pack(anchor="w", pady=3)
+
+        result: dict | None = None
+
+        def _on_confirm():
+            nonlocal result
+            result = {
+                "publish":        v_publish.get(),
+                "transcript":     v_transcript.get(),
+                "chapters_md":    v_chapters_md.get(),
+                "chapter_videos": v_chapter_videos.get(),
+            }
+            dlg.destroy()
+
+        ttk.Button(btns,
+                   text=tr("tool.news_desk.export_dialog.confirm"),
+                   command=_on_confirm
+                   ).pack(side="right")
+        ttk.Button(btns,
+                   text=tr("tool.news_desk.export_dialog.cancel"),
+                   command=dlg.destroy
+                   ).pack(side="right", padx=(0, 8))
+        dlg.bind("<Escape>", lambda _e: dlg.destroy())
+
+        center_dialog_on_parent(dlg, self.master)
+        self.master.wait_window(dlg)
+        return result
+
     def _do_export(self) -> None:
         if self._processing:
             return
@@ -804,6 +886,10 @@ class NewsDeskApp(ToolBase):
                                   parent=self.master)
             return
 
+        opts = self._show_export_options_dialog()
+        if opts is None:
+            return    # user cancelled
+
         out = self._output_path()
         os.makedirs(os.path.dirname(out), exist_ok=True)
         if os.path.exists(out):
@@ -814,6 +900,7 @@ class NewsDeskApp(ToolBase):
                 return
 
         self._save_instance_config()
+        self._export_opts = opts
         self._processing = True
         self._skip_sidecar = False
         self.set_busy()
@@ -917,10 +1004,151 @@ class NewsDeskApp(ToolBase):
         if getattr(self, "_skip_sidecar", False):
             self._skip_sidecar = False
             return
+
+        opts = getattr(self, "_export_opts", None) or {}
+
+        if opts.get("publish", True):
+            try:
+                self._write_publish_sidecar()
+            except Exception as e:
+                logger.warning(f"news_desk publish.md write skipped: {e}")
+
+        # The deliverables below all share a source-SRT + chapters lookup.
+        # Resolve once; each writer checks what it needs and logs+skips
+        # rather than failing the whole export when inputs are missing.
+        srt_path = self._primary_srt_path()
+        chapters = self._load_source_chapters()
+
+        if opts.get("transcript"):
+            self._write_transcript_artifact(srt_path)
+        if opts.get("chapters_md"):
+            self._write_chapters_md_artifact(srt_path, chapters)
+        if opts.get("chapter_videos"):
+            self._write_chapter_videos_artifact(
+                result.output_path, chapters)
+
+    # ── Optional artifacts ────────────────────────────────────────────────
+
+    def _primary_srt_path(self) -> str:
         try:
-            self._write_publish_sidecar()
+            lang_iso = self.project.meta.language.source or "zh"
+        except AttributeError:
+            lang_iso = "zh"
+        return os.path.join(self.project.subtitles_dir, f"{lang_iso}.srt")
+
+    def _primary_lang_iso(self) -> str:
+        try:
+            return self.project.meta.language.source or "zh"
+        except AttributeError:
+            return "zh"
+
+    def _load_source_chapters(self) -> list[dict]:
+        """Return chapters from the source project's analysis.json envelope,
+        or [] if no analysis exists. Same convention as publish.md.
+        """
+        from core import chapters_io
+        subs_dir = self.project.subtitles_dir
+        if not os.path.isdir(subs_dir):
+            return []
+        for fn in sorted(os.listdir(subs_dir)):
+            if not fn.endswith(".analysis.json"):
+                continue
+            try:
+                env = chapters_io.load_analysis(os.path.join(subs_dir, fn))
+            except (OSError, json.JSONDecodeError):
+                continue
+            chs = env.get("chapters") if isinstance(env, dict) else []
+            if isinstance(chs, list) and chs:
+                return chs
+        return []
+
+    def _write_transcript_artifact(self, srt_path: str) -> None:
+        from core.subtitle_analysis_runners import build_transcript_text
+        from core.io_utils import atomic_write_text
+        if not os.path.isfile(srt_path):
+            logger.warning(
+                "news_desk: " + tr("tool.news_desk.export.transcript_skipped",
+                                    reason=tr("tool.news_desk.export.no_srt")))
+            return
+        try:
+            text = build_transcript_text(srt_path, self._primary_lang_iso())
+            out = os.path.join(self._instance_dir(), "transcript.md")
+            atomic_write_text(out, text)
         except Exception as e:
-            logger.warning(f"news_desk publish.md write skipped: {e}")
+            logger.warning(
+                "news_desk: " + tr("tool.news_desk.export.transcript_skipped",
+                                    reason=str(e)))
+
+    def _write_chapters_md_artifact(self, srt_path: str,
+                                      chapters: list[dict]) -> None:
+        from core.subtitle_analysis_runners import build_chapter_transcript_text
+        from core.io_utils import atomic_write_text
+        if not os.path.isfile(srt_path):
+            logger.warning(
+                "news_desk: " + tr("tool.news_desk.export.chapters_md_skipped",
+                                    reason=tr("tool.news_desk.export.no_srt")))
+            return
+        if not chapters:
+            logger.warning(
+                "news_desk: " + tr("tool.news_desk.export.chapters_md_skipped",
+                                    reason=tr("tool.news_desk.export.no_chapters")))
+            return
+        try:
+            text = build_chapter_transcript_text(
+                srt_path, chapters, self._primary_lang_iso())
+            out = os.path.join(self._instance_dir(), "chapters.md")
+            atomic_write_text(out, text)
+        except Exception as e:
+            logger.warning(
+                "news_desk: " + tr("tool.news_desk.export.chapters_md_skipped",
+                                    reason=str(e)))
+
+    def _write_chapter_videos_artifact(self, main_mp4: str,
+                                          chapters: list[dict]) -> None:
+        """Split the rendered main.mp4 into per-chapter mp4 files inside
+        <instance_dir>/chapters/. Uses KEYFRAME_SNAP so each split is a
+        stream copy (fast, no re-encode); cut starts may snap a few
+        frames earlier to the nearest prior I-frame.
+        """
+        from core.video_split import split_one, SplitMode, probe_keyframes
+        from core.chapters_io import parse_time_str
+        if not os.path.isfile(main_mp4):
+            logger.warning(
+                "news_desk: " + tr("tool.news_desk.export.chapter_videos_skipped",
+                                    reason="main mp4 missing"))
+            return
+        if not chapters:
+            logger.warning(
+                "news_desk: " + tr("tool.news_desk.export.chapter_videos_skipped",
+                                    reason=tr("tool.news_desk.export.no_chapters")))
+            return
+        out_dir = os.path.join(self._instance_dir(), "chapters")
+        os.makedirs(out_dir, exist_ok=True)
+        try:
+            kfs = probe_keyframes(main_mp4)
+        except Exception as e:
+            logger.warning(
+                "news_desk: " + tr("tool.news_desk.export.chapter_videos_skipped",
+                                    reason=f"keyframe probe failed: {e}"))
+            return
+
+        for i, ch in enumerate(chapters, start=1):
+            start = float(ch.get("start_sec")
+                          or parse_time_str(ch.get("start", "")) or 0.0)
+            end = float(ch.get("end_sec")
+                        or parse_time_str(ch.get("end", "")) or 0.0)
+            duration = end - start
+            if duration <= 0.1:
+                continue
+            title = _sanitize_filename(ch.get("title", ""))
+            name = f"{i:02d}-{title}.mp4" if title else f"{i:02d}.mp4"
+            out_path = os.path.join(out_dir, name)
+            try:
+                split_one(main_mp4, start, duration, out_path,
+                          mode=SplitMode.KEYFRAME_SNAP, keyframes=kfs)
+            except Exception as e:
+                logger.warning(
+                    f"news_desk: chapter {i} split failed: {e}")
 
     def _write_publish_sidecar(self) -> None:
         from tools.news_desk.publish import render_news_desk_publish

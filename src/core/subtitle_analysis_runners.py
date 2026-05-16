@@ -145,17 +145,56 @@ def run_pack_analysis(srt_path: str, subtitles_dir: str, lang_iso: str,
 
 # ── Non-AI runners (transcript / chapter_transcript) ─────────────────────────
 
+def build_transcript_text(srt_path: str, lang_iso: str) -> str:
+    """Return the markdown text for a full transcript. Pure function — no
+    file IO. Callers (legacy run_transcript, news_desk export) write the
+    string wherever they need."""
+    from core.srt_ops import extract_all_subtitles
+    text = extract_all_subtitles(srt_path)
+    return f"# 全文文字稿 ({lang_iso})\n\n{text}\n"
+
+
+def build_chapter_transcript_text(srt_path: str, chapters: list[dict],
+                                    lang_iso: str) -> str:
+    """Return the markdown text for the per-chapter transcript. Groups
+    cues into the supplied chapter boundaries and emits one section per
+    chapter. Pure function — no file IO, no analysis.json reads. Caller
+    supplies the chapters list."""
+    if not chapters:
+        raise ValueError("chapters list is empty")
+    subs = list(srt.parse(read_srt(srt_path)))
+    grouped: list[tuple[dict, list[str]]] = [(c, []) for c in chapters]
+    for sub in subs:
+        t = sub.start.total_seconds()
+        text = sub.content.replace("\n", " ").strip()
+        if not text:
+            continue
+        for ch, bucket in grouped:
+            start = _parse_time_str(ch.get("start", ""))
+            end = _parse_time_str(ch.get("end", ""))
+            if start <= t < end if end > start else t >= start:
+                bucket.append(text)
+                break
+
+    lines = [f"# 分章节全文 ({lang_iso})", ""]
+    for ch, bucket in grouped:
+        lines.append(f"## {ch.get('start', '')} {ch.get('title', '').strip()}")
+        lines.append("")
+        if bucket:
+            lines.append(" ".join(bucket))
+        else:
+            lines.append("（此章节内无字幕）")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def run_transcript(srt_path: str, subtitles_dir: str, lang_iso: str,
                    progress_cb, cancel_token) -> dict:
     """Plain text dump, one cue per line. Non-AI; near-instant."""
-    from core.srt_ops import extract_all_subtitles
     from core.subtitle_analysis import analysis_path
-
     _say(progress_cb, "transcribing", "正在提取全文...", 50)
-    text = extract_all_subtitles(srt_path)
     path = analysis_path(subtitles_dir, lang_iso, "transcript")
-    header = f"# 全文文字稿 ({lang_iso})\n\n"
-    atomic_write_text(path, header + text + "\n")
+    atomic_write_text(path, build_transcript_text(srt_path, lang_iso))
     return {"path": path, "kind": "transcript"}
 
 
@@ -181,33 +220,10 @@ def run_chapter_transcript(srt_path: str, subtitles_dir: str, lang_iso: str,
         raise ValueError("analysis.json 没有有效章节")
 
     _say(progress_cb, "transcribing", "按章节切分字幕...", 70)
-    subs = list(srt.parse(read_srt(srt_path)))
-
-    # For each chapter, collect cues whose start falls within [start, end).
-    grouped: list[tuple[dict, list[str]]] = [(c, []) for c in chapters]
-    for sub in subs:
-        t = sub.start.total_seconds()
-        text = sub.content.replace("\n", " ").strip()
-        if not text:
-            continue
-        for ch, bucket in grouped:
-            start = _parse_time_str(ch.get("start", ""))
-            end = _parse_time_str(ch.get("end", ""))
-            if start <= t < end if end > start else t >= start:
-                bucket.append(text)
-                break
-
     out_path = analysis_path(subtitles_dir, lang_iso, "chapter_transcript")
-    lines = [f"# 分章节全文 ({lang_iso})", ""]
-    for ch, bucket in grouped:
-        lines.append(f"## {ch.get('start', '')} {ch.get('title', '').strip()}")
-        lines.append("")
-        if bucket:
-            lines.append(" ".join(bucket))
-        else:
-            lines.append("（此章节内无字幕）")
-        lines.append("")
-    atomic_write_text(out_path, "\n".join(lines))
+    atomic_write_text(
+        out_path,
+        build_chapter_transcript_text(srt_path, chapters, lang_iso))
     return {"path": out_path, "kind": "chapter_transcript"}
 
 
