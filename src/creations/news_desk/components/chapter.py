@@ -53,6 +53,7 @@ from __future__ import annotations
 
 import json
 import os
+from dataclasses import dataclass
 import tkinter as tk
 from tkinter import messagebox, ttk
 
@@ -451,108 +452,178 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
     del_btn.config(command=_delete_selected)
 
     def _do_import_analysis():
-        # Ask the bound material model for its analysis filenames —
-        # the model owns subtitles/ layout + naming. Dialog also
-        # surfaces the model's subtitles_dir for the "where" hint.
-        found = ctx.material_model.list_analyses()
+        # Ask the bound material model for analyses + per-file summaries.
+        # The model owns subtitles/ layout + envelope parsing; we just
+        # render and dispatch.
+        summaries = [
+            ctx.material_model.analysis_summary(fn)
+            for fn in ctx.material_model.list_analyses()
+        ]
         subs_dir = ctx.material_model.subtitles_dir
 
-        # Build the explanation dialog. ALWAYS show it (even when there's
-        # nothing to import) so the user learns where the file would
-        # come from.
         dlg = tk.Toplevel(parent)
         dlg.title(tr("tool.news_desk.chapter.import_dialog_title"))
         dlg.transient(parent.winfo_toplevel())
         dlg.grab_set()
         dlg.minsize(560, 480)
 
-        # Pack the action row FIRST at the bottom so it's never clipped
-        # when body content is taller than the window. Body then fills
-        # whatever's left — and the dialog auto-sizes to fit text.
+        # Pack the action row first at the bottom so it never clips.
         btns = ttk.Frame(dlg)
         btns.pack(side="bottom", fill="x", padx=12, pady=(0, 10))
-
         body = ttk.Frame(dlg); body.pack(fill="both", expand=True,
                                           padx=12, pady=10)
 
-        # What this is.
-        ttk.Label(body,
-                   text=tr("tool.news_desk.chapter.import_what_label"),
-                   font=("TkDefaultFont", 9, "bold")
-                   ).pack(anchor="w")
-        ttk.Label(body,
-                   text=tr("tool.news_desk.chapter.import_what_body"),
-                   wraplength=520, justify="left", foreground="#444"
-                   ).pack(anchor="w", pady=(2, 8))
+        # Pick state: which summary the user has selected. Auto-select
+        # the first usable one; None when no usable file exists.
+        usable = [s for s in summaries
+                  if not s.error and s.chapter_count > 0]
+        selected_var = tk.StringVar(
+            value=usable[0].filename if usable else "")
 
-        # Where it lives.
-        ttk.Label(body,
-                   text=tr("tool.news_desk.chapter.import_where_label"),
-                   font=("TkDefaultFont", 9, "bold")
-                   ).pack(anchor="w")
-        where_text = tr("tool.news_desk.chapter.import_where_body",
-                         path=(subs_dir or "—"))
-        ttk.Label(body, text=where_text, wraplength=520, justify="left",
-                   foreground="#444"
-                   ).pack(anchor="w", pady=(2, 8))
+        def _clear(frame):
+            for w in frame.winfo_children():
+                w.destroy()
 
-        # Scan result.
-        ttk.Label(body,
-                   text=tr("tool.news_desk.chapter.import_found_label"),
-                   font=("TkDefaultFont", 9, "bold")
-                   ).pack(anchor="w")
-        if found:
-            scan_text = tr("tool.news_desk.chapter.import_found_body",
-                            n=len(found),
-                            files=", ".join(found))
-            scan_color = "#444"
-        else:
-            scan_text = tr("tool.news_desk.chapter.import_found_none")
-            scan_color = "#a00"
-        ttk.Label(body, text=scan_text, wraplength=520, justify="left",
-                   foreground=scan_color
-                   ).pack(anchor="w", pady=(2, 8))
+        def _render_pick_state():
+            _clear(body)
+            _clear(btns)
 
-        # What import will do (incl. overwrite warning when applicable).
-        ttk.Label(body,
-                   text=tr("tool.news_desk.chapter.import_effect_label"),
-                   font=("TkDefaultFont", 9, "bold")
-                   ).pack(anchor="w")
-        if chapters:
-            effect_text = tr(
-                "tool.news_desk.chapter.import_effect_overwrite",
-                n=len(chapters))
-            effect_color = "#a00"
-        else:
-            effect_text = tr("tool.news_desk.chapter.import_effect_fresh")
-            effect_color = "#444"
-        ttk.Label(body, text=effect_text, wraplength=520, justify="left",
-                   foreground=effect_color
-                   ).pack(anchor="w", pady=(2, 8))
+            # What this is.
+            ttk.Label(body,
+                       text=tr("tool.news_desk.chapter.import_what_label"),
+                       font=("TkDefaultFont", 9, "bold")
+                       ).pack(anchor="w")
+            ttk.Label(body,
+                       text=tr("tool.news_desk.chapter.import_what_body"),
+                       wraplength=520, justify="left", foreground="#444"
+                       ).pack(anchor="w", pady=(2, 8))
 
-        # `btns` was packed at the very top so it pins to the bottom.
+            # Where it lives.
+            ttk.Label(body,
+                       text=tr("tool.news_desk.chapter.import_where_label"),
+                       font=("TkDefaultFont", 9, "bold")
+                       ).pack(anchor="w")
+            ttk.Label(body,
+                       text=tr("tool.news_desk.chapter.import_where_body",
+                                path=(subs_dir or "—")),
+                       wraplength=520, justify="left", foreground="#444"
+                       ).pack(anchor="w", pady=(2, 8))
+
+            # Pick list (or "none found" message).
+            ttk.Label(body,
+                       text=tr("tool.news_desk.chapter.import_pick_label"),
+                       font=("TkDefaultFont", 9, "bold")
+                       ).pack(anchor="w")
+            if not summaries:
+                ttk.Label(body,
+                           text=tr("tool.news_desk.chapter.import_found_none"),
+                           wraplength=520, justify="left", foreground="#a00"
+                           ).pack(anchor="w", pady=(2, 8))
+            else:
+                for s in summaries:
+                    row = ttk.Frame(body); row.pack(anchor="w", fill="x",
+                                                     pady=(2, 0))
+                    if s.error:
+                        line = tr(
+                            "tool.news_desk.chapter.import_summary_error",
+                            file=s.filename, err=s.error)
+                        ttk.Label(row, text=line, foreground="#a00",
+                                   wraplength=520, justify="left"
+                                   ).pack(anchor="w")
+                    else:
+                        rng = (f"{s.start_str}–{s.end_str}"
+                               if s.start_str and s.end_str else "—")
+                        line = tr(
+                            "tool.news_desk.chapter.import_summary_line",
+                            file=s.filename,
+                            chapters=s.chapter_count,
+                            titles=s.title_count,
+                            range=rng)
+                        rb = ttk.Radiobutton(row, text=line,
+                                              variable=selected_var,
+                                              value=s.filename)
+                        rb.pack(anchor="w")
+                        if s.chapter_count == 0:
+                            rb.config(state="disabled")
+
+            # Overwrite warning when current list has data.
+            ttk.Label(body,
+                       text=tr("tool.news_desk.chapter.import_effect_label"),
+                       font=("TkDefaultFont", 9, "bold")
+                       ).pack(anchor="w", pady=(8, 0))
+            if chapters:
+                effect_text = tr(
+                    "tool.news_desk.chapter.import_effect_overwrite",
+                    n=len(chapters))
+                effect_color = "#a00"
+            else:
+                effect_text = tr(
+                    "tool.news_desk.chapter.import_effect_fresh")
+                effect_color = "#444"
+            ttk.Label(body, text=effect_text, wraplength=520,
+                       justify="left", foreground=effect_color
+                       ).pack(anchor="w", pady=(2, 8))
+
+            confirm_btn = ttk.Button(
+                btns,
+                text=tr("tool.news_desk.chapter.import_confirm"),
+                command=_do_import)
+            confirm_btn.pack(side="right")
+            if not usable:
+                confirm_btn.config(state="disabled")
+            ttk.Button(btns,
+                        text=tr("tool.news_desk.chapter.cancel_btn"),
+                        command=dlg.destroy
+                        ).pack(side="right", padx=(0, 8))
+
+        def _render_result_state(result: ImportResult):
+            _clear(body)
+            _clear(btns)
+            if result.ok:
+                header = "✓"
+                msg = tr(
+                    "tool.news_desk.chapter.import_result_success",
+                    file=result.filename,
+                    chapters=result.chapters_imported,
+                    titles=result.titles_imported)
+                color = "#0a7"
+            else:
+                header = "✗"
+                err = (result.error
+                       or tr("tool.news_desk.chapter.import_result_empty"))
+                msg = tr("tool.news_desk.chapter.import_result_error",
+                          file=result.filename, err=err)
+                color = "#a00"
+            ttk.Label(body, text=header,
+                       font=("TkDefaultFont", 28, "bold"),
+                       foreground=color).pack(anchor="w")
+            ttk.Label(body, text=msg, wraplength=520, justify="left",
+                       foreground="#222"
+                       ).pack(anchor="w", pady=(6, 8))
+
+            if not result.ok:
+                ttk.Button(btns,
+                            text=tr("tool.news_desk.chapter.import_retry"),
+                            command=_render_pick_state
+                            ).pack(side="right")
+            ttk.Button(btns,
+                        text=tr("tool.news_desk.chapter.import_close"),
+                        command=dlg.destroy
+                        ).pack(side="right", padx=(0, 8))
+
         def _do_import():
-            _import_from_analysis(instance, ctx)
-            _refresh_tree()
-            _show_row(None)
-            on_change()
-            dlg.destroy()
+            fn = selected_var.get()
+            if not fn:
+                return
+            result = _import_from_analysis(instance, ctx, fn)
+            if result.ok:
+                _refresh_tree()
+                _show_row(None)
+                on_change()
+            _render_result_state(result)
 
-        confirm_btn = ttk.Button(
-            btns,
-            text=tr("tool.news_desk.chapter.import_confirm"),
-            command=_do_import)
-        confirm_btn.pack(side="right")
-        if not found:
-            confirm_btn.config(state="disabled")
-        ttk.Button(btns,
-                    text=tr("tool.news_desk.chapter.cancel_btn"),
-                    command=dlg.destroy
-                    ).pack(side="right", padx=(0, 8))
-
+        _render_pick_state()
         dlg.bind("<Escape>", lambda _e: dlg.destroy())
-        # Center AFTER widgets are packed so the helper measures real
-        # natural size (we let the dialog auto-size to text content).
         center_dialog_on_parent(dlg, parent)
     import_btn.config(command=_do_import_analysis)
 
@@ -564,10 +635,26 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
     enabled_v.trace_add("write", _commit_meta)
 
 
-def _import_from_analysis(instance: dict, ctx: ProjectContext) -> None:
+@dataclass(frozen=True)
+class ImportResult:
+    """Outcome of one analysis.json import attempt — drives the dialog's
+    post-action state swap. `error` is set when nothing landed."""
+    filename: str
+    chapters_imported: int = 0
+    titles_imported: int = 0
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return not self.error and self.chapters_imported > 0
+
+
+def _import_from_analysis(instance: dict, ctx: ProjectContext,
+                            filename: str) -> ImportResult:
     """[⇩ from analysis.json] — snapshot chapters + candidate titles
-    into the instance. Per ADR-0003 we copy both same-source pieces
-    here so downstream (publish.md) never reaches back to upstream.
+    from `filename` into the instance. Per ADR-0003 we copy both
+    same-source pieces here so downstream (publish.md) never reaches
+    back to upstream.
 
     Mutates instance["schedule"] and instance["titles"] in place
     (clear + extend) rather than replacing the list objects. The
@@ -575,38 +662,51 @@ def _import_from_analysis(instance: dict, ctx: ProjectContext) -> None:
     enclosing scope — replacing the object would leave the panel's
     UI bindings pointing at the stale empty list until the workbench
     is reopened.
+
+    Returns an ImportResult with the realized counts so the dialog
+    can confirm what actually happened. The function is non-throwing
+    — read/parse errors land in result.error.
     """
-    for fn in ctx.material_model.list_analyses():
-        try:
-            env = ctx.material_model.read_analysis(fn)
-        except (OSError, json.JSONDecodeError):
-            continue
-        if not isinstance(env, dict):
-            continue
-        chs = env.get("chapters") or []
-        titles = env.get("titles") or []
-        if not isinstance(chs, list):
-            continue
-        schedule = instance.setdefault("schedule", [])
-        schedule.clear()
-        schedule.extend({
-            "start_sec": float(ch.get("start_sec", 0.0)
-                                or chapters_io.parse_time_str(ch.get("start", ""))),
-            "end_sec":   float(ch.get("end_sec", 0.0)
-                                or chapters_io.parse_time_str(ch.get("end", ""))),
-            "title":     str(ch.get("title", "")),
-            "refined":   str(ch.get("refined", "")),
-            "key_points": list(ch.get("key_points") or []),
-        } for ch in chs)
-        # Snapshot candidate titles alongside chapters — same AI call
-        # produced both, so re-importing chapters refreshes titles too.
-        title_buf = instance.setdefault("titles", [])
-        title_buf.clear()
-        if isinstance(titles, list):
-            title_buf.extend(str(t).strip()
-                              for t in titles
-                              if str(t).strip())
-        return
+    try:
+        env = ctx.material_model.read_analysis(filename)
+    except (OSError, json.JSONDecodeError) as e:
+        return ImportResult(filename=filename, error=str(e))
+    if not isinstance(env, dict):
+        return ImportResult(
+            filename=filename, error="envelope is not a dict")
+    chs = env.get("chapters") or []
+    titles = env.get("titles") or []
+    if not isinstance(chs, list):
+        return ImportResult(
+            filename=filename, error="chapters field is not a list")
+
+    schedule = instance.setdefault("schedule", [])
+    schedule.clear()
+    schedule.extend({
+        "start_sec": float(ch.get("start_sec", 0.0)
+                            or chapters_io.parse_time_str(ch.get("start", ""))),
+        "end_sec":   float(ch.get("end_sec", 0.0)
+                            or chapters_io.parse_time_str(ch.get("end", ""))),
+        "title":     str(ch.get("title", "")),
+        "refined":   str(ch.get("refined", "")),
+        "key_points": list(ch.get("key_points") or []),
+    } for ch in chs)
+
+    # Snapshot candidate titles alongside chapters — same AI call
+    # produced both, so re-importing chapters refreshes titles too.
+    title_buf = instance.setdefault("titles", [])
+    title_buf.clear()
+    title_count = 0
+    if isinstance(titles, list):
+        clean = [str(t).strip() for t in titles if str(t).strip()]
+        title_buf.extend(clean)
+        title_count = len(clean)
+
+    return ImportResult(
+        filename=filename,
+        chapters_imported=len(schedule),
+        titles_imported=title_count,
+    )
 
 
 def _to_render_fragment(instance: dict, _ctx: ProjectContext) -> dict:

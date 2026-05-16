@@ -42,6 +42,19 @@ ALL_SLOTS = (SLOT_SOURCE, SLOT_NEWS_CONTEXT, SLOT_SUBTITLES)
 
 
 @dataclass(frozen=True)
+class AnalysisSummary:
+    """Pre-import preview of an analysis.json — what a picker shows
+    before the user commits to importing. `error` is set (and counts
+    are 0) when the file failed to parse or had an unexpected shape."""
+    filename: str
+    chapter_count: int = 0
+    title_count: int = 0
+    start_str: str = ""        # first chapter start, e.g. "03:42"
+    end_str: str = ""          # last chapter end
+    error: str = ""
+
+
+@dataclass(frozen=True)
 class SlotState:
     """One slot's render-ready state. Sidebar consumes this dict-of-states
     instead of doing its own readiness logic."""
@@ -264,6 +277,38 @@ class NewsVideoModel:
         path = os.path.join(self.subtitles_dir, filename)
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
+
+    def analysis_summary(self, filename: str) -> "AnalysisSummary":
+        """Quick-read summary for a UI picker (chapter count, title
+        count, time range). Never raises — malformed files surface via
+        the `error` field so callers can render them inline."""
+        try:
+            env = self.read_analysis(filename)
+        except (OSError, json.JSONDecodeError) as e:
+            return AnalysisSummary(filename=filename, error=str(e))
+        if not isinstance(env, dict):
+            return AnalysisSummary(
+                filename=filename, error="envelope is not a dict")
+        chapters = env.get("chapters") or []
+        titles = env.get("titles") or []
+        if not isinstance(chapters, list):
+            return AnalysisSummary(
+                filename=filename, error="chapters field is not a list")
+        start_str = end_str = ""
+        if chapters:
+            start_str = str((chapters[0] or {}).get("start") or "")
+            end_str = str((chapters[-1] or {}).get("end") or "")
+        title_count = 0
+        if isinstance(titles, list):
+            title_count = sum(
+                1 for t in titles if isinstance(t, str) and t.strip())
+        return AnalysisSummary(
+            filename=filename,
+            chapter_count=len(chapters),
+            title_count=title_count,
+            start_str=start_str,
+            end_str=end_str,
+        )
 
     def list_analysis_artifacts(self, lang_iso: str):
         from core.subtitle_analysis import existing_artifacts
