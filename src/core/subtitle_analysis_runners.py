@@ -155,13 +155,30 @@ def build_transcript_text(srt_path: str, lang_iso: str) -> str:
 
 
 def build_chapter_transcript_text(srt_path: str, chapters: list[dict],
-                                    lang_iso: str) -> str:
-    """Return the markdown text for the per-chapter transcript. Groups
-    cues into the supplied chapter boundaries and emits one section per
-    chapter. Pure function — no file IO, no analysis.json reads. Caller
-    supplies the chapters list."""
+                                    lang_iso: str,
+                                    *, titles: list[str] | None = None) -> str:
+    """Return the markdown text for the per-chapter transcript +
+    analysis bundle. For each chapter we emit:
+
+      ## start–end  Chapter Title
+      **摘要 / Summary**: refined paragraph (if present)
+      **要点 / Key points**:
+        - bullet
+        - bullet
+      <verbatim transcript text>
+
+    `titles` is the candidate-title list from analysis.json — rendered
+    as a top-of-file section so the user can pick one for the upload
+    title. Pure function — no file IO."""
     if not chapters:
         raise ValueError("chapters list is empty")
+    is_zh = (lang_iso or "").lower().startswith("zh")
+    summary_label = "摘要" if is_zh else "Summary"
+    keypoints_label = "要点" if is_zh else "Key points"
+    empty_label = "（此章节内无字幕）" if is_zh else "(no subtitle in this chapter)"
+    titles_label = "候选标题" if is_zh else "Candidate titles"
+    body_label = "文字稿" if is_zh else "Transcript"
+
     subs = list(srt.parse(read_srt(srt_path)))
     grouped: list[tuple[dict, list[str]]] = [(c, []) for c in chapters]
     for sub in subs:
@@ -176,15 +193,47 @@ def build_chapter_transcript_text(srt_path: str, chapters: list[dict],
                 bucket.append(text)
                 break
 
-    lines = [f"# 分章节全文 ({lang_iso})", ""]
+    lines: list[str] = [f"# 分章节全文 ({lang_iso})", ""]
+
+    # Candidate titles section — show as a simple list so the user can
+    # copy-paste one into the upload form.
+    clean_titles = [str(t).strip() for t in (titles or []) if str(t).strip()]
+    if clean_titles:
+        lines.append(f"## {titles_label}")
+        lines.append("")
+        for t in clean_titles:
+            lines.append(f"- {t}")
+        lines.append("")
+
     for ch, bucket in grouped:
-        lines.append(f"## {ch.get('start', '')} {ch.get('title', '').strip()}")
+        start = (ch.get("start") or "").strip()
+        end = (ch.get("end") or "").strip()
+        title = (ch.get("title") or "").strip()
+        timeline = f"{start}–{end}" if end else start
+        lines.append(f"## {timeline}  {title}".rstrip())
+        lines.append("")
+
+        refined = (ch.get("refined") or "").strip()
+        if refined:
+            lines.append(f"**{summary_label}**: {refined}")
+            lines.append("")
+
+        kps = ch.get("key_points") or []
+        clean_kps = [str(p).strip() for p in kps if str(p).strip()]
+        if clean_kps:
+            lines.append(f"**{keypoints_label}**:")
+            for p in clean_kps:
+                lines.append(f"- {p}")
+            lines.append("")
+
+        lines.append(f"**{body_label}**:")
         lines.append("")
         if bucket:
             lines.append(" ".join(bucket))
         else:
-            lines.append("（此章节内无字幕）")
+            lines.append(empty_label)
         lines.append("")
+
     return "\n".join(lines)
 
 
