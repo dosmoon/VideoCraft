@@ -161,11 +161,11 @@ class Project:
         if os.path.exists(folder):
             raise FileExistsError(f"Project folder already exists: {folder}")
 
-        # Create skeleton dirs
+        # Create skeleton dirs. Materials / creations subdirs are
+        # created on demand when the first instance is registered.
         os.makedirs(os.path.join(folder, Project.MARKER_DIR), exist_ok=True)
-        os.makedirs(os.path.join(folder, Project.SOURCE_DIR_NAME), exist_ok=True)
-        os.makedirs(os.path.join(folder, Project.SUBTITLES_DIR_NAME), exist_ok=True)
-        os.makedirs(os.path.join(folder, Project.DERIVATIVES_DIR_NAME), exist_ok=True)
+        os.makedirs(os.path.join(folder, Project.MATERIALS_DIR_NAME), exist_ok=True)
+        os.makedirs(os.path.join(folder, Project.CREATIONS_DIR_NAME), exist_ok=True)
 
         meta = ProjectMeta(name=name, created_at=now_iso(), source=source)
 
