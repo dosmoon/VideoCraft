@@ -81,6 +81,16 @@ class SubtitleToolApp(ToolBase):
         self.project = project
         self.instance_name = instance_name
 
+        # Slice Q (ADR-0005): pick or recall the bound material instance.
+        from creations import material_binding
+        config_path = os.path.join(
+            project.creation_instance_dir("bilingual_video", instance_name),
+            "config.json")
+        bound = material_binding.get_or_bind(master, project, config_path)
+        if bound is None:
+            raise RuntimeError("Bilingual video: material binding cancelled.")
+        self.material_type, self.material_instance_id = bound
+
         # 状态变量
         self.video_duration = 0.0
         self._src_w = 0
@@ -570,7 +580,7 @@ class SubtitleToolApp(ToolBase):
         """Source video is locked to the project. "Browse" opens the source
         folder so the user can verify which file the project points at."""
         try:
-            os.startfile(os.path.dirname(_nv_paths.source_video_path(self.project)))
+            os.startfile(os.path.dirname(_nv_paths.source_video_path(self.project, self.material_instance_id)))
         except OSError:
             pass
 
@@ -614,7 +624,7 @@ class SubtitleToolApp(ToolBase):
         # Lock the source video field.
         self.entry_video.config(state="normal")
         self.entry_video.delete(0, tk.END)
-        self.entry_video.insert(0, _nv_paths.source_video_path(self.project))
+        self.entry_video.insert(0, _nv_paths.source_video_path(self.project, self.material_instance_id))
         self.entry_video.config(state="readonly")
 
         # Lock the output field to derivatives/<type>/<instance>/output.mp4.
@@ -633,9 +643,9 @@ class SubtitleToolApp(ToolBase):
         # Probe duration + resolution so the top bar shows duration and the
         # preview/burn passthrough path knows the effective aspect (= source
         # dims) without re-probing per refresh.
-        self.video_duration = _probe_video_duration(_nv_paths.source_video_path(self.project))
+        self.video_duration = _probe_video_duration(_nv_paths.source_video_path(self.project, self.material_instance_id))
         self._src_w, self._src_h = _probe_video_resolution(
-            _nv_paths.source_video_path(self.project))
+            _nv_paths.source_video_path(self.project, self.material_instance_id))
         if self.video_duration > 0:
             hms = time.strftime('%H:%M:%S', time.gmtime(self.video_duration))
             self.label_duration.config(
@@ -645,7 +655,7 @@ class SubtitleToolApp(ToolBase):
         # current style + cues so the user sees their preset choices land.
         if self._preview is not None:
             try:
-                self._preview.set_source(_nv_paths.source_video_path(self.project), 0.0, 0.0)
+                self._preview.set_source(_nv_paths.source_video_path(self.project, self.material_instance_id), 0.0, 0.0)
             except Exception as e:
                 logger.debug(f"Preview set_source failed: {e}")
             self._push_preview()
@@ -656,7 +666,7 @@ class SubtitleToolApp(ToolBase):
         Returns absolute path of the picked SRT or None if cancelled.
         """
         from core import lang_names
-        subs_dir = _nv_paths.subtitles_dir(self.project)
+        subs_dir = _nv_paths.subtitles_dir(self.project, self.material_instance_id)
         files = []
         try:
             for fn in sorted(os.listdir(subs_dir)):
@@ -821,7 +831,7 @@ class SubtitleToolApp(ToolBase):
                 # Lazy backfill: pre-snapshot-principle instances (and
                 # instances whose dir got cleaned) get a one-shot copy
                 # from upstream on first re-open.
-                upstream = os.path.join(_nv_paths.subtitles_dir(self.project),
+                upstream = os.path.join(_nv_paths.subtitles_dir(self.project, self.material_instance_id),
                                           f"{iso}.srt")
                 self._ensure_srt_snapshot(upstream)
             chosen = snap if os.path.isfile(snap) else None
@@ -935,7 +945,7 @@ class SubtitleToolApp(ToolBase):
             # — publish.md then renders without a chapter block.
             chapters: list[dict] = []
             ch_path = os.path.join(
-                _nv_paths.subtitles_dir(self.project),
+                _nv_paths.subtitles_dir(self.project, self.material_instance_id),
                 f"{lang_iso}.analysis.json")
             if os.path.isfile(ch_path):
                 try:

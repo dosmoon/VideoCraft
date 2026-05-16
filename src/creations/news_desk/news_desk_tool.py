@@ -116,6 +116,16 @@ class NewsDeskApp(ToolBase):
         self.project = project
         self.instance_name = instance_name
 
+        # Slice Q (ADR-0005): pick or recall the bound material instance.
+        from creations import material_binding
+        config_path = os.path.join(
+            project.creation_instance_dir("news_desk", instance_name),
+            "config.json")
+        bound = material_binding.get_or_bind(master, project, config_path)
+        if bound is None:
+            raise RuntimeError("News desk: material binding cancelled.")
+        self.material_type, self.material_instance_id = bound
+
         master.title(tr("tool.news_desk.title", instance=instance_name))
         master.geometry("1200x720")
 
@@ -334,7 +344,8 @@ class NewsDeskApp(ToolBase):
             return
 
         ctx = nd_components.ProjectContext(
-            project=self.project, duration=self._duration,
+            project=self.project,
+            material_instance_id=self.material_instance_id, duration=self._duration,
             instance_dir=self._instance_dir(),
             seek_to=(self._preview.seek if self._preview else None))
 
@@ -375,7 +386,8 @@ class NewsDeskApp(ToolBase):
             return
         comp = self._components[idx]
         ctx = nd_components.ProjectContext(
-            project=self.project, duration=self._duration,
+            project=self.project,
+            material_instance_id=self.material_instance_id, duration=self._duration,
             instance_dir=self._instance_dir())
         try:
             source.handler(comp, ctx)
@@ -541,7 +553,7 @@ class NewsDeskApp(ToolBase):
         self.master.title(tr("tool.news_desk.project.title",
                               type=type_disp, instance=self.instance_name))
 
-        src = _nv_paths.source_video_path(self.project)
+        src = _nv_paths.source_video_path(self.project, self.material_instance_id)
         self.entry_video.config(state="normal")
         self.entry_video.delete(0, tk.END)
         self.entry_video.insert(0, src)
@@ -683,7 +695,8 @@ class NewsDeskApp(ToolBase):
                           watermark=WatermarkStyle(enabled=False))
 
         ctx = nd_components.ProjectContext(
-            project=self.project, duration=self._duration,
+            project=self.project,
+            material_instance_id=self.material_instance_id, duration=self._duration,
             instance_dir=self._instance_dir())
 
         # Component list position drives z-order: top of list = topmost
@@ -961,7 +974,7 @@ class NewsDeskApp(ToolBase):
     def _do_export(self) -> None:
         if self._processing:
             return
-        src = _nv_paths.source_video_path(self.project)
+        src = _nv_paths.source_video_path(self.project, self.material_instance_id)
         if not os.path.isfile(src):
             messagebox.showerror("VideoCraft",
                                   tr("tool.news_desk.error.source_missing"),
@@ -1014,7 +1027,7 @@ class NewsDeskApp(ToolBase):
     def _do_preview_render(self) -> None:
         if self._processing:
             return
-        src = _nv_paths.source_video_path(self.project)
+        src = _nv_paths.source_video_path(self.project, self.material_instance_id)
         if not os.path.isfile(src):
             messagebox.showerror("VideoCraft",
                                   tr("tool.news_desk.error.source_missing"),
@@ -1127,7 +1140,8 @@ class NewsDeskApp(ToolBase):
             return ""
         from creations.news_desk.components.subtitle import _resolve_srt_path
         ctx = nd_components.ProjectContext(
-            project=self.project, duration=self._duration,
+            project=self.project,
+            material_instance_id=self.material_instance_id, duration=self._duration,
             instance_dir=self._instance_dir())
         return _resolve_srt_path(comp, ctx)
 
@@ -1224,7 +1238,7 @@ class NewsDeskApp(ToolBase):
         # Canonical view: context.json (AI-corrected) wins; basic_info
         # falls back for fields context hasn't filled yet. publish.md
         # consumers should always see the same truth as renderers.
-        merged = source_context.combined_dict(_nv_paths.source_dir(self.project))
+        merged = source_context.combined_dict(_nv_paths.source_dir(self.project, self.material_instance_id))
         bi = source_context.SourceBasicInfo.from_dict(merged)
         ctx = source_context.SourceContext.from_dict(merged)
 

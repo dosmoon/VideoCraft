@@ -169,7 +169,7 @@ def _import_event_date(instance: dict, ctx: ProjectContext) -> None:
     """[⇩ Import event date] — pull date from the canonical combined view
     (context.json's AI-corrected value wins, basic_info as fallback) and
     nudge defaults toward the date-stamp look (smaller, bottom-left)."""
-    merged = source_context.combined_dict(_nv_paths.source_dir(ctx.project))
+    merged = source_context.combined_dict(_nv_paths.source_dir(ctx.project, ctx.material_instance_id))
     date = (merged.get("event_date") or "").strip()
     if not date:
         return

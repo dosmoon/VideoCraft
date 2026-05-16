@@ -580,7 +580,7 @@ def _import_from_analysis(instance: dict, ctx: ProjectContext) -> None:
     UI bindings pointing at the stale empty list until the workbench
     is reopened.
     """
-    subs_dir = _nv_paths.subtitles_dir(ctx.project)
+    subs_dir = _nv_paths.subtitles_dir(ctx.project, ctx.material_instance_id)
     if not os.path.isdir(subs_dir):
         return
     for fn in sorted(os.listdir(subs_dir)):

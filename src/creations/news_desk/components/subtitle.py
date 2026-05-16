@@ -184,7 +184,7 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
                               path=rel, count=n, dur=_fmt_duration(dur)))
 
     def _import_srt() -> None:
-        initial = _nv_paths.subtitles_dir(ctx.project)
+        initial = _nv_paths.subtitles_dir(ctx.project, ctx.material_instance_id)
         src = filedialog.askopenfilename(
             parent=parent.winfo_toplevel(),
             initialdir=initial if os.path.isdir(initial) else ctx.project.folder,
