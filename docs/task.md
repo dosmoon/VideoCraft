@@ -5,60 +5,73 @@
 
 ---
 
-## news_desk 章节体验全面收尾 + 布局回正 — 已上线
+## news_desk dogfood 第二轮 — 已收尾
 
-HEAD: `0088edd` (已 push origin/main)，workspace clean。
+HEAD: `983e11f` (已 push origin/main)，workspace clean。
+
+这轮从 chapter_editor 修 bug 开始，一路走到导出全链路重塑，落了一个**架构级 ADR**。
 
 ### 本次会话的 commit 串
 
 | commit | 内容 |
 |---|---|
-| `0ff9da9` | Hero Card overlay：新 ChapterHeroCardOverlay/Style，ass renderer + WebView 镜像；chapter `start_card` 路由到 hero（不再用 ChapterPointCardOverlay）；inline_style 字段允许 per-spec style override |
-| `8ed2db4` | chapter 单一 kind 模型：删 end_summary mode；inline 详情面板替换模态对话框（点 row → seek + 填详情 + 实时回写） |
-| `3f3f458` | 章节导入按钮挪到工具栏 + 弹窗解释 4 段（用 UI 实际词汇 📑「标题与章节」，不再用代码内部名 subtitle.pack/refined/key_points） |
-| `6a737c9` | `src/ui/dialog_utils.py::center_dialog_on_parent` canonical helper + 收编 11 个历史拷贝粘贴 |
-| `df134dd` | dialog auto-size + minsize + 按钮先 pack bottom（修被裁掉的按钮） |
-| `0088edd` | 布局回正：v0.3 设计文档 §2 — 左竖向 (preview 上 / list 下) + 右属性满高；「组件」→「图层」 |
+| `9e5a547` | 修 sidebar「新闻背景 (AI)」5/5 误显示（用 read_context 而非 combined_dict） |
+| `0513206` | chapter_editor 加可编辑详情 + 拆分语义新增章节 + 双击起点列 |
+| `ff56ccf` | chapter_editor 字段编辑全收进底部详情面板 |
+| `eacc1e9` | chapter_editor 用 focus_force 治 WebView2 焦点 |
+| `ed613ad` | chapter_editor 接入 core.composition.CompositionPreview（不再自造 video HTML） |
+| `ae9ef1b` | composition.preview 默认 = 最小行为（[[feedback_minimal_defaults]]） |
+| `8a104c5` | chapter_editor 用 ffprobe 真实尺寸算字幕 wrap budget |
+| `509cd10` | chapter_editor 字幕字号调小 + 加 stroke + Spinbox |
+| `bca3c8f` | news_desk/chapter import 用 clear+extend 不替换 list 对象 |
+| `85e69dd` | composition.preview 画图层顺序对齐 burn z_order |
+| `2340ba2` | news_desk 列表 UI 顺序真正驱动 render z-order，端到端 |
+| `c99c4aa` | news_desk 导出 bundle 初版（publish/transcript/chapters_md/chapter_videos 4 勾） |
+| `b8968b1` | 导出对话框加字幕语言下拉 |
+| `4957b39` | **ADR-0003 派生作品全面解耦** |
+| `43b72d6` | **Phase 1**: subtitle 组件改快照模式 + 导出全部从 instance 派生 |
+| `02c798a` | "snapshot" 字面去 jargon |
+| `983e11f` | candidate titles 一起从 chapter 快照 + publish.md 第一个 section |
 
-### 关键模型/文档变更
+### 关键架构变更
 
-- **章节是唯一 kind，模式是 view filter**：起始大卡 = "用 chapter 数据渲一次 hero card"，不是单独"大卡数据"。end_summary 删除（曾 DEFERRED，单一 kind 模型下没必要）
-- **chapter.py 模块 docstring 写明**：news_desk 当前**复用 analysis.json schema**（过渡设计），未来会拥有自己的 schema（参见模块顶部 ARCHITECTURE NOTE）
-- **独立性目标**：news_desk 派生**只需 source 视频**，SRT/analysis.json/context.json 都是可选；手工建一个完整章节列表 + 添加水印 + 跑通 MP4 必须能走通——这是接下来要验证的
-- **WebView 修复**：N 字幕路径下 sub1+sub2 都 disabled 时，`drawSubtitles` 早 return 导致 extras 也不画 → 删掉 early return（对应历史会话）
-- **图片水印真加载**：`new Image()` + file:// 缓存（早先是占位框）
+- **[[ADR-0003]]**：派生作品全面解耦——源层 = 数据准备工坊，派生层 = N 个独立编辑器
+- **subtitle 组件**：路径引用 → 本地快照（`<instance_dir>/subtitles/<id>.srt`）。Phase 2/3（cue 编辑、增删）没做，独立 session
+- **chapter 组件** import 现在一次同时快照 `schedule` + `titles`（同源 analysis.json）
+- **导出对话框**：3 勾选项（publish/transcript/chapter_videos），全部从 instance 状态派生
+- **publish.md**：候选标题首屏 + 章节详情（refined + key_points + 文字稿）合并成一个文件
 
 ### 学到的元规则（已存为 memory）
 
-- `feedback_check_design_docs` — 改 UI 前 grep `docs/draft/` 和 `docs/design/`，别拍脑袋
-- `feedback_user_facing_naming` — UI 文案绝不用代码内部名（task / field / class），先 grep i18n 找 UI 实际叫什么
-- `reference_dialog_pattern` — 弹窗标准模板在 `src/ui/dialog_utils.py` docstring，照着抄
+- [[feedback_minimal_defaults]] — 共享模块默认 = 最小行为；看见多个消费者 opt-out 就是默认选错的信号
 
-## 下一步候选
+---
 
-1. **真实使用攒反馈** — 拿一个真实新闻视频跑一遍：3+ 字幕 + 2+ 水印 + 章节起始大卡，预览 vs 烧录对比
-2. **chapter 导入合并策略** — 当前 `_import_from_analysis` 整个覆盖（有红字警告但仍危险），加 partial-merge：保留用户手工添加 / 编辑过的 row
-3. **多发言人 → 名牌组件** — 等 AI 提取多发言人 schema 出现
-4. **章节其它视觉模式** — 如果 dogfood 后觉得 hero / top_strip 不够
-5. **组件框架推广** — clip_script / bilingual_video 用同一 components-based 重构（大工程，先观察 news_desk 几周）
+## 下一步候选（按优先级）
 
-我建议 **1 → 2**：先 dogfood，再补 import 安全网。
+1. **真实使用攒反馈** — 把这一整套跑一遍真实素材，看 publish.md / chapter videos 出来的效果
+2. **subtitle Phase 2** — cue 内联编辑（仿 chapter_editor inline 模式：点 row → seek + 在下方编辑文本/时间）。先验证 dogfood 中是否真的需要在 news_desk 里改字幕
+3. **subtitle Phase 3** — 增删 cue + 重新导入按钮（带本地编辑覆盖警告）
+4. **多发言人 → 名牌组件** — 等 AI 提取多发言人 schema 出现
+5. **组件框架推广到 clip_script** — clip_script 同样走 ADR-0003 解耦？需要先想清楚 clip 形态跟 news_desk 的差异（clip 是切片产出 N 个 short，news_desk 是整片）
+
+老 instance 没 titles 字段——用户必须重新点一次 chapter import 才能在 publish.md 看到候选标题。是 ADR-0003 一致性的代价。
 
 ---
 
 ## 仍生效的开发约定
 
 - prompt 改动必须 git commit（不能只改 src/core/prompts.py 不刷盘 prompts/*.md，反过来也是）
-- 修 ComponentSpec 改组件原语前回看 `[[feedback_no_code_structure_in_ux]]`
-- AI 任务设计前看 `[[feedback_ai_call_budget]]` + `[[reference_claude_cli_options]]`
-- 改 UI 布局/模块结构前 grep `docs/`（`[[feedback_check_design_docs]]`）
-- UI 文案先 grep `src/i18n/*.json` 找用户实际看见的词（`[[feedback_user_facing_naming]]`）
+- 改 UI 布局/模块结构前 grep `docs/`（[[feedback_check_design_docs]]）
+- UI 文案先 grep `src/i18n/*.json` 找用户实际看见的词（[[feedback_user_facing_naming]]）
 - 新 `tk.Toplevel` 弹窗照 `src/ui/dialog_utils.py` docstring 模板写
+- 派生作品**任何**新代码必须遵守 [[ADR-0003]]——render/export 只读 instance 状态，不回扫上游
 
 ---
 
 ## 不在本任务范围（备忘）
 
-- v0.3 设计文档 `docs/draft/news_desk-ux-v0.3.md` **A/B 类分类那部分**已被 v0.4 推翻；**布局那部分仍生效**（已对齐）
-- timeline 拖拽编辑——v0.4 砍掉了，列表顺序 = z-order，足够
-- 名牌 / PullQuote / 引文 / 数据卡 等新组件——等需求清楚再加
+- chapter_editor 双击迟钝是 WebView2 焦点系统级问题，focus_force 已尽可能修，剩余偶发不彻底
+- subtitle Phase 2/3：cue 编辑能力。今天没做
+- image_watermark 还在引用模式（ADR-0003 灰区）
+- chapter `_import_from_analysis` 整覆盖：保留 partial-merge 的需求记着
