@@ -10,9 +10,8 @@ the timeline UI — per-shot composition driven by structured config, with
 overlays as the open-ended extension point for news-desk style elements
 (chapter cards, lower-thirds, tickers, ...).
 
-Stage 1 consumer: derivatives/clip (AI Clip workbench).
-Stage 2: derivatives/bilingual_video (subtitle burn).
-Future: derivatives/news_desk.
+Consumers: creations/clip (AI Clip workbench), creations/news_desk
+(press-briefing / news-show composer).
 """
 
 from .style import (

@@ -129,8 +129,8 @@ def render_news_desk_publish(
         lines.append("```")
         lines.append("")
 
-    # Chapter block — same YouTube description format the bilingual
-    # template uses, so users can append it verbatim.
+    # Chapter block — standard YouTube description format,
+    # users can append verbatim to the description.
     lines.append("## " + t(lang_iso, "章节", "Chapters"))
     lines.append("")
     if chapters:

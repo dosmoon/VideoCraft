@@ -262,9 +262,9 @@ def test_publish_writes_into_instance_dir():
 # ── F. Decoupling ────────────────────────────────────────────────────────────
 
 def test_news_desk_does_not_import_other_creation_plugins():
-    """news_desk MUST NOT import creations.clip / creations.bilingual_video.
+    """news_desk MUST NOT import other creation plugins.
     Each creation plugin is independent."""
-    forbidden_imports = ["creations.clip", "creations.bilingual_video"]
+    forbidden_imports = ["creations.clip"]
     violations: list[str] = []
     for root, dirs, files in os.walk(NEWS_DESK_DIR):
         if "__pycache__" in root:

@@ -329,9 +329,8 @@ class ClipToolApp(ToolBase):
         self._sub_stroke_color = tk.StringVar(value=s.stroke_color)
         self._sub_stroke_width = tk.IntVar(value=s.stroke_width)
         self._sub_position = tk.StringVar(value=s.position)
-        # Normalized layout (percent in UI, fraction in schema). Same
-        # contract as bilingual_video — both renderers consume via
-        # core.composition.layout.
+        # Normalized layout (percent in UI, fraction in schema).
+        # Renderer consumes the fraction form via core.composition.layout.
         self._sub_block_margin_pct = tk.DoubleVar(value=s.block_margin_pct * 100.0)
         self._sub_track_gap_pct = tk.DoubleVar(value=s.track_gap_pct * 100.0)
 

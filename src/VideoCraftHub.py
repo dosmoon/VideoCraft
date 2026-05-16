@@ -35,7 +35,6 @@ from i18n import tr
 # Plugin self-registration. Importing each creation plugin package
 # triggers its register() call, populating the creations registry
 # (see ADR-0004). Materials follow the same pattern in slice F.
-import creations.bilingual_video   # noqa: F401
 import creations.clip              # noqa: F401
 import creations.news_desk         # noqa: F401
 import creations
@@ -51,7 +50,6 @@ TOOL_MAP = {
     "yt-dlp":      {"file": "tools/download/yt_dlp_tool.py",      "class": "YouTubeDownloader"},
     "speech2text": {"file": "tools/speech/speech2text.py",         "class": "Speech2TextApp"},
     "translate":   {"file": "tools/translate/translate_srt.py",    "class": "TranslateApp"},
-    "subtitle":    {"file": "creations/bilingual_video/subtitle_tool.py", "class": "SubtitleToolApp"},
     "clip":        {"file": "creations/clip/clip_tool.py",          "class": "ClipToolApp"},
     "news-desk":   {"file": "creations/news_desk/news_desk_tool.py", "class": "NewsDeskApp"},
     "word-subtitle": {"file": "tools/subtitle/word_subtitle.py",   "class": "WordSubtitleApp"},
@@ -1492,9 +1490,9 @@ class VideoCraftHub:
             tf._set_status_cb = lambda s, k=registry_key: tab_bar.set_status(k, s)
 
             # Tools take an optional initial_file (legacy plumbing). Project-
-            # only tools (clip, subtitle, news-desk) don't accept initial_file.
+            # only tools (clip, news-desk) don't accept initial_file.
             kwargs: dict = {}
-            project_only = ("clip", "subtitle", "news-desk")
+            project_only = ("clip", "news-desk")
             if initial_file is not None and tool_key not in project_only:
                 kwargs["initial_file"] = initial_file
             # Project-only tools must receive project + instance_name.
