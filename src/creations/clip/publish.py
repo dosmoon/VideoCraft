@@ -154,13 +154,20 @@ def render_clip_index(
         dur = fmt_dur(s.get("duration_sec") or 0)
         score = s.get("score")
         score_s = "—" if score is None else str(score)
-        # Prefer the sidecar's `filename` (records the hook-bearing
-        # name picked at render time). Fall back to the legacy
-        # clip_NNN.mp4 convention for older sidecars without it.
-        mp4 = (s.get("filename") or "").strip() or f"clip_{idx:03d}.mp4"
-        md = os.path.splitext(mp4)[0] + ".md"
+        # Sidecar's `filename` records the hook-bearing name picked at
+        # render time. Sidecars without it are broken (pre-current
+        # render code wrote those) — show a dash so the user notices
+        # and re-renders, instead of silently linking a guessed path.
+        fname = (s.get("filename") or "").strip()
+        if fname:
+            md = os.path.splitext(fname)[0] + ".md"
+            file_cell = f"[{fname}]({fname})"
+            md_cell = f"[{md}]({md})"
+        else:
+            file_cell = "—"
+            md_cell = "—"
         lines.append(f"| {idx:03d} | {ttl} | {dur} | {score_s} "
-                     f"| [{mp4}]({mp4}) | [{md}]({md}) |")
+                     f"| {file_cell} | {md_cell} |")
 
     return "\n".join(lines).rstrip() + "\n"
 

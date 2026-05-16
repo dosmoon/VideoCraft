@@ -782,10 +782,10 @@ class ClipToolApp(ToolBase):
     # ── Clip file naming ─────────────────────────────────────────────────
     #
     # Clip basename is `clip_NNN` plus the hook text (when present),
-    # joined with `_`. The hook prefix means the user can scan the
-    # output folder by content rather than opening every .md. All file
-    # ops resolve via _existing_clip_files() so old `clip_NNN.mp4`
-    # outputs and new `clip_NNN_<hook>.mp4` ones coexist on disk.
+    # joined with `_`. The hook suffix means the user can scan the
+    # output folder by content rather than opening every .md. Hook-less
+    # clips fall back to the bare `clip_NNN` form. All file ops resolve
+    # via _existing_clip_files() so both shapes are addressable.
 
     @staticmethod
     def _sanitize_filename_part(text: str, max_len: int = 30) -> str:
@@ -811,9 +811,9 @@ class ClipToolApp(ToolBase):
         return f"clip_{out_idx:03d}"
 
     def _existing_clip_files(self, out_idx: int) -> list[str]:
-        """All on-disk files belonging to a given output index, across
-        legacy `clip_NNN.{mp4,json,md}` and current `clip_NNN_*.{...}`
-        naming. Used for conflict checks, deletion, and pre-render
+        """All on-disk files belonging to a given output index, covering
+        both `clip_NNN.{mp4,json,md}` (no hook) and `clip_NNN_<hook>.{...}`
+        shapes. Used for conflict checks, deletion, and pre-render
         cleanup when a hook change would otherwise leave stale pairs."""
         inst = self._instance_dir()
         prefix = f"clip_{out_idx:03d}"
@@ -900,8 +900,9 @@ class ClipToolApp(ToolBase):
         ov = self._clips_overrides.get(idx) or {}
         if "outro_text" in ov:
             return str(ov["outro_text"])
-        # AI hotclips schema: `outro` is the closing CTA line; falls back
-        # to empty for legacy hotclips.json that predate the outro field.
+        # AI hotclips schema: `outro` is the closing CTA line. .get()
+        # is defensive against AI output occasionally violating the
+        # schema's required-fields contract.
         return (hot.get("outro") or "").strip()
 
     def _effective_tags(self, idx: int) -> list[str]:
