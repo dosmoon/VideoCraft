@@ -24,7 +24,7 @@ from datetime import datetime
 from tkinter import messagebox, ttk
 
 from core.project_schema import ORIGIN_LINK, ORIGIN_LOCAL
-from core.source_context import read_basic_info
+from materials.news_video.schema import read_basic_info
 from ui.web_preview import WebPreviewFrame
 from i18n import tr
 
@@ -220,7 +220,7 @@ def build_source_preview(
              anchor="w").pack(side="left")
 
     def _on_edit_context():
-        from ui.source_basic_info_dialog import show_source_basic_info_dialog
+        from materials.news_video.ui.source_basic_info_dialog import show_source_basic_info_dialog
         if show_source_basic_info_dialog(outer, project.source_dir):
             _refresh_manual()
     tk.Button(header, text=tr("source_preview.btn_edit_context"), relief="flat",

@@ -613,7 +613,7 @@ class VideoCraftHub:
 
     def show_subtitle_preview(self, srt_path: str, lang_iso: str) -> None:
         """Sidebar click handler: show SRT contents + inline issues."""
-        from ui.srt_preview_pane import build_srt_preview
+        from materials.news_video.ui.srt_preview_pane import build_srt_preview
         key = f"subtitle:{lang_iso}"
         if self._preview_key != key:
             self._clear_preview_tab()
@@ -637,7 +637,7 @@ class VideoCraftHub:
 
     def show_analysis_preview(self, artifact) -> None:
         """Sidebar click handler: preview a subtitle analysis artifact in tab 0."""
-        from ui.subtitle_analysis_preview import build_analysis_preview
+        from materials.news_video.ui.subtitle_analysis_preview import build_analysis_preview
         key = f"analysis:{artifact.lang_iso}:{artifact.type.kind}"
         if self._preview_key != key:
             self._clear_preview_tab()
@@ -676,7 +676,7 @@ class VideoCraftHub:
         """Sidebar click handler: show source/video.mp4 in the preview tab."""
         if self.project.source_status() != "ready":
             return
-        from ui.source_preview_pane import build_source_preview
+        from materials.news_video.ui.source_preview_pane import build_source_preview
         key = "source"
         if self._preview_key != key:
             self._clear_preview_tab()
@@ -690,7 +690,7 @@ class VideoCraftHub:
         """Sidebar click handler: show the AI-generated event context pane."""
         if self.project.source_status() != "ready":
             return
-        from ui.news_context_pane import build_news_context_preview
+        from materials.news_video.ui.news_context_pane import build_news_context_preview
         key = "news_context"
         if self._preview_key != key:
             self._clear_preview_tab()
@@ -877,8 +877,8 @@ class VideoCraftHub:
 
     def _on_source_button(self) -> None:
         """Add (when missing) or Modify (when present)."""
-        from ui.source_add_dialog import show_source_add_dialog
-        from ui.source_prepare_modal import SourcePrepareModal
+        from materials.news_video.ui.source_add_dialog import show_source_add_dialog
+        from materials.news_video.ui.source_prepare_modal import SourcePrepareModal
         from ui.disclaimer_dialog import show_if_needed as show_disclaimer_if_needed
         from core.source_acquire import AcquireError, ERR_CANCELLED
         from core.project_schema import ORIGIN_LINK
@@ -968,8 +968,8 @@ class VideoCraftHub:
         """Run ASR. When preset_lang_iso == "ASK" (default), show the dialog.
         Otherwise skip the dialog and use the provided ISO directly (used by
         the per-row regenerate action which already knows the language)."""
-        from ui.subtitles_dialogs import show_asr_dialog
-        from ui.subtitles_progress_modal import SubtitlesProgressModal
+        from materials.news_video.ui.subtitles_dialogs import show_asr_dialog
+        from materials.news_video.ui.subtitles_progress_modal import SubtitlesProgressModal
         from core.subtitle_pipeline import run_asr
         from core.ai.errors import AIError, Kind
 
@@ -1013,8 +1013,8 @@ class VideoCraftHub:
         """Run translation. When preset_target_iso is None (default), show the
         target picker. Otherwise skip the dialog and re-translate the given
         ISO directly (used by per-row regenerate)."""
-        from ui.subtitles_dialogs import show_translate_dialog
-        from ui.subtitles_progress_modal import SubtitlesProgressModal
+        from materials.news_video.ui.subtitles_dialogs import show_translate_dialog
+        from materials.news_video.ui.subtitles_progress_modal import SubtitlesProgressModal
         from core.subtitle_pipeline import run_translate
         from core.ai.errors import AIError, Kind
 
@@ -1282,7 +1282,7 @@ class VideoCraftHub:
         from core.subtitle_analysis import analysis_path
         from core.subtitle_analysis_runners import run as run_analysis
         from core.ai.errors import AIError, Kind as AIKind
-        from ui.subtitles_progress_modal import SubtitlesProgressModal
+        from materials.news_video.ui.subtitles_progress_modal import SubtitlesProgressModal
 
         srt_path = os.path.join(self.project.subtitles_dir, f"{lang_iso}.srt")
         if not os.path.isfile(srt_path):

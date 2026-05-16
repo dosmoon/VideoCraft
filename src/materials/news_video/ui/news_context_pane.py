@@ -19,7 +19,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from core.source_context import (
+from materials.news_video.schema import (
     SourceContext, read_context, read_platform_metadata,
 )
 from i18n import tr
@@ -128,7 +128,7 @@ def build_news_context_preview(parent: tk.Frame, project) -> tk.Frame:
 
     # Handlers — defined after _refresh so they can call it.
     def _on_edit():
-        from ui.source_context_dialog import show_source_context_dialog
+        from materials.news_video.ui.source_context_dialog import show_source_context_dialog
         if show_source_context_dialog(outer, project.source_dir):
             _refresh()
     edit_btn.configure(command=_on_edit)
@@ -143,7 +143,7 @@ def build_news_context_preview(parent: tk.Frame, project) -> tk.Frame:
             err: Exception | None = None
             ctx: SourceContext | None = None
             try:
-                from core.source_context_ai import extract
+                from materials.news_video.ai_fill import extract
                 ctx = extract(project.source_dir, project.subtitles_dir)
             except Exception as e:
                 err = e
@@ -161,7 +161,7 @@ def build_news_context_preview(parent: tk.Frame, project) -> tk.Frame:
                     )
                     return
                 # Persist merged context then re-render.
-                from core.source_context import write_context
+                from materials.news_video.schema import write_context
                 write_context(project.source_dir, ctx)
                 status_lbl.configure(text=tr("news_context.ai_done"),
                                       fg="#2a7")

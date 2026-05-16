@@ -30,7 +30,11 @@ from core.chapters_io import (
 from core.subtitle_pipeline import ProgressInfo
 from core.ai.cancellation import CancellationToken
 from core.subtitle_ops import read_srt, srt_end_seconds as _srt_end_seconds
-from core.source_context import combined_prompt_block as _combined_prompt_block
+# TODO(ADR-0004): core/ should not import from a specific material plugin.
+# Cleanest fix: parameterize the runner so callers (which know the material
+# type) inject the context prompt block. Documented wart until a second
+# material type lands and forces the abstraction.
+from materials.news_video.schema import combined_prompt_block as _combined_prompt_block
 
 
 # ── Shared output helpers ────────────────────────────────────────────────────

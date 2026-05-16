@@ -14,7 +14,7 @@ from __future__ import annotations
 import tkinter as tk
 from tkinter import ttk
 
-from core.source_context import (
+from materials.news_video.schema import (
     SourceBasicInfo, read_basic_info, write_basic_info,
 )
 from i18n import tr

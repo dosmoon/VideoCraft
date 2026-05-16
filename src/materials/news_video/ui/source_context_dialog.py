@@ -21,7 +21,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from core.source_context import (
+from materials.news_video.schema import (
     SourceContext, read_context, write_context, read_platform_metadata,
 )
 from i18n import tr
@@ -276,7 +276,7 @@ class _ContextDialog:
             err: Exception | None = None
             ctx: SourceContext | None = None
             try:
-                from core.source_context_ai import extract
+                from materials.news_video.ai_fill import extract
                 self._flush_form_to_disk()
                 ctx = extract(self.source_dir, subtitles_dir)
             except Exception as e:

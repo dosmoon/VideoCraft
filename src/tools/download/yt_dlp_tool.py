@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from hub_logger import logger
 from core import youtube_download
 from core import srt_quality
-from ui.subs_lang_picker import SubsLangPicker
+from materials.news_video.ui.subs_lang_picker import SubsLangPicker
 
 SUBS_MAX_PER_KIND = 4
 

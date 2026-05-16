@@ -143,7 +143,7 @@ def _render_analysis(parent: tk.Frame, data, *,
         _render_chapters_readonly(parent, items)
         return
 
-    from ui.chapter_editor import ChapterEditor
+    from materials.news_video.ui.chapter_editor import ChapterEditor
     editor = ChapterEditor(
         parent,
         chapters_path=artifact.path,
