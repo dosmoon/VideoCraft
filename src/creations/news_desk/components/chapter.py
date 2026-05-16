@@ -452,9 +452,11 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
     del_btn.config(command=_delete_selected)
 
     def _do_import_analysis():
-        # Scan project's subtitles dir for analysis files first — drives
-        # the dialog's "what we found" line.
-        subs_dir = getattr(ctx.project, "subtitles_dir", "") or ""
+        # Scan the material instance's subtitles dir for analysis files
+        # first — drives the dialog's "what we found" line. Must match
+        # the path _import_from_analysis() reads from.
+        subs_dir = _nv_paths.subtitles_dir(
+            ctx.project, ctx.material_instance_id) or ""
         found: list[str] = []
         if subs_dir and os.path.isdir(subs_dir):
             for fn in sorted(os.listdir(subs_dir)):
