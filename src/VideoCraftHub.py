@@ -702,7 +702,7 @@ class VideoCraftHub:
             def _on_modify():
                 panel = self._material_panels.get("news_video")
                 if panel is not None:
-                    panel._on_source_button()
+                    panel._action_source_button()
             frame = build_source_preview(self._preview_tab, self.project,
                                           on_modify=_on_modify)
             frame.pack(fill="both", expand=True)

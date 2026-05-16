@@ -192,23 +192,27 @@ class NewsVideoModel:
         """Generate the source SRT via ASR. Returns the pipeline result.
         Caller wraps in progress modal."""
         from core.subtitle_pipeline import run_asr
-        return run_asr(
+        result = run_asr(
             self.project,
             source_lang_iso=source_lang_iso,
             progress_cb=progress_cb,
             cancel_token=cancel_token,
         )
+        self._notify()
+        return result
 
     def run_translate(self, *, target_lang_iso: str,
                        progress_cb, cancel_token):
         """Translate from the project's source language to target_lang_iso."""
         from core.subtitle_pipeline import run_translate
-        return run_translate(
+        result = run_translate(
             self.project,
             target_lang_iso=target_lang_iso,
             progress_cb=progress_cb,
             cancel_token=cancel_token,
         )
+        self._notify()
+        return result
 
     def import_subtitle(self, src_path: str, lang_iso: str) -> None:
         """Copy an external SRT into subtitles/<lang>.srt. First-imported
