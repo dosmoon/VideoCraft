@@ -498,9 +498,25 @@ class NewsDeskApp(ToolBase):
         pmenu.add_cascade(label=tr("tool.news_desk.preset.apply"),
                            menu=apply_menu)
 
-        delete_menu = tk.Menu(pmenu, tearoff=0)
         user_names = [n for n in nd_presets.list_preset_names()
                       if not nd_presets.is_builtin(n)]
+
+        # Save → overwrite an existing user preset, or create new.
+        save_menu = tk.Menu(pmenu, tearoff=0)
+        for name in user_names:
+            save_menu.add_command(
+                label=tr("tool.news_desk.preset.save_overwrite_label",
+                          name=name),
+                command=lambda n=name: self._on_preset_save_overwrite(n))
+        if user_names:
+            save_menu.add_separator()
+        save_menu.add_command(
+            label=tr("tool.news_desk.preset.save_new"),
+            command=self._on_preset_save_new)
+        pmenu.add_cascade(label=tr("tool.news_desk.preset.save"),
+                           menu=save_menu)
+
+        delete_menu = tk.Menu(pmenu, tearoff=0)
         if user_names:
             for name in user_names:
                 delete_menu.add_command(
@@ -513,9 +529,6 @@ class NewsDeskApp(ToolBase):
         pmenu.add_cascade(label=tr("tool.news_desk.preset.delete"),
                            menu=delete_menu)
 
-        pmenu.add_separator()
-        pmenu.add_command(label=tr("tool.news_desk.preset.save_as"),
-                           command=self._on_preset_save_as)
         m.add_cascade(label=tr("tool.news_desk.menu.preset"), menu=pmenu)
 
         m.add_separator()
@@ -545,7 +558,24 @@ class NewsDeskApp(ToolBase):
         self._push_preview()
         self._rebuild_top_menu()
 
-    def _on_preset_save_as(self) -> None:
+    def _on_preset_save_overwrite(self, name: str) -> None:
+        """Snapshot the current components into an existing user preset
+        (one entry per name in the Save submenu). Confirms first —
+        preset storage is global, the previous content is gone after."""
+        if nd_presets.is_builtin(name):
+            return                                       # menu shouldn't show these
+        if not messagebox.askyesno(
+                "VideoCraft",
+                tr("tool.news_desk.preset.save_overwrite_confirm",
+                    name=name, n=len(self.config.components)),
+                parent=self.master):
+            return
+        self._persist_preset(name)
+
+    def _on_preset_save_new(self) -> None:
+        """Snapshot the current components into a brand-new user preset.
+        Prompts for a name; rejects builtin names + name collisions
+        (collisions should overwrite via the Save submenu instead)."""
         name = simpledialog.askstring(
             "VideoCraft", tr("tool.news_desk.preset.save_as.prompt"),
             parent=self.master)
@@ -561,6 +591,19 @@ class NewsDeskApp(ToolBase):
                     name=name),
                 parent=self.master)
             return
+        existing = {n for n in nd_presets.list_preset_names()
+                    if not nd_presets.is_builtin(n)}
+        if name in existing:
+            messagebox.showinfo(
+                "VideoCraft",
+                tr("tool.news_desk.preset.save_as.name_taken", name=name),
+                parent=self.master)
+            return
+        self._persist_preset(name)
+
+    def _persist_preset(self, name: str) -> None:
+        """Shared tail for save-overwrite + save-new: snapshot
+        components, persist, update soft tag, refresh menu."""
         preset = nd_presets.NewsDeskPreset(
             name=name, components=list(self.config.components))
         nd_presets.save_user_preset(preset)
