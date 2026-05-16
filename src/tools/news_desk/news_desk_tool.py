@@ -804,18 +804,46 @@ class NewsDeskApp(ToolBase):
 
     # ── Export ─────────────────────────────────────────────────────────────
 
-    def _show_export_options_dialog(self) -> dict | None:
-        """Ask the user which deliverables to include in this export.
+    def _available_subtitle_langs(self) -> list[str]:
+        """Return sorted lang_iso list for SRT files found in the project's
+        subtitles_dir. Empty list if the dir is missing / has none."""
+        out: list[str] = []
+        subs_dir = self.project.subtitles_dir
+        if not os.path.isdir(subs_dir):
+            return out
+        for fn in sorted(os.listdir(subs_dir)):
+            if not fn.endswith(".srt"):
+                continue
+            iso = fn[:-len(".srt")].strip()
+            # Skip nested patterns like "zh.something.srt" — the analysis
+            # pipeline only writes flat "<iso>.srt" at the dir top.
+            if "." in iso or not iso:
+                continue
+            out.append(iso)
+        return out
 
-        Returns a dict of bool flags {publish, transcript, chapters_md,
-        chapter_videos} on confirm, or None on cancel. The main mp4 is
-        not gated — it's the export's primary product, always produced.
+    def _show_export_options_dialog(self) -> dict | None:
+        """Ask the user which deliverables to include in this export and
+        which subtitle language drives the transcript / chapter split.
+
+        Returns a dict {publish, transcript, chapters_md, chapter_videos,
+        lang_iso} on confirm, or None on cancel. The main mp4 is not
+        gated — it's the export's primary product, always produced.
         """
+        langs = self._available_subtitle_langs()
+        # Preselect source-language SRT if it exists; otherwise first.
+        try:
+            default_lang = self.project.meta.language.source or ""
+        except AttributeError:
+            default_lang = ""
+        if default_lang not in langs:
+            default_lang = langs[0] if langs else ""
+
         dlg = tk.Toplevel(self.master)
         dlg.title(tr("tool.news_desk.export_dialog.title"))
         dlg.transient(self.master.winfo_toplevel())
         dlg.grab_set()
-        dlg.minsize(480, 280)
+        dlg.minsize(500, 340)
 
         # Pack actions FIRST so they pin to the bottom even if body grows.
         btns = ttk.Frame(dlg)
@@ -826,8 +854,31 @@ class NewsDeskApp(ToolBase):
 
         ttk.Label(body,
                   text=tr("tool.news_desk.export_dialog.intro"),
-                  wraplength=440, justify="left", foreground="#444"
+                  wraplength=460, justify="left", foreground="#444"
                   ).pack(anchor="w", pady=(0, 10))
+
+        # Language picker — combobox so 2+ langs read cleanly without
+        # forcing N radio rows. Hidden when only one lang exists.
+        lang_var = tk.StringVar(value=default_lang)
+        if langs:
+            lang_row = ttk.Frame(body)
+            lang_row.pack(anchor="w", fill="x", pady=(0, 4))
+            ttk.Label(lang_row,
+                      text=tr("tool.news_desk.export_dialog.lang_label")
+                      ).pack(side="left")
+            cb = ttk.Combobox(lang_row, textvariable=lang_var,
+                              values=langs, state="readonly", width=10)
+            cb.pack(side="left", padx=(6, 0))
+            ttk.Label(body,
+                      text=tr("tool.news_desk.export_dialog.lang_hint"),
+                      wraplength=460, justify="left", foreground="#888",
+                      font=("TkDefaultFont", 8)
+                      ).pack(anchor="w", pady=(0, 10))
+        else:
+            ttk.Label(body,
+                      text=tr("tool.news_desk.export_dialog.lang_none"),
+                      foreground="#a00"
+                      ).pack(anchor="w", pady=(0, 10))
 
         v_publish        = tk.BooleanVar(value=True)
         v_transcript     = tk.BooleanVar(value=False)
@@ -852,6 +903,7 @@ class NewsDeskApp(ToolBase):
                 "transcript":     v_transcript.get(),
                 "chapters_md":    v_chapters_md.get(),
                 "chapter_videos": v_chapter_videos.get(),
+                "lang_iso":       lang_var.get(),
             }
             dlg.destroy()
 
@@ -1006,50 +1058,56 @@ class NewsDeskApp(ToolBase):
             return
 
         opts = getattr(self, "_export_opts", None) or {}
+        lang_iso = (opts.get("lang_iso") or "").strip()
 
         if opts.get("publish", True):
             try:
-                self._write_publish_sidecar()
+                self._write_publish_sidecar(lang_iso)
             except Exception as e:
                 logger.warning(f"news_desk publish.md write skipped: {e}")
 
         # The deliverables below all share a source-SRT + chapters lookup.
         # Resolve once; each writer checks what it needs and logs+skips
         # rather than failing the whole export when inputs are missing.
-        srt_path = self._primary_srt_path()
-        chapters = self._load_source_chapters()
+        # Language comes from the export dialog so chapters and transcript
+        # match — picking zh gives Chinese chapters + Chinese transcript.
+        srt_path = self._srt_path_for_lang(lang_iso)
+        chapters = self._load_chapters_for_lang(lang_iso)
 
         if opts.get("transcript"):
-            self._write_transcript_artifact(srt_path)
+            self._write_transcript_artifact(srt_path, lang_iso)
         if opts.get("chapters_md"):
-            self._write_chapters_md_artifact(srt_path, chapters)
+            self._write_chapters_md_artifact(srt_path, chapters, lang_iso)
         if opts.get("chapter_videos"):
             self._write_chapter_videos_artifact(
                 result.output_path, chapters)
 
     # ── Optional artifacts ────────────────────────────────────────────────
 
-    def _primary_srt_path(self) -> str:
-        try:
-            lang_iso = self.project.meta.language.source or "zh"
-        except AttributeError:
-            lang_iso = "zh"
+    def _srt_path_for_lang(self, lang_iso: str) -> str:
         return os.path.join(self.project.subtitles_dir, f"{lang_iso}.srt")
 
-    def _primary_lang_iso(self) -> str:
-        try:
-            return self.project.meta.language.source or "zh"
-        except AttributeError:
-            return "zh"
-
-    def _load_source_chapters(self) -> list[dict]:
-        """Return chapters from the source project's analysis.json envelope,
-        or [] if no analysis exists. Same convention as publish.md.
-        """
+    def _load_chapters_for_lang(self, lang_iso: str) -> list[dict]:
+        """Return chapters from `<subs>/<iso>.analysis.json`. Falls back to
+        any analysis.json in the dir when the chosen lang's envelope is
+        missing — so a project with chapters only in zh.analysis.json
+        still yields chapter splits even when user picked en SRT for
+        transcript. Empty list when nothing's available."""
         from core import chapters_io
         subs_dir = self.project.subtitles_dir
         if not os.path.isdir(subs_dir):
             return []
+        # Prefer the picked lang's envelope.
+        primary = os.path.join(subs_dir, f"{lang_iso}.analysis.json")
+        if os.path.isfile(primary):
+            try:
+                env = chapters_io.load_analysis(primary)
+                chs = env.get("chapters") if isinstance(env, dict) else []
+                if isinstance(chs, list) and chs:
+                    return chs
+            except (OSError, json.JSONDecodeError):
+                pass
+        # Fallback: any analysis.json.
         for fn in sorted(os.listdir(subs_dir)):
             if not fn.endswith(".analysis.json"):
                 continue
@@ -1062,7 +1120,8 @@ class NewsDeskApp(ToolBase):
                 return chs
         return []
 
-    def _write_transcript_artifact(self, srt_path: str) -> None:
+    def _write_transcript_artifact(self, srt_path: str,
+                                     lang_iso: str) -> None:
         from core.subtitle_analysis_runners import build_transcript_text
         from core.io_utils import atomic_write_text
         if not os.path.isfile(srt_path):
@@ -1071,7 +1130,7 @@ class NewsDeskApp(ToolBase):
                                     reason=tr("tool.news_desk.export.no_srt")))
             return
         try:
-            text = build_transcript_text(srt_path, self._primary_lang_iso())
+            text = build_transcript_text(srt_path, lang_iso)
             out = os.path.join(self._instance_dir(), "transcript.md")
             atomic_write_text(out, text)
         except Exception as e:
@@ -1080,7 +1139,8 @@ class NewsDeskApp(ToolBase):
                                     reason=str(e)))
 
     def _write_chapters_md_artifact(self, srt_path: str,
-                                      chapters: list[dict]) -> None:
+                                      chapters: list[dict],
+                                      lang_iso: str) -> None:
         from core.subtitle_analysis_runners import build_chapter_transcript_text
         from core.io_utils import atomic_write_text
         if not os.path.isfile(srt_path):
@@ -1094,8 +1154,7 @@ class NewsDeskApp(ToolBase):
                                     reason=tr("tool.news_desk.export.no_chapters")))
             return
         try:
-            text = build_chapter_transcript_text(
-                srt_path, chapters, self._primary_lang_iso())
+            text = build_chapter_transcript_text(srt_path, chapters, lang_iso)
             out = os.path.join(self._instance_dir(), "chapters.md")
             atomic_write_text(out, text)
         except Exception as e:
@@ -1150,10 +1209,9 @@ class NewsDeskApp(ToolBase):
                 logger.warning(
                     f"news_desk: chapter {i} split failed: {e}")
 
-    def _write_publish_sidecar(self) -> None:
+    def _write_publish_sidecar(self, lang_iso: str = "") -> None:
         from tools.news_desk.publish import render_news_desk_publish
         from datetime import datetime as _dt
-        from core import chapters_io
         # Canonical view: context.json (AI-corrected) wins; basic_info
         # falls back for fields context hasn't filled yet. publish.md
         # consumers should always see the same truth as renderers.
@@ -1161,21 +1219,18 @@ class NewsDeskApp(ToolBase):
         bi = source_context.SourceBasicInfo.from_dict(merged)
         ctx = source_context.SourceContext.from_dict(merged)
 
-        # Pull chapters from the source project's analysis.json if any.
-        chapters: list[dict] = []
-        subs_dir = self.project.subtitles_dir
-        if os.path.isdir(subs_dir):
-            for fn in sorted(os.listdir(subs_dir)):
-                if fn.endswith(".analysis.json"):
-                    try:
-                        env = chapters_io.load_analysis(
-                            os.path.join(subs_dir, fn))
-                        chs = env.get("chapters") if isinstance(env, dict) else []
-                        if isinstance(chs, list):
-                            chapters = chs
-                            break
-                    except (OSError, json.JSONDecodeError):
-                        continue
+        try:
+            fallback_lang = self.project.meta.language.source or "zh"
+            project_title = self.project.meta.source.title
+            source_url = self.project.meta.source.url
+        except AttributeError:
+            fallback_lang, project_title, source_url = "zh", None, None
+        effective_lang = lang_iso or fallback_lang
+
+        # Chapters source matches the selected SRT lang for consistency
+        # with transcript.md / chapters.md. Falls back to any envelope
+        # in the dir if the picked lang has none.
+        chapters = self._load_chapters_for_lang(effective_lang)
 
         # No structured "lower thirds" in the new model — the publish
         # renderer just gets an empty list; chapter data carries the
@@ -1184,13 +1239,6 @@ class NewsDeskApp(ToolBase):
         for comp in self._components:
             if comp.get("kind") == "subtitle" and comp.get("srt_path"):
                 adapted.append(comp["srt_path"])
-
-        try:
-            lang_iso = self.project.meta.language.source or "zh"
-            project_title = self.project.meta.source.title
-            source_url = self.project.meta.source.url
-        except AttributeError:
-            lang_iso, project_title, source_url = "zh", None, None
 
         md = render_news_desk_publish(
             project_title=project_title,
@@ -1201,7 +1249,7 @@ class NewsDeskApp(ToolBase):
             lower_thirds=[],
             adapted_srts=adapted,
             rendered_at=_dt.now().strftime("%Y-%m-%d %H:%M"),
-            lang_iso=lang_iso,
+            lang_iso=effective_lang,
         )
         out = os.path.join(self._instance_dir(), "publish.md")
         with open(out, "w", encoding="utf-8", newline="\n") as f:
