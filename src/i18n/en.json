@@ -2076,6 +2076,7 @@
   "tool.news_desk.field.title": "Title",
   "tool.news_desk.field.subtitle": "Subtitle",
   "tool.news_desk.field.position": "Position",
+  "tool.news_desk.field.margin": "Margin",
   "tool.news_desk.field.topic": "Topic",
   "tool.news_desk.field.card_text": "Card text",
   "tool.news_desk.field.date_text": "Date text",

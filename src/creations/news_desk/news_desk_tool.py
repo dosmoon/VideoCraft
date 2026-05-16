@@ -626,6 +626,17 @@ class NewsDeskApp(ToolBase):
             self._components = [c for c in components if isinstance(c, dict)]
             return
 
+        # Detect "fresh instance" — the slice Q binding writes a
+        # bound_material into config.json BEFORE any components exist.
+        # Without this guard the migration block below conjures an
+        # image-watermark component from the preset's WatermarkStyle and
+        # mutates a brand-new instance to look like a legacy one.
+        # Migration only runs when the config carries actual legacy keys.
+        legacy_keys = ("sub1_srt", "sub2_srt", "overlays")
+        if not any(k in cfg for k in legacy_keys):
+            self._components = []
+            return
+
         # Migration path.
         migrated: list[dict] = []
         for slot, key in ((1, "sub1_srt"), (2, "sub2_srt")):

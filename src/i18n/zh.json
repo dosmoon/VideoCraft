@@ -2076,6 +2076,7 @@
   "tool.news_desk.field.title": "主标题",
   "tool.news_desk.field.subtitle": "副标题",
   "tool.news_desk.field.position": "位置",
+  "tool.news_desk.field.margin": "边距",
   "tool.news_desk.field.topic": "章节标题",
   "tool.news_desk.field.card_text": "卡片文字",
   "tool.news_desk.field.date_text": "日期文字",
