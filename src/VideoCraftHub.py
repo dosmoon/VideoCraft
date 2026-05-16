@@ -849,10 +849,11 @@ class VideoCraftHub:
             self._news_context_status_lbl.configure(fg="#999", cursor="")
             return
         try:
-            from core.source_context import combined_dict
-            data = combined_dict(self.project.source_dir)
-            total = len(data)
-            filled = sum(1 for v in data.values() if (v or "").strip())
+            from core.source_context import read_context, SourceContext
+            ctx = read_context(self.project.source_dir).to_dict()
+            total = len(SourceContext.__dataclass_fields__)
+            filled = sum(1 for v in ctx.values()
+                         if isinstance(v, str) and v.strip())
         except Exception:
             filled, total = 0, 15
         if filled == 0:
