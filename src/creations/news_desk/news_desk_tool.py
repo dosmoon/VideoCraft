@@ -486,10 +486,9 @@ class NewsDeskApp(ToolBase):
         m = self.top_menu
         m.delete(0, "end")
 
-        # Preset submenu: Apply → (one entry per preset),
-        # then Save as / Delete. The selected preset is a soft tag —
-        # users can edit components after applying without disturbing
-        # the preset library.
+        # Preset submenu: Apply → (one entry per preset), Delete →
+        # (one entry per user preset), Save as. config.preset_name is
+        # a soft tag — no dirty tracking, edits live on the instance.
         pmenu = tk.Menu(m, tearoff=0)
         apply_menu = tk.Menu(pmenu, tearoff=0)
         for name in nd_presets.list_preset_names():
@@ -498,11 +497,25 @@ class NewsDeskApp(ToolBase):
                 command=lambda n=name: self._on_preset_apply(n))
         pmenu.add_cascade(label=tr("tool.news_desk.preset.apply"),
                            menu=apply_menu)
+
+        delete_menu = tk.Menu(pmenu, tearoff=0)
+        user_names = [n for n in nd_presets.list_preset_names()
+                      if not nd_presets.is_builtin(n)]
+        if user_names:
+            for name in user_names:
+                delete_menu.add_command(
+                    label=name,
+                    command=lambda n=name: self._on_preset_delete(n))
+        else:
+            delete_menu.add_command(
+                label=tr("tool.news_desk.preset.delete.no_user_presets"),
+                state="disabled")
+        pmenu.add_cascade(label=tr("tool.news_desk.preset.delete"),
+                           menu=delete_menu)
+
         pmenu.add_separator()
         pmenu.add_command(label=tr("tool.news_desk.preset.save_as"),
                            command=self._on_preset_save_as)
-        pmenu.add_command(label=tr("tool.news_desk.preset.delete"),
-                           command=self._on_preset_delete)
         m.add_cascade(label=tr("tool.news_desk.menu.preset"), menu=pmenu)
 
         m.add_separator()
@@ -555,28 +568,18 @@ class NewsDeskApp(ToolBase):
         self._save_instance_config()
         self._rebuild_top_menu()
 
-    def _on_preset_delete(self) -> None:
-        # Pick one to delete from the user-preset list (builtins
-        # excluded). Skip silently when no user presets exist.
-        user_names = [n for n in nd_presets.list_preset_names()
-                      if not nd_presets.is_builtin(n)]
-        if not user_names:
-            messagebox.showinfo(
+    def _on_preset_delete(self, name: str) -> None:
+        """Delete a user preset (one per submenu entry). Confirms first
+        — preset persistence is global, removing it can't be undone."""
+        if nd_presets.is_builtin(name):
+            return                                       # menu shouldn't show these
+        if not messagebox.askyesno(
                 "VideoCraft",
-                tr("tool.news_desk.preset.delete.no_user_presets"),
-                parent=self.master)
+                tr("tool.news_desk.preset.delete.confirm", name=name),
+                parent=self.master):
             return
-        # Prompt the user with a simple input — list available names
-        # in the prompt body so they can copy-paste.
-        prompt = tr("tool.news_desk.preset.delete.prompt",
-                     names="\n".join(f"  · {n}" for n in user_names))
-        name = simpledialog.askstring(
-            "VideoCraft", prompt, parent=self.master)
-        if not name or name.strip() not in user_names:
-            return
-        nd_presets.delete_user_preset(name.strip())
-        # If the deleted preset was the instance's tag, clear it.
-        if self.config.preset_name == name.strip():
+        nd_presets.delete_user_preset(name)
+        if self.config.preset_name == name:
             self.config.preset_name = ""
             self._save_instance_config()
         self._rebuild_top_menu()
