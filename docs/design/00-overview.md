@@ -30,6 +30,12 @@ Menu + Sidebar + Tab 嵌入式工具架构；底部可拖拽日志面板；5 色
 
 ---
 
+## 架构决策记录
+
+跨模块契约、数据 schema 决议、重大重构/退役记录在 [`docs/adr/`](../adr/README.md)。改架构层代码前先扫一遍，确认不要违背已有决策。
+
+---
+
 ## 核心设计原则
 
 1. **Project = 文件夹**，任意文件夹均可打开，自动生成 `.videocraft/project.json` 作为标识（旧版本根级 `videocraft.json` 在 open 时一次性迁入）
