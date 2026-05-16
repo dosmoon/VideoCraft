@@ -143,14 +143,6 @@ def test_context_completion_partial(model):
     assert total == 15
 
 
-def test_combined_dict_priority(model):
-    """context wins over basic_info for the same field."""
-    model.write_basic_info(SourceBasicInfo(host="USER_GUESS"))
-    model.write_context(SourceContext(host="AI_CANONICAL"))
-    merged = model.combined_dict()
-    assert merged["host"] == "AI_CANONICAL"
-
-
 # ── slot_readiness ───────────────────────────────────────────────────────────
 
 def test_slot_readiness_returns_all_slots(model):

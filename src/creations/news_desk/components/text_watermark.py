@@ -166,11 +166,11 @@ def _to_render_fragment(instance: dict, _ctx: ProjectContext) -> dict:
 
 
 def _import_event_date(instance: dict, ctx: ProjectContext) -> None:
-    """[⇩ Import event date] — pull date from the canonical combined view
-    (context.json's AI-corrected value wins, basic_info as fallback) and
-    nudge defaults toward the date-stamp look (smaller, bottom-left)."""
-    merged = source_context.combined_dict(_nv_paths.source_dir(ctx.project, ctx.material_instance_id))
-    date = (merged.get("event_date") or "").strip()
+    """[⇩ Import event date] — pull AI-verified date from context.json and
+    nudge defaults toward the date-stamp look (smaller, bottom-left).
+    Silent no-op when context.json is empty / AI Fill hasn't run."""
+    src_dir = _nv_paths.source_dir(ctx.project, ctx.material_instance_id)
+    date = source_context.read_context(src_dir).event_date.strip()
     if not date:
         return
     instance["text"] = date

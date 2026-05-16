@@ -34,7 +34,7 @@ from core.subtitle_ops import read_srt, srt_end_seconds as _srt_end_seconds
 # Cleanest fix: parameterize the runner so callers (which know the material
 # type) inject the context prompt block. Documented wart until a second
 # material type lands and forces the abstraction.
-from materials.news_video.schema import combined_prompt_block as _combined_prompt_block
+from materials.news_video.schema import context_prompt_block as _context_prompt_block
 
 
 # ── Shared output helpers ────────────────────────────────────────────────────
@@ -95,10 +95,10 @@ def _source_dir_for(subtitles_dir: str) -> str:
 
 
 def _context_block(subtitles_dir: str) -> str:
-    """Render the combined source context (basic_info + ai context) as a
-    prompt prefix block. Empty when both files are missing/blank."""
+    """Render context.json as a prompt prefix block. Empty when AI Fill
+    hasn't run (context.json missing or blank)."""
     try:
-        return _combined_prompt_block(_source_dir_for(subtitles_dir))
+        return _context_prompt_block(_source_dir_for(subtitles_dir))
     except Exception:
         return ""
 

@@ -1,9 +1,8 @@
 """News-desk derivative publish.md template.
 
-Built for press-briefing / speech / news-show outputs. The schema is
-considerably richer than bilingual_video's because news_desk consumes
-both anchor data (source/basic_info.json) and AI-extracted context
-(source/context.json):
+Built for press-briefing / speech / news-show outputs. Consumes
+source/context.json (the AI-verified canonical record — all 15 fields
+including the 5 anchors AI re-checked from basic_info hints):
 
   - Episode header: topic, host, host_bio, host_affiliation, event date /
     time / location, show type
@@ -14,9 +13,10 @@ both anchor data (source/basic_info.json) and AI-extracted context
     the instance's overlay list
   - Adapted SRT pointer
 
-Empty fields are silently omitted, so a news_desk render with only
-basic_info filled still produces a usable publish.md (the AI context
-sections just stay blank).
+Empty fields are silently omitted. If AI Fill hasn't run yet, context
+is blank and publish.md degrades to a chapters-only doc — that's the
+correct UX signal (run AI Fill), not a place to silently inject raw
+user hints from basic_info.
 """
 
 from __future__ import annotations
@@ -30,7 +30,6 @@ def render_news_desk_publish(
     *,
     project_title: Optional[str],
     source_url: Optional[str],
-    basic_info: dict,
     context: dict,
     chapters: list[dict],
     lower_thirds: list[dict],
@@ -46,20 +45,16 @@ def render_news_desk_publish(
     independent of the workbench's dataclasses. Caller (news_desk_tool)
     converts dataclasses to dicts before invoking.
 
-    `basic_info`: SourceBasicInfo.to_dict() shape — host / host_bio /
-        event_date / event_location / episode_topic.
-    `context`: SourceContext.to_dict() shape — host_affiliation /
-        guests / event_time / show_type / event_summary / key_points /
-        background / audience / platform_tone / notes.
+    `context`: SourceContext.to_dict() shape — all 15 fields. Empty
+        dict (AI Fill not run) yields a chapters-only publish.md.
     `lower_thirds`: list of {title, subtitle, start_sec, end_sec} dicts
         (LowerThirdOverlay → overlay_to_dict subset).
     """
-    bi = basic_info or {}
     ctx = context or {}
 
     # Title preference: episode_topic (it's the editorial topic of THIS
     # episode) → project_title (filename / source video title) → fallback.
-    title = (bi.get("episode_topic") or "").strip() \
+    title = (ctx.get("episode_topic") or "").strip() \
         or (project_title or "").strip() \
         or t(lang_iso, "（无标题）", "(no title)")
 
@@ -92,13 +87,13 @@ def render_news_desk_publish(
         if v:
             meta_pairs.append((t(lang_iso, label_zh, label_en), v))
 
-    _add("主讲人",   "Host",          bi.get("host", ""))
-    _add("身份",     "Bio",           bi.get("host_bio", ""))
+    _add("主讲人",   "Host",          ctx.get("host", ""))
+    _add("身份",     "Bio",           ctx.get("host_bio", ""))
     _add("所属机构", "Affiliation",   ctx.get("host_affiliation", ""))
     _add("嘉宾",     "Guests",        ctx.get("guests", ""))
-    _add("事件日期", "Date",          bi.get("event_date", ""))
+    _add("事件日期", "Date",          ctx.get("event_date", ""))
     _add("事件时间", "Time",          ctx.get("event_time", ""))
-    _add("事件地点", "Location",      bi.get("event_location", ""))
+    _add("事件地点", "Location",      ctx.get("event_location", ""))
     _add("节目类型", "Show type",     ctx.get("show_type", ""))
 
     if meta_pairs:

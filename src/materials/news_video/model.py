@@ -27,7 +27,6 @@ from materials.news_video.schema import (
     basic_info_path, context_path,
     read_basic_info, write_basic_info,
     read_context, write_context,
-    combined_dict, combined_prompt_block,
 )
 
 
@@ -141,14 +140,6 @@ class NewsVideoModel:
         total = len(SourceContext.__dataclass_fields__)
         filled = sum(1 for v in ctx.values() if isinstance(v, str) and v.strip())
         return filled, total
-
-    def combined_dict(self) -> dict[str, str]:
-        """Merged basic_info + context view; context values win.
-        Used by downstream consumers (creation plugins) for prompt context."""
-        return combined_dict(self.source_dir)
-
-    def combined_prompt_block(self) -> str:
-        return combined_prompt_block(self.source_dir)
 
     def ai_fill_context(self, *, progress_cb=None, cancel_token=None) -> SourceContext:
         """Run AI extraction to populate context.json. Returns the new

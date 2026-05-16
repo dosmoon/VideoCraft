@@ -1,28 +1,26 @@
-"""Source content context — two on-disk files, single source of truth.
+"""Source content context — two on-disk files with strict roles.
 
   source/basic_info.json   — SourceBasicInfo (5 fields)
-      User-provided HINTS. Source pane owns it. The user fills these
-      in 30 seconds based on what they think they see in the first 5
-      seconds of the video. THEY CAN BE WRONG (misspelled names,
-      out-of-date titles, approximate dates). AI reads them as a
-      seed for its search, NOT as ground truth.
+      User-provided HINTS, INPUT-ONLY for AI Fill. The user fills
+      these in 30 seconds based on what they think they see in the
+      first 5 seconds of the video. THEY CAN BE WRONG (misspelled
+      names, out-of-date titles, approximate dates). The ONLY
+      consumer is ai_fill.extract() which reads them as a seed for
+      web search. Downstream renderers MUST NOT read this file.
 
   source/context.json      — SourceContext (15 fields)
-      AI-generated canonical archive. Includes the 5 anchor fields
-      (host / host_bio / event_date / event_location / episode_topic)
-      that the AI verified + corrected against its searches, PLUS
-      10 AI-derived fields (host_affiliation / guests / event_time
-      / show_type / event_summary / key_points / background /
-      audience / platform_tone / notes). news_context pane owns it.
-      Manual edit possible via dialog; typical flow is AI Fill.
+      AI-generated canonical archive and the SINGLE downstream
+      source of truth. Includes the 5 anchor fields that AI verified
+      + corrected against its searches, PLUS 10 AI-derived fields.
+      news_context pane owns it; manual edit possible via dialog.
 
 Downstream consumers (subtitle_analysis_runners, news_desk components,
-publish renderers) call `combined_dict(source_dir)` /
-`combined_prompt_block(source_dir)`. The combined view honors
-context.json's values when populated (= AI-verified canonical) and
-falls back to basic_info.json only for fields context hasn't filled
-yet (legacy projects + before first AI Fill). Consumers SHOULD NOT
-read either file directly — the combined view is the contract.
+publish renderers) read `read_context(source_dir)` or
+`context_prompt_block(source_dir)`. If AI Fill hasn't run, context
+is empty and downstream renders degrade gracefully (empty sections).
+We do NOT fall back to basic_info — silent fallback hides "user
+hasn't run AI Fill" and lets raw, possibly-wrong hints leak into
+publish artifacts.
 """
 
 from __future__ import annotations
@@ -119,23 +117,9 @@ def context_path(source_dir: str) -> str:
 
 
 def read_basic_info(source_dir: str) -> SourceBasicInfo:
-    """Read basic_info.json. Returns empty when absent. If absent BUT the
-    legacy context.json has the 5 anchor fields, migrate them out (kept
-    intact in context.json until the next AI/manual write strips them)."""
-    path = basic_info_path(source_dir)
-    if os.path.isfile(path):
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if isinstance(data, dict):
-                return SourceBasicInfo.from_dict(data)
-        except (OSError, json.JSONDecodeError):
-            pass
-    # Migration: derive from legacy 15-field context.json if present.
-    legacy = _read_raw_json(context_path(source_dir))
-    if legacy:
-        return SourceBasicInfo.from_dict(legacy)
-    return SourceBasicInfo()
+    """Read basic_info.json. Returns empty when absent or malformed."""
+    data = _read_raw_json(basic_info_path(source_dir))
+    return SourceBasicInfo.from_dict(data) if data else SourceBasicInfo()
 
 
 def write_basic_info(source_dir: str, info: SourceBasicInfo) -> None:
@@ -149,15 +133,13 @@ def write_basic_info(source_dir: str, info: SourceBasicInfo) -> None:
 
 
 def read_context(source_dir: str) -> SourceContext:
-    """Read context.json. Legacy files that still contain the 5 anchor
-    fields load fine — SourceContext.from_dict() drops unknown keys."""
+    """Read context.json. Returns empty when absent or malformed."""
     data = _read_raw_json(context_path(source_dir))
     return SourceContext.from_dict(data) if data else SourceContext()
 
 
 def write_context(source_dir: str, ctx: SourceContext) -> None:
-    """Persist context.json with ONLY the AI-owned fields (no anchor
-    fields). Implicitly migrates legacy 15-field files on first write."""
+    """Persist context.json with all 15 fields (anchors + AI extras)."""
     os.makedirs(source_dir, exist_ok=True)
     path = context_path(source_dir)
     tmp = path + ".tmp"
@@ -183,11 +165,11 @@ def _read_raw_json(path: str) -> dict:
         return {}
 
 
-# ── Combined view (downstream prompt injection) ─────────────────────────────
+# ── Context-only prompt block (downstream AI injection) ─────────────────────
 
-# Field rendering order in the combined prompt block. Anchor fields come
-# first (most reliable signal), then AI-generated derived fields.
-_COMBINED_LABELS = (
+# Field rendering order. All 15 fields live in SourceContext after AI Fill
+# (5 anchors AI-verified + 10 AI-derived). basic_info is NEVER consulted.
+_CONTEXT_LABELS = (
     ("host",             "主讲人"),
     ("host_bio",         "身份"),
     ("host_affiliation", "所属机构"),
@@ -206,31 +188,15 @@ _COMBINED_LABELS = (
 )
 
 
-def combined_dict(source_dir: str) -> dict[str, str]:
-    """Merged view for downstream consumers. context.json's non-empty
-    values WIN — they're the AI-verified canonical form. basic_info
-    only fills slots context hasn't populated yet (legacy projects /
-    pre-AI-Fill state). This priority enables AI to correct user typos
-    like "Vance" → "James David Vance" — once AI Fill runs, the
-    corrected value is what downstream sees.
-    """
-    out: dict[str, str] = {}
-    out.update(read_basic_info(source_dir).to_dict())  # baseline (hint)
-    ctx_dict = read_context(source_dir).to_dict()
-    for k, v in ctx_dict.items():
-        if isinstance(v, str) and v.strip():
-            out[k] = v
-    return out
-
-
-def combined_prompt_block(source_dir: str) -> str:
-    """Render the combined view as a markdown block for downstream AI
-    prompts. Empty fields omitted; returns "" when everything is blank."""
-    data = combined_dict(source_dir)
-    if not any((data.get(f) or "").strip() for f, _ in _COMBINED_LABELS):
+def context_prompt_block(source_dir: str) -> str:
+    """Render context.json as a markdown block for downstream AI prompts.
+    Empty fields omitted; returns "" when context is blank (AI Fill not
+    run yet — caller decides whether to proceed with no context)."""
+    data = read_context(source_dir).to_dict()
+    if not any((data.get(f) or "").strip() for f, _ in _CONTEXT_LABELS):
         return ""
     lines = ["以下是源视频的内容背景，请在生成时充分考虑："]
-    for field, zh in _COMBINED_LABELS:
+    for field, zh in _CONTEXT_LABELS:
         val = (data.get(field) or "").strip()
         if val:
             lines.append(f"- {zh}: {val}")

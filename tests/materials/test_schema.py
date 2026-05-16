@@ -1,4 +1,4 @@
-"""materials/news_video/schema.py — dataclass + JSON IO + combined view."""
+"""materials/news_video/schema.py — dataclass + JSON IO + context prompt."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from materials.news_video.schema import (
     basic_info_path, context_path,
     read_basic_info, write_basic_info,
     read_context, write_context,
-    combined_dict, combined_prompt_block,
+    context_prompt_block,
 )
 
 
@@ -89,35 +89,26 @@ def test_read_context_missing_returns_empty(tmp_path):
     assert ctx.is_empty()
 
 
-# ── Combined view priority rules ────────────────────────────────────────────
+# ── Context prompt block ────────────────────────────────────────────────────
 
-def test_combined_dict_context_wins(tmp_path):
+def test_context_prompt_block_ignores_basic_info(tmp_path):
+    """basic_info is AI input only — must never bleed into the prompt block."""
     src_dir = str(tmp_path / "source")
-    write_basic_info(src_dir, SourceBasicInfo(host="USER_GUESS"))
-    write_context(src_dir, SourceContext(host="AI_CANONICAL"))
-    merged = combined_dict(src_dir)
-    assert merged["host"] == "AI_CANONICAL"
+    write_basic_info(src_dir, SourceBasicInfo(host="USER_HINT"))
+    # context.json empty → block is empty even though basic_info has data.
+    assert context_prompt_block(src_dir) == ""
 
 
-def test_combined_dict_basic_fills_gap(tmp_path):
-    """When context.host is empty, basic_info.host fills it."""
+def test_context_prompt_block_empty_when_blank(tmp_path):
     src_dir = str(tmp_path / "source")
-    write_basic_info(src_dir, SourceBasicInfo(host="USER_HOST"))
-    write_context(src_dir, SourceContext(host=""))
-    merged = combined_dict(src_dir)
-    assert merged["host"] == "USER_HOST"
+    assert context_prompt_block(src_dir) == ""
 
 
-def test_combined_prompt_block_empty_when_blank(tmp_path):
-    src_dir = str(tmp_path / "source")
-    assert combined_prompt_block(src_dir) == ""
-
-
-def test_combined_prompt_block_renders_filled_fields(tmp_path):
+def test_context_prompt_block_renders_filled_fields(tmp_path):
     src_dir = str(tmp_path / "source")
     write_context(src_dir, SourceContext(
         host="H", episode_topic="T", background="B"))
-    block = combined_prompt_block(src_dir)
+    block = context_prompt_block(src_dir)
     assert "主讲人" in block
     assert "H" in block
     assert "整集主题" in block
@@ -126,12 +117,12 @@ def test_combined_prompt_block_renders_filled_fields(tmp_path):
     assert "B" in block
 
 
-def test_combined_prompt_block_omits_empty_fields(tmp_path):
+def test_context_prompt_block_omits_empty_fields(tmp_path):
     """Empty fields don't render to avoid 'host:   ' style noise.
     Check at line level: each rendered field becomes a '- 标签: 值' line."""
     src_dir = str(tmp_path / "source")
     write_context(src_dir, SourceContext(host="ONLY_HOST"))
-    block = combined_prompt_block(src_dir)
+    block = context_prompt_block(src_dir)
     field_lines = [ln for ln in block.splitlines() if ln.startswith("- ")]
     # Only one field rendered → exactly one field line.
     assert len(field_lines) == 1

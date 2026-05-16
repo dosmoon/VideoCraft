@@ -1194,12 +1194,12 @@ class NewsDeskApp(ToolBase):
         """
         from creations.news_desk.publish import render_news_desk_publish
         from datetime import datetime as _dt
-        # Canonical view: context.json (AI-corrected) wins; basic_info
-        # falls back for fields context hasn't filled yet. publish.md
-        # consumers should always see the same truth as renderers.
-        merged = source_context.combined_dict(_nv_paths.source_dir(self.project, self.material_instance_id))
-        bi = source_context.SourceBasicInfo.from_dict(merged)
-        ctx = source_context.SourceContext.from_dict(merged)
+        # context.json is the single source of truth for publish.
+        # basic_info is AI input only — never bleeds into the artifact.
+        # When AI Fill hasn't run, ctx is empty and publish.md degrades
+        # to a chapters-only doc (publish.py omits empty sections).
+        ctx = source_context.read_context(
+            _nv_paths.source_dir(self.project, self.material_instance_id))
 
         try:
             fallback_lang = self.project.meta.language.source or "zh"
@@ -1224,7 +1224,6 @@ class NewsDeskApp(ToolBase):
         md = render_news_desk_publish(
             project_title=project_title,
             source_url=source_url,
-            basic_info=bi.to_dict(),
             context=ctx.to_dict(),
             chapters=chapters,
             candidate_titles=self._candidate_titles(),
