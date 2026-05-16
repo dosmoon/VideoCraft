@@ -773,10 +773,54 @@ class VideoCraftHub:
     # ── Sidebar tabs (ADR-0004: 素材 / 创作 / 文件) ─────────────────────────
 
     def _build_materials_tab(self, parent: tk.Frame) -> None:
-        """素材 tab — source / news context / subtitles sections.
+        """素材 tab framework (ADR-0004):
+          - top row: [+] button → registry-driven popup menu of material types
+          - body: each registered material's sidebar_renderer paints its tree
+        Hub no longer knows what sections any specific material type contains.
+        """
+        head = tk.Frame(parent, bg="#f5f5f5")
+        head.pack(fill="x", padx=2, pady=(2, 4))
+        self._material_add_btn = tk.Button(
+            head, text=tr("hub.button.add"), relief="flat", bg="#e8e8e8",
+            command=self._show_add_material_menu,
+        )
+        self._material_add_btn.pack(side="right", padx=2)
 
-        Conceptually owned by the materials/news_video plugin. Hub still
-        hosts construction until plugin.sidebar_renderer is wired.
+        # Body: vertical stack of per-material panels.
+        body = tk.Frame(parent, bg="#f5f5f5")
+        body.pack(fill="both", expand=True)
+
+        self._material_panels: dict[str, object] = {}
+        for mt in materials.all_types():
+            if mt.sidebar_renderer is None:
+                continue
+            panel_frame = tk.Frame(body, bg="#f5f5f5")
+            panel_frame.pack(fill="both", expand=True)
+            self._material_panels[mt.type_name] = mt.sidebar_renderer(panel_frame, self)
+
+    def _show_add_material_menu(self) -> None:
+        """Drop-down menu under the 素材 tab [+] button: one entry per
+        registered MaterialType. Single source of truth = registry."""
+        menu = tk.Menu(self.root, tearoff=0)
+        for mt in materials.all_types():
+            if mt.create_handler is None:
+                continue
+            label = f"  {mt.icon or '📦'}  {tr(mt.display_name_key) if mt.display_name_key else mt.type_name}  "
+            menu.add_command(
+                label=label,
+                command=lambda mt=mt: mt.create_handler(self),
+            )
+        if menu.index("end") is None:
+            return  # nothing registered
+        btn = self._material_add_btn
+        x = btn.winfo_rootx()
+        y = btn.winfo_rooty() + btn.winfo_height()
+        menu.tk_popup(x, y)
+
+    def _build_materials_tab_legacy(self, parent: tk.Frame) -> None:
+        """Legacy news_video section builder.
+        Delegate target for materials/news_video/sidebar.py during slice K.1.
+        Slice K.2 will move these section bodies into the plugin class.
         """
         self._source_section = tk.Frame(parent, bg="#f5f5f5")
         self._source_section.pack(fill="x", padx=4, pady=(4, 0))
@@ -794,6 +838,15 @@ class VideoCraftHub:
         self._subtitles_section.pack(fill="both", expand=True,
                                      padx=4, pady=(0, 4))
         self._build_subtitles_section(self._subtitles_section)
+
+    def _refresh_materials_tab_legacy(self) -> None:
+        """Legacy refresh delegate for materials/news_video/sidebar.py.
+        Slice K.2 moves this into the plugin class."""
+        if not hasattr(self, "_source_status_var"):
+            return
+        self._refresh_source_section()
+        self._refresh_news_context_section()
+        self._refresh_subtitles_section()
 
     def _build_creations_tab(self, parent: tk.Frame) -> None:
         """创作 tab — flat list of creation instances. [+] sits at tab head,
@@ -1116,11 +1169,13 @@ class VideoCraftHub:
     # ── State refresh ─────────────────────────────────────────────────────────
 
     def _refresh_project_tab(self) -> None:
-        if not hasattr(self, "_source_status_var"):
-            return  # not built yet
-        self._refresh_source_section()
-        self._refresh_news_context_section()
-        self._refresh_subtitles_section()
+        # Materials: delegate to each registered plugin's refresh.
+        for panel in getattr(self, "_material_panels", {}).values():
+            try:
+                panel.refresh()
+            except Exception:
+                pass
+        # Creations tab (still Hub-owned)
         self._refresh_derivatives_section()
 
     def _refresh_source_section(self) -> None:
