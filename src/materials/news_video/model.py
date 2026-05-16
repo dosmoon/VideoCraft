@@ -56,9 +56,12 @@ class SlotState:
 class NewsVideoModel:
     """One news_video instance. Wrap-and-call surface for sidebar/UI."""
 
-    def __init__(self, project, instance_id: str = _paths.DEFAULT_INSTANCE):
+    def __init__(self, project, instance_id: str | None = None):
         self.project = project
-        self.instance_id = instance_id
+        # Caller may omit instance_id for ergonomic transitional callsites;
+        # we resolve via paths.default_instance which prefers an existing
+        # instance over the "default" fallback.
+        self.instance_id = instance_id or _paths.default_instance(project)
         self._subscribers: list[Callable[[], None]] = []
 
     # ── Identity / paths ──────────────────────────────────────────────────

@@ -508,13 +508,9 @@ class NewsVideoSidebar:
         self._on_model_change()
 
 
-def render(parent: tk.Frame, hub: "VideoCraftHub") -> NewsVideoSidebar:
-    """MaterialType.sidebar_renderer entry point.
-
-    Constructs a NewsVideoModel for the DEFAULT instance (slice M
-    transitional). Slice P replaces this with a renderer that takes an
-    explicit instance_id from the hub iteration over
-    project.list_material_instances("news_video").
-    """
-    model = NewsVideoModel(hub.project)
+def render(parent: tk.Frame, hub: "VideoCraftHub",
+            instance_id: str) -> NewsVideoSidebar:
+    """MaterialType.sidebar_renderer entry point. Constructs a model
+    for the requested instance and a sidebar view over it."""
+    model = NewsVideoModel(hub.project, instance_id)
     return NewsVideoSidebar(parent, model, hub)

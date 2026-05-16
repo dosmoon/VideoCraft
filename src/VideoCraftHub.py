@@ -245,11 +245,8 @@ class VideoCraftHub:
         """
         self.root = root
         self.project: Project = project
-        # Slice M (ADR-0005): single-instance projects auto-bootstrap a
-        # default news_video material so existing single-source code paths
-        # have a writable instance to land data in. Slice P replaces this
-        # with user-driven [+] instance creation.
-        _nv_paths.ensure_default_instance(project)
+        # Slice P (ADR-0005): no auto-bootstrap. Empty 素材 tab until user
+        # clicks [+] to create the first instance.
         # Signals to the main loop after Hub destroys itself:
         #   reopen_launcher=True + requested_project_path=None → show launcher
         #   reopen_launcher=True + requested_project_path=<p>  → open that project directly
@@ -809,8 +806,10 @@ class VideoCraftHub:
         self._populate_materials_body()
 
     def _populate_materials_body(self) -> None:
-        """(Re)render the materials tab body to match current instance state."""
-        # Tear down anything already in the body.
+        """(Re)render the materials tab body. Iterates every registered
+        material type, then every instance of that type on disk, painting
+        one panel per instance. Empty (no instances anywhere) shows a
+        guide-to-[+] hint."""
         for child in self._materials_body.winfo_children():
             child.destroy()
         self._material_panels.clear()
@@ -819,18 +818,12 @@ class VideoCraftHub:
         for mt in materials.all_types():
             if mt.sidebar_renderer is None:
                 continue
-            exists = True
-            if mt.has_instance is not None:
-                try:
-                    exists = bool(mt.has_instance(self.project))
-                except Exception:
-                    exists = False
-            if not exists:
-                continue
-            panel_frame = tk.Frame(self._materials_body, bg="#f5f5f5")
-            panel_frame.pack(fill="both", expand=True)
-            self._material_panels[mt.type_name] = mt.sidebar_renderer(panel_frame, self)
-            any_rendered = True
+            for inst_id in self.project.list_material_instances(mt.type_name):
+                panel_frame = tk.Frame(self._materials_body, bg="#f5f5f5")
+                panel_frame.pack(fill="both", expand=True)
+                panel = mt.sidebar_renderer(panel_frame, self, inst_id)
+                self._material_panels[f"{mt.type_name}:{inst_id}"] = panel
+                any_rendered = True
 
         if not any_rendered:
             tk.Label(
@@ -842,17 +835,14 @@ class VideoCraftHub:
         self._materials_fingerprint = self._compute_materials_fingerprint()
 
     def _compute_materials_fingerprint(self) -> tuple:
-        """Cheap state hash: which materials currently have instances.
-        Drives whether _refresh_project_tab needs to rebuild the body."""
+        """Cheap state hash: per type, the sorted list of instance names
+        currently on disk. Body rebuild fires when this changes."""
         out = []
         for mt in materials.all_types():
             if mt.sidebar_renderer is None:
                 continue
-            try:
-                ok = bool(mt.has_instance(self.project)) if mt.has_instance else True
-            except Exception:
-                ok = False
-            out.append((mt.type_name, ok))
+            out.append((mt.type_name,
+                        tuple(self.project.list_material_instances(mt.type_name))))
         return tuple(out)
 
     def _show_add_material_menu(self) -> None:

@@ -32,10 +32,14 @@ class MaterialType:
     description_zh: str = ""     # subtitle in the type-picker dialog (zh)
     description_en: str = ""     # subtitle in the type-picker dialog (en)
     icon: Optional[str] = None
-    sidebar_renderer: Optional[Callable] = None   # renders this material's tree node in 素材 tab; slice H
-    create_handler: Optional[Callable] = None     # handles 素材 tab [+] click; slice F
-    artifact_resolver: Optional[Callable] = None  # (instance, key) -> Path | None; slice F
-    has_instance: Optional[Callable] = None       # (project) -> bool; gates whether the sidebar paints this material
+    # (parent_frame, hub, instance_id) -> sidebar panel object
+    sidebar_renderer: Optional[Callable] = None
+    # (hub) -> None; creates a NEW empty instance, triggers refresh.
+    # The 素材 tab [+] popup menu invokes this per type.
+    create_handler: Optional[Callable] = None
+    # (project, instance_id) -> model object exposing get_artifact(key) etc.
+    # Slice Q uses this from creation plugins to resolve material artifacts.
+    instance_factory: Optional[Callable] = None
 
 
 _REGISTRY: dict[str, MaterialType] = {}
