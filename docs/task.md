@@ -56,7 +56,7 @@ J 之后用户指出：
 - Hub 仍直接构造 source/news_context/subtitles 3 个 section——这不是封装，是壁纸贴新墙
 - 新闻视频"本身就是结构化的"，所有 schema + UI + 加载逻辑应该完整封装在 `materials/news_video/`
 
-### K.1 已完成（HEAD `c7b9a07`）
+### K.1 + K.2 已完成（HEAD `a1a4bc3`）
 
 架构 seam 落地 + 用户可见 UX 补齐：
 - `materials/news_video/sidebar.py` 加 `NewsVideoSidebar` 类 + `render()` 入口；`MaterialType.sidebar_renderer` / `create_handler` 都 wire 上了
@@ -64,34 +64,24 @@ J 之后用户指出：
 - Hub 加了 tab 级 [+] popup menu（registry-driven，每个 MaterialType 一条目，带 icon + display name）
 - Hub 把当前的 section 构造代码改名 `_build_materials_tab_legacy` / `_refresh_materials_tab_legacy`——**plugin class 当前还是 delegate 回 hub 的 legacy 方法**
 
-### K.2 待做（pure refactor，无行为变化）
+### K.2（HEAD `a1a4bc3`）
 
-把 ~500 行 news_video-specific 代码从 `VideoCraftHub.py` 真正搬到 `materials/news_video/sidebar.py` 的 `NewsVideoSidebar` 类内：
+`materials/news_video/sidebar.py` 长成 614 行 `NewsVideoSidebar` 类，包含所有 build / refresh / handler。`VideoCraftHub.py` 从 2122 → 1592 行（-530），不再出现 source / news_context / subtitles 字眼。Hub legacy 方法全删。
 
-待迁方法：
-- `_build_source_section` / `_build_news_context_section` / `_build_subtitles_section`
-- `_refresh_source_section` / `_refresh_news_context_section` / `_refresh_subtitles_section`
-- `_on_source_button` / `_on_subtitles_primary` / `_invoke_asr` / `_invoke_translate` / `_import_subtitle_file`
-- `_subtitles_section_snapshot`
-- 各 section 内的 row helper（per-language SRT row, analysis sub-rows, etc.）
+视觉上每个 panel 顶部加了实例 header `▼  📺  新闻视频`，3 个 section 缩进显示，符合状态-2 的树形 mockup。
 
-适配规则：
-- `self.project` → `self.hub.project`
-- `self.root` → `self.hub.root`
-- `self.show_*_preview` 调用保持 → `self.hub.show_*_preview()`（preview 路由是 hub 概念）
-- `self._refresh_project_tab` → 改成 `self.refresh()` 或 `self.hub._refresh_project_tab()`（确认哪种）
-- Hub 端删完之后，`_build_materials_tab_legacy` / `_refresh_materials_tab_legacy` 也跟着删；`NewsVideoSidebar.__init__` / `refresh` 直接做活
+Hub 侧 preview 回调（subtitle 修复 / analysis 保存 / source 修改）已重新路由：
+- `on_fixed` / `on_saved` → `self._refresh_project_tab`（级联到 `panel.refresh()`）
+- `on_modify` → 从 `self._material_panels['news_video']` 反向调 `_on_source_button`
 
-预估：单 commit 完成，~500 行 cut/paste + ~50 处变量适配。低风险（pure mechanical refactor）但篇幅大；下一个会话起手做这个。
+### K 之后的 UI 设计问题（仍未拍板）
 
-### K 之后的 UI 设计问题（也需要拍板）
-
-当前 K.1 实现：news_video 面板**始终渲染**（即使源视频未添加）；用户看到 3 个空槽位 + 各自的 [+ 添加] 内联按钮。
+当前实现：news_video 面板**始终渲染**（即使源视频未添加）；用户看到 3 个空槽位 + 各自的 [+ 添加] 内联按钮。
 
 设计层面待澄清：
-- 这是不是用户预期？还是希望"源视频未添加时素材 tab 全空、只看见 [+]，点 [+] 后才出现 news_video 面板"？
+- 这是不是用户预期？还是希望"源视频未添加时素材 tab 全空、只看见 tab 顶 [+]，点 [+] 后才出现 news_video 面板"？
 - 后者意味着把 source video 当作"创建 instance 的动作"而非"填满第一个槽"。当前单源项目模型下两种解释都讲得通，但 UX 不同
-- 推荐先用 K.1 跑一段时间，等真实使用觉得别扭再决定。
+- 推荐先跑一段时间，等真实使用觉得别扭再决定
 
 ---
 
