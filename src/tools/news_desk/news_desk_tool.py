@@ -828,6 +828,17 @@ class NewsDeskApp(ToolBase):
                 return list(comp.get("schedule") or [])
         return []
 
+    def _candidate_titles(self) -> list[str]:
+        """Snapshotted candidate titles from the chapter component.
+        Same upstream source (analysis.json) as schedule, snapshotted
+        together at import time. Empty list when user hasn't imported
+        or analysis had no titles."""
+        for comp in self._components:
+            if comp.get("kind") == "chapter":
+                titles = comp.get("titles") or []
+                return [str(t).strip() for t in titles if str(t).strip()]
+        return []
+
     @staticmethod
     def _chapters_for_publish(schedule: list[dict]) -> list[dict]:
         """Convert chapter component's schedule dicts to the shape
@@ -1242,6 +1253,7 @@ class NewsDeskApp(ToolBase):
             basic_info=bi.to_dict(),
             context=ctx.to_dict(),
             chapters=chapters,
+            candidate_titles=self._candidate_titles(),
             lower_thirds=[],
             adapted_srts=adapted,
             rendered_at=_dt.now().strftime("%Y-%m-%d %H:%M"),

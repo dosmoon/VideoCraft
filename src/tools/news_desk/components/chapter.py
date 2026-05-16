@@ -568,13 +568,16 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
 
 
 def _import_from_analysis(instance: dict, ctx: ProjectContext) -> None:
-    """[⇩ from analysis.json] — load chapters into the schedule.
+    """[⇩ from analysis.json] — snapshot chapters + candidate titles
+    into the instance. Per ADR-0003 we copy both same-source pieces
+    here so downstream (publish.md) never reaches back to upstream.
 
-    Mutates instance["schedule"] in place (clear + extend) rather than
-    replacing the list object. The property panel captures the schedule
-    list by reference in its enclosing scope — replacing the object
-    would leave the panel's UI bindings pointing at the stale empty
-    list until the workbench is reopened.
+    Mutates instance["schedule"] and instance["titles"] in place
+    (clear + extend) rather than replacing the list objects. The
+    property panel captures the schedule list by reference in its
+    enclosing scope — replacing the object would leave the panel's
+    UI bindings pointing at the stale empty list until the workbench
+    is reopened.
     """
     subs_dir = ctx.project.subtitles_dir
     if not os.path.isdir(subs_dir):
@@ -585,7 +588,10 @@ def _import_from_analysis(instance: dict, ctx: ProjectContext) -> None:
                 env = chapters_io.load_analysis(os.path.join(subs_dir, fn))
             except (OSError, json.JSONDecodeError):
                 continue
-            chs = env.get("chapters") if isinstance(env, dict) else []
+            if not isinstance(env, dict):
+                continue
+            chs = env.get("chapters") or []
+            titles = env.get("titles") or []
             if isinstance(chs, list):
                 schedule = instance.setdefault("schedule", [])
                 schedule.clear()
@@ -598,6 +604,15 @@ def _import_from_analysis(instance: dict, ctx: ProjectContext) -> None:
                     "refined":   str(ch.get("refined", "")),
                     "key_points": list(ch.get("key_points") or []),
                 } for ch in chs)
+                # Snapshot candidate titles alongside chapters — same
+                # AI call produced both, so re-importing chapters
+                # refreshes titles too.
+                title_buf = instance.setdefault("titles", [])
+                title_buf.clear()
+                if isinstance(titles, list):
+                    title_buf.extend(str(t).strip()
+                                      for t in titles
+                                      if str(t).strip())
                 return
 
 

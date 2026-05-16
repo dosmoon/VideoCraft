@@ -38,6 +38,7 @@ def render_news_desk_publish(
     rendered_at: str,
     lang_iso: str,
     transcript_srt_path: Optional[str] = None,
+    candidate_titles: Optional[list[str]] = None,
 ) -> str:
     """Markdown for derivatives/news_desk/<instance>/publish.md.
 
@@ -69,6 +70,18 @@ def render_news_desk_publish(
         lines.append(f"> Source: {source_url}")
     lines.append(f"> Rendered: {rendered_at}")
     lines.append("")
+
+    # Candidate titles — first section so the user picking a YouTube
+    # title sees these immediately on opening publish.md. Empty list
+    # → section silently omitted. Snapshotted on the chapter component
+    # (same upstream source as chapters; see ADR-0003).
+    titles = [str(t).strip() for t in (candidate_titles or []) if str(t).strip()]
+    if titles:
+        lines.append("## " + t(lang_iso, "候选标题", "Candidate Titles"))
+        lines.append("")
+        for tt in titles:
+            lines.append(f"- {tt}")
+        lines.append("")
 
     # Episode metadata block — single tight section the user can scan in
     # one glance before writing the description.
