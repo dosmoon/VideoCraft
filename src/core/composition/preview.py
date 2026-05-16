@@ -121,12 +121,14 @@ class CompositionPreview:
 
     def __init__(self, parent,
                  on_crop_changed: Optional[Callable[[dict], None]] = None,
+                 on_time: Optional[Callable[[int], None]] = None,
                  width: int = 480, height: int = 540):
         # Late import keeps this module importable in headless contexts.
         from ui.web_preview import WebPreviewFrame
 
         self._parent = parent
         self._on_crop = on_crop_changed
+        self._on_time = on_time
         self._loaded = False
         self._pending: list[str] = []
 
@@ -286,9 +288,15 @@ class CompositionPreview:
         self._pending.clear()
 
     def _on_message(self, msg: dict) -> None:
-        if msg.get("type") == "crop" and self._on_crop:
+        mtype = msg.get("type")
+        if mtype == "crop" and self._on_crop:
             try:
                 self._on_crop(msg.get("rect") or {})
+            except Exception:
+                pass
+        elif mtype == "time" and self._on_time:
+            try:
+                self._on_time(int(msg.get("t") or 0))
             except Exception:
                 pass
 

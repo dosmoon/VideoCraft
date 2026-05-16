@@ -1138,6 +1138,7 @@ vid.addEventListener('loadedmetadata', () => {
   drawOverlay();
 });
 
+let lastNotifiedSec = -1;
 vid.addEventListener('timeupdate', () => {
   if (clipEnd > 0 && vid.currentTime >= clipEnd) {
     // Loop the clip window so users get a continuous preview without
@@ -1147,6 +1148,14 @@ vid.addEventListener('timeupdate', () => {
     vid.currentTime = clipStart;
   }
   drawOverlay();
+  // Throttle: only emit once per integer second.
+  const sec = Math.floor(vid.currentTime);
+  if (sec !== lastNotifiedSec) {
+    lastNotifiedSec = sec;
+    if (window.pywebview && window.pywebview.api) {
+      try { window.pywebview.api.notify({type: 'time', t: sec}); } catch (e) {}
+    }
+  }
 });
 
 window.addEventListener('resize', drawOverlay);

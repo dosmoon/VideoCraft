@@ -135,7 +135,6 @@ def _render_analysis(parent: tk.Frame, data, *,
     project_root = os.path.dirname(subtitles_dir)
     source_video = os.path.join(project_root, "source", "video.mp4")
     srt_path = os.path.join(subtitles_dir, f"{artifact.lang_iso}.srt")
-    cache_dir = os.path.join(project_root, ".videocraft", "cache")
 
     if not os.path.isfile(source_video):
         # Per design: chapters only exist when subtitles exist, which
@@ -151,7 +150,6 @@ def _render_analysis(parent: tk.Frame, data, *,
         lang_iso=artifact.lang_iso,
         source_video=source_video,
         srt_path=srt_path,
-        cache_dir=cache_dir,
         on_saved=on_saved,
     )
     editor.pack(fill="both", expand=True)

@@ -4,11 +4,13 @@ Embedded into the permanent preview tab 0 when the user clicks an
 analysis.json sidebar artifact. Two columns:
 
     +-----------------+----------------------------------------+
-    |  chapter list   |  WebView <video>                       |
+    |  chapter list   |  CompositionPreview (video + cues)     |
     |  (Treeview)     |  ----------------------------------    |
-    |                 |  start [HH:MM:SS] [🎯 N秒]              |
-    |                 |  title [           ]                    |
-    |                 |  [💾 保存] [↺ 撤销]                     |
+    |                 |  [save] [undo] [add] [delete]          |
+    |                 |  --- 章节详情 ---                       |
+    |                 |  start [HH:MM:SS] [🎯 N s]  title [..]  |
+    |                 |  refined [..]                          |
+    |                 |  key_points [..]                       |
     +-----------------+----------------------------------------+
 
 Click a chapter row → seek the video to that chapter's start.
@@ -19,6 +21,12 @@ re-normalized via core.chapters_io and re-rendered.
 All chapter invariants (sort, end recompute, auto-intro at 00:00,
 drop-degenerate) live in chapters_io. This UI is a thin editor on
 top — it never embeds the invariant logic itself.
+
+The video surface reuses core.composition.CompositionPreview — the
+same WebView page that clip_script and news_desk drive — so future
+video/subtitle UX improvements land in one place. We don't push a
+CompositionStyle here; the preview's default style is fine for the
+read-only subtitle overlay we use as a chapter-boundary reference.
 """
 
 from __future__ import annotations
@@ -35,71 +43,9 @@ from core.chapters_io import (
     parse_time_str,
     fmt_time_str,
 )
+from core.composition.preview import CompositionPreview
 from core.subtitle_ops import srt_end_seconds
 from i18n import tr
-from ui.web_preview import WebPreviewFrame
-
-
-# Cues are baked into the page as a JSON array, so the browser can
-# render subtitles without a separate VTT fetch (file:// pages cannot
-# load <track src=file://...> due to Chromium's local-file CORS rules).
-_VIDEO_HTML = """<!doctype html>
-<html><head><meta charset="utf-8">
-<style>
-  html, body {{ margin:0; padding:0; background:#000; height:100%;
-                position:relative; overflow:hidden; }}
-  body {{ display:flex; align-items:center; justify-content:center; }}
-  video {{ width:100%; height:100%; object-fit:contain; }}
-  #cap {{
-    position: fixed; left: 0; right: 0; bottom: 60px;
-    text-align: center; color: #fff;
-    font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif;
-    font-size: 20px; font-weight: 600; line-height: 1.35;
-    text-shadow: 1px 1px 0 #000, -1px -1px 0 #000,
-                 1px -1px 0 #000, -1px 1px 0 #000,
-                 0 0 6px rgba(0,0,0,0.85);
-    padding: 0 24px; pointer-events: none;
-    white-space: pre-wrap;
-  }}
-</style></head>
-<body>
-  <video id="v" controls preload="metadata" src="{video_url}"></video>
-  <div id="cap"></div>
-  <script>
-    var cues = {cues_json};
-    var v = document.getElementById('v');
-    var cap = document.getElementById('cap');
-    var last = -1;
-    var lastIdx = -1;
-    // Cues are sorted by start; advance an index pointer instead of
-    // scanning the whole list every tick.
-    function findCue(t) {{
-      // Forward seek
-      while (lastIdx + 1 < cues.length && cues[lastIdx + 1].s <= t) {{
-        lastIdx++;
-      }}
-      // Backward seek (user scrubbed)
-      while (lastIdx >= 0 && cues[lastIdx].s > t) {{
-        lastIdx--;
-      }}
-      if (lastIdx >= 0 && cues[lastIdx].e > t) return cues[lastIdx].t;
-      return "";
-    }}
-    v.addEventListener('timeupdate', function() {{
-      var t = v.currentTime;
-      cap.textContent = findCue(t);
-      var sec = Math.floor(t);
-      if (sec === last) return;
-      last = sec;
-      try {{ window.pywebview.api.notify({{type:'time', t:sec}}); }} catch(e) {{}}
-    }});
-    v.addEventListener('seeked', function() {{
-      lastIdx = -1; // force re-search after a scrub
-      cap.textContent = findCue(v.currentTime);
-    }});
-  </script>
-</body></html>
-"""
 
 
 def _is_valid_ts(text: str) -> bool:
@@ -114,7 +60,7 @@ def _is_valid_ts(text: str) -> bool:
 
 
 class ChapterEditor(tk.Frame):
-    """Split-view editor; owns its own WebPreviewFrame lifecycle."""
+    """Split-view editor; owns a CompositionPreview lifecycle."""
 
     def __init__(
         self,
@@ -124,7 +70,6 @@ class ChapterEditor(tk.Frame):
         lang_iso: str,
         source_video: str,
         srt_path: str,
-        cache_dir: str,
         on_saved: Optional[Callable[[], None]] = None,
     ):
         super().__init__(parent, bg="white")
@@ -145,13 +90,13 @@ class ChapterEditor(tk.Frame):
         self._selected: Optional[int] = None
         self._current_video_sec: int = 0
 
-        self._build_ui(cache_dir)
+        self._build_ui()
         self._reload_tree()
         self.bind("<Destroy>", self._on_destroy)
 
     # ── UI construction ──────────────────────────────────────────────────
 
-    def _build_ui(self, cache_dir: str) -> None:
+    def _build_ui(self) -> None:
         paned = ttk.PanedWindow(self, orient="horizontal")
         paned.pack(fill="both", expand=True)
 
@@ -188,18 +133,17 @@ class ChapterEditor(tk.Frame):
         video_box.pack(fill="both", expand=True)
         video_box.pack_propagate(False)
 
-        os.makedirs(cache_dir, exist_ok=True)
-        html_path = os.path.join(cache_dir, "chapter_editor_preview.html")
-        video_url = "file:///" + os.path.abspath(
-            self._source_video).replace("\\", "/")
-        cues_json = self._build_cues_json()
-        with open(html_path, "w", encoding="utf-8") as f:
-            f.write(_VIDEO_HTML.format(video_url=video_url,
-                                       cues_json=cues_json))
-        initial_url = "file:///" + html_path.replace("\\", "/")
-        self._web = WebPreviewFrame(video_box, initial_url=initial_url,
-                                    on_message=self._on_web_message)
-        self._web.pack(fill="both", expand=True)
+        # Reuse the canonical preview surface — same WebView page that
+        # clip_script / news_desk drive, so future video/subtitle UX
+        # upgrades land in one place. Style is left at defaults
+        # (composition_preview.html has sane fallbacks); we only feed
+        # source + cues + seek and consume the time message.
+        self._preview = CompositionPreview(
+            video_box, on_time=self._on_time)
+        self._preview.widget.pack(fill="both", expand=True)
+        self._preview.set_source(
+            os.path.abspath(self._source_video), 0.0, 0.0)
+        self._preview.set_cues(self._build_cues_list())
 
         # Top button row — save / undo / add / delete only. The actual
         # field editors all live in the details panel below.
@@ -386,52 +330,44 @@ class ChapterEditor(tk.Frame):
 
     # ── Subtitle overlay ─────────────────────────────────────────────────
 
-    def _build_cues_json(self) -> str:
-        """Parse the SRT once and emit a JSON literal of cues for the
-        in-page subtitle overlay. Shape: [{s, e, t}] sorted by start."""
+    def _build_cues_list(self) -> list[dict]:
+        """Parse the SRT into the cue dict shape composition.preview
+        expects: [{start, end, text}, ...] sorted by start."""
         try:
-            import json as _json
             import srt as _srt
             from core.subtitle_ops import read_srt
             cues = list(_srt.parse(read_srt(self._srt_path)))
         except Exception:
-            return "[]"
-        out = []
+            return []
+        out: list[dict] = []
         for cue in cues:
             text = cue.content.replace("\n", " ").strip()
             if not text:
                 continue
             out.append({
-                "s": cue.start.total_seconds(),
-                "e": cue.end.total_seconds(),
-                "t": text,
+                "start": cue.start.total_seconds(),
+                "end":   cue.end.total_seconds(),
+                "text":  text,
             })
-        out.sort(key=lambda c: c["s"])
-        return _json.dumps(out, ensure_ascii=False)
+        out.sort(key=lambda c: c["start"])
+        return out
 
-    # ── WebView messages ─────────────────────────────────────────────────
+    # ── Preview callbacks ────────────────────────────────────────────────
 
-    def _on_web_message(self, data) -> None:
-        if not isinstance(data, dict):
-            return
-        if data.get("type") == "time":
-            t = int(data.get("t") or 0)
-            self._current_video_sec = t
-            self._set_cur_btn.configure(text=f"🎯 {t}s")
-            self._add_btn.configure(
-                text=tr("chapter_editor.btn_add_at", t=f"{t}s"))
+    def _on_time(self, sec: int) -> None:
+        """Called from composition.preview's timeupdate throttler. Updates
+        the two buttons whose labels track the current playback second."""
+        self._current_video_sec = sec
+        self._set_cur_btn.configure(text=f"🎯 {sec}s")
+        self._add_btn.configure(
+            text=tr("chapter_editor.btn_add_at", t=f"{sec}s"))
 
     def _seek_to_str(self, ts: str) -> None:
-        sec = parse_time_str(ts)
-        self._seek_to_sec(sec)
+        self._seek_to_sec(parse_time_str(ts))
 
     def _seek_to_sec(self, sec: float) -> None:
-        # currentTime accepts float seconds. Pause then seek to avoid an
-        # auto-play after each row click.
-        js = (f"var v=document.getElementById('v');"
-              f"if(v){{v.pause();v.currentTime={sec:.3f};}}")
         try:
-            self._web.evaluate_js(js)
+            self._preview.seek(float(sec))
         except Exception:
             pass
 
@@ -662,6 +598,6 @@ class ChapterEditor(tk.Frame):
 
     def _on_destroy(self, _e=None) -> None:
         try:
-            self._web.destroy()
+            self._preview.destroy()
         except Exception:
             pass
