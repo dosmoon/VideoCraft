@@ -2,17 +2,11 @@
 
 Per ADR-0003 derivatives own their data. Each subtitle instance:
 
-  - has a stable `id` (UUID-ish hex slug)
+  - has a stable `id` (8-char hex slug) assigned at creation
   - snapshots the user-picked SRT into
     `<instance_dir>/subtitles/<id>.srt` at import time
   - stores a derivative-relative `srt_path` ("subtitles/<id>.srt")
-    instead of pointing at the source layer
-
-Legacy instances (srt_path pointing at `subtitles/zh.srt` in the
-project folder) keep rendering — `_resolve_srt_path` looks at the
-path shape to decide which root to resolve against. Upgrading a
-legacy instance to a snapshot is an explicit user action (click
-[↻ 重新导入]); we don't auto-rewrite on load.
+    rooted at the instance dir, never at the source layer
 """
 
 from __future__ import annotations
@@ -55,54 +49,22 @@ def _default_instance(_duration: float) -> dict:
     }
 
 
-def _ensure_id(instance: dict) -> str:
-    """Backfill an id onto legacy instances that predate ADR-0003."""
-    cid = instance.get("id")
-    if not cid:
-        cid = _new_comp_id()
-        instance["id"] = cid
-    return cid
-
-
 def _snapshot_rel_path(instance: dict) -> str:
     """Derivative-relative path for this instance's snapshotted SRT."""
-    return f"subtitles/{_ensure_id(instance)}.srt"
-
-
-def _is_local_snapshot(rel_path: str) -> bool:
-    """True if `rel_path` looks like a per-instance snapshot inside
-    `<instance_dir>/subtitles/`. Legacy paths point at the source layer
-    (`subtitles/<iso>.srt` rooted at project folder) so they share the
-    `subtitles/` prefix but a different parent — we disambiguate by the
-    `.srt` filename: snapshots are named by id (hex), legacy by iso."""
-    p = (rel_path or "").replace("\\", "/")
-    if not p.startswith("subtitles/") or not p.endswith(".srt"):
-        return False
-    stem = p[len("subtitles/"):-len(".srt")]
-    # Snapshot ids are 8-char hex; legacy stems are lang isos like "zh"
-    # or "zh-Hans". Hex-only + length 8 distinguishes safely.
-    if len(stem) != 8:
-        return False
-    try:
-        int(stem, 16)
-        return True
-    except ValueError:
-        return False
+    return f"subtitles/{instance['id']}.srt"
 
 
 def _resolve_srt_path(instance: dict, ctx: ProjectContext) -> str:
     """Absolute filesystem path for the configured SRT, resolved against
-    the instance dir (snapshot) or the project folder (legacy reference).
-    Empty string when nothing's configured."""
+    the instance dir. Empty string when nothing's configured."""
     rel = (instance.get("srt_path") or "").strip()
     if not rel:
         return ""
     if os.path.isabs(rel):
         return rel
-    root = ctx.instance_dir if _is_local_snapshot(rel) else ctx.project.folder
-    if not root:
+    if not ctx.instance_dir:
         return rel
-    return os.path.normpath(os.path.join(root, rel))
+    return os.path.normpath(os.path.join(ctx.instance_dir, rel))
 
 
 def _probe_srt_summary(abs_path: str) -> tuple[int, float]:
@@ -176,12 +138,8 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
             status_var.set(tr("tool.news_desk.subtitle.srt_missing",
                               path=rel))
             return
-        if _is_local_snapshot(rel):
-            status_var.set(tr("tool.news_desk.subtitle.snapshot_ok",
-                              count=n, dur=_fmt_duration(dur)))
-        else:
-            status_var.set(tr("tool.news_desk.subtitle.legacy_ref",
-                              path=rel, count=n, dur=_fmt_duration(dur)))
+        status_var.set(tr("tool.news_desk.subtitle.snapshot_ok",
+                          count=n, dur=_fmt_duration(dur)))
 
     def _import_srt() -> None:
         initial = _nv_paths.subtitles_dir(ctx.project, ctx.material_instance_id)
