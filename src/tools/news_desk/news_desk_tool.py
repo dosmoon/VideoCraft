@@ -35,7 +35,7 @@ from core import derivative_types
 from core.composition import presets as comp_presets
 from core.composition.preview import CompositionPreview
 from core.composition.render import (
-    CompositionRequest, ExtraSubtitleSpec,
+    CompositionRequest, ExtraSubtitleSpec, ExtraWatermarkSpec,
     prepare_subtitle_cues, probe_video_resolution, render_composition,
 )
 from core.composition.style import (
@@ -665,11 +665,17 @@ class NewsDeskApp(ToolBase):
         ctx = nd_components.ProjectContext(
             project=self.project, duration=self._duration)
 
+        # Component list position drives z-order: top of list = topmost
+        # render layer. We assign z = (N - index) * 1000 so each
+        # component lands at a unique z with room (the *1000 spacing
+        # leaves slots for overlay-internal z if a single component
+        # produces multiple specs — though in practice today it doesn't).
         overlays: list = []
-        sub_inputs: list[dict] = []     # ordered
-        wm_inputs: list[WatermarkStyle] = []
+        extra_subs: list[ExtraSubtitleSpec] = []
+        extra_wms: list[ExtraWatermarkSpec] = []
+        total = len(self._components)
 
-        for comp in self._components:
+        for index, comp in enumerate(self._components):
             spec = nd_components.spec_for_instance(comp)
             if spec is None:
                 continue
@@ -679,15 +685,36 @@ class NewsDeskApp(ToolBase):
                 logger.warning(
                     f"news_desk: {spec.kind} render fragment failed: {e}")
                 continue
+            z = (total - index) * 1000
+
             ov = frag.get("overlays")
             if isinstance(ov, list):
-                overlays.extend(ov)
+                for o in ov:
+                    # Overlay specs already carry z_order (used as a
+                    # tie-breaker for fine ordering inside one component);
+                    # we override with the list-derived z so UI order
+                    # wins. The overlay dataclasses are mutable.
+                    try:
+                        o.z_order = z
+                    except Exception:
+                        pass
+                    overlays.append(o)
+
             wm = frag.get("watermark")
             if wm is not None:
-                wm_inputs.append(wm)
+                extra_wms.append(ExtraWatermarkSpec(watermark=wm, z_order=z))
+
             sub = frag.get("subtitle")
             if sub is not None:
-                sub_inputs.append(sub)
+                srt_path = sub.get("srt_path") or ""
+                if srt_path:
+                    extra_subs.append(ExtraSubtitleSpec(
+                        srt_path=srt_path,
+                        line=sub["line"],
+                        position=sub.get("position", "bottom"),
+                        block_margin_pct=sub.get("block_margin_pct", 0.09),
+                        z_order=z,
+                    ))
 
         # All subtitles + watermarks ride the N-track render path. The
         # legacy sub1/sub2 + style.watermark slots are kept disabled —
@@ -696,19 +723,7 @@ class NewsDeskApp(ToolBase):
         style.subtitle.sub1.enabled = False
         style.subtitle.sub2.enabled = False
 
-        extra_subs: list[ExtraSubtitleSpec] = []
-        for sub in sub_inputs:
-            srt_path = sub.get("srt_path") or ""
-            if not srt_path:
-                continue
-            extra_subs.append(ExtraSubtitleSpec(
-                srt_path=srt_path,
-                line=sub["line"],
-                position=sub.get("position", "bottom"),
-                block_margin_pct=sub.get("block_margin_pct", 0.09),
-            ))
-
-        return style, extra_subs, wm_inputs, overlays
+        return style, extra_subs, extra_wms, overlays
 
     # ── Preview push ──────────────────────────────────────────────────────
 
@@ -745,22 +760,27 @@ class NewsDeskApp(ToolBase):
                     "position": es.position,
                     "block_margin_pct": es.block_margin_pct,
                     "cues": cues,
+                    "z_order": es.z_order,
                 })
             self._preview.set_extra_subtitles(sub_payload)
-            wm_payload = [{
-                "enabled": w.enabled,
-                "type": w.type,
-                "text": w.text,
-                "text_fontsize": w.text_fontsize,
-                "text_color": w.text_color,
-                "text_opacity": w.text_opacity,
-                "image_path": w.image_path,
-                "image_scale": w.image_scale,
-                "image_opacity": w.image_opacity,
-                "position": w.position,
-                "margin_x_pct": w.margin_x_pct,
-                "margin_y_pct": w.margin_y_pct,
-            } for w in extra_wms]
+            wm_payload = []
+            for ews in extra_wms:
+                w = ews.watermark
+                wm_payload.append({
+                    "enabled": w.enabled,
+                    "type": w.type,
+                    "text": w.text,
+                    "text_fontsize": w.text_fontsize,
+                    "text_color": w.text_color,
+                    "text_opacity": w.text_opacity,
+                    "image_path": w.image_path,
+                    "image_scale": w.image_scale,
+                    "image_opacity": w.image_opacity,
+                    "position": w.position,
+                    "margin_x_pct": w.margin_x_pct,
+                    "margin_y_pct": w.margin_y_pct,
+                    "z_order": ews.z_order,
+                })
             self._preview.set_extra_watermarks(wm_payload)
         except Exception as e:
             logger.warning(f"news_desk preview push failed: {e}")

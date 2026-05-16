@@ -64,11 +64,28 @@ class ExtraSubtitleSpec:
     block_margin — i.e. each track is fully independent (no shared
     track_gap layout). news_desk consumes this path because every
     subtitle component is a free-standing instance with its own anchor.
+
+    `z_order` is the absolute render layer (higher = on top). Consumers
+    should pass list-position-derived values; default 10 matches the
+    legacy kind-based hardcode.
     """
     srt_path: str
     line: "SubtitleLineStyle"
     position: str = "bottom"            # "top" | "bottom"
     block_margin_pct: float = 0.09      # fraction of frame height
+    z_order: int = 10
+
+
+@dataclass
+class ExtraWatermarkSpec:
+    """One additional watermark beyond the legacy `style.watermark` slot.
+
+    Wraps a WatermarkStyle with an explicit z_order so the consumer
+    (news_desk) can drive layer ordering from its component list
+    position. Default 60 matches the legacy kind-based hardcode.
+    """
+    watermark: "WatermarkStyle"
+    z_order: int = 60
 
 
 @dataclass
@@ -102,7 +119,7 @@ class CompositionRequest:
     crop_rect: Optional[dict] = None    # {x,y,w,h} normalized; None = center crop
     overlays: list = field(default_factory=list)    # list[OverlaySpec] — future news_desk overlays
     extra_subtitles: list = field(default_factory=list)    # list[ExtraSubtitleSpec]
-    extra_watermarks: list = field(default_factory=list)   # list[WatermarkStyle]
+    extra_watermarks: list = field(default_factory=list)   # list[ExtraWatermarkSpec]
 
 
 @dataclass
@@ -679,14 +696,18 @@ def _named_overlay_jobs(req: CompositionRequest,
 
     # Extra independent subtitle tracks (news_desk path). Each spec has its
     # own position + block_margin → its own MarginV + Alignment in libass.
-    for i, (tmp_path, espec) in enumerate(extra_sub_tmps):
-        jobs.append(_OverlayJob(kind="subtitle_libass", z_order=12 + i, data={
-            "srt_path": tmp_path,
-            "force_style": _build_subtitle_force_style(
-                espec.line, style.subtitle,
-                margin_v=libass_margin_v(espec.block_margin_pct),
-                target_h=target_h, position=espec.position),
-        }))
+    # z_order comes from the spec — caller (news_desk) drives layer
+    # ordering from its component-list index.
+    for tmp_path, espec in extra_sub_tmps:
+        jobs.append(_OverlayJob(
+            kind="subtitle_libass", z_order=espec.z_order,
+            data={
+                "srt_path": tmp_path,
+                "force_style": _build_subtitle_force_style(
+                    espec.line, style.subtitle,
+                    margin_v=libass_margin_v(espec.block_margin_pct),
+                    target_h=target_h, position=espec.position),
+            }))
 
     # Watermark — image or text (mutually exclusive). High z_order so the
     # logo / channel bug paints on top of everything else (broadcast
@@ -701,13 +722,15 @@ def _named_overlay_jobs(req: CompositionRequest,
 
     # Extra watermarks (news_desk: N watermark components → N drawtext /
     # overlay filters chained together). Each one is independent — its own
-    # position + opacity + margins.
-    for i, ewm in enumerate(req.extra_watermarks):
-        if not ewm.enabled:
+    # position + opacity + margins. z_order comes from the spec — caller
+    # drives layer ordering from its component-list index.
+    for ews in req.extra_watermarks:
+        wm = ews.watermark
+        if not wm.enabled:
             continue
-        kind = "image_watermark" if ewm.type == "image" else "text_watermark"
-        jobs.append(_OverlayJob(kind=kind, z_order=62 + i,
-                                  data={"watermark": ewm}))
+        kind = "image_watermark" if wm.type == "image" else "text_watermark"
+        jobs.append(_OverlayJob(
+            kind=kind, z_order=ews.z_order, data={"watermark": wm}))
 
     # Hook + Outro card.
     if req.hook_text:
@@ -736,14 +759,15 @@ def _named_overlay_jobs(req: CompositionRequest,
             ))
 
     if news_desk_specs:
-        # Build the merged .ass lazily — needs target_w/target_h which only
-        # the render context knows. Stash specs + overlay_styles on the job
-        # and let the dispatcher build it just before invoking the renderer.
-        # Sort by z_order so libass layer ordering matches user intent.
+        # All news_desk specs are merged into one libass job so the filter
+        # chain stays shallow. The job's z_order = max of contained specs'
+        # z_order — that way if the caller assigned a high list-position-
+        # derived z (chapter component dragged above watermarks), the
+        # whole merged group rises above the watermark layer. libass
+        # internal Layer attribute still handles per-spec ordering inside
+        # the merged .ass file.
         news_desk_specs.sort(key=lambda s: s.z_order)
-        # Use the lowest news-desk z_order as the job's order so they stack
-        # together in the filter chain (default 40 = TopicStrip first).
-        merged_z = min((s.z_order for s in news_desk_specs), default=40)
+        merged_z = max((s.z_order for s in news_desk_specs), default=40)
         jobs.append(_OverlayJob(
             kind="news_desk_ass", z_order=merged_z,
             data={

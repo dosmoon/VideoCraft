@@ -302,16 +302,49 @@ function drawOverlay() {
     ctx.lineTo((rect.x+rect.w)*vSrcW, (rect.y+rect.h/2)*vSrcH);
     ctx.stroke();
   }
-  // Canvas draw order MUST mirror the ffmpeg burn pipeline's z_order
-  // (see core/composition/render.py: jobs sorted by z_order ascending,
-  // later filter = on top). Lowest z first, highest last:
-  //   subtitle (10-12) → hook/outro (30) → news_desk (40) → watermark (60+).
-  // Diverging here means preview ≢ render — users see chapter overlays
-  // on top of watermarks in preview, then watermarks on top in burn.
-  drawSubtitles();
-  drawHookOutro();
-  drawNewsDeskOverlays();
-  drawWatermark();
+  // Build a unified list of drawables tagged with z_order, then draw
+  // in ascending z so higher-z items end up on top — same convention
+  // as the ffmpeg burn pipeline (render.py jobs.sort by z_order).
+  //
+  // news_desk drives per-item z from its component-list index (top of
+  // list = highest z), so dragging a chapter ABOVE the watermark in
+  // the layer list actually puts the chapter overlay on top of the
+  // watermark here too. Legacy items without per-item z (sub1/sub2,
+  // legacy single watermark, hook/outro) fall back to the kind-based
+  // defaults that match the burn pipeline's hardcoded z_orders.
+  const items = [];
+  // Legacy stacked sub1/sub2 (clip_script path). z=10 matches burn.
+  if (styleState.subtitle &&
+      ((styleState.subtitle.sub1 && styleState.subtitle.sub1.enabled) ||
+       (styleState.subtitle.sub2 && styleState.subtitle.sub2.enabled))) {
+    items.push({ z: 10, draw: drawLegacySubtitles });
+  }
+  // Extra subtitle tracks (news_desk). Each carries its own z_order.
+  for (const es of extraSubs) {
+    const z = (typeof es.z_order === "number") ? es.z_order : 10;
+    items.push({ z, draw: () => drawOneExtraSub(es) });
+  }
+  // Hook + outro card. z=30 matches burn.
+  if (clipMeta && (clipMeta.hook || clipMeta.outro)) {
+    items.push({ z: 30, draw: drawHookOutro });
+  }
+  // News_desk overlays — each carries its own z_order.
+  for (const ov of overlays) {
+    const z = (typeof ov.z_order === "number") ? ov.z_order : 40;
+    items.push({ z, draw: () => drawOneNewsDeskOverlay(ov) });
+  }
+  // Legacy single-slot watermark. z=60 matches burn.
+  if (styleState.watermark && styleState.watermark.enabled) {
+    items.push({ z: 60, draw: () => drawSingleWatermark(styleState.watermark) });
+  }
+  // Extra watermarks (news_desk) — each carries its own z_order.
+  for (const wm of extraWms) {
+    const z = (typeof wm.z_order === "number") ? wm.z_order : 60;
+    items.push({ z, draw: () => drawSingleWatermark(wm) });
+  }
+  // Stable ascending sort — items with equal z keep insertion order.
+  items.sort((a, b) => a.z - b.z);
+  for (const it of items) it.draw();
 }
 
 // ── news-desk overlays (LowerThird + TopicStrip) ─────────────────────────
@@ -344,29 +377,10 @@ function _estTextWidthPx(text, fontsize) {
   return cjk * fontsize + latin * fontsize * 0.55;
 }
 
-function drawNewsDeskOverlays() {
-  if (!overlays || overlays.length === 0) return;
-  const t = vid.currentTime || 0;
-  const { ox, oy, cw, ch } = cropBox();
-  // Overlay pixel coords are computed against the CROPPED frame (the
-  // visible content area), matching the libass render which positions
-  // against the post-crop frame too.
-  for (const ov of overlays) {
-    if (typeof ov.start_sec === "number" && t < ov.start_sec) continue;
-    if (typeof ov.end_sec === "number" && ov.end_sec > 0 && t >= ov.end_sec) continue;
-    if (ov.kind === "lower_third") {
-      _drawLowerThird(ov, ox, oy, cw, ch);
-    } else if (ov.kind === "topic_strip") {
-      _drawTopicStrip(ov, ox, oy, cw, ch);
-    } else if (ov.kind === "chapter_point_card") {
-      _drawChapterPointCard(ov, ox, oy, cw, ch);
-    } else if (ov.kind === "chapter_hero_card") {
-      _drawChapterHeroCard(ov, ox, oy, cw, ch);
-    } else if (ov.kind === "date_stamp") {
-      _drawDateStamp(ov, ox, oy, cw, ch);
-    }
-  }
-}
+// drawNewsDeskOverlays / drawSubtitles / drawWatermark have been
+// unified into drawOverlay's per-item z-sorted loop; per-item helpers
+// drawOneNewsDeskOverlay / drawLegacySubtitles / drawOneExtraSub /
+// drawSingleWatermark replace them.
 
 function _drawLowerThird(ov, ox, oy, cw, ch) {
   const st = _resolveOverlayStyle("lower_third", ov.style_class) || {};
@@ -781,16 +795,13 @@ function subtitleBaselineY(blockMarginPct, trackGapPct, isInnerTrack,
   return oy + ch * (1.0 - pct);  // bottom (default)
 }
 
-function drawSubtitles() {
+// Legacy sub1/sub2 stacked-pair rendering. News_desk doesn't use this
+// path (it disables sub1/sub2 in favor of the N-track extras path);
+// clip_script does.
+function drawLegacySubtitles() {
   const sub = styleState.subtitle;
   if (!sub) return;
   const { ox, oy, cw, ch } = cropBox();
-  // Cues pushed from Python are PRE-SPLIT into short single-line entries
-  // (mirrors how libass + the burn pipeline handle long lines: split into
-  // more cues with their own timing, never wrap visually). So we render one
-  // line per active cue — no JS-side wrapping needed.
-  // sub1 reads from `cues`, sub2 from `cues2`. When the corresponding
-  // stream is empty the placeholder text from styleState falls through.
   const live1 = pickActiveCueFrom(cues);
   const live2 = pickActiveCueFrom(cues2);
   const sub1 = sub.sub1 && sub.sub1.enabled
@@ -799,8 +810,7 @@ function drawSubtitles() {
   const sub2 = sub.sub2 && sub.sub2.enabled
     ? { ...sub.sub2, text: live2 != null ? live2 : sub.sub2.text }
     : null;
-  // NOTE: don't early-return when sub1+sub2 are both null — extraSubs
-  // (news_desk N-track path) may still need to render below.
+  if (!sub1 && !sub2) return;
 
   const blockPct = (typeof sub.block_margin_pct === "number")
                      ? sub.block_margin_pct : 0.08;
@@ -810,8 +820,7 @@ function drawSubtitles() {
 
   // At bottom anchor: sub2 is the outer track (near edge), sub1 inner.
   // At top anchor:    sub1 is the outer track, sub2 inner.
-  // Middle anchor is intentionally unsupported for stacking — both
-  // tracks would overlap; fall back to a centered approximation.
+  // Middle anchor is intentionally unsupported for stacking.
   for (const line of [sub1, sub2]) {
     if (!line) continue;
     let y;
@@ -824,25 +833,48 @@ function drawSubtitles() {
     }
     drawSubtitleLine(line, y, ox, cw, ch, sub.stroke_color, sub.stroke_width);
   }
+}
 
-  // N independent extra tracks (news_desk path). Each anchors at its own
-  // block_margin_pct from its own position edge — no shared track_gap.
-  // Stroke borrows the global stroke_color/width from the legacy slot.
-  for (const es of extraSubs) {
-    const line = es.line;
-    if (!line) continue;
-    const live = pickActiveCueFrom(es.cues);
-    const text = (live != null) ? live : "";
-    if (!text) continue;
-    const renderLine = { ...line, text };
-    const eAnchor = es.position || "bottom";
-    const eBlock = (typeof es.block_margin_pct === "number")
-                     ? es.block_margin_pct : 0.09;
-    const y = (eAnchor === "top")
-                ? oy + ch * eBlock + subtitleFontPx(line.fontsize)
-                : oy + ch * (1.0 - eBlock);
-    drawSubtitleLine(renderLine, y, ox, cw, ch,
-                       sub.stroke_color, sub.stroke_width);
+// One independent extra subtitle track (news_desk N-track path). Each
+// anchors at its own block_margin_pct from its own position edge — no
+// shared track_gap. Stroke borrows the global stroke_color/width from
+// styleState.subtitle.
+function drawOneExtraSub(es) {
+  const sub = styleState.subtitle;
+  const line = es.line;
+  if (!line) return;
+  const live = pickActiveCueFrom(es.cues);
+  const text = (live != null) ? live : "";
+  if (!text) return;
+  const { ox, oy, cw, ch } = cropBox();
+  const renderLine = { ...line, text };
+  const eAnchor = es.position || "bottom";
+  const eBlock = (typeof es.block_margin_pct === "number")
+                   ? es.block_margin_pct : 0.09;
+  const y = (eAnchor === "top")
+              ? oy + ch * eBlock + subtitleFontPx(line.fontsize)
+              : oy + ch * (1.0 - eBlock);
+  drawSubtitleLine(renderLine, y, ox, cw, ch,
+                     sub ? sub.stroke_color : "#000",
+                     sub ? sub.stroke_width : 2);
+}
+
+// One news_desk overlay (LowerThird / TopicStrip / Chapter cards).
+function drawOneNewsDeskOverlay(ov) {
+  const t = vid.currentTime || 0;
+  if (typeof ov.start_sec === "number" && t < ov.start_sec) return;
+  if (typeof ov.end_sec === "number" && ov.end_sec > 0 && t >= ov.end_sec) return;
+  const { ox, oy, cw, ch } = cropBox();
+  if (ov.kind === "lower_third") {
+    _drawLowerThird(ov, ox, oy, cw, ch);
+  } else if (ov.kind === "topic_strip") {
+    _drawTopicStrip(ov, ox, oy, cw, ch);
+  } else if (ov.kind === "chapter_point_card") {
+    _drawChapterPointCard(ov, ox, oy, cw, ch);
+  } else if (ov.kind === "chapter_hero_card") {
+    _drawChapterHeroCard(ov, ox, oy, cw, ch);
+  } else if (ov.kind === "date_stamp") {
+    _drawDateStamp(ov, ox, oy, cw, ch);
   }
 }
 
@@ -993,15 +1025,6 @@ function drawHookOutro() {
 
 function pixelOffsetFromPct(pct, dim) {
   return Math.max(8, Math.floor((pct || 0) * dim));
-}
-
-function drawWatermark() {
-  if (styleState.watermark && styleState.watermark.enabled) {
-    drawSingleWatermark(styleState.watermark);
-  }
-  for (const wm of extraWms) {
-    drawSingleWatermark(wm);
-  }
 }
 
 function drawSingleWatermark(wm) {
