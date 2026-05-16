@@ -43,6 +43,11 @@ from core.chapters_io import (
     parse_time_str,
     fmt_time_str,
 )
+from core.composition import (
+    SubtitleLineStyle,
+    prepare_subtitle_cues,
+    probe_video_resolution,
+)
 from core.composition.preview import CompositionPreview
 from core.subtitle_ops import srt_end_seconds
 from i18n import tr
@@ -331,26 +336,28 @@ class ChapterEditor(tk.Frame):
     # ── Subtitle overlay ─────────────────────────────────────────────────
 
     def _build_cues_list(self) -> list[dict]:
-        """Parse the SRT into the cue dict shape composition.preview
-        expects: [{start, end, text}, ...] sorted by start."""
+        """Cue list for the preview overlay — goes through the canonical
+        prepare_subtitle_cues helper so long cues get time-sliced into
+        single-line short cues (same wrap budget the ffmpeg burn would
+        use). Reads real video dims via ffprobe so the wrap budget
+        matches what would actually render on this video — no hardcoded
+        16:9 / 1080p assumption."""
+        w, h = probe_video_resolution(self._source_video)
+        if w <= 0 or h <= 0:
+            # ffprobe failed — fall back to source aspect we can't know.
+            # Better to render unwrapped than crash; HTML clips invisibly.
+            w, h = 1920, 1080
+        aspect = f"{w}:{h}"
+        short_edge = min(w, h)
+        is_chinese = (self._lang_iso or "").lower().startswith("zh")
+        line = SubtitleLineStyle(
+            enabled=True, fontsize=24, is_chinese=is_chinese)
         try:
-            import srt as _srt
-            from core.subtitle_ops import read_srt
-            cues = list(_srt.parse(read_srt(self._srt_path)))
+            return prepare_subtitle_cues(
+                self._srt_path, line,
+                aspect=aspect, short_edge=short_edge)
         except Exception:
             return []
-        out: list[dict] = []
-        for cue in cues:
-            text = cue.content.replace("\n", " ").strip()
-            if not text:
-                continue
-            out.append({
-                "start": cue.start.total_seconds(),
-                "end":   cue.end.total_seconds(),
-                "text":  text,
-            })
-        out.sort(key=lambda c: c["start"])
-        return out
 
     # ── Preview callbacks ────────────────────────────────────────────────
 

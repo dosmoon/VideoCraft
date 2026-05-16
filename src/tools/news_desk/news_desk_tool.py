@@ -36,7 +36,7 @@ from core.composition import presets as comp_presets
 from core.composition.preview import CompositionPreview
 from core.composition.render import (
     CompositionRequest, ExtraSubtitleSpec,
-    prepare_subtitle_cues, render_composition,
+    prepare_subtitle_cues, probe_video_resolution, render_composition,
 )
 from core.composition.style import (
     CompositionStyle, SubtitleLineStyle, SubtitleStyle, WatermarkStyle,
@@ -52,22 +52,6 @@ DERIVATIVE_TYPE = "news_desk"
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
-
-def _probe_resolution(video_path: str) -> tuple[int, int]:
-    import subprocess
-    try:
-        out = subprocess.run(
-            ["ffprobe", "-v", "error", "-select_streams", "v:0",
-             "-show_entries", "stream=width,height", "-of", "csv=p=0",
-             video_path],
-            capture_output=True, encoding="utf-8", errors="replace", timeout=10)
-        if out.returncode == 0:
-            w, h = out.stdout.strip().split(",")
-            return int(w), int(h)
-    except Exception:
-        pass
-    return 0, 0
-
 
 def _probe_duration(video_path: str) -> float:
     import subprocess
@@ -549,7 +533,7 @@ class NewsDeskApp(ToolBase):
 
         if os.path.isfile(src):
             self._duration = _probe_duration(src)
-            self._src_w, self._src_h = _probe_resolution(src)
+            self._src_w, self._src_h = probe_video_resolution(src)
             if self._duration > 0:
                 hms = time.strftime("%H:%M:%S", time.gmtime(self._duration))
                 self.label_duration.config(

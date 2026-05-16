@@ -115,8 +115,12 @@ class CompositionResult:
 
 # ── ffmpeg helpers ──────────────────────────────────────────────────────────
 
-def _probe_resolution(video_path: str) -> tuple[int, int]:
-    """ffprobe → (width, height); (0, 0) on any failure."""
+def probe_video_resolution(video_path: str) -> tuple[int, int]:
+    """ffprobe → (width, height); (0, 0) on any failure.
+
+    Public helper for any consumer that needs real source dims to feed
+    prepare_subtitle_cues / compute_subtitle_max_chars (subtitle wrap
+    budget is driven by actual pixel width, not assumed aspect)."""
     try:
         out = subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "v:0",
@@ -769,7 +773,7 @@ def render_composition(
     """
     style = req.style
 
-    src_w, src_h = _probe_resolution(req.source_video)
+    src_w, src_h = probe_video_resolution(req.source_video)
     if src_w == 0 or src_h == 0:
         raise RuntimeError(f"Cannot probe video resolution: {req.source_video}")
 
