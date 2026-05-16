@@ -10,7 +10,7 @@ from creations import CreationType, register
 
 register(CreationType(
     type_name="bilingual_video",
-    display_name_key="derivative.subtitle_video",  # renamed to creation.bilingual_video in slice I
+    display_name_key="creation.bilingual_video",  # renamed to creation.bilingual_video in slice I
     tool_key="subtitle",
     default_basename="default",
     single_instance=True,

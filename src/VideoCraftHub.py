@@ -1082,7 +1082,7 @@ class VideoCraftHub:
     def _build_derivatives_section(self, parent: tk.Frame) -> None:
         head = tk.Frame(parent, bg="#f5f5f5")
         head.pack(fill="x", padx=2, pady=(2, 2))
-        tk.Label(head, text=tr("hub.sidebar.derivatives.title"), font=("", 9, "bold"),
+        tk.Label(head, text=tr("hub.sidebar.creations.title"), font=("", 9, "bold"),
                  bg="#f5f5f5", fg="#555"
                  ).pack(side="left")
         self._derivative_add_btn = tk.Button(
@@ -1109,7 +1109,7 @@ class VideoCraftHub:
                                 self._on_derivative_tree_right_click)
 
         self._derivative_empty_lbl = tk.Label(
-            parent, text=tr("hub.sidebar.derivatives.empty"),
+            parent, text=tr("hub.sidebar.creations.empty"),
             bg="#f5f5f5", fg="#888", font=("", 9),
             wraplength=280, justify="left",
         )
@@ -1583,12 +1583,12 @@ class VideoCraftHub:
         type_name, instance_name = info
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(
-            label=tr("hub.derivative.menu_open"),
+            label=tr("hub.creation.menu_open"),
             command=lambda: self._open_workbench_for_type(type_name, instance_name),
         )
         menu.add_separator()
         menu.add_command(
-            label=tr("hub.derivative.menu_delete"),
+            label=tr("hub.creation.menu_delete"),
             command=lambda: self._delete_derivative(type_name, instance_name),
         )
         menu.tk_popup(event.x_root, event.y_root)
@@ -1598,7 +1598,7 @@ class VideoCraftHub:
 
         types = creations.all_types()
         if not types:
-            messagebox.showinfo("VideoCraft", tr("hub.derivative.no_types"), parent=self.root)
+            messagebox.showinfo("VideoCraft", tr("hub.creation.no_types"), parent=self.root)
             return
 
         # Single registered type → skip type-picker, go straight to naming.
@@ -1619,7 +1619,7 @@ class VideoCraftHub:
             messagebox.showerror("VideoCraft", str(e))
             return
         except ValueError as e:
-            messagebox.showerror("VideoCraft", tr("hub.derivative.invalid_name", error=str(e)))
+            messagebox.showerror("VideoCraft", tr("hub.creation.invalid_name", error=str(e)))
             return
 
         self._refresh_project_tab()
@@ -1631,8 +1631,8 @@ class VideoCraftHub:
 
     def _delete_derivative(self, type_name: str, instance_name: str) -> None:
         if not messagebox.askyesno(
-                tr("hub.derivative.delete.title"),
-                tr("hub.derivative.delete.confirm", type=type_name, instance=instance_name),
+                tr("hub.creation.delete.title"),
+                tr("hub.creation.delete.confirm", type=type_name, instance=instance_name),
                 default="no"):
             return
         import shutil
@@ -1640,7 +1640,7 @@ class VideoCraftHub:
         try:
             shutil.rmtree(inst_dir)
         except OSError as e:
-            messagebox.showerror("VideoCraft", tr("hub.derivative.delete.failed", error=str(e)))
+            messagebox.showerror("VideoCraft", tr("hub.creation.delete.failed", error=str(e)))
             return
         self._refresh_project_tab()
 
@@ -1650,7 +1650,7 @@ class VideoCraftHub:
         t = creations.get(type_name)
         if t is None:
             messagebox.showerror(
-                "VideoCraft", tr("hub.derivative.unknown_type", type=type_name))
+                "VideoCraft", tr("hub.creation.unknown_type", type=type_name))
             return
         # Compound tab key so each derivative instance has its own tab
         # (字幕视频/default vs 字幕视频/v2 are two different workspaces).
@@ -1755,7 +1755,7 @@ class VideoCraftHub:
 
         menu.add_separator()
         menu.add_command(
-            label=tr("hub.derivative.menu_delete"),
+            label=tr("hub.creation.menu_delete"),
             command=lambda fp=file_path: self._delete_item(fp)
         )
 

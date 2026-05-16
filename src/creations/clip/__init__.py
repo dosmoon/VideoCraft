@@ -10,7 +10,7 @@ from creations import CreationType, register
 
 register(CreationType(
     type_name="clip",
-    display_name_key="derivative.clip",        # renamed to creation.clip in slice I
+    display_name_key="creation.clip",        # renamed to creation.clip in slice I
     tool_key="clip",
     default_basename="default",
     single_instance=False,

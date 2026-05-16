@@ -10,7 +10,7 @@ from creations import CreationType, register
 
 register(CreationType(
     type_name="news_desk",
-    display_name_key="derivative.news_desk",   # renamed to creation.news_desk in slice I
+    display_name_key="creation.news_desk",   # renamed to creation.news_desk in slice I
     tool_key="news-desk",
     default_basename="news",
     single_instance=False,
