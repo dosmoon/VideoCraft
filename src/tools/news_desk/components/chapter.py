@@ -568,7 +568,14 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
 
 
 def _import_from_analysis(instance: dict, ctx: ProjectContext) -> None:
-    """[⇩ from analysis.json] — load chapters into the schedule."""
+    """[⇩ from analysis.json] — load chapters into the schedule.
+
+    Mutates instance["schedule"] in place (clear + extend) rather than
+    replacing the list object. The property panel captures the schedule
+    list by reference in its enclosing scope — replacing the object
+    would leave the panel's UI bindings pointing at the stale empty
+    list until the workbench is reopened.
+    """
     subs_dir = ctx.project.subtitles_dir
     if not os.path.isdir(subs_dir):
         return
@@ -580,8 +587,9 @@ def _import_from_analysis(instance: dict, ctx: ProjectContext) -> None:
                 continue
             chs = env.get("chapters") if isinstance(env, dict) else []
             if isinstance(chs, list):
-                # Snapshot only the fields we use.
-                instance["schedule"] = [{
+                schedule = instance.setdefault("schedule", [])
+                schedule.clear()
+                schedule.extend({
                     "start_sec": float(ch.get("start_sec", 0.0)
                                         or chapters_io.parse_time_str(ch.get("start", ""))),
                     "end_sec":   float(ch.get("end_sec", 0.0)
@@ -589,7 +597,7 @@ def _import_from_analysis(instance: dict, ctx: ProjectContext) -> None:
                     "title":     str(ch.get("title", "")),
                     "refined":   str(ch.get("refined", "")),
                     "key_points": list(ch.get("key_points") or []),
-                } for ch in chs]
+                } for ch in chs)
                 return
 
 
