@@ -312,13 +312,16 @@ class VideoCraftHub:
             if self._layout_store.get("zoomed", True):
                 self.root.state("zoomed")
 
-            # Restore last-selected sidebar tab. Tab order: 0=project, 1=resources.
-            saved_tab = self._layout_store.get("sidebar_tab", "project")
-            if saved_tab == "resources":
-                try:
-                    self._sidebar_nb.select(1)
-                except Exception:
-                    pass
+            # Restore last-selected sidebar tab. Tab order (ADR-0004):
+            # 0=materials, 1=creations, 2=files.
+            saved_tab = self._layout_store.get("sidebar_tab", "materials")
+            tab_idx = {"materials": 0, "creations": 1, "files": 2,
+                       # Back-compat with pre-three-tab payloads:
+                       "project": 0, "resources": 2}.get(saved_tab, 0)
+            try:
+                self._sidebar_nb.select(tab_idx)
+            except Exception:
+                pass
         except Exception as e:
             from hub_logger import logger
             logger.error(f"应用保存的布局失败: {e}")
@@ -335,9 +338,9 @@ class VideoCraftHub:
                 self.root.update_idletasks()
             try:
                 idx = self._sidebar_nb.index(self._sidebar_nb.select())
-                sidebar_tab = "resources" if idx == 1 else "project"
+                sidebar_tab = {0: "materials", 1: "creations", 2: "files"}.get(idx, "materials")
             except Exception:
-                sidebar_tab = "project"
+                sidebar_tab = "materials"
             payload = {
                 "geometry":      self.root.geometry(),
                 "zoomed":        zoomed,
@@ -539,14 +542,22 @@ class VideoCraftHub:
         self._sidebar_nb = ttk.Notebook(sidebar_frame)
         self._sidebar_nb.pack(fill="both", expand=True)
 
-        # ===== Project tab — Source / Subtitles / Derivatives dashboard (primary entry) =====
-        prj_tab = tk.Frame(self._sidebar_nb, bg="#f5f5f5")
-        self._sidebar_nb.add(prj_tab, text=tr("hub.sidebar.tab.project"))
-        self._build_project_tab(prj_tab)
+        # ===== 素材 tab (idx 0) — source / news context / subtitles =====
+        # Owned by materials/news_video plugin conceptually (ADR-0004).
+        # Hub still hosts the section building until plugin.sidebar_renderer
+        # is wired in a follow-up slice.
+        mat_tab = tk.Frame(self._sidebar_nb, bg="#f5f5f5")
+        self._sidebar_nb.add(mat_tab, text=tr("hub.sidebar.tab.materials"))
+        self._build_materials_tab(mat_tab)
 
-        # ===== Resources tab — file browser (index 1) =====
+        # ===== 创作 tab (idx 1) — creation instances flat list =====
+        cre_tab = tk.Frame(self._sidebar_nb, bg="#f5f5f5")
+        self._sidebar_nb.add(cre_tab, text=tr("hub.sidebar.tab.creations"))
+        self._build_creations_tab(cre_tab)
+
+        # ===== 文件 tab (idx 2) — generic file browser =====
         res_tab = tk.Frame(self._sidebar_nb, bg="#f5f5f5")
-        self._sidebar_nb.add(res_tab, text=tr("hub.sidebar.tab.resources"))
+        self._sidebar_nb.add(res_tab, text=tr("hub.sidebar.tab.files"))
 
         sb_top = tk.Frame(res_tab, bg="#e8e8e8")
         sb_top.pack(fill="x")
@@ -584,7 +595,7 @@ class VideoCraftHub:
         # ── Permanent preview tab (key = PREVIEW_TAB_KEY, no close button) ──
         self._preview_tab = tk.Frame(self._content_area, bg="white")
         self._tab_frames[PREVIEW_TAB_KEY] = self._preview_tab
-        self._tab_bar.add_tab(PREVIEW_TAB_KEY, "项目", closable=False)
+        self._tab_bar.add_tab(PREVIEW_TAB_KEY, tr("hub.preview_tab.title"), closable=False)
         self._render_preview_placeholder()
         self._select_tab(PREVIEW_TAB_KEY)
 
@@ -759,48 +770,37 @@ class VideoCraftHub:
             if entry["is_dir"]:
                 self._tree.insert(node, "end", tags=("_placeholder",))
 
-    # ── Sidebar: Project tab (Source / Subtitles / Derivatives) ────────────
+    # ── Sidebar tabs (ADR-0004: 素材 / 创作 / 文件) ─────────────────────────
 
-    def _build_project_tab(self, parent: tk.Frame) -> None:
-        """Build the sidebar 'Project' tab as a 3-section dashboard:
+    def _build_materials_tab(self, parent: tk.Frame) -> None:
+        """素材 tab — source / news context / subtitles sections.
 
-          [Source]      add / modify / status
-          [Subtitles]   add / modify / regenerate / status (per-lang rows)
-          [派生作品]    single [+ 添加] + dynamic type groups → instances
-
-        Source and Subtitles drive the prerequisites; the 派生 [+ 添加]
-        button is disabled until both are ready.
+        Conceptually owned by the materials/news_video plugin. Hub still
+        hosts construction until plugin.sidebar_renderer is wired.
         """
-        # Vertically-stacked sections inside a scrollable canvas would be
-        # ideal but overkill for 3 fixed-height regions. Plain stacked frames
-        # are fine — content fits and Tk handles overflow with the parent
-        # PanedWindow's natural scrolling.
-
-        # ── Section 1: Source ──
         self._source_section = tk.Frame(parent, bg="#f5f5f5")
         self._source_section.pack(fill="x", padx=4, pady=(4, 0))
         self._build_source_section(self._source_section)
 
         _sidebar_separator(parent)
 
-        # ── Section 2: News context (AI-generated event archive) ──
         self._news_context_section = tk.Frame(parent, bg="#f5f5f5")
         self._news_context_section.pack(fill="x", padx=4, pady=(0, 0))
         self._build_news_context_section(self._news_context_section)
 
         _sidebar_separator(parent)
 
-        # ── Section 3: Subtitles ──
         self._subtitles_section = tk.Frame(parent, bg="#f5f5f5")
-        self._subtitles_section.pack(fill="x", padx=4, pady=(0, 0))
+        self._subtitles_section.pack(fill="both", expand=True,
+                                     padx=4, pady=(0, 4))
         self._build_subtitles_section(self._subtitles_section)
 
-        _sidebar_separator(parent)
-
-        # ── Section 3: 派生作品 ──
+    def _build_creations_tab(self, parent: tk.Frame) -> None:
+        """创作 tab — flat list of creation instances. [+] sits at tab head,
+        no per-type分栏 (per ADR-0004). Instance row shows type via badge."""
         self._derivatives_section = tk.Frame(parent, bg="#f5f5f5")
         self._derivatives_section.pack(fill="both", expand=True,
-                                       padx=4, pady=(0, 4))
+                                       padx=4, pady=(4, 4))
         self._build_derivatives_section(self._derivatives_section)
 
     # ── Source section ────────────────────────────────────────────────────────
@@ -1434,39 +1434,31 @@ class VideoCraftHub:
         derivatives = self.project.list_derivatives()
         any_instance = False
 
+        # ADR-0004: flat instance list, no per-type group nodes. Each row
+        # shows "<instance> · <type-display>" so the type stays visible
+        # without a separate header. Registered types first (canonical
+        # order), then orphan-type instances appended at the end.
         for t in creations.all_types():
-            instances = derivatives.get(t.type_name, [])
-            if not instances:
-                continue  # type group only shown when non-empty
-            group_iid = f"type:{t.type_name}"
-            self._project_tree.insert(
-                "", "end", iid=group_iid, open=True,
-                text=f"  {creations.display_name(t.type_name)}",
-                tags=("group",),
-            )
-            for inst in instances:
+            type_disp = creations.display_name(t.type_name)
+            for inst in derivatives.get(t.type_name, []):
                 inst_iid = f"{t.type_name}/{inst}"
                 self._project_tree.insert(
-                    group_iid, "end", iid=inst_iid,
-                    text=f"  {inst}", tags=("instance",), open=True,
+                    "", "end", iid=inst_iid,
+                    text=f"  {inst}  ·  {type_disp}",
+                    tags=("instance",), open=True,
                 )
                 self._populate_instance_artifacts(inst_iid, t.type_name, inst)
                 any_instance = True
 
-        # Orphan types (forward-compat)
         for type_name, instances in derivatives.items():
             if creations.get(type_name) is not None:
-                continue
-            group_iid = f"type:{type_name}"
-            self._project_tree.insert(
-                "", "end", iid=group_iid, open=True,
-                text=f"  ({type_name})", tags=("group",),
-            )
+                continue  # already rendered above
             for inst in instances:
                 inst_iid = f"{type_name}/{inst}"
                 self._project_tree.insert(
-                    group_iid, "end", iid=inst_iid,
-                    text=f"  {inst}", tags=("instance",), open=True,
+                    "", "end", iid=inst_iid,
+                    text=f"  {inst}  ·  ({type_name})",
+                    tags=("instance",), open=True,
                 )
                 self._populate_instance_artifacts(inst_iid, type_name, inst)
                 any_instance = True
