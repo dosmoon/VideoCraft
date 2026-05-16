@@ -44,6 +44,11 @@ let aspectRatio = 9 / 16;
 let clipStart = 0, clipEnd = 0;
 let vSrcW = 0, vSrcH = 0;
 
+// Defaults are intentionally MINIMAL — "just play the video, no
+// chrome". Each consumer (clip_tool, news_desk, subtitle, chapter
+// editor) explicitly pushes the chrome it wants via setStyle /
+// enableCropDrag / setExtraSubtitles. The bare default = neutral
+// readable subtitle, no crop UI, no aspect reframe.
 let styleState = {
   subtitle: {
     position: "bottom",
@@ -51,10 +56,10 @@ let styleState = {
     stroke_width: 2,
     block_margin_pct: 0.08,
     track_gap_pct: 0.12,
-    sub1: { enabled: true, fontsize: 24, color: "#FFFF00", bold: true,
-            text: "字幕预览第一行 sub1" },
+    sub1: { enabled: true, fontsize: 24, color: "#FFFFFF", bold: false,
+            text: "" },
     sub2: { enabled: false, fontsize: 24, color: "#FFFFFF", bold: false,
-            text: "subtitle preview line 2" },
+            text: "" },
   },
   watermark: {
     enabled: false, type: "text", text: "@channel",
@@ -96,10 +101,10 @@ let extraSubs = [];
 // styleState.watermark shape — drawn after the singular slot.
 let extraWms = [];
 
-// "reframe" (default) | "passthrough". Passthrough means the burn keeps
+// "reframe" | "passthrough" (default). Passthrough means the burn keeps
 // source resolution/aspect verbatim, so the canvas uses the video's
 // natural dims (no crop rect UI, no dimming).
-let outputMode = "reframe";
+let outputMode = "passthrough";
 
 // News-desk overlays — list of {kind, start_sec, end_sec, ...kind-specific}.
 // Drawn each frame with currentTime-based visibility filter. Style data
@@ -225,7 +230,7 @@ window.vc = {
 // Drag-enable flag — Python toggles this per preview instance (style tab =
 // global crop, clip tab = per-clip crop). When false, all canvas pointer
 // events are ignored.
-let cropDragEnabled = true;
+let cropDragEnabled = false;
 
 // ── crop math ────────────────────────────────────────────────────────────
 

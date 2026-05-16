@@ -207,7 +207,6 @@ class NewsDeskApp(ToolBase):
         self._preview = CompositionPreview(
             preview_outer, width=520, height=400)
         self._preview.widget.pack(fill="both", expand=True, padx=4, pady=4)
-        self._preview.enable_crop_drag(False)
 
         self._build_list_pane(list_outer)
         self._build_property_pane(props_outer)

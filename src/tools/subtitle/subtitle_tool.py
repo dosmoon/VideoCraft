@@ -220,9 +220,6 @@ class SubtitleToolApp(ToolBase):
         self._preview = CompositionPreview(
             preview_outer, width=480, height=540)
         self._preview.widget.pack(fill="both", expand=True, padx=4, pady=4)
-        # Bilingual burn doesn't crop — kill the crop-rect drag UI clip
-        # uses for global crop. Subtitles/watermark still render on top.
-        self._preview.enable_crop_drag(False)
 
     def _build_form(self, parent: ttk.Frame) -> None:
         # ── Preset ────────────────────────────────────────────────────────
