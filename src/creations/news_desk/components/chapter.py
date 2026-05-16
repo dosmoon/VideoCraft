@@ -61,7 +61,6 @@ from core import chapters_io
 from core.composition.overlays import (
     ChapterHeroCardOverlay, TopicStripOverlay,
 )
-from materials.news_video import paths as _nv_paths
 from ui.dialog_utils import center_dialog_on_parent
 
 from . import ComponentSpec, ProjectContext, register
@@ -452,16 +451,11 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
     del_btn.config(command=_delete_selected)
 
     def _do_import_analysis():
-        # Scan the material instance's subtitles dir for analysis files
-        # first — drives the dialog's "what we found" line. Must match
-        # the path _import_from_analysis() reads from.
-        subs_dir = _nv_paths.subtitles_dir(
-            ctx.project, ctx.material_instance_id) or ""
-        found: list[str] = []
-        if subs_dir and os.path.isdir(subs_dir):
-            for fn in sorted(os.listdir(subs_dir)):
-                if fn.endswith(".analysis.json"):
-                    found.append(fn)
+        # Ask the bound material model for its analysis filenames —
+        # the model owns subtitles/ layout + naming. Dialog also
+        # surfaces the model's subtitles_dir for the "where" hint.
+        found = ctx.material_model.list_analyses()
+        subs_dir = ctx.material_model.subtitles_dir
 
         # Build the explanation dialog. ALWAYS show it (even when there's
         # nothing to import) so the user learns where the file would
@@ -582,17 +576,13 @@ def _import_from_analysis(instance: dict, ctx: ProjectContext) -> None:
     UI bindings pointing at the stale empty list until the workbench
     is reopened.
     """
-    subs_dir = _nv_paths.subtitles_dir(ctx.project, ctx.material_instance_id)
-    if not os.path.isdir(subs_dir):
-        return
-    for fn in sorted(os.listdir(subs_dir)):
-        if fn.endswith(".analysis.json"):
-            try:
-                env = chapters_io.load_analysis(os.path.join(subs_dir, fn))
-            except (OSError, json.JSONDecodeError):
-                continue
-            if not isinstance(env, dict):
-                continue
+    for fn in ctx.material_model.list_analyses():
+        try:
+            env = ctx.material_model.read_analysis(fn)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(env, dict):
+            continue
             chs = env.get("chapters") or []
             titles = env.get("titles") or []
             if isinstance(chs, list):

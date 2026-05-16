@@ -43,11 +43,12 @@ class ProjectContext:
     # property panels can write local files; empty string when host
     # hasn't established a per-instance directory yet.
     instance_dir: str = ""
-    # ADR-0005 slice Q: the bound material instance ID. Components that
-    # need to peek at upstream material paths (e.g. chapter import,
-    # subtitle import filedialog initialdir) resolve via
-    # `_nv_paths.X(project, material_instance_id)`.
-    material_instance_id: str = ""
+    # Bound material's model object (e.g. NewsVideoModel). The ONLY
+    # legitimate handle components have on upstream material data —
+    # ask the model for paths / context / analyses, never reach into
+    # the material plugin's path helpers directly. None until host
+    # establishes the binding.
+    material_model: object = None
     # Optional preview hooks — host wires these so component panels can
     # drive the WebView preview (e.g. chapter list click-to-seek).
     # None when no preview is mounted; callers must guard.

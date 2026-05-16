@@ -15,6 +15,7 @@ analysis) accept progress_cb + cancel_token — UI wraps these in modals.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from dataclasses import dataclass
@@ -241,6 +242,28 @@ class NewsVideoModel:
         )
 
     # ── Analysis artifacts (per-subtitle) ─────────────────────────────────
+
+    def list_analyses(self) -> list[str]:
+        """Filenames of `<iso>.analysis.json` artifacts on disk for this
+        instance, sorted alphabetically. Empty list when subtitles/ is
+        missing or holds none. The single public entry-point for
+        creation plugins that consume analysis output."""
+        try:
+            return sorted(
+                n for n in os.listdir(self.subtitles_dir)
+                if n.endswith(".analysis.json")
+            )
+        except OSError:
+            return []
+
+    def read_analysis(self, filename: str) -> dict:
+        """Parse and return analysis.json content. `filename` must be one
+        of the names list_analyses() returned. Raises OSError if the
+        file vanished between listing and reading, json.JSONDecodeError
+        if corrupted."""
+        path = os.path.join(self.subtitles_dir, filename)
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
 
     def list_analysis_artifacts(self, lang_iso: str):
         from core.subtitle_analysis import existing_artifacts

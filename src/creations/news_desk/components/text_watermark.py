@@ -9,10 +9,8 @@ import tkinter as tk
 from tkinter import ttk
 
 from i18n import tr
-from materials.news_video import schema as source_context
 
 from . import ComponentSpec, ImportSource, ProjectContext, register
-from materials.news_video import paths as _nv_paths
 
 
 _POSITIONS = ["top-left", "top-right", "bottom-left", "bottom-right"]
@@ -169,8 +167,7 @@ def _import_event_date(instance: dict, ctx: ProjectContext) -> None:
     """[⇩ Import event date] — pull AI-verified date from context.json and
     nudge defaults toward the date-stamp look (smaller, bottom-left).
     Silent no-op when context.json is empty / AI Fill hasn't run."""
-    src_dir = _nv_paths.source_dir(ctx.project, ctx.material_instance_id)
-    date = source_context.read_context(src_dir).event_date.strip()
+    date = ctx.material_model.read_context().event_date.strip()
     if not date:
         return
     instance["text"] = date

@@ -38,11 +38,10 @@ from core.composition.render import (
     CompositionRequest, ExtraSubtitleSpec, ExtraWatermarkSpec,
     prepare_subtitle_cues, probe_video_resolution, render_composition,
 )
-from materials.news_video import paths as _nv_paths
+from materials.news_video.model import NewsVideoModel
 from core.composition.style import (
     CompositionStyle, SubtitleLineStyle, SubtitleStyle, WatermarkStyle,
 )
-from materials.news_video import schema as source_context
 from ui.dialog_utils import center_dialog_on_parent
 
 # Importing the package triggers each component module's register()
@@ -124,6 +123,11 @@ class NewsDeskApp(ToolBase):
         if bound is None:
             raise RuntimeError("News desk: material binding cancelled.")
         self.material_type, self.material_instance_id = bound
+        # Single handle the workbench + every component uses to read
+        # upstream material data. Components must NOT reach into the
+        # material plugin's path helpers directly — ask the model.
+        self.material_model = NewsVideoModel(
+            self.project, self.material_instance_id)
 
         master.title(tr("tool.news_desk.title", instance=instance_name))
         master.geometry("1200x720")
@@ -344,7 +348,7 @@ class NewsDeskApp(ToolBase):
 
         ctx = nd_components.ProjectContext(
             project=self.project,
-            material_instance_id=self.material_instance_id, duration=self._duration,
+            material_model=self.material_model, duration=self._duration,
             instance_dir=self._instance_dir(),
             seek_to=(self._preview.seek if self._preview else None))
 
@@ -386,7 +390,7 @@ class NewsDeskApp(ToolBase):
         comp = self._components[idx]
         ctx = nd_components.ProjectContext(
             project=self.project,
-            material_instance_id=self.material_instance_id, duration=self._duration,
+            material_model=self.material_model, duration=self._duration,
             instance_dir=self._instance_dir())
         try:
             source.handler(comp, ctx)
@@ -552,7 +556,7 @@ class NewsDeskApp(ToolBase):
         self.master.title(tr("tool.news_desk.project.title",
                               type=type_disp, instance=self.instance_name))
 
-        src = _nv_paths.source_video_path(self.project, self.material_instance_id)
+        src = self.material_model.source_video_path
         self.entry_video.config(state="normal")
         self.entry_video.delete(0, tk.END)
         self.entry_video.insert(0, src)
@@ -655,7 +659,7 @@ class NewsDeskApp(ToolBase):
 
         ctx = nd_components.ProjectContext(
             project=self.project,
-            material_instance_id=self.material_instance_id, duration=self._duration,
+            material_model=self.material_model, duration=self._duration,
             instance_dir=self._instance_dir())
 
         # Component list position drives z-order: top of list = topmost
@@ -933,7 +937,7 @@ class NewsDeskApp(ToolBase):
     def _do_export(self) -> None:
         if self._processing:
             return
-        src = _nv_paths.source_video_path(self.project, self.material_instance_id)
+        src = self.material_model.source_video_path
         if not os.path.isfile(src):
             messagebox.showerror("VideoCraft",
                                   tr("tool.news_desk.error.source_missing"),
@@ -986,7 +990,7 @@ class NewsDeskApp(ToolBase):
     def _do_preview_render(self) -> None:
         if self._processing:
             return
-        src = _nv_paths.source_video_path(self.project, self.material_instance_id)
+        src = self.material_model.source_video_path
         if not os.path.isfile(src):
             messagebox.showerror("VideoCraft",
                                   tr("tool.news_desk.error.source_missing"),
@@ -1100,7 +1104,7 @@ class NewsDeskApp(ToolBase):
         from creations.news_desk.components.subtitle import _resolve_srt_path
         ctx = nd_components.ProjectContext(
             project=self.project,
-            material_instance_id=self.material_instance_id, duration=self._duration,
+            material_model=self.material_model, duration=self._duration,
             instance_dir=self._instance_dir())
         return _resolve_srt_path(comp, ctx)
 
@@ -1198,8 +1202,7 @@ class NewsDeskApp(ToolBase):
         # basic_info is AI input only — never bleeds into the artifact.
         # When AI Fill hasn't run, ctx is empty and publish.md degrades
         # to a chapters-only doc (publish.py omits empty sections).
-        ctx = source_context.read_context(
-            _nv_paths.source_dir(self.project, self.material_instance_id))
+        ctx = self.material_model.read_context()
 
         try:
             fallback_lang = self.project.meta.language.source or "zh"

@@ -20,7 +20,6 @@ from tkinter import filedialog, ttk
 from i18n import tr
 
 from . import ComponentSpec, ProjectContext, register
-from materials.news_video import paths as _nv_paths
 
 
 def _new_comp_id() -> str:
@@ -142,7 +141,7 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
                           count=n, dur=_fmt_duration(dur)))
 
     def _import_srt() -> None:
-        initial = _nv_paths.subtitles_dir(ctx.project, ctx.material_instance_id)
+        initial = ctx.material_model.subtitles_dir
         src = filedialog.askopenfilename(
             parent=parent.winfo_toplevel(),
             initialdir=initial if os.path.isdir(initial) else ctx.project.folder,

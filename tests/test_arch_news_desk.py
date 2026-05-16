@@ -195,14 +195,17 @@ def test_nv_paths_calls_pass_material_instance_id_in_tool():
     assert not bare, f"_nv_paths called without material_instance_id: {bare}"
 
 
-def test_project_context_has_material_instance_id():
-    """ADR-0005 slice Q added material_instance_id to ProjectContext."""
+def test_project_context_has_material_model():
+    """ProjectContext exposes the bound material's model — the ONLY
+    legitimate handle components have on upstream material data."""
     from creations.news_desk.components import ProjectContext
-    assert "material_instance_id" in ProjectContext.__dataclass_fields__
+    assert "material_model" in ProjectContext.__dataclass_fields__
 
 
-def test_nv_paths_calls_pass_material_instance_id_in_components():
-    """Component code paths must propagate ctx.material_instance_id."""
+def test_components_dont_import_nv_paths():
+    """Components must NOT reach into materials.news_video.paths — that
+    module is a private implementation detail of the material plugin.
+    All material-data access goes through ctx.material_model."""
     comp_dir = os.path.join(NEWS_DESK_DIR, "components")
     violations: list[str] = []
     for fn in os.listdir(comp_dir):
@@ -211,24 +214,24 @@ def test_nv_paths_calls_pass_material_instance_id_in_components():
         p = os.path.join(comp_dir, fn)
         with open(p, "r", encoding="utf-8") as f:
             src = f.read()
-        bare = re.findall(r"_nv_paths\.\w+\(ctx\.project\)(?!\s*,)", src)
-        if bare:
-            violations.append(f"{fn}: {bare}")
+        if re.search(r"from\s+materials\.news_video(?:\.paths)?\s+import\s+paths", src):
+            violations.append(f"{fn}: imports materials.news_video.paths")
+        if "_nv_paths." in src:
+            violations.append(f"{fn}: calls _nv_paths.*")
     assert not violations, (
-        f"components call _nv_paths without ctx.material_instance_id: {violations}")
+        f"components must not import or call _nv_paths: {violations}")
 
 
-def test_ctx_constructors_pass_material_instance_id():
+def test_ctx_constructors_pass_material_model():
     """Each nd_components.ProjectContext(...) call must include
-    material_instance_id=self.material_instance_id."""
+    material_model=self.material_model."""
     with open(NEWS_DESK_TOOL_PATH, "r", encoding="utf-8") as f:
         src = f.read()
-    # Find all ProjectContext(...) constructor blocks and check.
     blocks = re.findall(
         r"nd_components\.ProjectContext\([^)]+\)", src, re.DOTALL)
-    missing = [b for b in blocks if "material_instance_id" not in b]
+    missing = [b for b in blocks if "material_model" not in b]
     assert not missing, (
-        f"ProjectContext constructors missing material_instance_id: "
+        f"ProjectContext constructors missing material_model: "
         f"{len(missing)} of {len(blocks)}")
 
 
