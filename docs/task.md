@@ -5,7 +5,46 @@
 
 ---
 
-## 本会话主题：插件化大重构（ADR-0004）— 已收尾
+## 当前主题：Project 数据层组件化（ADR-0005）
+
+ADR-0004 立起了 plugin 框架，但 Project 数据层还是**单源假设**——`source/` `subtitles/` 是 project 直接子目录，跟"组件库 + N 实例"的 mental model 直接打架。
+
+详细决策见 [docs/adr/0005-componentized-data-layer.md](adr/0005-componentized-data-layer.md)。
+
+### 目标
+
+```
+<project>/
+  materials/<type>/<instance>/      ← N 个素材实例 (镜像 creations/)
+  creations/<type>/<instance>/      ← 重命名自 derivatives/
+```
+
+`Project.source_dir` / `subtitles_dir` / `source_status()` 等单源假设 API 全删；改成 `material_instance_dir(type, instance)` + plugin model 持有实例上下文。
+
+### Slice L→Q 推进计划
+
+| Slice | 内容 | 状态 |
+|---|---|---|
+| L | ADR-0005 + task.md（仅文档） | 进行中 |
+| M | Project 目录结构重构：`materials/<type>/<inst>/` + `creations/` 重命名；移除 source_dir/subtitles_dir | ⬜ |
+| N | `materials/news_video/model.py` 的 `NewsVideoModel` 类（零 Tk，业务逻辑唯一所有者）| ⬜ |
+| O | `materials/news_video/sidebar.py` 重写：`MaterialSlot` 抽象 + 统一槽位树渲染 | ⬜ |
+| P | Hub 多实例渲染：N 个 panel；[+] 创建实例 auto-name；右键重命名/删除 | ⬜ |
+| Q | 创作工作台绑定素材：`bound_material` 字段；首开弹素材选择器；所有素材路径走 `material.get_artifact()` | ⬜ |
+
+### 用户拍板的设计点（ADR-0005 已记录）
+
+- 实例命名：自动 `news-1/news-2/...`，用户可改
+- 创作绑素材：创建时不绑，进工作台后选；选择 = 绑定 = 记录
+- 旧 project 兼容：**不兼容**，pre-alpha 直接破坏性升级
+
+### 强烈警告：Slice M 是地基级破坏性改动
+
+Slice M 删 `Project.source_dir` 等核心 API，连锁影响所有用 `project.source_*` / `project.subtitles_*` 的代码——粗估 30+ 处。会话内做完整个 M→Q 是个大动作，可能需要 2-3 个会话。每片需要保持可启动状态。
+
+---
+
+## 之前完成的工作：ADR-0004（已收尾）
 
 会话起点 HEAD: `7d2e603`。
 会话结尾 HEAD: 待 commit slice J。
