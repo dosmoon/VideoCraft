@@ -302,10 +302,16 @@ function drawOverlay() {
     ctx.lineTo((rect.x+rect.w)*vSrcW, (rect.y+rect.h/2)*vSrcH);
     ctx.stroke();
   }
+  // Canvas draw order MUST mirror the ffmpeg burn pipeline's z_order
+  // (see core/composition/render.py: jobs sorted by z_order ascending,
+  // later filter = on top). Lowest z first, highest last:
+  //   subtitle (10-12) → hook/outro (30) → news_desk (40) → watermark (60+).
+  // Diverging here means preview ≢ render — users see chapter overlays
+  // on top of watermarks in preview, then watermarks on top in burn.
   drawSubtitles();
-  drawWatermark();
   drawHookOutro();
   drawNewsDeskOverlays();
+  drawWatermark();
 }
 
 // ── news-desk overlays (LowerThird + TopicStrip) ─────────────────────────
