@@ -47,13 +47,52 @@ HEAD: `983e11f` (已 push origin/main)，workspace clean。
 
 ---
 
-## 下一步候选（按优先级）
+## 下一手 — 已选定：sidebar 三栏拆分
 
-1. **真实使用攒反馈** — 把这一整套跑一遍真实素材，看 publish.md / chapter videos 出来的效果
-2. **subtitle Phase 2** — cue 内联编辑（仿 chapter_editor inline 模式：点 row → seek + 在下方编辑文本/时间）。先验证 dogfood 中是否真的需要在 news_desk 里改字幕
-3. **subtitle Phase 3** — 增删 cue + 重新导入按钮（带本地编辑覆盖警告）
-4. **多发言人 → 名牌组件** — 等 AI 提取多发言人 schema 出现
-5. **组件框架推广到 clip_script** — clip_script 同样走 ADR-0003 解耦？需要先想清楚 clip 形态跟 news_desk 的差异（clip 是切片产出 N 个 short，news_desk 是整片）
+**践行 [[ADR-0003]] 的可视化对齐**：左边栏拆成 3 个 tab，对应数据层 vs 编辑器层 vs 文件层。
+
+```
+┌─[资源]─[项目]─[文件]─┐
+│                       │
+└───────────────────────┘
+```
+
+### 三栏内容定义
+
+1. **资源 (Resources)** — 以源视频为根的"梳状 AI 分析数据树"
+   - 当前 sidebar 里这些归这里：源视频卡 / 新闻背景(AI) / 字幕列表（含 +生成 menu）/ 标题与章节子节点
+   - 本质：**source 层数据准备工坊的产出**——多个独立编辑器可共享消费的标准化资产
+   - 跟编辑器层无运行时耦合
+
+2. **项目 (Projects)** — 独立编辑器模块实例
+   - 当前的「派生作品」整段挪过来——news_desk / clip_script / bilingual_video / 未来更多形态
+   - **改名建议**：「派生作品」→「项目」（跟 [[ADR-0003]] 一致：派生作品不是派生，是独立编辑器实例）
+   - 每个实例展开 = 实例下的可见 artifacts（output.mp4 / publish.md 等）
+
+3. **文件 (Files)** — 文件资源管理器视图
+   - 项目目录树（folder 结构）
+   - 方便用户跳过模型直接看磁盘上的东西
+
+### 关键设计点（开工前讨论）
+
+- **空状态**：没源视频时「资源」tab 长什么样？引导用户先「下载」/「转字幕」？
+- **跨 tab 跳转**：点「资源」里某个 artifact，是否在「项目」tab 里高亮用到它的项目？目前所有 artifact 都属 source 层，没显式 binding——但 subtitle 组件按 ADR-0003 现在快照了，跟 source 字幕不一定一致。怎么显示这种漂移？
+- **预览 tab 0 的关系**：右栏 preview tab 0 跟左侧三 tab 怎么联动？目前是单击 sidebar artifact = 切 preview tab 0 内容，需要扩展到三 tab 各自的选中物
+- **改名「派生作品」**：UI 文案改不改？memory `feedback_user_facing_naming` 提醒过用户实际看见的词要 grep i18n。这次改名是个 i18n 级动作
+
+### 接力起点
+
+- HEAD `2387735` (workspace clean)
+- 关键代码定位：`src/VideoCraftHub.py` 的 sidebar 构造（grep `_build_sidebar`、`_build_news_context_section`、`派生作品`/derivative）
+- ADR-0003 在 `docs/adr/0003-editor-modules-decoupling.md`，开工前重读
+
+### 其它候选（次优先级）
+
+- 真实使用攒反馈（跑完整素材跑一遍 publish.md / chapter videos）
+- subtitle Phase 2（cue 内联编辑）
+- subtitle Phase 3（增删 cue + 重新导入按钮）
+- 多发言人 → 名牌组件
+- 组件框架推广到 clip_script
 
 老 instance 没 titles 字段——用户必须重新点一次 chapter import 才能在 publish.md 看到候选标题。是 ADR-0003 一致性的代价。
 
