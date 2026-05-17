@@ -114,12 +114,16 @@ def _default_instance(_duration: float) -> dict:
                 "fontsize": 26,
             },
             "start_card": {
+                # Sidebar layout — left-anchored translucent panel.
+                # Field defaults mirror ChapterHeroCardStyle so omitted
+                # keys take dataclass defaults at render time.
                 "title_color": "#FFFFFF",
-                "title_fontsize": 56,
+                "title_fontsize": 40,
                 "body_color": "#E5E7EB",
-                "body_fontsize": 28,
-                "bg_color": "#000000",
-                "bg_opacity": 75,
+                "body_fontsize": 22,
+                "bg_color": "#0F1B2C",
+                "bg_opacity": 55,
+                "accent_color": "#DC2626",
                 "duration_sec": 6,
             },
         },
@@ -154,6 +158,7 @@ def _build_mode_style_panel(parent: ttk.Frame, mode: str,
         "text_color":    ("color",   tr("tool.news_desk.field.text_color")),
         "title_color":   ("color",   tr("tool.news_desk.chapter.title_color")),
         "body_color":    ("color",   tr("tool.news_desk.chapter.body_color")),
+        "accent_color":  ("color",   tr("tool.news_desk.chapter.accent_color")),
         "fontsize":      ("int",     tr("tool.news_desk.field.fontsize")),
         "title_fontsize":("int",     tr("tool.news_desk.chapter.title_fontsize")),
         "body_fontsize": ("int",     tr("tool.news_desk.chapter.body_fontsize")),

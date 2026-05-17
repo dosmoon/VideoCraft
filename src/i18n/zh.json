@@ -2046,6 +2046,7 @@
   "tool.news_desk.chapter.field.key_points": "要点（key_points）— 一行一条",
   "tool.news_desk.chapter.title_color": "标题色",
   "tool.news_desk.chapter.body_color": "正文色",
+  "tool.news_desk.chapter.accent_color": "强调色",
   "tool.news_desk.chapter.title_fontsize": "标题字号",
   "tool.news_desk.chapter.body_fontsize": "正文字号",
   "tool.news_desk.chapter.duration": "显示时长 (秒)",

@@ -453,10 +453,22 @@ def _build_chapter_hero_card_dialogues(
     spec: ChapterHeroCardOverlay, style: ChapterHeroCardStyle,
     *, target_w: int, target_h: int,
 ) -> list[str]:
-    """Centered hero card — title (large) + multi-line body on a
-    semi-transparent backdrop. Used for chapter intro / "now showing"
-    interstitials. Animation: fade in/out (no slide — feels heavier than
-    the L3 card, slide would look fidgety at this size).
+    """Sidebar hero card — left/right-anchored vertical panel.
+
+    Composition: translucent backdrop + screen-edge accent stripe +
+    title block + divider + body block. Slides in from the screen
+    edge on enter, fades out on exit.
+
+    Layout (left-anchored example):
+
+        ┌──────────────────────────┐
+        │█│  title line 1          │ ← accent stripe full-height on the
+        │█│  title line 2          │   screen-edge side; title left-
+        │█│ ─────────────────────  │   aligned within the text region;
+        │█│  body line 1           │   thin divider between title and
+        │█│  body line 2           │   body; body wraps narrow.
+        │█│  ...                   │
+        └──────────────────────────┘
     """
     title = (spec.title or "").strip()
     body  = (spec.body  or "").strip()
@@ -468,53 +480,71 @@ def _build_chapter_hero_card_dialogues(
     pad_x = max(8, int(style.padding_x_pct * target_w))
     pad_y = max(6, int(style.padding_y_pct * target_h))
     gap_px = max(4, int(style.title_body_gap_pct * target_h))
-    max_card_w = max(80, int(style.max_width_pct * target_w))
-    max_text_w = max(40, max_card_w - pad_x * 2)
+    accent_w = max(0, int(style.accent_width_pct * target_w))
+    divider_h = max(0, int(style.divider_height_px))
 
-    # Wrap title to 1 line (truncate w/ … if too wide); body to N lines.
+    # Fixed card width from style; text region = card minus paddings + accent.
+    card_w = max(80, int(style.width_pct * target_w))
+    text_region_w = max(40, card_w - pad_x * 2 - accent_w)
+
+    # Title wraps up to title_max_lines; body to body_max_lines.
+    title_max_lines = max(1, int(style.title_max_lines))
     title_wrapped = _wrap_text_cjk_n(
-        title, max(4, int(style.body_max_chars_per_line * 0.7)), 1
+        title, max(4, int(style.body_max_chars_per_line * 0.9)),
+        title_max_lines,
     ) if title else []
     body_wrapped = _wrap_text_cjk_n(
         body, max(4, int(style.body_max_chars_per_line)),
-        max(1, int(style.body_max_lines))
+        max(1, int(style.body_max_lines)),
     ) if body else []
-
-    title_w = max((_est_text_width_px(ln, title_size) for ln in title_wrapped),
-                    default=0.0)
-    body_w = max((_est_text_width_px(ln, body_size) for ln in body_wrapped),
-                   default=0.0)
-    text_w_est = min(max_text_w, max(title_w, body_w))
 
     n_title = len(title_wrapped)
     n_body  = len(body_wrapped)
-    text_block_h = (n_title * title_size
-                     + (gap_px if (n_title and n_body) else 0)
-                     + n_body * body_size)
+    has_divider = bool(n_title and n_body)
 
-    card_w = int(min(max_card_w, text_w_est + pad_x * 2))
+    text_block_h = (n_title * title_size
+                     + (gap_px + divider_h + gap_px if has_divider else 0)
+                     + n_body * body_size)
     card_h = text_block_h + pad_y * 2
 
-    card_x = (target_w - card_w) // 2
-    card_y = int(target_h * style.y_pct) - card_h // 2
-
-    text_cx = card_x + card_w // 2
-    title_top = card_y + pad_y
-    body_top = title_top + n_title * title_size + (gap_px if (n_title and n_body) else 0)
+    # Anchor to screen edge; vertically centered.
+    margin_x = int(style.margin_x_pct * target_w)
+    card_y = (target_h - card_h) // 2
+    if style.position == "right":
+        card_x_final = target_w - margin_x - card_w
+        accent_x = card_x_final + card_w - accent_w
+        text_left_offset = pad_x                                 # accent on the right
+        slide_dx = max(0, int(style.slide_in_px))                # slide from right edge
+    else:    # "left" (default)
+        card_x_final = margin_x
+        accent_x = card_x_final
+        text_left_offset = accent_w + pad_x
+        slide_dx = -max(0, int(style.slide_in_px))               # slide from left edge
 
     fade_in  = max(0, int(style.fade_in_ms))
     fade_out = max(0, int(style.fade_out_ms))
-    fade = (f"\\fad({fade_in},{fade_out})"
-             if (fade_in or fade_out) else "")
+
+    def _anim(x: int, y: int) -> str:
+        """`\\move(start → final)` for slide-in entry + `\\fad` for both
+        ends. Same offsets applied to every layer so the whole sidebar
+        moves as one unit."""
+        parts: list[str] = []
+        if slide_dx and fade_in > 0:
+            parts.append(
+                f"\\move({x + slide_dx},{y},{x},{y},0,{fade_in})")
+        else:
+            parts.append(f"\\pos({x},{y})")
+        if fade_in > 0 or fade_out > 0:
+            parts.append(f"\\fad({fade_in},{fade_out})")
+        return "".join(parts)
 
     lines: list[str] = []
 
-    # Layer 0 — backdrop card.
+    # Layer 0 — translucent backdrop.
     bg_color = hex_color_to_ass(style.bg_color)
     bg_alpha = _ass_alpha(style.bg_opacity)
-    band_body = ("{\\an7"
-                  f"\\pos({card_x},{card_y}){fade}"
-                  f"\\bord0\\shad0\\1c{bg_color}\\1a{bg_alpha}\\p1}}"
+    band_body = ("{\\an7" + _anim(card_x_final, card_y)
+                  + f"\\bord0\\shad0\\1c{bg_color}\\1a{bg_alpha}\\p1}}"
                   f"m 0 0 l {card_w} 0 {card_w} {card_h} 0 {card_h}"
                   "{\\p0}")
     lines.append(
@@ -522,34 +552,62 @@ def _build_chapter_hero_card_dialogues(
         f"{_ass_time(spec.end_sec)},NewsDeskRect,,0,0,0,,{band_body}"
     )
 
-    # Layer 1 — title (centered, top of inner block).
+    # Layer 1 — accent stripe on the screen-edge side.
+    if accent_w > 0:
+        acc_color = hex_color_to_ass(style.accent_color)
+        acc_body = ("{\\an7" + _anim(accent_x, card_y)
+                     + f"\\bord0\\shad0\\1c{acc_color}\\1a&H00&\\p1}}"
+                     f"m 0 0 l {accent_w} 0 {accent_w} {card_h} 0 {card_h}"
+                     "{\\p0}")
+        lines.append(
+            f"Dialogue: 1,{_ass_time(spec.start_sec)},"
+            f"{_ass_time(spec.end_sec)},NewsDeskRect,,0,0,0,,{acc_body}"
+        )
+
+    text_left_x = card_x_final + text_left_offset
+    title_top = card_y + pad_y
+
+    # Layer 2 — divider (when both title and body exist).
+    divider_y = title_top + n_title * title_size + gap_px
+    if has_divider:
+        div_color = hex_color_to_ass(style.divider_color)
+        div_alpha = _ass_alpha(style.divider_opacity)
+        div_body = ("{\\an7" + _anim(text_left_x, divider_y)
+                     + f"\\bord0\\shad0\\1c{div_color}\\1a{div_alpha}\\p1}}"
+                     f"m 0 0 l {text_region_w} 0 {text_region_w} {divider_h} 0 {divider_h}"
+                     "{\\p0}")
+        lines.append(
+            f"Dialogue: 2,{_ass_time(spec.start_sec)},"
+            f"{_ass_time(spec.end_sec)},NewsDeskRect,,0,0,0,,{div_body}"
+        )
+
+    # Layer 3 — title (left-anchored within text region).
     if title_wrapped:
         title_color = hex_color_to_ass(style.title_color)
-        # Anchor 8 = top-center; (x, y) is the top-center of the text block.
         joined = "\\N".join(_ass_escape_text(ln) for ln in title_wrapped)
-        body_str = ("{\\an8"
-                     f"\\pos({text_cx},{title_top}){fade}"
-                     f"\\fn{style.font}\\fs{title_size}"
+        # Anchor 7 = top-left.
+        body_str = ("{\\an7" + _anim(text_left_x, title_top)
+                     + f"\\fn{style.font}\\fs{title_size}"
                      f"\\1c{title_color}\\bord0\\shad0"
                      + ("\\b1" if style.title_bold else "")
                      + "}" + joined)
         lines.append(
-            f"Dialogue: 1,{_ass_time(spec.start_sec)},"
+            f"Dialogue: 3,{_ass_time(spec.start_sec)},"
             f"{_ass_time(spec.end_sec)},NewsDeskText,,0,0,0,,{body_str}"
         )
 
-    # Layer 2 — body (centered, below title).
+    # Layer 4 — body (left-anchored, below divider).
     if body_wrapped:
         body_color = hex_color_to_ass(style.body_color)
         joined = "\\N".join(_ass_escape_text(ln) for ln in body_wrapped)
-        body_str = ("{\\an8"
-                     f"\\pos({text_cx},{body_top}){fade}"
-                     f"\\fn{style.font}\\fs{body_size}"
+        body_top = (divider_y + divider_h + gap_px) if has_divider else title_top
+        body_str = ("{\\an7" + _anim(text_left_x, body_top)
+                     + f"\\fn{style.font}\\fs{body_size}"
                      f"\\1c{body_color}\\bord0\\shad0"
                      + ("\\b1" if style.body_bold else "")
                      + "}" + joined)
         lines.append(
-            f"Dialogue: 2,{_ass_time(spec.start_sec)},"
+            f"Dialogue: 4,{_ass_time(spec.start_sec)},"
             f"{_ass_time(spec.end_sec)},NewsDeskText,,0,0,0,,{body_str}"
         )
 

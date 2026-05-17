@@ -2046,6 +2046,7 @@
   "tool.news_desk.chapter.field.key_points": "Key points — one per line",
   "tool.news_desk.chapter.title_color": "Title color",
   "tool.news_desk.chapter.body_color": "Body color",
+  "tool.news_desk.chapter.accent_color": "Accent color",
   "tool.news_desk.chapter.title_fontsize": "Title size",
   "tool.news_desk.chapter.body_fontsize": "Body size",
   "tool.news_desk.chapter.duration": "Duration (sec)",

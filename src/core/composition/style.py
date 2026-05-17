@@ -245,37 +245,48 @@ class ChapterPointCardStyle:
 
 @dataclass
 class ChapterHeroCardStyle:
-    """Hero/intro card — large centered card carrying a chapter title +
-    multi-line body. Bigger than ChapterPointCardStyle (a thin L3 band)
-    and centered rather than lower-third anchored.
+    """Sidebar hero card — left/right-anchored vertical panel carrying
+    a chapter title + multi-line body. Sits BESIDE the speaker rather
+    than over them; defaults are translucent so the underlying video
+    remains visible behind the card.
 
-    Card auto-sizes to fit text + padding, capped at max_width_pct of
-    the frame width. Body text wraps to body_max_lines lines (surplus
-    truncated with …).
+    Geometry: card width is a fixed fraction of the frame; height
+    auto-fits the title + divider + body. Vertically centered.
     """
-    # Title (large, top of card).
+    # Title (large, top).
     title_color: str = "#FFFFFF"
-    title_fontsize: int = 56
+    title_fontsize: int = 40
     title_bold: bool = True
-    # Body (smaller, multi-line under title).
+    title_max_lines: int = 2
+    # Body (smaller, multi-line under divider).
     body_color: str = "#E5E7EB"
-    body_fontsize: int = 28
+    body_fontsize: int = 22
     body_bold: bool = False
-    # Card backdrop.
-    bg_color: str = "#000000"
-    bg_opacity: int = 75
-    # Card geometry — fractions of frame dim.
-    max_width_pct: float = 0.72
-    padding_x_pct: float = 0.035
+    body_max_chars_per_line: int = 14
+    body_max_lines: int = 8
+    # Card backdrop — broadcast-navy + heavy transparency so the video
+    # behind the sidebar stays legible.
+    bg_color: str = "#0F1B2C"
+    bg_opacity: int = 55
+    # Geometry — fractions of frame dim. Sidebar mode: anchored to
+    # screen edge, vertically centered.
+    position: str = "left"                  # "left" | "right"
+    width_pct: float = 0.30                 # card width as fraction of frame
+    margin_x_pct: float = 0.025             # offset from anchored edge
+    padding_x_pct: float = 0.025
     padding_y_pct: float = 0.030
     title_body_gap_pct: float = 0.020
-    y_pct: float = 0.45               # vertical center; 0.45 sits slightly above middle
-    # Body wrap budget.
-    body_max_chars_per_line: int = 36
-    body_max_lines: int = 4
-    # Animation.
+    # Accent stripe on the screen-edge side (broadcast convention).
+    accent_color: str = "#DC2626"
+    accent_width_pct: float = 0.005
+    # Thin divider between title and body.
+    divider_color: str = "#FFFFFF"
+    divider_opacity: int = 30
+    divider_height_px: int = 2
+    # Animation — slide in from the screen edge + fade.
     fade_in_ms: int = 400
     fade_out_ms: int = 350
+    slide_in_px: int = 60
     font: str = "Microsoft YaHei"
 
 
