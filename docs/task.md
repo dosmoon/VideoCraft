@@ -5,60 +5,57 @@
 
 ---
 
-## ▶ 下次会话主题：timeline 迁移收尾 follow-ups (可选)
+## ▶ 下次会话主题：clip 模块重构（对齐 news_desk 现行标准）
 
-**Axis 1~7 全部锁定 + PR 1/2 + ADR-0006 已合 main**。设计稿在 `docs/design/composition-timeline-v0.md`，权威 ADR 在 `docs/adr/0006-composition-timeline-ir.md`。
+**先读** [[project_clip_refactor_debt]] —— 那份记忆是 clip 跟现行标准的偏差清单 + 推荐重构顺序 + 验收标准，是下次会话的 starting checklist。**本节只是路标，详情看那里**。
 
-### 已完成（本次 + 上次会话）
+### 一句话
 
-- ADR-0006 立项；ADR/0001~0006 README 同步
-- PR 1：timeline.py + compile.py + primitives/__init__.py 脚手架（commit `c555449`）+ 24 测试
-- PR 2 前置：8 个渲染字符串 golden seeded（commit `55612b0`），3 ASS + 5 snippet
-- PR 2 part 1/2：删 `news_desk_overlays.py` 491 行，topic_strip + chapter_hero_card primitive 落地，libass_helpers.py 引擎级 helper（commit 在 main，本会话）
-- PR 2 part 2/2：5 个 primitive（subtitle_cue / text_watermark / image_watermark / hook_text / outro_text）+ drawtext_helpers.py；render.py 979 → 816 行；统一 primitives 注册中心（commit `66cd2c0`）
-- PR 3：`compile_timeline()` 真实现 + `primitives.KNOWN_KINDS` 7 kind catalog + 4 个 news_desk component 各加 `_compile()` + `ComponentDictAdapter` bridge dict→Protocol（commit `37b4e71`）
-- PR 4：news_desk 切到 timeline——`CompositionRequest.timeline` 双路径 + `CompositionPreview.set_timeline()` + `_rebuild_timeline()` + 删 `_build_render_inputs`+`_rebase_overlays`；`subtitle_libass` → `subtitle_cue` 双命名 reconcile；8 新 e2e 测试验证 timeline→Spec roundtrip byte-equal vs chapter+topic_strip golden（commit `04c11f1`）
-- PR 5：clip 切 timeline + 老路径删——`creations/clip/timeline_builder.py` 新增 `build_clip_timeline()`；`CompositionRequest` 压到 7 字段（删 7 个老字段）；删 `_named_overlay_jobs` / `_prepare_track_srt` / `ExtraSubtitleSpec` / `ExtraWatermarkSpec` / 3 个 news_desk-only preview Python 桥；timeline 字段变 required；7 个新架构 grep guard 锁死（commit `4dd932b`）
-- 全程 217 测试 + 11 goldens byte-equal；**timeline 迁移主体完成**
+`creations/clip/clip_tool.py` 2208 行 god 模块，timeline 迁移期间只动了渲染入口，UI/状态/架构/材料绑定全部欠债——按 news_desk 已对齐的契约（[[feedback_material_via_model_only]] / [[project_creation_config_owner]] / ADR-0004 / ADR-0006）逐项扫。
 
-### Timeline 迁移完成度
+### 推荐顺序（详情看欠债 memory）
 
-**已完成（5 PR 全部 land）**：
-- 引擎统一 timeline IR + primitive registry
-- news_desk 端到端走 timeline（render + preview）
-- clip 渲染走 timeline
-- `CompositionRequest` 干净 7 字段
-- 老 5 通道 dispatch 路径整块删除
-- 11 goldens byte-equal 全程守护
-- 217 测试全绿
+1. 素材访问换 Model（删 `_nv_paths` 9 处 callsite）
+2. `ClipInstanceConfig` dataclass 单 writer
+3. preview 切 set_timeline（解 PR 5 deferred #1）
+4. 拆 god 模块（候选 / style form / 渲染队列 / clip editor）
+5. Component 化（hook/outro/subtitle/watermark → ComponentSpec 注册表）
+6. Style 物理迁移（CompositionStyle 等搬到 creations/clip/style.py）
 
-**故意 deferred（不影响主体功能，作为未来 follow-up）**：
+### 验收（每步都要满足）
 
-1. **clip preview live-editing → set_timeline**
-   - 现状：clip 的 UI live 编辑（每次 var 变化）通过 `set_cues` / `set_cues_secondary` / `set_clip_meta` 直接推送 preview。这 3 个 Python 桥仍留在 `CompositionPreview` 上
-   - 阻塞物：clip UI 当前 var-trace 驱动，重建 timeline 喂 `set_timeline` 需要每次都跑 IO（读 SRT）。需要 cue 缓存机制或 UI 重构
-   - 优先级：中。clip preview 工作正常；只是双 push 路径（news_desk 走 timeline，clip 走 bridges）
-
-2. **JS bridge 收口到单 `window.vc.setTimeline()`**
-   - 现状：`composition_preview.html` 仍有 `setOverlays / setCues / setCuesSecondary / setExtraSubtitles / setExtraWatermarks / setClipMeta` 6 个 JS 入口；`set_timeline` Python 把 timeline 拆成多个 JS 调用
-   - 阻塞物：JS 重写工作量（~200 行 HTML/JS）
-   - 优先级：低。Python 接口已经统一；JS 是内部 impl
-
-3. **WatermarkStyle / HookOutroStyle 拆成窄 primitive Style**
-   - 现状：`style.py` 还有统一的 `WatermarkStyle`（带 `type` discriminator）和 `HookOutroStyle`（同时管 hook + outro）
-   - 阻塞物：clip UI 直接构造 `WatermarkStyle(type=...)`；拆要改 ~5 个 callsite + 测试
-   - 优先级：低。纯架构清洁度，无 runtime 影响
-
-### 下次会话开场建议
-
-不强求接 follow-up。timeline 迁移主体已完成，可以：
-- **(A)** dogfood 几天（news_desk + clip 实际跑一跑，看新路径有没有 bug）
-- **(B)** 推动这 3 个 follow-up 中的某一个（建议按优先级 1→3）
-- **(C)** 切回别的工作（backlog 里 P1 还有 PPT2Video / 字幕工作台 / 用户数据绿色化 / yt-dlp JS runtime）
+- 218+ 测试全绿
+- 11 goldens byte-equal
+- 该步对应的架构 grep guard 加上
+- preview ≡ render 不变量（ADR-0006 #6）通过 wrap-parity 测试
 
 ### 起点 HEAD
 
-`4dd932b` — "composition: PR 5 — clip → timeline + delete legacy"，已 push origin/main。217 测试全绿；11 goldens byte-equal。
+`949faf3` — "docs/adr-0006: preview≡render single-source invariant"，已 push origin/main。218 测试全绿；11 goldens byte-equal。本次会话最后改动：preview 字幕 wrap 分裂修复（commit `ba9d584`）+ ADR-0006 新加不变量 #6（commit `949faf3`）。
+
+### 不在 clip 重构范围内的几件 follow-up
+
+仍是 timeline 迁移的 deferred items，clip 重构期间可顺手做、不强求；详情见 [[project_composition_timeline_v0]] 描述里的 deferred 三项：JS 单 setTimeline 桥收口 / WatermarkStyle/HookOutroStyle 窄拆。
+
+---
+
+## 已完成（迁移整轮 + 后续补完，2026-05-17）
+
+### Timeline 迁移（5 PR 全 land）
+
+- PR 1：timeline IR 脚手架（`c555449`）
+- ADR-0006 立项（`39c4fda`）
+- PR 2：news_desk_overlays.py 解构 + 7 primitive 落地（`66cd2c0`）
+- PR 3：`compile_timeline()` 真实现 + news_desk 4 component compile()（`37b4e71`）
+- PR 4：news_desk → timeline 端到端（`04c11f1`）
+- PR 5：clip → timeline + 老 5 通道删 + 架构 guard（`4dd932b`）
+
+### 迁移后补完（同会话）
+
+- 引擎 API 跟 CompositionStyle 解耦（`84ad0b2`）—— `CompositionRequest` 拿 `output_geometry` + `encode_preset` 直接，引擎不再认识 clip-shaped 上帝对象；`drawtext_filter` 改吃 dict；`_RenderCtx` 删 style 字段；`preview.set_geometry()` 新增；news_desk 删 `_default_render_style()`
+- preview≡render 字幕 wrap 分裂修复（`ba9d584`）—— 抽 `wrap_subtitle_elements()` 单源；preview/render 同调；加回归测试
+- ADR-0006 加不变量 #6（`949faf3`）—— "preview ≡ render 渲染前数据变换必须是单一纯函数"
+- 全程 218 测试 + 11 goldens byte-equal
 
 ---
 
