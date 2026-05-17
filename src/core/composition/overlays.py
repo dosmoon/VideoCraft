@@ -5,13 +5,11 @@ hold per-render content: what to draw, when, and which style class to use.
 The split mirrors AE's "character style + text layer content" or web's
 "CSS class + DOM element".
 
-Industry alignment: `LowerThirdOverlay` follows the broadcast-graphics
-standard (Adobe Premiere / DaVinci / OBS / vMix all call this a
-"lower third" or "L3"). `TopicStripOverlay` is our internal name for what
+Industry alignment: `TopicStripOverlay` is our internal name for what
 broadcast packages variously call "topic bar", "chapter marker strip", or
-"now playing strip" — a static labeled bar pinned to the top edge. Future
-overlay kinds (PullQuote / FullCard / Ticker / Bug) extend the same
-discriminator pattern.
+"now playing strip" — a static labeled bar pinned to the top edge.
+`ChapterHeroCardOverlay` is a sidebar interstitial that announces a new
+chapter. Future overlay kinds extend the same discriminator pattern.
 
 Each kind dataclass is the single contract shared by: AI prompt JSON
 schema, on-disk JSON storage, UI list editor, and composition renderer.
@@ -48,76 +46,10 @@ class OverlaySpec:
 
 
 @dataclass
-class LowerThirdOverlay:
-    """Speaker name plate — broadcast-standard lower third.
-
-    Anchored to the bottom-left or bottom-right safe area. Two-line content:
-    `title` (the name, large weight) + `subtitle` (role / affiliation,
-    smaller). Rendered as a libass dialogue with `\\pos()` absolute coords;
-    the actual pixel position is derived from the matching LowerThirdStyle's
-    margin pcts at render time.
-
-    style_class: key into CompositionStyle.overlay_styles — selects which
-        LowerThirdStyle drives the visual look. "default" is always
-        guaranteed to exist (preset seeds it).
-    """
-    title: str = ""
-    subtitle: str = ""
-    start_sec: float = 0.0
-    end_sec: float = 0.0
-    position: str = "bottom-left"   # "bottom-left" | "bottom-right"
-    style_class: str = "default"
-    kind: str = "lower_third"
-    z_order: int = 50
-    zone: str = "lower_third"
-
-
-@dataclass
-class DateStampOverlay:
-    """Persistent corner date stamp — small, optional, always-on text
-    label carrying the event/broadcast date (Bloomberg / Reuters style
-    "bug" under the logo). Default corner is bottom-left to avoid the
-    typical top-right watermark / logo zone.
-    """
-    text: str = ""
-    start_sec: float = 0.0
-    end_sec: float = 0.0
-    position: str = "bottom-left"
-    # "bottom-left" | "bottom-right" | "top-left" | "top-right"
-    style_class: str = "default"
-    kind: str = "date_stamp"
-    z_order: int = 55
-    zone: str = "auto"
-
-
-@dataclass
-class ChapterPointCardOverlay:
-    """Per-chapter hero callout — large centered text in the upper-third
-    zone with fade+slide entrance.
-
-    Sits above the subtitle band and clear of the LowerThird zone, so all
-    three can coexist on the same beat (hero up top, name plate bottom-
-    corner, subtitles bottom-center). Visual heavy-lifting (size / stroke /
-    shadow / animation / accent underline) lives entirely in style.
-    """
-    text: str = ""
-    start_sec: float = 0.0
-    end_sec: float = 0.0
-    style_class: str = "default"
-    kind: str = "chapter_point_card"
-    z_order: int = 45
-    zone: str = "upper_third"
-
-
-@dataclass
 class ChapterHeroCardOverlay:
-    """Chapter intro/hero card — large centered title + multi-line body
-    on a semi-transparent backdrop, shown for the first few seconds of
-    a chapter as a "now showing" interstitial.
-
-    Distinct from ChapterPointCardOverlay (a thin lower-third L3 band):
-    the hero card is bigger, centered, and carries 2 lines of text
-    (chapter title + AI-refined description). The chapter component
+    """Chapter intro/hero card — large title (+ optional body) on a
+    sidebar-anchored translucent panel, shown for the first few seconds
+    of a chapter as a "now showing" interstitial. The chapter component
     routes its `start_card` visual mode here.
 
     inline_style is a per-spec override hatch — chapter.py uses it so
@@ -158,8 +90,7 @@ class TopicStripOverlay:
 # Union for callers that want type-narrowing. Renderer dispatch keys off
 # `kind` (str) so this union is purely for static typing convenience.
 OverlayUnion = Union[
-    OverlaySpec, LowerThirdOverlay, TopicStripOverlay,
-    ChapterPointCardOverlay, ChapterHeroCardOverlay, DateStampOverlay,
+    OverlaySpec, TopicStripOverlay, ChapterHeroCardOverlay,
 ]
 
 
@@ -167,8 +98,7 @@ OverlayUnion = Union[
 # render.py / preview.py to test isinstance() against all supported shapes
 # in one shot — extends as new kinds (PullQuote / FullCard / ...) ship.
 TYPED_OVERLAY_KINDS: tuple[type, ...] = (
-    OverlaySpec, LowerThirdOverlay, TopicStripOverlay,
-    ChapterPointCardOverlay, ChapterHeroCardOverlay, DateStampOverlay,
+    OverlaySpec, TopicStripOverlay, ChapterHeroCardOverlay,
 )
 
 
@@ -189,16 +119,10 @@ def overlay_from_dict(d: dict):
     if not isinstance(d, dict):
         raise TypeError(f"overlay_from_dict: not a dict: {type(d)}")
     kind = d.get("kind", "")
-    if kind == "lower_third":
-        return LowerThirdOverlay(**_filter(d, LowerThirdOverlay))
     if kind == "topic_strip":
         return TopicStripOverlay(**_filter(d, TopicStripOverlay))
-    if kind == "chapter_point_card":
-        return ChapterPointCardOverlay(**_filter(d, ChapterPointCardOverlay))
     if kind == "chapter_hero_card":
         return ChapterHeroCardOverlay(**_filter(d, ChapterHeroCardOverlay))
-    if kind == "date_stamp":
-        return DateStampOverlay(**_filter(d, DateStampOverlay))
     return OverlaySpec(**_filter(d, OverlaySpec))
 
 

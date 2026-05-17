@@ -188,9 +188,10 @@ class CompositionPreview:
     def set_overlays(self, overlays: list) -> None:
         """Push the news_desk overlay list to the canvas mirror.
 
-        `overlays` is a list of typed overlay dataclasses (LowerThirdOverlay,
-        TopicStripOverlay, ...). Each is serialized to a dict (incl. `kind`
-        discriminator) so the JS side can dispatch by kind. Pass [] to clear.
+        `overlays` is a list of typed overlay dataclasses (TopicStripOverlay,
+        ChapterHeroCardOverlay, ...). Each is serialized to a dict (incl.
+        `kind` discriminator) so the JS side can dispatch by kind. Pass [] to
+        clear.
         """
         payload = [overlay_to_dict(o) for o in (overlays or [])]
         self._call_js(

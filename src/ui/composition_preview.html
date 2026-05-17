@@ -382,59 +382,6 @@ function _estTextWidthPx(text, fontsize) {
 // drawOneNewsDeskOverlay / drawLegacySubtitles / drawOneExtraSub /
 // drawSingleWatermark replace them.
 
-function _drawLowerThird(ov, ox, oy, cw, ch) {
-  const st = _resolveOverlayStyle("lower_third", ov.style_class) || {};
-  const titleSize    = (st.title_fontsize    != null ? st.title_fontsize    : 38);
-  const subSize      = (st.subtitle_fontsize != null ? st.subtitle_fontsize : 24);
-  const padPx        = Math.max(4, (st.padding_pct  != null ? st.padding_pct  : 0.012) * ch);
-  const lineGapPx    = Math.max(2, (st.line_gap_pct != null ? st.line_gap_pct : 0.005) * ch);
-  const accentWPx    = (st.accent_width_pct != null ? st.accent_width_pct : 0.006) * cw;
-  const marginX      = (st.margin_x_pct != null ? st.margin_x_pct : 0.05) * cw;
-  const marginY      = (st.margin_y_pct != null ? st.margin_y_pct : 0.10) * ch;
-
-  const titleW = _estTextWidthPx(ov.title, titleSize);
-  const subW   = _estTextWidthPx(ov.subtitle, subSize);
-  const textW  = Math.max(titleW, subW);
-  const subH   = ov.subtitle ? subSize : 0;
-  const textBlockH = titleSize + (subH ? lineGapPx + subH : 0);
-  const barH = textBlockH + padPx * 2;
-  let barW = Math.max(textW + padPx * 2 + accentWPx, cw * 0.20);
-
-  const barY = oy + ch - marginY - barH;
-  let barX, accentX, textLeft;
-  if (ov.position === "bottom-right") {
-    barX = ox + cw - marginX - barW;
-    accentX = barX + barW - accentWPx;
-    textLeft = barX + padPx;
-  } else {
-    barX = ox + marginX;
-    accentX = barX;
-    textLeft = barX + accentWPx + padPx;
-  }
-
-  // Bar bg.
-  ctx.fillStyle = _hexToRgba(st.bg_color || "#0F172A",
-                                st.bg_opacity != null ? st.bg_opacity : 88);
-  ctx.fillRect(barX, barY, barW, barH);
-  // Accent stripe.
-  if (accentWPx > 0) {
-    ctx.fillStyle = _hexToRgba(st.accent_color || "#C8102E", 100);
-    ctx.fillRect(accentX, barY, accentWPx, barH);
-  }
-  // Title.
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-  ctx.font = `${st.title_bold === false ? "" : "bold "}${titleSize}px sans-serif`;
-  ctx.fillStyle = st.title_color || "#FFFFFF";
-  ctx.fillText(ov.title || "", textLeft, barY + padPx);
-  // Subtitle.
-  if (ov.subtitle) {
-    ctx.font = `${st.subtitle_bold ? "bold " : ""}${subSize}px sans-serif`;
-    ctx.fillStyle = st.subtitle_color || "#E2E8F0";
-    ctx.fillText(ov.subtitle, textLeft, barY + padPx + titleSize + lineGapPx);
-  }
-}
-
 function _drawTopicStrip(ov, ox, oy, cw, ch) {
   const st = _resolveOverlayStyle("topic_strip", ov.style_class) || {};
   const stripH = Math.max(8, (st.height_pct != null ? st.height_pct : 0.055) * ch);
@@ -455,126 +402,6 @@ function _drawTopicStrip(ov, ox, oy, cw, ch) {
   else if (align === "right")  { tx = ox + cw - padPx; ctx.textAlign = "right"; }
   else                         { tx = ox + padPx; ctx.textAlign = "left"; }
   ctx.fillText(ov.topic_text || "", tx, stripY + stripH / 2);
-}
-
-function _wrapTextCjk(text, maxChars) {
-  // Mirror of core/composition/news_desk_overlays.py::_wrap_text_cjk —
-  // CJK char counts 1, ASCII counts 0.5; max 2 lines, surplus truncated …
-  text = (text || "").trim();
-  if (!text || maxChars <= 0) return [];
-  const cost = (ch) => (ch.charCodeAt(0) > 0x2E80 ? 1.0 : 0.5);
-  const lines = [];
-  let cur = [];
-  let curW = 0;
-  let lastBreak = -1;
-  for (const ch of text) {
-    const w = cost(ch);
-    if (curW + w > maxChars && cur.length > 0) {
-      if (lastBreak >= 0 && cur[cur.length - 1].charCodeAt(0) <= 0x2E80) {
-        lines.push(cur.slice(0, lastBreak).join("").replace(/\s+$/, ""));
-        cur = cur.slice(lastBreak + 1);
-        curW = cur.reduce((s, c) => s + cost(c), 0);
-        lastBreak = -1;
-      } else {
-        lines.push(cur.join(""));
-        cur = [];
-        curW = 0;
-        lastBreak = -1;
-      }
-      if (lines.length >= 2) break;
-    }
-    cur.push(ch);
-    curW += w;
-    if (ch === " ") lastBreak = cur.length - 1;
-  }
-  if (cur.length > 0 && lines.length < 2) {
-    lines.push(cur.join("").replace(/\s+$/, ""));
-  }
-  if (lines.length >= 2 && curW > maxChars) {
-    let tail = lines[1];
-    while (tail && [...tail].reduce((s, c) => s + cost(c), 0) > maxChars - 0.5) {
-      tail = tail.slice(0, -1);
-    }
-    lines[1] = (tail.replace(/\s+$/, "") || "") + "…";
-  }
-  return lines;
-}
-
-function _drawChapterPointCard(ov, ox, oy, cw, ch) {
-  // Broadcast L3 — fitted dark band + left red accent + centered text.
-  // Mirrors core/composition/news_desk_overlays.py::_build_chapter_point_card_dialogues.
-  const st = _resolveOverlayStyle("chapter_point_card", ov.style_class) || {};
-  const fontPx    = st.fontsize != null ? st.fontsize : 40;
-  const lineGapPx = Math.max(2, (st.line_gap_pct != null ? st.line_gap_pct : 0.005) * ch);
-  const yPct      = st.y_pct != null ? st.y_pct : 0.70;
-  const maxChars  = Math.max(4, st.max_chars_per_line != null ? st.max_chars_per_line : 22);
-  const padX      = Math.max(8, (st.padding_x_pct != null ? st.padding_x_pct : 0.020) * cw);
-  const padY      = Math.max(6, (st.padding_y_pct != null ? st.padding_y_pct : 0.014) * ch);
-  const accentW   = Math.max(0, (st.accent_width_pct != null ? st.accent_width_pct : 0.004) * cw);
-  const fadeInMs  = st.fade_in_ms  != null ? st.fade_in_ms  : 350;
-  const fadeOutMs = st.fade_out_ms != null ? st.fade_out_ms : 300;
-  const slidePx   = st.slide_in_px != null ? st.slide_in_px : 24;
-
-  const wrapped = _wrapTextCjk(ov.text, maxChars);
-  if (wrapped.length === 0) return;
-
-  // Animation timing — relative to overlay window.
-  const t = vid.currentTime || 0;
-  const tIn  = (t - ov.start_sec) * 1000;
-  const tOut = (ov.end_sec - t)   * 1000;
-  if (tIn < 0 || tOut < 0) return;
-
-  let alpha = 1.0;
-  let yOffset = 0.0;
-  if (fadeInMs > 0 && tIn < fadeInMs) {
-    const p = tIn / fadeInMs;
-    alpha = Math.min(alpha, p);
-    yOffset = (1 - p) * slidePx;
-  }
-  if (fadeOutMs > 0 && tOut < fadeOutMs) {
-    alpha = Math.min(alpha, tOut / fadeOutMs);
-  }
-  if (alpha <= 0.01) return;
-
-  // Band geometry.
-  const textW = Math.max(...wrapped.map(ln => _estTextWidthPx(ln, fontPx)));
-  const textBlockH = fontPx * wrapped.length + lineGapPx * (wrapped.length - 1);
-  const bandW = textW + padX * 2 + accentW;
-  const bandH = textBlockH + padY * 2;
-  const bandX = ox + (cw - bandW) / 2;
-  const bandY = oy + ch * yPct - bandH / 2 + yOffset;
-
-  ctx.save();
-  ctx.globalAlpha = alpha;
-
-  // Background band.
-  ctx.fillStyle = _hexToRgba(st.bg_color || "#0F172A",
-                                st.bg_opacity != null ? st.bg_opacity : 78);
-  ctx.fillRect(bandX, bandY, bandW, bandH);
-
-  // Left accent stripe.
-  if (accentW > 0) {
-    ctx.fillStyle = _hexToRgba(st.accent_color || "#C8102E", 100);
-    ctx.fillRect(bandX, bandY, accentW, bandH);
-  }
-
-  // Text — centered in the text region (excluding the accent stripe).
-  const textRegionLeft = bandX + accentW + padX;
-  const textCx = textRegionLeft + textW / 2;
-  const textTop = bandY + padY;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "top";
-  // Quote the font name in case it has spaces; canvas falls back through
-  // the list, so we add sans-serif as the final fallback.
-  const fontName = st.font || "SimHei";
-  ctx.font = `${st.bold === false ? "" : "bold "}${fontPx}px "${fontName}", sans-serif`;
-  ctx.fillStyle = st.text_color || "#FFFFFF";
-  for (let i = 0; i < wrapped.length; i++) {
-    const ly = textTop + i * (fontPx + lineGapPx);
-    ctx.fillText(wrapped[i], textCx, ly);
-  }
-
-  ctx.restore();
 }
 
 function _drawChapterHeroCard(ov, ox, oy, cw, ch) {
@@ -705,8 +532,9 @@ function _drawChapterHeroCard(ov, ox, oy, cw, ch) {
 }
 
 function _wrapTextCjkN(text, maxChars, maxLines) {
-  // Like _wrapTextCjk but with configurable maxLines. Surplus past
-  // maxLines is appended with an ellipsis on the last line.
+  // Greedy wrap on `maxChars` budget with configurable maxLines.
+  // CJK char counts 1, ASCII counts 0.5. Surplus past maxLines is
+  // appended with an ellipsis on the last line.
   text = (text || "").trim();
   if (!text || maxChars <= 0 || maxLines <= 0) return [];
   const cost = (ch) => (ch.charCodeAt(0) > 0x2E80 ? 1.0 : 0.5);
@@ -748,51 +576,6 @@ function _wrapTextCjkN(text, maxChars, maxLines) {
     lines[lines.length - 1] = (tail.replace(/\s+$/, "") || "") + "…";
   }
   return lines;
-}
-
-function _drawDateStamp(ov, ox, oy, cw, ch) {
-  // Compact corner date label — mirrors
-  // core/composition/news_desk_overlays.py::_build_date_stamp_dialogues.
-  const st = _resolveOverlayStyle("date_stamp", ov.style_class) || {};
-  const fontPx   = st.fontsize != null ? st.fontsize : 22;
-  const padX     = Math.max(2, (st.padding_x_pct != null ? st.padding_x_pct : 0.008) * cw);
-  const padY     = Math.max(2, (st.padding_y_pct != null ? st.padding_y_pct : 0.004) * ch);
-  const marginX  = (st.margin_x_pct != null ? st.margin_x_pct : 0.025) * cw;
-  const marginY  = (st.margin_y_pct != null ? st.margin_y_pct : 0.025) * ch;
-  const bgOpa    = st.bg_opacity != null ? st.bg_opacity : 60;
-
-  const text = ov.text || "";
-  if (!text) return;
-
-  ctx.font = `${st.bold ? "bold " : ""}${fontPx}px "${st.font || "SimHei"}", sans-serif`;
-  ctx.textAlign = "left";
-  ctx.textBaseline = "top";
-  const textW = ctx.measureText(text).width;
-  const boxW = textW + padX * 2;
-  const boxH = fontPx + padY * 2;
-
-  const pos = (ov.position || "bottom-left").toLowerCase();
-  let boxX, boxY;
-  if (pos === "top-left") {
-    boxX = ox + marginX;
-    boxY = oy + marginY;
-  } else if (pos === "top-right") {
-    boxX = ox + cw - marginX - boxW;
-    boxY = oy + marginY;
-  } else if (pos === "bottom-right") {
-    boxX = ox + cw - marginX - boxW;
-    boxY = oy + ch - marginY - boxH;
-  } else {  // bottom-left (default)
-    boxX = ox + marginX;
-    boxY = oy + ch - marginY - boxH;
-  }
-
-  if (bgOpa > 0) {
-    ctx.fillStyle = _hexToRgba(st.bg_color || "#0F172A", bgOpa);
-    ctx.fillRect(boxX, boxY, boxW, boxH);
-  }
-  ctx.fillStyle = st.text_color || "#FFFFFF";
-  ctx.fillText(text, boxX + padX, boxY + padY);
 }
 
 function cropBox() {
@@ -900,22 +683,16 @@ function drawOneExtraSub(es) {
                      sub ? sub.stroke_width : 2);
 }
 
-// One news_desk overlay (LowerThird / TopicStrip / Chapter cards).
+// One news_desk overlay (TopicStrip / ChapterHeroCard).
 function drawOneNewsDeskOverlay(ov) {
   const t = vid.currentTime || 0;
   if (typeof ov.start_sec === "number" && t < ov.start_sec) return;
   if (typeof ov.end_sec === "number" && ov.end_sec > 0 && t >= ov.end_sec) return;
   const { ox, oy, cw, ch } = cropBox();
-  if (ov.kind === "lower_third") {
-    _drawLowerThird(ov, ox, oy, cw, ch);
-  } else if (ov.kind === "topic_strip") {
+  if (ov.kind === "topic_strip") {
     _drawTopicStrip(ov, ox, oy, cw, ch);
-  } else if (ov.kind === "chapter_point_card") {
-    _drawChapterPointCard(ov, ox, oy, cw, ch);
   } else if (ov.kind === "chapter_hero_card") {
     _drawChapterHeroCard(ov, ox, oy, cw, ch);
-  } else if (ov.kind === "date_stamp") {
-    _drawDateStamp(ov, ox, oy, cw, ch);
   }
 }
 

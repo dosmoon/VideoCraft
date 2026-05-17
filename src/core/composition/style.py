@@ -140,42 +140,6 @@ class OutputGeometry:
 # round-trips); the typed loader in presets.py coerces back to dataclass.
 
 @dataclass
-class LowerThirdStyle:
-    """Visual style for LowerThirdOverlay — title + subtitle on a colored
-    bar anchored to the bottom safe area.
-
-    Industry defaults: bar height ~10-15% of frame; title font 4-6% of
-    frame height; subtitle ~60% of title size. Margin ≥ 5% from bottom
-    edge keeps the bar inside title-safe area on broadcast displays.
-    """
-    # Bar background.
-    bg_color: str = "#0F172A"
-    bg_opacity: int = 88              # 0-100
-    accent_color: str = "#C8102E"     # left-edge accent bar (broadcast convention)
-    accent_width_pct: float = 0.006   # fraction of frame width; 0 disables
-
-    # Title (large name).
-    title_color: str = "#FFFFFF"
-    title_fontsize: int = 38
-    title_bold: bool = True
-    # Subtitle (role / affiliation).
-    subtitle_color: str = "#E2E8F0"
-    subtitle_fontsize: int = 24
-    subtitle_bold: bool = False
-
-    font: str = "Microsoft YaHei"
-
-    # Position — fraction of frame dimension. margin_x_pct from the
-    # anchored side edge, margin_y_pct from the bottom edge.
-    margin_x_pct: float = 0.05
-    margin_y_pct: float = 0.10        # ≥ 0.05 keeps inside title-safe
-    # Bar inner padding (fraction of frame height).
-    padding_pct: float = 0.012
-    # Title-to-subtitle vertical gap (fraction of frame height).
-    line_gap_pct: float = 0.005
-
-
-@dataclass
 class TopicStripStyle:
     """Visual style for TopicStripOverlay — top-edge labeled strip."""
     bg_color: str = "#1E40AF"
@@ -194,53 +158,6 @@ class TopicStripStyle:
     text_align: str = "left"          # "left" | "center" | "right"
     # Inner left/right text padding (fraction of frame width).
     text_padding_pct: float = 0.025
-
-
-@dataclass
-class ChapterPointCardStyle:
-    """Broadcast lower-third style — text on a fitted semi-transparent
-    dark band with a left red accent stripe (CNN / Reuters / 央视 L3
-    convention).
-
-    Default position is the lower-third zone (y_pct=0.70), above the
-    subtitle band. The band auto-sizes to text width + padding so it
-    reads as a framed graphic, not a full-width ticker.
-    """
-    # Text.
-    text_color: str = "#FFFFFF"
-    fontsize: int = 40
-    bold: bool = True
-    # SimHei (黑体) reads squarer / more "news-y" than YaHei's rounder
-    # shape. Fallback chain handled by the font engine.
-    font: str = "SimHei"
-
-    # Background band — semi-transparent dark fill behind the text.
-    bg_color: str = "#0F172A"
-    bg_opacity: int = 78
-
-    # Left accent stripe (broadcast convention). 0 = stripe off.
-    accent_color: str = "#C8102E"
-    accent_width_pct: float = 0.004    # fraction of frame width
-
-    # Inner padding — fraction of frame dim. Padding is what gives the
-    # band its visible "card" feel rather than tight text-hugging.
-    padding_x_pct: float = 0.020
-    padding_y_pct: float = 0.014
-
-    # Vertical center of the band, as fraction of frame height. 0.70 sits
-    # in the broadcast lower-third zone, above the subtitle band
-    # (subtitle outer track baseline ≈ 92%, inner ≈ 80%).
-    y_pct: float = 0.70
-    # Line-to-line vertical gap when text wraps to 2 lines.
-    line_gap_pct: float = 0.005
-    # Pre-wrap budget for the text.
-    max_chars_per_line: int = 22
-
-    # Entrance animation. fade_in / fade_out durations in milliseconds;
-    # slide_in_px = the band+text lift up by this many pixels on entry.
-    fade_in_ms: int = 350
-    fade_out_ms: int = 300
-    slide_in_px: int = 24
 
 
 @dataclass
@@ -294,38 +211,11 @@ class ChapterHeroCardStyle:
     font: str = "Microsoft YaHei"
 
 
-@dataclass
-class DateStampStyle:
-    """Visual style for DateStampOverlay — small persistent corner label.
-
-    Compact by default (Bloomberg-style bug): small font, optional dark
-    backdrop for legibility on busy backgrounds. Pin to a corner via
-    DateStampOverlay.position; this style only controls look + offsets.
-    """
-    text_color: str = "#FFFFFF"
-    fontsize: int = 22
-    bold: bool = False
-    font: str = "SimHei"
-
-    # Optional backdrop. bg_opacity=0 → no rectangle (clean text only).
-    bg_color: str = "#0F172A"
-    bg_opacity: int = 60
-    padding_x_pct: float = 0.008
-    padding_y_pct: float = 0.004
-
-    # Distance from the anchored corner — fraction of frame dim.
-    margin_x_pct: float = 0.025
-    margin_y_pct: float = 0.025
-
-
 # Registry of typed overlay-style classes by `kind` discriminator. Render
 # and preview look up the matching class to coerce dict → dataclass.
 OVERLAY_STYLE_CLASSES: dict[str, type] = {
-    "lower_third": LowerThirdStyle,
     "topic_strip": TopicStripStyle,
-    "chapter_point_card": ChapterPointCardStyle,
     "chapter_hero_card": ChapterHeroCardStyle,
-    "date_stamp": DateStampStyle,
 }
 
 

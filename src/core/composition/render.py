@@ -8,9 +8,9 @@ flow through a single dispatch table:
 
 The named style sections (style.subtitle / style.watermark /
 style.hook_outro + req.hook_text / req.outro_text) are converted to
-internal _OverlayJob records by _named_overlay_jobs(); future news_desk
-overlay kinds (chapter_card / lower_third / ...) drop in as additional
-registered renderers without touching the main loop.
+internal _OverlayJob records by _named_overlay_jobs(); news_desk overlay
+kinds (topic_strip / chapter_hero_card) drop in as additional registered
+renderers without touching the main loop.
 
 Per-word karaoke, smart-crop face_center, and audio mixing are not in
 this layer yet.
@@ -41,8 +41,7 @@ from core.subtitle_ops import (
 from .style import CompositionStyle, SubtitleStyle, SubtitleLineStyle, \
     WatermarkStyle, HookOutroStyle, compute_subtitle_max_chars
 from .overlays import (
-    ChapterHeroCardOverlay, ChapterPointCardOverlay, DateStampOverlay,
-    LowerThirdOverlay, OverlaySpec, TopicStripOverlay,
+    ChapterHeroCardOverlay, OverlaySpec, TopicStripOverlay,
 )
 from .layout import libass_margin_v, pixel_offset
 from .fonts import (
@@ -587,8 +586,8 @@ _OVERLAY_RENDERERS: dict[str, _OverlayRenderer] = {}
 
 
 def register_overlay_renderer(kind: str, fn: _OverlayRenderer) -> None:
-    """Register a renderer for an overlay kind. Future news_desk kinds
-    (chapter_card, lower_third, ...) call this from their own module."""
+    """Register a renderer for an overlay kind. news_desk kinds
+    (topic_strip / chapter_hero_card) call this from their own module."""
     _OVERLAY_RENDERERS[kind] = fn
 
 
@@ -658,8 +657,8 @@ register_overlay_renderer("text_watermark",  _renderer_text_watermark)
 register_overlay_renderer("hook_text",       _renderer_hook_text)
 register_overlay_renderer("outro_text",      _renderer_outro_text)
 
-# News-desk overlay kinds (lower_third + topic_strip merged into one
-# .ass file via a single "news_desk_ass" job). Imported for the side
+# News-desk overlay kinds (topic_strip + chapter_hero_card merged into
+# one .ass file via a single "news_desk_ass" job). Imported for the side
 # effect of registering its renderer with the table above.
 from . import news_desk_overlays as _news_desk_overlays
 _news_desk_overlays.register()
@@ -741,16 +740,14 @@ def _named_overlay_jobs(req: CompositionRequest,
                                   data={"text": req.outro_text}))
 
     # User-supplied overlays — split into:
-    #   - news_desk typed overlays (LowerThird/TopicStrip): merged into
-    #     a single libass job (one .ass file regardless of count) so the
-    #     filter chain stays shallow.
+    #   - news_desk typed overlays (TopicStrip/ChapterHeroCard): merged
+    #     into a single libass job (one .ass file regardless of count) so
+    #     the filter chain stays shallow.
     #   - generic OverlaySpec entries: passed through individually for any
     #     kind that has its own registered renderer.
     news_desk_specs: list = []
     for spec in req.overlays:
-        if isinstance(spec, (LowerThirdOverlay, TopicStripOverlay,
-                              ChapterPointCardOverlay,
-                              ChapterHeroCardOverlay, DateStampOverlay)):
+        if isinstance(spec, (TopicStripOverlay, ChapterHeroCardOverlay)):
             news_desk_specs.append(spec)
         elif isinstance(spec, OverlaySpec):
             jobs.append(_OverlayJob(

@@ -1268,7 +1268,6 @@ class NewsDeskApp(ToolBase):
             context=ctx.to_dict(),
             chapters=chapters,
             candidate_titles=self._candidate_titles(),
-            lower_thirds=[],
             adapted_srts=adapted,
             rendered_at=_dt.now().strftime("%Y-%m-%d %H:%M"),
             lang_iso=effective_lang,

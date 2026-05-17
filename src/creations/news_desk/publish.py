@@ -9,8 +9,6 @@ including the 5 anchors AI re-checked from basic_info hints):
   - Event summary + key points + background (AI-grounded)
   - Chapter table (YouTube description format, 00:00 first chapter
     guaranteed by chapters_io normalization)
-  - LowerThird roster — who appeared on screen and when, derived from
-    the instance's overlay list
   - Adapted SRT pointer
 
 Empty fields are silently omitted. If AI Fill hasn't run yet, context
@@ -23,7 +21,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from core.markdown_fmt import fmt_dur, t
+from core.markdown_fmt import t
 
 
 def render_news_desk_publish(
@@ -32,7 +30,6 @@ def render_news_desk_publish(
     source_url: Optional[str],
     context: dict,
     chapters: list[dict],
-    lower_thirds: list[dict],
     adapted_srts: list[str],
     rendered_at: str,
     lang_iso: str,
@@ -47,8 +44,6 @@ def render_news_desk_publish(
 
     `context`: SourceContext.to_dict() shape — all 15 fields. Empty
         dict (AI Fill not run) yields a chapters-only publish.md.
-    `lower_thirds`: list of {title, subtitle, start_sec, end_sec} dicts
-        (LowerThirdOverlay → overlay_to_dict subset).
     """
     ctx = context or {}
 
@@ -145,21 +140,6 @@ def render_news_desk_publish(
     else:
         lines.append(t(lang_iso, "（无章节）", "(no chapters)"))
     lines.append("")
-
-    # LowerThird roster — who appeared on screen and when.
-    if lower_thirds:
-        lines.append("## " + t(lang_iso,
-                                 "出场名牌（LowerThird）",
-                                 "Lower-Third Roster"))
-        lines.append("")
-        for ov in lower_thirds:
-            ov_title = (ov.get("title") or "").strip()
-            ov_sub = (ov.get("subtitle") or "").strip()
-            start_s = float(ov.get("start_sec") or 0.0)
-            end_s = float(ov.get("end_sec") or 0.0)
-            who = ov_title if not ov_sub else f"{ov_title} · {ov_sub}"
-            lines.append(f"- {fmt_dur(start_s)}–{fmt_dur(end_s)}  {who}")
-        lines.append("")
 
     # Notes from context (production hints, sensitive topics).
     notes = (ctx.get("notes") or "").strip()
