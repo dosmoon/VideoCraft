@@ -5,40 +5,42 @@
 
 ---
 
-## ▶ 下次会话主题：开 PR 1 + 跑 ASS golden 准入 + 立 ADR-0006
+## ▶ 下次会话主题：PR 3 — compile_timeline + Component.compile() 协议
 
-**Axis 1~7 全部锁定**——设计稿在 `docs/design/composition-timeline-v0.md`（唯一权威，task.md 不重复内容）。下次会话开场必须先读这份文档。
+**Axis 1~7 全部锁定 + PR 1/2 + ADR-0006 已合 main**。设计稿在 `docs/design/composition-timeline-v0.md`，权威 ADR 在 `docs/adr/0006-composition-timeline-ir.md`。
 
-### 三件动手活（按顺序）
+### 已完成（本次 + 上次会话）
 
-**1. 开 PR 1：Timeline IR 脚手架（纯 additive，零风险，半天）**
-- 新增 `src/core/composition/timeline.py`：`CompositionTimeline / Track / Element` dataclass
-- 新增 `src/core/composition/compile.py`：`ClipRange / CompileContext / compile_timeline()` 骨架（components=[] 返回空 timeline）
-- 新增 `src/core/composition/primitives/__init__.py`：renderer registry 空壳
-- 加 ~12 数据测试 + ~2 架构测试（细节见设计稿 Axis 7.4）
-- 不动 render / preview / 任何 creation
-- 验收：147 → ~161 测试全绿
+- ADR-0006 立项；ADR/0001~0006 README 同步
+- PR 1：timeline.py + compile.py + primitives/__init__.py 脚手架（commit `c555449`）+ 24 测试
+- PR 2 前置：8 个渲染字符串 golden seeded（commit `55612b0`），3 ASS + 5 snippet
+- PR 2 part 1/2：删 `news_desk_overlays.py` 491 行，topic_strip + chapter_hero_card primitive 落地，libass_helpers.py 引擎级 helper（commit 在 main，本会话）
+- PR 2 part 2/2：5 个 primitive（subtitle_cue / text_watermark / image_watermark / hook_text / outro_text）+ drawtext_helpers.py；render.py 979 → 816 行；统一 primitives 注册中心（commit `66cd2c0`）
+- 全程 179 测试 + 8 goldens byte-equal
 
-**2. PR 2 前置：在 main 上跑 8 个 ASS golden（PR 2 的硬前置）**
-- 从未改动 main HEAD 跑出 8 个场景的 ASS 文件落到 `tests/golden/`
-- 8 个场景见 Axis 7.4：chapter only / topic_strip only / 1 SRT / 2 SRT / text wm / image wm / chapter+sub+wm 混合 + 一个 hook+outro
-- golden **不准手编**——必须从真跑出来
-- 配套：把 `render.py` 里"生成 ASS 内容"那段抽成纯函数（小 commit），让 golden 测试能直接调
+### PR 3 干啥
 
-**3. 立 ADR-0006**
-- PR 1 land 后填 `docs/adr/0006-composition-timeline-ir.md`
-- 骨架已在设计稿 Axis 7.6 段
-- ADR 立完后设计稿顶部加 "Status: 已转 ADR-0006，本稿作详细参考保留" 一行
+实现 `compile_timeline()` 真实逻辑 + 让 news_desk 4 个 component 加 `compile(clip_range, ctx) → list[Element]` 方法。render / preview 不动——compile 出来的 timeline 只用于测试，验证 component 翻译没改语义。
+
+**具体步骤**（见设计稿 Axis 7.2 PR 3 行）：
+1. `compile.py` 的 `compile_timeline()` 已有骨架（PR 1 加的），但用 dummy。这次接入真实校验 / range 过滤 / track z_base 分配——其实 PR 1 已经把核心逻辑写完了（`_clip_to_range` 等），主要是 schema validate（每个 element.kind ∈ primitive catalog）
+2. `creations/news_desk/components/{chapter,subtitle,text_watermark,image_watermark}.py` 每个加一个 `compile(clip_range, ctx) → list[Element]` 方法
+   - 翻译：从现有 `to_overlays()` 出来的字典 → `Element(kind, start, end, style, data)` 列表
+   - 必须 pure；compile() 不写文件不弹 UI
+3. 加 ~20 测试（每 component 单独 compile 测 + 整体 timeline 编排 + 短 clip 边界处理）
+
+**仍不接入 render/preview**——PR 4 才接。PR 3 只让 timeline 可编译可断言。
 
 ### 不在下次会话做
 
-- PR 2~5 的代码改动（PR 1 + golden 准入完了才能进 PR 2）
-- clip 任何改动（PR 5 才轮到）
-- preset 系统任何改动（迁移正交）
+- 切到 timeline render 路径（PR 4）
+- clip 任何改动（PR 5）
+- preset 系统改动
+- WatermarkStyle / HookOutroStyle 拆分（PR 5）
 
 ### 起点 HEAD
 
-`eaa83fc` — "composition: scrub dead overlay kinds"，已 push origin/main。147 测试全绿。本会话只改文档（task.md + composition-timeline-v0.md），无代码变化。
+`66cd2c0` — "composition: PR 2 (2/2)"，已 push origin/main。179 测试全绿；8 goldens byte-equal。
 
 ---
 
