@@ -5,9 +5,49 @@
 
 ---
 
-## ▶ 下次会话主题：clip 复用 + composition 边界 + 引擎归属
+## ▶ 下次会话主题：开 PR 1 + 跑 ASS golden 准入 + 立 ADR-0006
 
-用户拍板的下一轮工作（2026-05-17 末由用户点定，等会话 clear 之后开始）：
+**Axis 1~7 全部锁定**——设计稿在 `docs/design/composition-timeline-v0.md`（唯一权威，task.md 不重复内容）。下次会话开场必须先读这份文档。
+
+### 三件动手活（按顺序）
+
+**1. 开 PR 1：Timeline IR 脚手架（纯 additive，零风险，半天）**
+- 新增 `src/core/composition/timeline.py`：`CompositionTimeline / Track / Element` dataclass
+- 新增 `src/core/composition/compile.py`：`ClipRange / CompileContext / compile_timeline()` 骨架（components=[] 返回空 timeline）
+- 新增 `src/core/composition/primitives/__init__.py`：renderer registry 空壳
+- 加 ~12 数据测试 + ~2 架构测试（细节见设计稿 Axis 7.4）
+- 不动 render / preview / 任何 creation
+- 验收：147 → ~161 测试全绿
+
+**2. PR 2 前置：在 main 上跑 8 个 ASS golden（PR 2 的硬前置）**
+- 从未改动 main HEAD 跑出 8 个场景的 ASS 文件落到 `tests/golden/`
+- 8 个场景见 Axis 7.4：chapter only / topic_strip only / 1 SRT / 2 SRT / text wm / image wm / chapter+sub+wm 混合 + 一个 hook+outro
+- golden **不准手编**——必须从真跑出来
+- 配套：把 `render.py` 里"生成 ASS 内容"那段抽成纯函数（小 commit），让 golden 测试能直接调
+
+**3. 立 ADR-0006**
+- PR 1 land 后填 `docs/adr/0006-composition-timeline-ir.md`
+- 骨架已在设计稿 Axis 7.6 段
+- ADR 立完后设计稿顶部加 "Status: 已转 ADR-0006，本稿作详细参考保留" 一行
+
+### 不在下次会话做
+
+- PR 2~5 的代码改动（PR 1 + golden 准入完了才能进 PR 2）
+- clip 任何改动（PR 5 才轮到）
+- preset 系统任何改动（迁移正交）
+
+### 起点 HEAD
+
+`eaa83fc` — "composition: scrub dead overlay kinds"，已 push origin/main。147 测试全绿。本会话只改文档（task.md + composition-timeline-v0.md），无代码变化。
+
+---
+
+## ▶ 老主题（已被 timeline 设计取代，仅留作上下文）
+
+下面这些是 2026-05-17 上半段的待办，**已经在 timeline 设计中被消解或合并**——不需要单独再做：
+- "主线 2"（composition 边界 / 注册表化）：被 timeline 设计完整覆盖
+- "主线 3"（共享组件归属）：消失（timeline 让 primitive 归属问题消解）
+- "主线 1"（clip 组件化）：等 timeline v0 上线后自然受益（clip 也走 ComponentInstance 协议）
 
 ### 主线 1 — 验证 news_desk 抽象组件逻辑在 clip 模块的可用度
 
