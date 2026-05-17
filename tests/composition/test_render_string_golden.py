@@ -30,17 +30,23 @@ import re
 
 import pytest
 
-from core.composition.render import build_news_desk_ass_str
+from core.composition.drawtext_helpers import (
+    drawtext_filter as _drawtext_filter,
+)
 from core.composition.overlays import (
     ChapterHeroCardOverlay, TopicStripOverlay,
 )
-from core.composition.render import (
-    _build_image_watermark_chain,
-    _build_subtitle_force_style,
-    _build_text_watermark_drawtext,
-    _drawtext_filter,
-    _track_margins,
+from core.composition.primitives.image_watermark import (
+    build_chain as _build_image_watermark_chain,
 )
+from core.composition.primitives.subtitle_cue import (
+    build_force_style as _build_subtitle_force_style,
+    track_margins as _track_margins,
+)
+from core.composition.primitives.text_watermark import (
+    build_drawtext as _build_text_watermark_drawtext,
+)
+from core.composition.render import build_news_desk_ass_str
 from core.composition.style import (
     ChapterHeroCardStyle, HookOutroStyle, SubtitleLineStyle,
     SubtitleStyle, TopicStripStyle, WatermarkStyle,

@@ -300,6 +300,11 @@ def prepare_subtitle_cues(
 
 
 # ── drawtext / subtitle filter strings ─────────────────────────────────────
+#
+# Per-kind drawtext / libass builders moved to primitives/<kind>.py and
+# drawtext_helpers.py in PR 2 split. _escape_drawtext kept here as it's
+# a generic helper not tied to any primitive (currently unused; pending
+# removal in a later cleanup pass).
 
 def _escape_drawtext(text: str) -> str:
     """Escape user text for ffmpeg drawtext text='...'."""
@@ -314,238 +319,21 @@ def _escape_drawtext(text: str) -> str:
                 .replace("'", "’"))    # straight → curly to dodge quoting hell
 
 
-def _drawtext_filter(text: str, *, role: str, ho: HookOutroStyle,
-                      duration: float, aspect_ratio: tuple[int, int],
-                      tmp_files: list[str], short_edge: int = 1080) -> str:
-    """Build a drawtext snippet for hook (first hook_duration_sec) or outro
-    (last outro_duration_sec). role ∈ {'hook', 'outro'}.
+# The per-kind builders + renderers were moved to primitive modules
+# during the PR 2 split — see primitives/subtitle_cue.py (force_style +
+# track_margins), primitives/text_watermark.py, primitives/image_watermark.py,
+# primitives/hook_text.py, primitives/outro_text.py, and the shared
+# drawtext_helpers / libass_helpers modules. render.py orchestrates them
+# via the registry; it doesn't know per-kind specifics anymore.
 
-    Multi-line behaviour: text is wrapped to fit the target frame width
-    via core.composition.text_layout.wrap_hook_outro (same call as the
-    WebView preview), then written to a temp file consumed by drawtext's
-    `textfile=` parameter. `text=` doesn't reliably accept newlines, so
-    going through a file is the only escape-safe path. The temp file is
-    appended to tmp_files for the caller to clean up after ffmpeg returns.
-
-    `short_edge` lets passthrough renders pass the actual source short
-    edge so wrap budgets scale with the real frame width.
-    """
-    if not text:
-        return ""
-
-    font_path = hook_outro_font_path(ho.font)
-    lines = wrap_hook_outro(text, aspect_ratio, font_path, ho.size,
-                              short_edge=short_edge)
-    if not lines:
-        return ""
-    wrapped = "\n".join(lines)
-
-    tmp_path = os.path.join(
-        tempfile.gettempdir(),
-        f"composition-{role}-{os.getpid()}-{id(text)}.txt",
-    )
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            f.write(wrapped)
-    except OSError:
-        return ""
-    tmp_files.append(tmp_path)
-
-    if role == "hook":
-        position = ho.hook_position
-        enable = f"between(t,0,{ho.hook_duration_sec})"
-    else:
-        position = ho.outro_position
-        start = max(0.0, duration - ho.outro_duration_sec)
-        enable = f"between(t,{start},{duration})"
-
-    fontfile_ff = font_path.replace(":", "\\:")
-    textfile_ff = tmp_path.replace("\\", "/").replace(":", "\\:")
-    y_expr = y_expr_for_position(position)
-    parts = [
-        f"drawtext=textfile='{textfile_ff}'",
-        f"fontfile='{fontfile_ff}'",
-        f"fontcolor={ho.color}",
-        f"fontsize={ho.size}",
-        "x=(w-text_w)/2",
-        f"y={y_expr}",
-    ]
-    if ho.stroke_width > 0:
-        parts.append(f"borderw={int(ho.stroke_width)}")
-        parts.append(f"bordercolor={ho.stroke_color}")
-    if ho.bg_opacity > 0:
-        parts.append("box=1")
-        opacity = max(0.0, min(1.0, ho.bg_opacity / 100.0))
-        parts.append(f"boxcolor={ho.bg_color}@{opacity:.2f}")
-        parts.append(f"boxborderw={int(ho.box_padding)}")
-    parts.append(f"enable='{enable}'")
-    return ":".join(parts)
-
-
-def _ass_bgr_with_alpha(hex_color: str, opacity_0_100: int) -> str:
-    """libass colour with alpha — `&HAABBGGRR&`. 0 = fully opaque, 255 =
-    fully transparent. opacity_0_100 follows the dataclass convention
-    (0 = transparent, 100 = opaque)."""
-    h = (hex_color or "#000000").lstrip("#")
-    if len(h) != 6:
-        h = "000000"
-    rr, gg, bb = h[0:2], h[2:4], h[4:6]
-    o = max(0, min(100, int(opacity_0_100)))
-    aa = int(round((100 - o) * 255 / 100))
-    return f"&H{aa:02X}{bb}{gg}{rr}&"
-
-
-def _build_subtitle_force_style(line: SubtitleLineStyle,
-                                  subtitle: SubtitleStyle,
-                                  *, margin_v: int,
-                                  target_h: int,
-                                  position: Optional[str] = None) -> str:
-    """ASS force_style string for one subtitle track. When
-    `line.bg_opacity > 0` the track switches to libass opaque-box mode
-    (BorderStyle=3) — a translucent rectangle is drawn behind each cue
-    line, sized to fit the text with `bg_padding_x_pct` extra padding."""
-    font_name = "Microsoft YaHei" if line.is_chinese else "Arial"
-    parts = [
-        f"Fontname={font_name}",
-        f"Fontsize={line.fontsize}",
-        f"PrimaryColour={hex_color_to_ass(line.color)}",
-    ]
-    if line.bg_opacity > 0:
-        # Box mode. OutlineColour mirrors BackColour so the box edge
-        # blends with its own fill — reads as a single flat backdrop.
-        bg_ass = _ass_bgr_with_alpha(line.bg_color, line.bg_opacity)
-        pad_px = max(1, int(line.bg_padding_x_pct * target_h))
-        parts += [
-            f"OutlineColour={bg_ass}",
-            f"BackColour={bg_ass}",
-            "BorderStyle=3",
-            f"Outline={pad_px}",
-            "Shadow=0",
-        ]
-    else:
-        parts += [
-            f"OutlineColour={hex_color_to_ass(subtitle.stroke_color)}",
-            "BorderStyle=1",
-            f"Outline={max(0, int(subtitle.stroke_width))}",
-            "Shadow=0",
-        ]
-    parts += [
-        f"Bold={1 if line.bold else 0}",
-        f"Alignment={ass_alignment_for_position(position or subtitle.position)}",
-        f"MarginV={margin_v}",
-    ]
-    return ",".join(parts)
-
-
-def _track_margins(subtitle: SubtitleStyle) -> tuple[int, int]:
-    """Vertical MarginV for (sub1, sub2) derived from the normalized
-    layout fields on SubtitleStyle. The JS preview reads the SAME
-    block_margin_pct + track_gap_pct via core.composition.layout, so the
-    two renderers stay aligned by construction — no magic-number drift.
-
-    sub1 is the primary track and sits visually above sub2 (translation).
-    position=top: sub1 outer (near top edge), sub2 inner (below sub1).
-    position=bottom: sub2 outer (near bottom edge), sub1 inner (above sub2).
-    position=middle: libass Alignment=5 ignores MarginV — stacking not
-    supported; callers should use top/bottom for bilingual."""
-    outer = libass_margin_v(subtitle.block_margin_pct)
-    inner = libass_margin_v(subtitle.block_margin_pct + subtitle.track_gap_pct)
-    pos = subtitle.position
-    if pos == "top":
-        return (outer, inner)
-    if pos == "bottom":
-        return (inner, outer)
-    return (outer, outer)
-
-
-def _hex_to_drawtext_rgba(hex_color: str, alpha: float) -> str:
-    h = (hex_color or "#FFFFFF").lstrip("#")
-    a = max(0.0, min(1.0, alpha))
-    if len(h) == 6:
-        return f"#{h.upper()}@{a:.2f}"
-    return f"white@{a:.2f}"
-
-
-def _build_text_watermark_drawtext(watermark: WatermarkStyle,
-                                      target_w: int,
-                                      target_h: int,
-                                      tmp_files: list[str]) -> str:
-    """Text-mode watermark via textfile so long strings wrap consistently
-    with the preview. Wraps at 40% of target width — watermarks should be
-    small / corner-anchored, not banner-width."""
-    if not watermark.enabled or watermark.type != "text":
-        return ""
-    raw = (watermark.text or "").strip()
-    if not raw:
-        return ""
-
-    font_path = "C:/Windows/Fonts/msyh.ttc"
-    lines = wrap_overlay_text(
-        raw, max(40.0, target_w * 0.40),
-        font_path, watermark.text_fontsize)
-    if not lines:
-        return ""
-    wrapped = "\n".join(lines)
-
-    tmp_path = os.path.join(
-        tempfile.gettempdir(),
-        f"composition-watermark-{os.getpid()}-{id(watermark)}.txt",
-    )
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            f.write(wrapped)
-    except OSError:
-        return ""
-    tmp_files.append(tmp_path)
-
-    margin_x = pixel_offset(watermark.margin_x_pct, target_w)
-    margin_y = pixel_offset(watermark.margin_y_pct, target_h)
-    pos = watermark.position or "top-right"
-    x = f"w-text_w-{margin_x}" if pos.endswith("right") else f"{margin_x}"
-    y = f"h-text_h-{margin_y}" if pos.startswith("bottom") else f"{margin_y}"
-    opacity = max(0.0, min(1.0, (watermark.text_opacity or 70) / 100.0))
-    textfile_ff = tmp_path.replace("\\", "/").replace(":", "\\:")
-    return (f"drawtext=textfile='{textfile_ff}':"
-            f"fontfile='{font_path.replace(':', chr(92)+':')}':"
-            f"fontcolor={_hex_to_drawtext_rgba(watermark.text_color, opacity)}:"
-            f"fontsize={watermark.text_fontsize}:"
-            f"x={x}:y={y}:"
-            f"borderw=2:bordercolor=black@{opacity*0.5:.2f}")
-
-
-def _build_image_watermark_chain(watermark: WatermarkStyle,
-                                    target_w: int,
-                                    target_h: int,
-                                    prev_label: str,
-                                    src_label: str,
-                                    out_label: str,
-                                    ) -> tuple[list[str], str]:
-    """Image watermark needs a `movie` source + overlay pair (drawtext can't
-    render external images). Returns (extra_nodes, new_chain_head)."""
-    if not watermark.enabled or watermark.type != "image":
-        return [], prev_label
-    img_path = (watermark.image_path or "").strip()
-    if not img_path:
-        logger.warning("image watermark skipped: image_path is empty")
-        return [], prev_label
-    if not os.path.exists(img_path):
-        logger.warning(
-            f"image watermark skipped: file not found at {img_path}")
-        return [], prev_label
-    img_ff = escape_ffmpeg_path(img_path)
-    wm_w = max(1, int(target_w * max(0.01, watermark.image_scale or 0.15)))
-    opacity = max(0.0, min(1.0, (watermark.image_opacity or 100) / 100.0))
-    pos = watermark.position or "top-right"
-    margin_x = pixel_offset(watermark.margin_x_pct, target_w)
-    margin_y = pixel_offset(watermark.margin_y_pct, target_h)
-    # overlay W/H = main video dims, w/h = overlay dims
-    x = f"W-w-{margin_x}" if pos.endswith("right") else f"{margin_x}"
-    y = f"H-h-{margin_y}" if pos.startswith("bottom") else f"{margin_y}"
-    return ([
-        f"movie='{img_ff}',scale={wm_w}:-1,"
-        f"format=rgba,colorchannelmixer=aa={opacity:.3f}{src_label}",
-        f"{prev_label}{src_label}overlay={x}:{y}{out_label}",
-    ], out_label)
+# Re-export bindings for in-module callers (_named_overlay_jobs still
+# needs build_force_style + track_margins from the subtitle_cue
+# primitive — those are subtitle-track plumbing, not per-element
+# renderer concerns). Underscore-aliased to keep diffs minimal.
+from .primitives.subtitle_cue import (
+    build_force_style as _build_subtitle_force_style,
+    track_margins as _track_margins,
+)
 
 
 # ── Overlay dispatch — converts named style sections + req.overlays into
@@ -582,80 +370,30 @@ class _OverlayJob:
 _OverlayRenderer = Callable[[_OverlayJob, str, _RenderCtx],
                               tuple[list[str], str]]
 
-_OVERLAY_RENDERERS: dict[str, _OverlayRenderer] = {}
+# PR 2: registry consolidated into primitives/__init__.py. Each primitive
+# module registers its renderer at import time via primitives.
+# register_overlay_renderer; render.py looks them up via
+# primitives.get_overlay_renderer during dispatch.
+from . import primitives as _primitives
+
+register_overlay_renderer = _primitives.register_overlay_renderer
 
 
-def register_overlay_renderer(kind: str, fn: _OverlayRenderer) -> None:
-    """Register a renderer for an overlay kind. news_desk kinds
-    (topic_strip / chapter_hero_card) call this from their own module."""
-    _OVERLAY_RENDERERS[kind] = fn
+# ── Built-in renderer registration ──────────────────────────────────────────
+#
+# Each primitive module registers its renderer at import time. We import
+# them explicitly here so the registrations happen as part of render
+# module load — order matters for "renderer not registered" early errors,
+# not for behaviour. After PR 2 the 5 entries below mirror what used to
+# be 5 local _renderer_X / register pairs in this file.
 
-
-# ── Built-in renderers (named overlays) ─────────────────────────────────────
-
-def _renderer_subtitle_libass(job: _OverlayJob, prev_label: str,
-                                ctx: _RenderCtx) -> tuple[list[str], str]:
-    srt_path = job.data.get("srt_path")
-    force_style = job.data.get("force_style")
-    if not (srt_path and os.path.exists(srt_path)
-            and os.path.getsize(srt_path) > 0):
-        return [], prev_label
-    srt_ff = escape_ffmpeg_path(srt_path)
-    out_label = ctx.next_label()
-    return ([f"{prev_label}subtitles=filename='{srt_ff}':"
-             f"force_style='{force_style}'{out_label}"],
-            out_label)
-
-
-def _renderer_image_watermark(job: _OverlayJob, prev_label: str,
-                                ctx: _RenderCtx) -> tuple[list[str], str]:
-    wm: WatermarkStyle = job.data["watermark"]
-    src_label = ctx.next_label()
-    out_label = ctx.next_label()
-    return _build_image_watermark_chain(
-        wm, ctx.target_w, ctx.target_h, prev_label, src_label, out_label)
-
-
-def _renderer_text_watermark(job: _OverlayJob, prev_label: str,
-                               ctx: _RenderCtx) -> tuple[list[str], str]:
-    wm: WatermarkStyle = job.data["watermark"]
-    snippet = _build_text_watermark_drawtext(
-        wm, ctx.target_w, ctx.target_h, ctx.tmp_files)
-    if not snippet:
-        return [], prev_label
-    out_label = ctx.next_label()
-    return [f"{prev_label}{snippet}{out_label}"], out_label
-
-
-def _renderer_hook_text(job: _OverlayJob, prev_label: str,
-                          ctx: _RenderCtx) -> tuple[list[str], str]:
-    snippet = _drawtext_filter(
-        job.data["text"], role="hook", ho=ctx.style.hook_outro,
-        duration=ctx.duration, aspect_ratio=ctx.aspect,
-        tmp_files=ctx.tmp_files, short_edge=ctx.short_edge)
-    if not snippet:
-        return [], prev_label
-    out_label = ctx.next_label()
-    return [f"{prev_label}{snippet}{out_label}"], out_label
-
-
-def _renderer_outro_text(job: _OverlayJob, prev_label: str,
-                           ctx: _RenderCtx) -> tuple[list[str], str]:
-    snippet = _drawtext_filter(
-        job.data["text"], role="outro", ho=ctx.style.hook_outro,
-        duration=ctx.duration, aspect_ratio=ctx.aspect,
-        tmp_files=ctx.tmp_files, short_edge=ctx.short_edge)
-    if not snippet:
-        return [], prev_label
-    out_label = ctx.next_label()
-    return [f"{prev_label}{snippet}{out_label}"], out_label
-
-
-register_overlay_renderer("subtitle_libass", _renderer_subtitle_libass)
-register_overlay_renderer("image_watermark", _renderer_image_watermark)
-register_overlay_renderer("text_watermark",  _renderer_text_watermark)
-register_overlay_renderer("hook_text",       _renderer_hook_text)
-register_overlay_renderer("outro_text",      _renderer_outro_text)
+from .primitives import (
+    hook_text as _hook_text,            # noqa: F401  — registers "hook_text"
+    image_watermark as _image_watermark, # noqa: F401 — registers "image_watermark"
+    outro_text as _outro_text,           # noqa: F401 — registers "outro_text"
+    subtitle_cue as _subtitle_cue,       # noqa: F401 — registers "subtitle_libass"
+    text_watermark as _text_watermark,   # noqa: F401 — registers "text_watermark"
+)
 
 
 # ── News-desk merged ASS orchestrator ───────────────────────────────────────
@@ -987,11 +725,11 @@ def render_composition(
     jobs = _named_overlay_jobs(req, tmp_srt_path, tmp_srt2_path,
                                 extra_sub_tmps, target_h=target_h)
     for job in jobs:
-        renderer = _OVERLAY_RENDERERS.get(job.kind)
-        if renderer is None:
-            # Unknown kind (e.g. future news_desk overlay with no renderer
-            # registered yet) — skip silently rather than fail the render.
+        if not _primitives.is_registered(job.kind):
+            # Unknown kind (e.g. future overlay with no renderer registered
+            # yet) — skip silently rather than fail the render.
             continue
+        renderer = _primitives.get_overlay_renderer(job.kind)
         extra, cur = renderer(job, cur, ctx)
         parts.extend(extra)
 
