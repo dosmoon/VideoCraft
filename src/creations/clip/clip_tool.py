@@ -1822,15 +1822,22 @@ class ClipToolApp(ToolBase):
                 continue
             base = self._clip_basename(out_idx, src_idx)
             out_path = os.path.join(inst, base + ".mp4")
+            from creations.clip.timeline_builder import build_clip_timeline
+            from core.composition.compile import ClipRange
+            timeline = build_clip_timeline(
+                self._current_style,
+                ClipRange(start_sec=start, end_sec=end),
+                hook_text=self._effective_hook(src_idx),
+                outro_text=self._effective_outro(src_idx),
+                source_srt=srt_path,
+            )
             requests.append((out_idx, src_idx, CompositionRequest(
                 source_video=video_path,
                 start_sec=start, end_sec=end,
                 output_path=out_path,
                 style=self._current_style,
-                source_srt=srt_path,
-                hook_text=self._effective_hook(src_idx),
-                outro_text=self._effective_outro(src_idx),
                 crop_rect=self._effective_crop(src_idx),
+                timeline=timeline,
             )))
 
         if not requests:
@@ -2126,15 +2133,22 @@ class ClipToolApp(ToolBase):
             except OSError:
                 pass
         self._read_form_into_style()
+        from creations.clip.timeline_builder import build_clip_timeline
+        from core.composition.compile import ClipRange
+        timeline = build_clip_timeline(
+            self._current_style,
+            ClipRange(start_sec=start, end_sec=end),
+            hook_text=self._effective_hook(src_idx),
+            outro_text="",
+            source_srt=self._resolve_source_srt(),
+        )
         req = CompositionRequest(
             source_video=video_path,
             start_sec=start, end_sec=end,
             output_path=out_path,
             style=self._current_style,
-            source_srt=self._resolve_source_srt(),
-            hook_text=self._effective_hook(src_idx),
-            outro_text="",
             crop_rect=self._effective_crop(src_idx),
+            timeline=timeline,
         )
         self._cancel_flag = False
         self._render_btn.configure(state="disabled")

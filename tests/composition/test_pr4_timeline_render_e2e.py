@@ -48,13 +48,15 @@ def _range() -> ClipRange:
     return ClipRange(start_sec=0.0, end_sec=60.0)
 
 
-def _stub_req() -> CompositionRequest:
+def _stub_req(timeline=None) -> CompositionRequest:
     """Minimum CompositionRequest body — _timeline_to_overlay_jobs only
     reads req.style.overlay_styles, the rest is unused for the jobs the
-    test inspects."""
+    test inspects. timeline is required since PR 5."""
+    from core.composition.timeline import CompositionTimeline
     return CompositionRequest(
         source_video="", start_sec=0.0, end_sec=60.0,
         output_path="", style=CompositionStyle(),
+        timeline=timeline or CompositionTimeline(duration_sec=60.0),
     )
 
 
@@ -259,14 +261,14 @@ def test_timeline_to_overlay_jobs_skips_disabled_tracks(tmp_path):
     assert jobs == []
 
 
-def test_timeline_path_active_when_req_timeline_set():
-    """Sanity: CompositionRequest's new timeline field defaults to None
-    so legacy callers (clip) keep the old code path untouched."""
-    req = CompositionRequest(
-        source_video="", start_sec=0.0, end_sec=0.0, output_path="",
-        style=CompositionStyle(),
-    )
-    assert req.timeline is None
+def test_timeline_is_required_field():
+    """PR 5 made timeline a required field — render path is unified."""
+    import pytest
+    with pytest.raises(TypeError):
+        CompositionRequest(
+            source_video="", start_sec=0.0, end_sec=0.0, output_path="",
+            style=CompositionStyle(),
+        )
 
 
 # ── Preview adapter sanity (Tk-free dryrun) ─────────────────────────────────

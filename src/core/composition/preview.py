@@ -19,7 +19,6 @@ from dataclasses import asdict
 from typing import Callable, Optional
 
 from .style import CompositionStyle
-from .overlays import overlay_to_dict
 
 
 def style_to_web_dict(style: CompositionStyle) -> dict:
@@ -185,18 +184,6 @@ class CompositionPreview:
         on the JS side (see `setSource` / `setClipRange`)."""
         self._call_js(f"window.vc.seek({float(sec)})")
 
-    def set_overlays(self, overlays: list) -> None:
-        """Push the news_desk overlay list to the canvas mirror.
-
-        `overlays` is a list of typed overlay dataclasses (TopicStripOverlay,
-        ChapterHeroCardOverlay, ...). Each is serialized to a dict (incl.
-        `kind` discriminator) so the JS side can dispatch by kind. Pass [] to
-        clear.
-        """
-        payload = [overlay_to_dict(o) for o in (overlays or [])]
-        self._call_js(
-            f"window.vc.setOverlays({json.dumps(payload, ensure_ascii=False)})")
-
     def set_clip_meta(self, hook: str = "", outro: str = "",
                        hook_lines: Optional[list[str]] = None,
                        outro_lines: Optional[list[str]] = None) -> None:
@@ -224,30 +211,6 @@ class CompositionPreview:
         so the cue list reflects the same slice + max_chars wrap the
         ffmpeg burn will produce — preview ≡ render."""
         self._call_js(f"window.vc.setCues({json.dumps(cues, ensure_ascii=False)})")
-
-    def set_extra_subtitles(self, specs: list[dict]) -> None:
-        """Push N independent extra subtitle tracks (news_desk path).
-
-        Each spec entry shape:
-            {
-                "line": {fontsize, color, bold, is_chinese, bg_color,
-                          bg_opacity, bg_padding_x_pct},
-                "position": "top" | "bottom",
-                "block_margin_pct": float,
-                "cues": [{start, end, text}, ...],
-            }
-        Pass [] to clear. Independent of set_cues / set_cues_secondary —
-        these are NOT routed through the legacy sub1/sub2 stack.
-        """
-        self._call_js(
-            f"window.vc.setExtraSubtitles({json.dumps(specs, ensure_ascii=False)})")
-
-    def set_extra_watermarks(self, wms: list[dict]) -> None:
-        """Push N additional watermarks (news_desk path). Each entry is a
-        WatermarkStyle-shaped dict (see style_to_web_dict's `watermark` block
-        for fields). Pass [] to clear."""
-        self._call_js(
-            f"window.vc.setExtraWatermarks({json.dumps(wms, ensure_ascii=False)})")
 
     def set_cues_secondary(self, cues: list[dict]) -> None:
         """Push the secondary (sub2) cue list. Same shape and same source

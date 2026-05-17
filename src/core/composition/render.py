@@ -1,16 +1,11 @@
 """ffmpeg + libass + drawtext render pipeline.
 
-One call to ffmpeg per output clip. All overlays — subtitle tracks,
-watermark, hook/outro text, plus any user-provided OverlaySpec entries —
-flow through a single dispatch table:
+One call to ffmpeg per output clip. All "what to draw" comes in via
+req.timeline (a CompositionTimeline); _timeline_to_overlay_jobs turns
+the tracks/elements into per-kind jobs that the primitive registry
+dispatches into filter_complex nodes:
 
-    [0:v] crop → scale+pad → <overlay 1> → <overlay 2> → ... → [vout]
-
-The named style sections (style.subtitle / style.watermark /
-style.hook_outro + req.hook_text / req.outro_text) are converted to
-internal _OverlayJob records by _named_overlay_jobs(); news_desk overlay
-kinds (topic_strip / chapter_hero_card) drop in as additional registered
-renderers without touching the main loop.
+    [0:v] crop → scale+pad → <element 1> → <element 2> → ... → [vout]
 
 Per-word karaoke, smart-crop face_center, and audio mixing are not in
 this layer yet.
@@ -40,9 +35,9 @@ from core.subtitle_ops import (
 
 from .style import CompositionStyle, SubtitleStyle, SubtitleLineStyle, \
     WatermarkStyle, HookOutroStyle, compute_subtitle_max_chars
-from .overlays import (
-    ChapterHeroCardOverlay, OverlaySpec, TopicStripOverlay,
-)
+# overlays.py shim is retained for legacy creations imports; render.py
+# itself doesn't need typed overlay classes anymore — Element kind
+# strings drive dispatch.
 from .layout import libass_margin_v, pixel_offset
 from .fonts import (
     hook_outro_font_path, y_expr_for_position, ass_alignment_for_position,
@@ -56,76 +51,22 @@ ProgressCallback = Callable[[str, int], None]   # (stage, percent 0-100)
 # ── Public dataclasses ──────────────────────────────────────────────────────
 
 @dataclass
-class ExtraSubtitleSpec:
-    """One additional subtitle track beyond the legacy sub1/sub2 slots.
-
-    Each spec carries its own SRT, SubtitleLineStyle, position and
-    block_margin — i.e. each track is fully independent (no shared
-    track_gap layout). news_desk consumes this path because every
-    subtitle component is a free-standing instance with its own anchor.
-
-    `z_order` is the absolute render layer (higher = on top). Consumers
-    should pass list-position-derived values; default 10 matches the
-    legacy kind-based hardcode.
-    """
-    srt_path: str
-    line: "SubtitleLineStyle"
-    position: str = "bottom"            # "top" | "bottom"
-    block_margin_pct: float = 0.09      # fraction of frame height
-    z_order: int = 10
-
-
-@dataclass
-class ExtraWatermarkSpec:
-    """One additional watermark beyond the legacy `style.watermark` slot.
-
-    Wraps a WatermarkStyle with an explicit z_order so the consumer
-    (news_desk) can drive layer ordering from its component list
-    position. Default 60 matches the legacy kind-based hardcode.
-    """
-    watermark: "WatermarkStyle"
-    z_order: int = 60
-
-
-@dataclass
 class CompositionRequest:
     """All inputs needed for one render_composition() call.
 
-    Built by the consumer (e.g. AI Clip workbench, subtitle burn) from a
-    hotclip entry / SRT pair + the user's current CompositionStyle + the
-    project's source video.
-
-    Subtitle tracks come in via two paths:
-      - Legacy 2-track shared-layout path: `source_srt` / `source_srt_secondary`
-        plus `style.subtitle.sub1` / `sub2` (clip + bilingual subtitle burn).
-      - N-track independent path: `extra_subtitles` — each entry is an
-        ExtraSubtitleSpec carrying its own SRT/style/position (news_desk).
-    Both paths can coexist in one render; jobs render in declared order.
-
-    Watermarks: legacy `style.watermark` is the singular slot
-    (clip / subtitle); `extra_watermarks` carries any additional
-    WatermarkStyle entries (news_desk emits all of them here).
+    PR 5 collapsed the legacy 5-channel "what to draw" fields into the
+    single `timeline` IR — callers (clip / news_desk) build a
+    CompositionTimeline via their own builders and hand it over here.
+    `style` still supplies output geometry + encode preset; per-element
+    visual data lives in timeline.tracks[i].elements[j].style/data.
     """
     source_video: str
     start_sec: float
     end_sec: float
     output_path: str
-    style: CompositionStyle
-    source_srt: Optional[str] = None    # primary subtitle (sub1); None = no burn
-    source_srt_secondary: Optional[str] = None    # secondary subtitle (sub2); None = no burn
-    hook_text: str = ""                 # rendered as top overlay during hook window
-    outro_text: str = ""                # rendered as bottom overlay during outro window
-    crop_rect: Optional[dict] = None    # {x,y,w,h} normalized; None = center crop
-    overlays: list = field(default_factory=list)    # list[OverlaySpec] — future news_desk overlays
-    extra_subtitles: list = field(default_factory=list)    # list[ExtraSubtitleSpec]
-    extra_watermarks: list = field(default_factory=list)   # list[ExtraWatermarkSpec]
-
-    # PR 4: when set, drives "what to draw" entirely (the legacy fields
-    # above + style.subtitle / style.watermark / style.hook_outro are
-    # ignored). style.output still supplies output geometry until PR 5
-    # collapses it. clip remains on the legacy path; news_desk drives
-    # this field.
-    timeline: object = None    # core.composition.timeline.CompositionTimeline | None
+    style: CompositionStyle                          # output geometry + encode preset
+    timeline: "CompositionTimeline"                  # required; "what to draw"
+    crop_rect: Optional[dict] = None                 # {x,y,w,h} normalized; None = center crop
 
 
 @dataclass
@@ -508,126 +449,11 @@ def _renderer_news_desk_ass(job: _OverlayJob, prev_label: str,
 register_overlay_renderer("news_desk_ass", _renderer_news_desk_ass)
 
 
-def _named_overlay_jobs(req: CompositionRequest,
-                          sub1_srt: Optional[str],
-                          sub2_srt: Optional[str],
-                          extra_sub_tmps: list[tuple[str, ExtraSubtitleSpec]],
-                          *, target_h: int) -> list[_OverlayJob]:
-    """Convert the named style sections + req.hook_text/outro_text into
-    _OverlayJob records. z_order chosen so the visible stacking matches
-    the legacy hand-coded order: subtitles → image_wm → text_wm → hook/outro.
-    """
-    style = req.style
-    jobs: list[_OverlayJob] = []
-
-    # Subtitle tracks.
-    margin_v1, margin_v2 = _track_margins(style.subtitle)
-    if style.subtitle.sub1.enabled and sub1_srt:
-        jobs.append(_OverlayJob(kind="subtitle_cue", z_order=10, data={
-            "srt_path": sub1_srt,
-            "force_style": _build_subtitle_force_style(
-                style.subtitle.sub1, style.subtitle,
-                margin_v=margin_v1, target_h=target_h),
-        }))
-    if style.subtitle.sub2.enabled and sub2_srt:
-        jobs.append(_OverlayJob(kind="subtitle_cue", z_order=11, data={
-            "srt_path": sub2_srt,
-            "force_style": _build_subtitle_force_style(
-                style.subtitle.sub2, style.subtitle,
-                margin_v=margin_v2, target_h=target_h),
-        }))
-
-    # Extra independent subtitle tracks (news_desk path). Each spec has its
-    # own position + block_margin → its own MarginV + Alignment in libass.
-    # z_order comes from the spec — caller (news_desk) drives layer
-    # ordering from its component-list index.
-    for tmp_path, espec in extra_sub_tmps:
-        jobs.append(_OverlayJob(
-            kind="subtitle_cue", z_order=espec.z_order,
-            data={
-                "srt_path": tmp_path,
-                "force_style": _build_subtitle_force_style(
-                    espec.line, style.subtitle,
-                    margin_v=libass_margin_v(espec.block_margin_pct),
-                    target_h=target_h, position=espec.position),
-            }))
-
-    # Watermark — image or text (mutually exclusive). High z_order so the
-    # logo / channel bug paints on top of everything else (broadcast
-    # convention: corner bugs override L3 banners + chapter strips).
-    if style.watermark.enabled:
-        if style.watermark.type == "image":
-            jobs.append(_OverlayJob(kind="image_watermark", z_order=60,
-                                      data={"watermark": style.watermark}))
-        else:
-            jobs.append(_OverlayJob(kind="text_watermark", z_order=61,
-                                      data={"watermark": style.watermark}))
-
-    # Extra watermarks (news_desk: N watermark components → N drawtext /
-    # overlay filters chained together). Each one is independent — its own
-    # position + opacity + margins. z_order comes from the spec — caller
-    # drives layer ordering from its component-list index.
-    for ews in req.extra_watermarks:
-        wm = ews.watermark
-        if not wm.enabled:
-            continue
-        kind = "image_watermark" if wm.type == "image" else "text_watermark"
-        jobs.append(_OverlayJob(
-            kind=kind, z_order=ews.z_order, data={"watermark": wm}))
-
-    # Hook + Outro card.
-    if req.hook_text:
-        jobs.append(_OverlayJob(kind="hook_text", z_order=30,
-                                  data={"text": req.hook_text}))
-    if req.outro_text:
-        jobs.append(_OverlayJob(kind="outro_text", z_order=31,
-                                  data={"text": req.outro_text}))
-
-    # User-supplied overlays — split into:
-    #   - news_desk typed overlays (TopicStrip/ChapterHeroCard): merged
-    #     into a single libass job (one .ass file regardless of count) so
-    #     the filter chain stays shallow.
-    #   - generic OverlaySpec entries: passed through individually for any
-    #     kind that has its own registered renderer.
-    news_desk_specs: list = []
-    for spec in req.overlays:
-        if isinstance(spec, (TopicStripOverlay, ChapterHeroCardOverlay)):
-            news_desk_specs.append(spec)
-        elif isinstance(spec, OverlaySpec):
-            jobs.append(_OverlayJob(
-                kind=spec.kind, z_order=spec.z_order,
-                data={"spec": spec},
-            ))
-
-    if news_desk_specs:
-        # All news_desk specs are merged into one libass job so the filter
-        # chain stays shallow. The job's z_order = max of contained specs'
-        # z_order — that way if the caller assigned a high list-position-
-        # derived z (chapter component dragged above watermarks), the
-        # whole merged group rises above the watermark layer. libass
-        # internal Layer attribute still handles per-spec ordering inside
-        # the merged .ass file.
-        news_desk_specs.sort(key=lambda s: s.z_order)
-        merged_z = max((s.z_order for s in news_desk_specs), default=40)
-        jobs.append(_OverlayJob(
-            kind="news_desk_ass", z_order=merged_z,
-            data={
-                "specs": news_desk_specs,
-                "overlay_styles": req.style.overlay_styles,
-            },
-        ))
-
-    return jobs
-
-
-# ── Timeline → _OverlayJob translation (PR 4 dual-path bridge) ──────────────
+# ── Timeline → _OverlayJob translation ─────────────────────────────────────
 #
-# When req.timeline is set the legacy 5-channel CompositionRequest fields
-# are ignored; this function turns the compiled timeline into the same
-# _OverlayJob list the legacy path produces. The render main loop dispatches
-# both shapes through one registry, so byte equivalence holds as long as
-# the per-kind reconstruction below matches what _named_overlay_jobs would
-# build for equivalent input.
+# Walks a compiled timeline and emits the _OverlayJob list the render
+# main loop dispatches through the primitive registry. Single entry
+# point — PR 5 retired the parallel "legacy 5-channel" path.
 
 def _timeline_to_overlay_jobs(
     timeline,
@@ -667,28 +493,36 @@ def _timeline_to_overlay_jobs(
                     continue
                 tmp_files.append(tmp_srt)
                 # All cues in one track share the same style dict (set by
-                # subtitle.compile). Recover SubtitleLineStyle + the
-                # block_margin → MarginV computation the legacy track did.
+                # the producing component). Recover SubtitleLineStyle +
+                # SubtitleStyle for force_style; prefer element-supplied
+                # margin_v (clip pre-computes for dual-track layouts);
+                # else compute from block_margin_pct (news_desk single-
+                # track path).
                 style_dict = elements[0].style
                 line = SubtitleLineStyle(
                     enabled=True,
                     fontsize=int(style_dict.get("fontsize", 24)),
                     color=style_dict.get("color", "#FFFFFF"),
+                    bold=bool(style_dict.get("bold", False)),
                     is_chinese=bool(style_dict.get("is_chinese", False)),
                     bg_color=style_dict.get("bg_color", "#000000"),
                     bg_opacity=int(style_dict.get("bg_opacity", 0)),
+                    bg_padding_x_pct=float(
+                        style_dict.get("bg_padding_x_pct", 0.006)),
                 )
-                # block_margin_pct lives on the cue's track style; build
-                # a one-track SubtitleStyle so _track_margins / force_style
-                # land at the right MarginV (single-track, no sub2 stack).
                 sub_style = SubtitleStyle(
                     sub1=line, sub2=SubtitleLineStyle(enabled=False),
+                    stroke_color=style_dict.get("stroke_color", "#000000"),
+                    stroke_width=int(style_dict.get("stroke_width", 2)),
                     position=style_dict.get("position", "bottom"),
                     block_margin_pct=float(
                         style_dict.get("block_margin_pct", 0.09)),
                     track_gap_pct=0.0,
                 )
-                margin_v, _ = _tm(sub_style)
+                if "margin_v" in style_dict:
+                    margin_v = int(style_dict["margin_v"])
+                else:
+                    margin_v, _ = _tm(sub_style)
                 force_style = _bfs(line, sub_style,
                                      margin_v=margin_v, target_h=target_h,
                                      position=sub_style.position)
@@ -893,41 +727,12 @@ def render_composition(
     os.makedirs(os.path.dirname(os.path.abspath(req.output_path)) or ".",
                 exist_ok=True)
 
-    # ── Slice each track's SRT to this window (rebased to 0), then
-    #    write the wrapped cues to a temp file for libass. The split
-    #    policy lives in _slice_and_wrap_cues — never duplicated here.
     effective_aspect_str = f"{effective_aspect[0]}:{effective_aspect[1]}"
 
-    def _prepare_track_srt(src_path: str | None, line: SubtitleLineStyle,
-                            tag: str) -> str | None:
-        subs = _slice_and_wrap_cues(
-            src_path or "", line,
-            aspect=effective_aspect_str,
-            short_edge=effective_short_edge,
-            start_sec=req.start_sec, end_sec=req.end_sec)
-        if not subs:
-            return None
-        out = os.path.join(
-            tempfile.gettempdir(),
-            f"composition-{tag}-{int(req.start_sec*1000)}-{os.getpid()}.srt")
-        try:
-            with open(out, "w", encoding="utf-8") as f:
-                f.write(_srt.compose(subs))
-            return out
-        except OSError:
-            return None
-
-    tmp_srt_path = _prepare_track_srt(req.source_srt, style.subtitle.sub1, "sub1")
-    tmp_srt2_path = _prepare_track_srt(
-        req.source_srt_secondary, style.subtitle.sub2, "sub2")
-
-    # Extra independent subtitle tracks (news_desk N-track path). Each
-    # spec gets its own sliced+wrapped temp SRT keyed by index for cleanup.
-    extra_sub_tmps: list[tuple[str, ExtraSubtitleSpec]] = []
-    for i, espec in enumerate(req.extra_subtitles):
-        tmp = _prepare_track_srt(espec.srt_path, espec.line, f"sub_extra_{i}")
-        if tmp:
-            extra_sub_tmps.append((tmp, espec))
+    if req.timeline is None:
+        raise ValueError(
+            "CompositionRequest.timeline is required since PR 5; "
+            "callers must compile a CompositionTimeline before render.")
 
     # ── Build filter_complex via overlay dispatch ─────────────────────────
     parts: list[str] = []
@@ -950,19 +755,13 @@ def render_composition(
         style=style, tmp_files=tmp_text_files,
     )
 
-    # Timeline (PR 4) drives "what to draw" when set; the legacy 5-channel
-    # fields are then ignored. clip stays on the legacy path until PR 5.
-    if req.timeline is not None:
-        jobs = _timeline_to_overlay_jobs(
-            req.timeline, req,
-            aspect_str=effective_aspect_str,
-            short_edge=effective_short_edge,
-            tmp_files=tmp_text_files,
-            target_h=target_h,
-        )
-    else:
-        jobs = _named_overlay_jobs(req, tmp_srt_path, tmp_srt2_path,
-                                    extra_sub_tmps, target_h=target_h)
+    jobs = _timeline_to_overlay_jobs(
+        req.timeline, req,
+        aspect_str=effective_aspect_str,
+        short_edge=effective_short_edge,
+        tmp_files=tmp_text_files,
+        target_h=target_h,
+    )
     for job in jobs:
         if not _primitives.is_registered(job.kind):
             # Unknown kind (e.g. future overlay with no renderer registered
@@ -1017,20 +816,12 @@ def render_composition(
                         on_progress("encoding", pct)
         proc.wait()
     finally:
-        cleanup_paths = [tmp_srt_path, tmp_srt2_path]
-        cleanup_paths.extend(p for p, _ in extra_sub_tmps)
-        for p in cleanup_paths:
+        for p in list(tmp_text_files):
             if p and os.path.exists(p):
                 try:
                     os.unlink(p)
                 except OSError:
                     pass
-        for p in tmp_text_files:
-            try:
-                if os.path.exists(p):
-                    os.unlink(p)
-            except OSError:
-                pass
         # Whether cancelled or crashed, leave no half-rendered mp4 behind.
         if (was_cancelled or proc.returncode != 0) \
                 and os.path.exists(req.output_path):
