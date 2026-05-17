@@ -1,6 +1,10 @@
 # Composition Timeline v0 — 设计草稿
 
-> 状态：设计中（2026-05-17 会话产出，待 Axis 7 迁移计划补完后转 ADR-0006）。
+> **状态（2026-05-17）：已转 ADR-0006 立项**。本稿作为详细参考保留——决策权威在 [`docs/adr/0006-composition-timeline-ir.md`](../adr/0006-composition-timeline-ir.md)；本稿提供 ADR 引用的"详见"细节（Axis 7.3 通道映射对照表 / 7.4 测试矩阵 / 7.5 文件迁移对照表 等）。
+>
+> ---
+>
+> 原始起源：设计中（2026-05-17 会话产出，待 Axis 7 迁移计划补完后转 ADR-0006）。
 > 起因：composition 引擎当前有 5 种"画什么"输入通道散落（overlays / extra_subtitles / extra_watermarks / hook_text+outro_text / style 单例），导致 render.py 必须为各通道写特化路径、preview.py 必须为每种通道开 JS 桥方法，且新加 typed overlay 时只能靠 isinstance 调度。根因是引擎缺少统一的"场景/时间轴"IR。这份文档定义 v0 timeline IR。
 
 ---
