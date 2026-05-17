@@ -5,7 +5,7 @@
 
 ---
 
-## ▶ 下次会话主题：PR 3 — compile_timeline + Component.compile() 协议
+## ▶ 下次会话主题：PR 4 — News_desk 切到 timeline (render + preview)
 
 **Axis 1~7 全部锁定 + PR 1/2 + ADR-0006 已合 main**。设计稿在 `docs/design/composition-timeline-v0.md`，权威 ADR 在 `docs/adr/0006-composition-timeline-ir.md`。
 
@@ -16,31 +16,36 @@
 - PR 2 前置：8 个渲染字符串 golden seeded（commit `55612b0`），3 ASS + 5 snippet
 - PR 2 part 1/2：删 `news_desk_overlays.py` 491 行，topic_strip + chapter_hero_card primitive 落地，libass_helpers.py 引擎级 helper（commit 在 main，本会话）
 - PR 2 part 2/2：5 个 primitive（subtitle_cue / text_watermark / image_watermark / hook_text / outro_text）+ drawtext_helpers.py；render.py 979 → 816 行；统一 primitives 注册中心（commit `66cd2c0`）
-- 全程 179 测试 + 8 goldens byte-equal
+- PR 3：`compile_timeline()` 真实现 + `primitives.KNOWN_KINDS` 7 kind catalog + 4 个 news_desk component 各加 `_compile()` + `ComponentDictAdapter` bridge dict→Protocol（commit `37b4e71`）
+- 全程 202 测试 + 8 goldens byte-equal
 
-### PR 3 干啥
+### PR 4 干啥
 
-实现 `compile_timeline()` 真实逻辑 + 让 news_desk 4 个 component 加 `compile(clip_range, ctx) → list[Element]` 方法。render / preview 不动——compile 出来的 timeline 只用于测试，验证 component 翻译没改语义。
+把 news_desk 工作台切到 timeline 路径——render + preview 同时切。两个老 callers 仍能跑（双路径并存：`CompositionRequest.timeline` 字段可空，None 走老路）。
 
-**具体步骤**（见设计稿 Axis 7.2 PR 3 行）：
-1. `compile.py` 的 `compile_timeline()` 已有骨架（PR 1 加的），但用 dummy。这次接入真实校验 / range 过滤 / track z_base 分配——其实 PR 1 已经把核心逻辑写完了（`_clip_to_range` 等），主要是 schema validate（每个 element.kind ∈ primitive catalog）
-2. `creations/news_desk/components/{chapter,subtitle,text_watermark,image_watermark}.py` 每个加一个 `compile(clip_range, ctx) → list[Element]` 方法
-   - 翻译：从现有 `to_overlays()` 出来的字典 → `Element(kind, start, end, style, data)` 列表
-   - 必须 pure；compile() 不写文件不弹 UI
-3. 加 ~20 测试（每 component 单独 compile 测 + 整体 timeline 编排 + 短 clip 边界处理）
+**具体步骤**（见设计稿 Axis 7.2 PR 4 行）：
+1. `core/composition/render.py` 的 `CompositionRequest` 加 `timeline: CompositionTimeline | None = None` 字段；render 主循环：if timeline → 从 timeline.tracks 走 element 喂 registry dispatch；else 走老 5 通道路径
+2. `CompositionPreview.set_timeline(tl)` 新增；WebView JS 加统一 `setTimeline()` 入口处理新形态（per Axis 6 "5 桥 → 1 桥"）
+3. `news_desk_tool.py`:
+   - 新增 `_rebuild_timeline() → CompositionTimeline`（用 ComponentDictAdapter 包 components + 调 `compile_timeline()`）
+   - `_do_render` / `_do_preview_render` 改成"compile → req.timeline"，把 overlays/extra_*/style 留空
+   - `_push_preview` 改成 `preview.set_timeline(tl)`
+   - 删 `_build_render_inputs` + `_rebase_overlays`
+4. **关键**: 写 1~2 个端到端 ASS golden（news_desk render→timeline→ass 跟 PR 2 baseline byte-equal）—— PR 4 的硬验收标准
+5. clip 仍走老路径（PR 5 才切）；5 个老 preview JS 桥保留
 
-**仍不接入 render/preview**——PR 4 才接。PR 3 只让 timeline 可编译可断言。
+**核心 dispatch 不一致**: PR 2 留了一个 "subtitle_libass" vs "subtitle_cue" 双命名。PR 4 reconcile：要么 render dispatch 改成 subtitle_cue，要么有个 element.kind → renderer.kind 翻译层。倾向前者。
 
 ### 不在下次会话做
 
-- 切到 timeline render 路径（PR 4）
-- clip 任何改动（PR 5）
-- preset 系统改动
+- clip 切 timeline（PR 5）
+- 删 CompositionRequest 老 5 字段（PR 5）
+- 删 preview 5 桥（PR 5）
 - WatermarkStyle / HookOutroStyle 拆分（PR 5）
 
 ### 起点 HEAD
 
-`66cd2c0` — "composition: PR 2 (2/2)"，已 push origin/main。179 测试全绿；8 goldens byte-equal。
+`37b4e71` — "composition: PR 3 — compile_timeline real impl"，已 push origin/main。202 测试全绿；8 goldens byte-equal。
 
 ---
 
