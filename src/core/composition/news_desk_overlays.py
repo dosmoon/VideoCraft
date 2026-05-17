@@ -507,7 +507,7 @@ def _build_chapter_hero_card_dialogues(
     ) if title else []
     body_wrapped = _wrap_text_cjk_n(
         body, body_budget, max(1, int(style.body_max_lines)),
-    ) if body else []
+    ) if (body and style.show_body) else []
 
     n_title = len(title_wrapped)
     n_body  = len(body_wrapped)

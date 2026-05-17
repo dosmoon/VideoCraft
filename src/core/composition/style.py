@@ -253,12 +253,16 @@ class ChapterHeroCardStyle:
     Geometry: card width is a fixed fraction of the frame; height
     auto-fits the title + divider + body. Vertically centered.
     """
-    # Title (large, top).
+    # Title (large, top). Title-only mode is the default: body rendering
+    # is gated by show_body so the hero card stays a high-recognition
+    # broadcast-style topic flash, not a wall of summary text.
     title_color: str = "#FFFFFF"
-    title_fontsize: int = 40
+    title_fontsize: int = 56
     title_bold: bool = True
-    title_max_lines: int = 2
-    # Body (smaller, multi-line under divider).
+    title_max_lines: int = 3
+    # Body (smaller, multi-line). Hidden by default — flip show_body to
+    # True to render the chapter's refined summary below the title.
+    show_body: bool = False
     body_color: str = "#E5E7EB"
     body_fontsize: int = 22
     body_bold: bool = False

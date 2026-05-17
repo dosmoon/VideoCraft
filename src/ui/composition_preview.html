@@ -608,8 +608,9 @@ function _drawChapterHeroCard(ov, ox, oy, cw, ch) {
 
   const title = (ov.title || "").trim();
   const body  = (ov.body  || "").trim();
+  const showBody = st.show_body === true;
   const titleWrapped = title ? _wrapTextCjkN(title, titleBudget, titleMaxLines) : [];
-  const bodyWrapped  = body  ? _wrapTextCjkN(body, bodyBudget, bodyMaxLines) : [];
+  const bodyWrapped  = (body && showBody) ? _wrapTextCjkN(body, bodyBudget, bodyMaxLines) : [];
 
   if (titleWrapped.length === 0 && bodyWrapped.length === 0) return;
 
