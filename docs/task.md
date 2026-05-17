@@ -5,6 +5,74 @@
 
 ---
 
+## ▶ 下次会话主题：clip 复用 + composition 边界 + 引擎归属
+
+用户拍板的下一轮工作（2026-05-17 末由用户点定，等会话 clear 之后开始）：
+
+### 主线 1 — 验证 news_desk 抽象组件逻辑在 clip 模块的可用度
+
+news_desk 这轮把"组件"沉淀成了一套清晰抽象：
+- `ComponentSpec` registry（multi_instance / default_z / build_property_panel / to_overlays / import_sources）
+- `ProjectContext` 传递（project / duration / instance_dir / material_model / seek_to）
+- 组件自注册，workbench 迭代组件、收 render fragment、按 list 顺序定 z
+
+**问题**：clip 创作还是老式 `CompositionStyle` 直接持 hook/outro/subtitle/watermark 字段——没走 ComponentSpec。该不该把 clip 也改造成组件化？
+
+调研要点：
+- clip 的核心语义是"长视频 → N 段短视频"，跟 news_desk 的"一对一带 overlay"不同。组件抽象能否承载"多输出"形态？
+- clip 现有元素（hook / outro / subtitle 主副 / watermark / hotclip 候选列表）拆成组件后是什么形状？
+  - hook_outro 应该是一个组件（一对开/收文案）还是两个（hook 组件 + outro 组件）？
+  - hotclips 候选列表是组件吗？还是更高一层的"切片任务集合"？
+- ProjectContext 在 clip 场景下需要哪些字段？多输出场景下"instance_dir"语义如何变？
+- 哪些 news_desk 组件可以直接复用到 clip？（subtitle / text_watermark / image_watermark 几乎肯定可以）
+
+成果形态：要么 **clip 改造方案 + 第一步落地**，要么 **结论"组件抽象不适配 clip 多输出语义" + 给出替代方案**。两者都比"先放着"有价值——是个二选一的架构判定。
+
+### 主线 2 — 进一步界定 composition 引擎的功能
+
+`core/composition/` 现在包含：
+- `style.py` —— CompositionStyle + 各种 overlay 样式 dataclass（ChapterHeroCardStyle / LowerThirdStyle / TopicStripStyle / DateStampStyle / etc.）
+- `overlays.py` —— overlay 数据 dataclass（ChapterHeroCardOverlay / TopicStripOverlay / etc.）
+- `render.py` —— ffmpeg 编排
+- `preview.py` —— WebView 适配
+- `news_desk_overlays.py` —— news_desk 特定 overlay 的 libass 渲染逻辑（**已知 wart：core 认识 news_desk**）
+- `presets.py` —— clip preset 全套 + hook_outro preset
+- `layout.py` / `text_layout.py` / `fonts.py` 等
+
+**问题**：哪些算"通用组合引擎"，哪些是某个创作类型的私有渲染？现在边界混乱。
+
+调研要点：
+- `news_desk_overlays.py` 整文件该不该挪到 `creations/news_desk/` 下？
+- `ChapterHeroCardStyle` / `ChapterHeroCardOverlay` 是 news_desk 专属，挂在 `core/composition/style.py` / `overlays.py` 里合理吗？
+- 把 news_desk 的 overlay 抽出去之后，`core/composition` 还剩什么？是否变成纯"字幕烧录 + 水印 + 输出几何 + 渲染编排"的窄引擎？
+- 反向：是否要给 composition 一个"overlay registry"机制，让各创作插件**注册自己的 overlay 渲染器**到 composition，而不是把代码挪走？
+- clip 的 hook_outro 也是同样问题——hook_outro 是 clip 专属还是通用组合元素？
+
+### 主线 3 — 引擎组件归属问题
+
+跟主线 2 重叠但更广。组件层面要回答：
+- subtitle / text_watermark / image_watermark 三种组件几乎肯定**多创作类型共享**——它们的代码归属在哪？现在挂在 `creations/news_desk/components/` 下，clip 想用得 import 跨创作？
+- 答案候选：
+  - **A 共享组件库**：`creations/_shared_components/` 或 `core/components/`，每个创作 opt-in 注册它需要的组件
+  - **B 各创作复制粘贴**：组件代码在 `creations/<x>/components/` 下各自实现，接受小重复
+  - **C 抽到 core/composition 当一等元素**：composition 引擎直接管这些"通用 overlay 类型"，创作只调用
+- 各方案利弊？跟 ADR-0004 的"plugin self-contained"原则冲突吗？
+
+### 推荐流程
+
+1. **先调研，再动代码**——这三条主线本质都是架构判定题，不是 bug 修复。先 grep 出 clip 当前组件用法 / composition 跨创作引用 / news_desk overlay 边界，列出现状。
+2. **跟用户对齐方向再落地**——三条主线任何一条都可能 200+ 行改动，先讨论再写代码。
+3. **可能的产出**：新 ADR-0006「组件抽象的归属与共享」或「composition 引擎边界」。本次会话沉淀的 [[feedback_material_via_model_only]] 和 [[project_creation_config_owner]] 模式可以作为新 ADR 的参考案例。
+
+### 起点状态
+
+- HEAD: `0c1b328`（已 push origin/main）
+- 147 测试全绿
+- news_desk 是组件化的参考实现，clip 是非组件化的对照组
+- 已知 wart：`core/composition/news_desk_overlays.py` + `style.py` 里的 Chapter/LowerThird/TopicStrip 类——本次会话没动，作为下次的入口
+
+---
+
 ## 本次会话主题：legacy 大清扫 + news_desk 架构收口（2026-05-17）
 
 会话起点 HEAD：`7d2e603`
