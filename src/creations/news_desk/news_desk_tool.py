@@ -24,7 +24,7 @@ import re
 import threading
 import time
 import tkinter as tk
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from tools.base import ToolBase
@@ -33,9 +33,9 @@ from hub_logger import logger
 
 import creations
 from core.composition.preview import CompositionPreview
+from core.composition.compile import ClipRange, compile_timeline
 from core.composition.render import (
-    CompositionRequest, ExtraSubtitleSpec, ExtraWatermarkSpec,
-    prepare_subtitle_cues, probe_video_resolution, render_composition,
+    CompositionRequest, probe_video_resolution, render_composition,
 )
 from creations.news_desk import presets as nd_presets
 from materials.news_video.model import NewsVideoModel
@@ -96,23 +96,6 @@ def _probe_duration(video_path: str) -> float:
     except Exception:
         pass
     return 0.0
-
-
-def _rebase_overlays(overlays: list, ws: float, we: float) -> list:
-    """Clip overlays into [ws, we] and rebase to a 0-based timeline.
-    Used by the 20-s preview render to match ffmpeg's `-ss ws -to we`."""
-    out: list = []
-    for ov in overlays:
-        start = float(getattr(ov, "start_sec", 0.0))
-        end = float(getattr(ov, "end_sec", 0.0))
-        if end <= ws or start >= we:
-            continue
-        new_start = max(0.0, start - ws)
-        new_end = min(we - ws, end - ws)
-        if new_end <= new_start:
-            continue
-        out.append(replace(ov, start_sec=new_start, end_sec=new_end))
-    return out
 
 
 # ── App ────────────────────────────────────────────────────────────────────
@@ -678,145 +661,47 @@ class NewsDeskApp(ToolBase):
         single path on the config dataclass."""
         self.config.save(self._instance_config_path)
 
-    # ── Render translation: components → CompositionRequest fragments ────
+    # ── Render translation: components → timeline IR ─────────────────────
 
-    def _build_render_inputs(self) -> tuple[CompositionStyle,
-                                              list[ExtraSubtitleSpec],
-                                              list[WatermarkStyle], list]:
-        """Translate the current components list into:
-          (CompositionStyle with sub1/sub2 + style.watermark disabled,
-           list of ExtraSubtitleSpec — one per enabled subtitle component,
-           list of WatermarkStyle — one per enabled watermark component,
-           overlay list — chapter cards, lower thirds, etc.).
-        Renderer + preview are then driven by these uniformly.
+    def _rebuild_timeline(self, clip_range: ClipRange | None = None):
+        """Wrap each instance dict in a ComponentDictAdapter and feed
+        compile_timeline() to produce a CompositionTimeline for the
+        given clip window. Default range = [0, full duration]. The
+        compile pass handles enabled-filtering, range-clipping, and
+        z_base assignment; news_desk just supplies the inputs.
         """
-        # News-desk has a fixed render style (passthrough + veryfast +
-        # default overlay library). Subtitles and watermarks are
-        # contributed by components below.
-        style = _default_render_style()
-
-        ctx = nd_components.ProjectContext(
+        from creations.news_desk.components import ComponentDictAdapter
+        from core.composition.compile import CompileContext
+        if clip_range is None:
+            clip_range = ClipRange(start_sec=0.0, end_sec=float(self._duration))
+        ctx = CompileContext(
             project=self.project,
-            material_model=self.material_model, duration=self._duration,
-            instance_dir=self._instance_dir())
-
-        # Component list position drives z-order: top of list = topmost
-        # render layer. We assign z = (N - index) * 1000 so each
-        # component lands at a unique z with room (the *1000 spacing
-        # leaves slots for overlay-internal z if a single component
-        # produces multiple specs — though in practice today it doesn't).
-        overlays: list = []
-        extra_subs: list[ExtraSubtitleSpec] = []
-        extra_wms: list[ExtraWatermarkSpec] = []
-        total = len(self.config.components)
-
-        for index, comp in enumerate(self.config.components):
-            spec = nd_components.spec_for_instance(comp)
-            if spec is None:
-                continue
-            try:
-                frag = spec.to_overlays(comp, ctx) or {}
-            except Exception as e:
-                logger.warning(
-                    f"news_desk: {spec.kind} render fragment failed: {e}")
-                continue
-            z = (total - index) * 1000
-
-            ov = frag.get("overlays")
-            if isinstance(ov, list):
-                for o in ov:
-                    # Overlay specs already carry z_order (used as a
-                    # tie-breaker for fine ordering inside one component);
-                    # we override with the list-derived z so UI order
-                    # wins. The overlay dataclasses are mutable.
-                    try:
-                        o.z_order = z
-                    except Exception:
-                        pass
-                    overlays.append(o)
-
-            wm = frag.get("watermark")
-            if wm is not None:
-                extra_wms.append(ExtraWatermarkSpec(watermark=wm, z_order=z))
-
-            sub = frag.get("subtitle")
-            if sub is not None:
-                srt_path = sub.get("srt_path") or ""
-                if srt_path:
-                    extra_subs.append(ExtraSubtitleSpec(
-                        srt_path=srt_path,
-                        line=sub["line"],
-                        position=sub.get("position", "bottom"),
-                        block_margin_pct=sub.get("block_margin_pct", 0.09),
-                        z_order=z,
-                    ))
-
-        # All subtitles + watermarks ride the N-track render path. The
-        # legacy sub1/sub2 + style.watermark slots are kept disabled —
-        # news_desk components are independent instances by design (each
-        # carries its own position + style), not a shared-layout pair.
-        style.subtitle.sub1.enabled = False
-        style.subtitle.sub2.enabled = False
-
-        return style, extra_subs, extra_wms, overlays
+            material_model=self.material_model,
+            instance_dir=self._instance_dir(),
+            duration=float(self._duration),
+        )
+        adapters = [ComponentDictAdapter(c) for c in self.config.components]
+        return compile_timeline(adapters, clip_range, ctx)
 
     # ── Preview push ──────────────────────────────────────────────────────
 
     def _push_preview(self) -> None:
+        """Build the current timeline and push it to the preview via the
+        unified set_timeline bridge. set_style still drives output geometry
+        (passthrough mode, aspect, encode_preset) — those live on style.
+        Per-element rendering data rides the timeline."""
         if self._preview is None:
             return
         try:
-            style, extra_subs, extra_wms, overlays = self._build_render_inputs()
+            style = _default_render_style()
             self._preview.set_style(style)
-            self._preview.set_overlays(overlays)
             short = (min(self._src_w, self._src_h)
                       if self._src_w and self._src_h else 1080)
             aspect = (f"{self._src_w}:{self._src_h}"
                        if self._src_w and self._src_h else "16:9")
-            # Legacy sub1/sub2 stack stays empty — news_desk components
-            # ride the N-track extras path, where each track anchors
-            # independently (no shared track_gap).
-            self._preview.set_cues([])
-            self._preview.set_cues_secondary([])
-            sub_payload = []
-            for es in extra_subs:
-                cues = prepare_subtitle_cues(
-                    es.srt_path, es.line, aspect=aspect, short_edge=short)
-                sub_payload.append({
-                    "line": {
-                        "fontsize": es.line.fontsize,
-                        "color": es.line.color,
-                        "bold": es.line.bold,
-                        "is_chinese": es.line.is_chinese,
-                        "bg_color": es.line.bg_color,
-                        "bg_opacity": es.line.bg_opacity,
-                        "bg_padding_x_pct": es.line.bg_padding_x_pct,
-                    },
-                    "position": es.position,
-                    "block_margin_pct": es.block_margin_pct,
-                    "cues": cues,
-                    "z_order": es.z_order,
-                })
-            self._preview.set_extra_subtitles(sub_payload)
-            wm_payload = []
-            for ews in extra_wms:
-                w = ews.watermark
-                wm_payload.append({
-                    "enabled": w.enabled,
-                    "type": w.type,
-                    "text": w.text,
-                    "text_fontsize": w.text_fontsize,
-                    "text_color": w.text_color,
-                    "text_opacity": w.text_opacity,
-                    "image_path": w.image_path,
-                    "image_scale": w.image_scale,
-                    "image_opacity": w.image_opacity,
-                    "position": w.position,
-                    "margin_x_pct": w.margin_x_pct,
-                    "margin_y_pct": w.margin_y_pct,
-                    "z_order": ews.z_order,
-                })
-            self._preview.set_extra_watermarks(wm_payload)
+            timeline = self._rebuild_timeline()
+            self._preview.set_timeline(
+                timeline, aspect=aspect, short_edge=short)
         except Exception as e:
             logger.warning(f"news_desk preview push failed: {e}")
 
@@ -1012,15 +897,13 @@ class NewsDeskApp(ToolBase):
             text=tr("tool.news_desk.status.rendering"))
         self.progress["value"] = 0
 
-        style, extra_subs, extra_wms, overlays = self._build_render_inputs()
+        timeline = self._rebuild_timeline()
         req = CompositionRequest(
             source_video=src,
             start_sec=0.0, end_sec=self._duration,
             output_path=out,
-            style=style,
-            overlays=overlays,
-            extra_subtitles=extra_subs,
-            extra_watermarks=extra_wms,
+            style=_default_render_style(),
+            timeline=timeline,
         )
         threading.Thread(
             target=self._export_thread, args=(req,), daemon=True).start()
@@ -1042,9 +925,16 @@ class NewsDeskApp(ToolBase):
                                   parent=self.master)
             return
 
-        # Anchor: first overlay's start_sec, else t=0.
-        style, extra_subs, extra_wms, overlays = self._build_render_inputs()
-        anchor = overlays[0].start_sec if overlays else 0.0
+        # Anchor: first overlay's start_sec in the full-duration timeline,
+        # else t=0. Compile the full timeline once just to read the anchor,
+        # then re-compile against the clipped window — compile is pure
+        # and cheap.
+        full_timeline = self._rebuild_timeline()
+        anchor = 0.0
+        for track in full_timeline.tracks:
+            if track.elements:
+                anchor = float(track.elements[0].start_sec)
+                break
         lead_in = 2.0
         window_len = 20.0
         ws = max(0.0, anchor - lead_in)
@@ -1057,7 +947,10 @@ class NewsDeskApp(ToolBase):
                                   parent=self.master)
             return
 
-        rebased = _rebase_overlays(overlays, ws, we)
+        # Compile against the windowed range — clip-relative element times
+        # come out naturally (each component's compile subtracts clip_range
+        # .start_sec); range-clipping prunes out-of-window elements.
+        timeline = self._rebuild_timeline(ClipRange(start_sec=ws, end_sec=we))
         out = os.path.join(self._instance_dir(), "output.preview.mp4")
         os.makedirs(os.path.dirname(out), exist_ok=True)
 
@@ -1075,10 +968,8 @@ class NewsDeskApp(ToolBase):
             source_video=src,
             start_sec=ws, end_sec=we,
             output_path=out,
-            style=style,
-            overlays=rebased,
-            extra_subtitles=extra_subs,
-            extra_watermarks=extra_wms,
+            style=_default_render_style(),
+            timeline=timeline,
         )
         threading.Thread(
             target=self._export_thread, args=(req,), daemon=True).start()

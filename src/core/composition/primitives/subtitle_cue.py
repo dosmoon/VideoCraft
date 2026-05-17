@@ -21,7 +21,7 @@ from ..style import SubtitleLineStyle, SubtitleStyle
 from . import register_overlay_renderer
 
 
-KIND = "subtitle_libass"
+KIND = "subtitle_cue"
 
 
 # ── Force-style builder + margin computation ────────────────────────────────

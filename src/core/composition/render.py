@@ -120,6 +120,13 @@ class CompositionRequest:
     extra_subtitles: list = field(default_factory=list)    # list[ExtraSubtitleSpec]
     extra_watermarks: list = field(default_factory=list)   # list[ExtraWatermarkSpec]
 
+    # PR 4: when set, drives "what to draw" entirely (the legacy fields
+    # above + style.subtitle / style.watermark / style.hook_outro are
+    # ignored). style.output still supplies output geometry until PR 5
+    # collapses it. clip remains on the legacy path; news_desk drives
+    # this field.
+    timeline: object = None    # core.composition.timeline.CompositionTimeline | None
+
 
 @dataclass
 class CompositionResult:
@@ -391,7 +398,7 @@ from .primitives import (
     hook_text as _hook_text,            # noqa: F401  — registers "hook_text"
     image_watermark as _image_watermark, # noqa: F401 — registers "image_watermark"
     outro_text as _outro_text,           # noqa: F401 — registers "outro_text"
-    subtitle_cue as _subtitle_cue,       # noqa: F401 — registers "subtitle_libass"
+    subtitle_cue as _subtitle_cue,       # noqa: F401 — registers "subtitle_cue"
     text_watermark as _text_watermark,   # noqa: F401 — registers "text_watermark"
 )
 
@@ -516,14 +523,14 @@ def _named_overlay_jobs(req: CompositionRequest,
     # Subtitle tracks.
     margin_v1, margin_v2 = _track_margins(style.subtitle)
     if style.subtitle.sub1.enabled and sub1_srt:
-        jobs.append(_OverlayJob(kind="subtitle_libass", z_order=10, data={
+        jobs.append(_OverlayJob(kind="subtitle_cue", z_order=10, data={
             "srt_path": sub1_srt,
             "force_style": _build_subtitle_force_style(
                 style.subtitle.sub1, style.subtitle,
                 margin_v=margin_v1, target_h=target_h),
         }))
     if style.subtitle.sub2.enabled and sub2_srt:
-        jobs.append(_OverlayJob(kind="subtitle_libass", z_order=11, data={
+        jobs.append(_OverlayJob(kind="subtitle_cue", z_order=11, data={
             "srt_path": sub2_srt,
             "force_style": _build_subtitle_force_style(
                 style.subtitle.sub2, style.subtitle,
@@ -536,7 +543,7 @@ def _named_overlay_jobs(req: CompositionRequest,
     # ordering from its component-list index.
     for tmp_path, espec in extra_sub_tmps:
         jobs.append(_OverlayJob(
-            kind="subtitle_libass", z_order=espec.z_order,
+            kind="subtitle_cue", z_order=espec.z_order,
             data={
                 "srt_path": tmp_path,
                 "force_style": _build_subtitle_force_style(
@@ -609,6 +616,227 @@ def _named_overlay_jobs(req: CompositionRequest,
                 "overlay_styles": req.style.overlay_styles,
             },
         ))
+
+    return jobs
+
+
+# ── Timeline → _OverlayJob translation (PR 4 dual-path bridge) ──────────────
+#
+# When req.timeline is set the legacy 5-channel CompositionRequest fields
+# are ignored; this function turns the compiled timeline into the same
+# _OverlayJob list the legacy path produces. The render main loop dispatches
+# both shapes through one registry, so byte equivalence holds as long as
+# the per-kind reconstruction below matches what _named_overlay_jobs would
+# build for equivalent input.
+
+def _timeline_to_overlay_jobs(
+    timeline,
+    req: CompositionRequest,
+    *,
+    aspect_str: str,
+    short_edge: int,
+    tmp_files: list[str],
+    target_h: int,
+) -> list[_OverlayJob]:
+    from .primitives.chapter_hero_card import (
+        ChapterHeroCardSpec, ChapterHeroCardStyle,
+    )
+    from .primitives.subtitle_cue import build_force_style as _bfs
+    from .primitives.subtitle_cue import track_margins as _tm
+    from .primitives.topic_strip import TopicStripSpec
+
+    jobs: list[_OverlayJob] = []
+    news_desk_specs: list = []
+    news_desk_z: int = 0
+
+    for track in timeline.tracks:
+        if not track.enabled:
+            continue
+        z_base = track.z_base
+
+        elements_by_kind: dict[str, list] = {}
+        for e in track.elements:
+            elements_by_kind.setdefault(e.kind, []).append(e)
+
+        for kind, elements in elements_by_kind.items():
+            if kind == "subtitle_cue":
+                tmp_srt = _subtitle_elements_to_temp_srt(
+                    elements, aspect_str=aspect_str,
+                    short_edge=short_edge, tag=f"timeline-{track.id}")
+                if not tmp_srt:
+                    continue
+                tmp_files.append(tmp_srt)
+                # All cues in one track share the same style dict (set by
+                # subtitle.compile). Recover SubtitleLineStyle + the
+                # block_margin → MarginV computation the legacy track did.
+                style_dict = elements[0].style
+                line = SubtitleLineStyle(
+                    enabled=True,
+                    fontsize=int(style_dict.get("fontsize", 24)),
+                    color=style_dict.get("color", "#FFFFFF"),
+                    is_chinese=bool(style_dict.get("is_chinese", False)),
+                    bg_color=style_dict.get("bg_color", "#000000"),
+                    bg_opacity=int(style_dict.get("bg_opacity", 0)),
+                )
+                # block_margin_pct lives on the cue's track style; build
+                # a one-track SubtitleStyle so _track_margins / force_style
+                # land at the right MarginV (single-track, no sub2 stack).
+                sub_style = SubtitleStyle(
+                    sub1=line, sub2=SubtitleLineStyle(enabled=False),
+                    position=style_dict.get("position", "bottom"),
+                    block_margin_pct=float(
+                        style_dict.get("block_margin_pct", 0.09)),
+                    track_gap_pct=0.0,
+                )
+                margin_v, _ = _tm(sub_style)
+                force_style = _bfs(line, sub_style,
+                                     margin_v=margin_v, target_h=target_h,
+                                     position=sub_style.position)
+                jobs.append(_OverlayJob(
+                    kind="subtitle_cue", z_order=z_base,
+                    data={"srt_path": tmp_srt,
+                           "force_style": force_style}))
+
+            elif kind in ("text_watermark", "image_watermark"):
+                for e in elements:
+                    wm = _element_to_watermark_style(e)
+                    jobs.append(_OverlayJob(
+                        kind=kind, z_order=z_base + e.z_offset,
+                        data={"watermark": wm}))
+
+            elif kind == "hook_text":
+                for e in elements:
+                    txt = e.data.get("text", "")
+                    if txt:
+                        jobs.append(_OverlayJob(
+                            kind="hook_text", z_order=z_base + e.z_offset,
+                            data={"text": txt}))
+
+            elif kind == "outro_text":
+                for e in elements:
+                    txt = e.data.get("text", "")
+                    if txt:
+                        jobs.append(_OverlayJob(
+                            kind="outro_text", z_order=z_base + e.z_offset,
+                            data={"text": txt}))
+
+            elif kind == "topic_strip":
+                for e in elements:
+                    news_desk_specs.append(TopicStripSpec(
+                        topic_text=e.data.get("topic_text", ""),
+                        start_sec=e.start_sec, end_sec=e.end_sec,
+                        style_class=e.data.get("style_class", "default"),
+                    ))
+                news_desk_z = max(news_desk_z, z_base)
+
+            elif kind == "chapter_hero_card":
+                for e in elements:
+                    news_desk_specs.append(ChapterHeroCardSpec(
+                        title=e.data.get("title", ""),
+                        body=e.data.get("body", ""),
+                        start_sec=e.start_sec, end_sec=e.end_sec,
+                        style_class=e.data.get("style_class", "default"),
+                        inline_style=e.data.get("inline_style", {}) or {},
+                    ))
+                news_desk_z = max(news_desk_z, z_base)
+
+    if news_desk_specs:
+        # Match legacy behaviour: caller-driven z + sort-by-input-z so the
+        # merged ASS preserves the relative stacking the timeline encoded.
+        news_desk_specs.sort(key=lambda s: s.z_order if hasattr(s, "z_order") else 0)
+        overlay_styles = (req.style.overlay_styles if req.style is not None
+                            else {}) or {}
+        jobs.append(_OverlayJob(
+            kind="news_desk_ass", z_order=news_desk_z,
+            data={"specs": news_desk_specs,
+                   "overlay_styles": overlay_styles}))
+
+    return jobs
+
+
+def _subtitle_elements_to_temp_srt(
+    elements: list, *, aspect_str: str, short_edge: int, tag: str,
+) -> str | None:
+    """Rebuild a temp SRT file from a subtitle_cue track's Elements
+    (already clip-relative timing), then run process_srt_split to wrap
+    long lines into multiple cues — the same wrap policy the legacy
+    _slice_and_wrap_cues uses, kept in one place by reusing the helper.
+    Returns the wrapped temp SRT path, or None on failure.
+    """
+    if not elements:
+        return None
+    style_dict = elements[0].style
+    max_chars = compute_subtitle_max_chars(
+        aspect_str,
+        int(style_dict.get("fontsize", 24)),
+        bool(style_dict.get("is_chinese", False)),
+        short_edge=short_edge,
+    )
+    cues = [
+        _srt.Subtitle(
+            index=i + 1,
+            start=timedelta(seconds=float(e.start_sec)),
+            end=timedelta(seconds=float(e.end_sec)),
+            content=str(e.data.get("text", "")),
+        )
+        for i, e in enumerate(elements)
+        if e.end_sec > e.start_sec
+    ]
+    if not cues:
+        return None
+    raw_tmp = os.path.join(
+        tempfile.gettempdir(),
+        f"composition-timeline-raw-{tag}-{os.getpid()}-{id(cues)}.srt")
+    try:
+        with open(raw_tmp, "w", encoding="utf-8") as f:
+            f.write(_srt.compose(cues))
+        wrapped = list(process_srt_split(
+            raw_tmp, max_chars,
+            is_chinese=bool(style_dict.get("is_chinese", False))))
+    except Exception:
+        try:
+            os.unlink(raw_tmp)
+        except OSError:
+            pass
+        return None
+    try:
+        os.unlink(raw_tmp)
+    except OSError:
+        pass
+    if not wrapped:
+        return None
+    final_tmp = os.path.join(
+        tempfile.gettempdir(),
+        f"composition-timeline-{tag}-{os.getpid()}-{id(wrapped)}.srt")
+    try:
+        with open(final_tmp, "w", encoding="utf-8") as f:
+            f.write(_srt.compose(wrapped))
+        return final_tmp
+    except OSError:
+        return None
+
+
+def _element_to_watermark_style(e) -> "WatermarkStyle":
+    """Reconstruct a unified WatermarkStyle dataclass from a text_watermark
+    or image_watermark Element. PR 5 splits WatermarkStyle into two narrow
+    primitives; until then both kinds share this dataclass."""
+    style_dict = e.style
+    data = e.data
+    is_image = (e.kind == "image_watermark")
+    return WatermarkStyle(
+        enabled=True,
+        type="image" if is_image else "text",
+        text=data.get("text", "") if not is_image else "",
+        text_fontsize=int(style_dict.get("text_fontsize", 36)),
+        text_color=style_dict.get("text_color", "#FFFFFF"),
+        text_opacity=int(style_dict.get("text_opacity", 70)),
+        image_path=data.get("image_path", "") if is_image else "",
+        image_scale=float(style_dict.get("image_scale", 0.15)),
+        image_opacity=int(style_dict.get("image_opacity", 100)),
+        position=style_dict.get("position", "top-right"),
+        margin_x_pct=float(style_dict.get("margin_x_pct", 0.025)),
+        margin_y_pct=float(style_dict.get("margin_y_pct", 0.025)),
+    )
 
     jobs.sort(key=lambda j: j.z_order)
     return jobs
@@ -722,8 +950,19 @@ def render_composition(
         style=style, tmp_files=tmp_text_files,
     )
 
-    jobs = _named_overlay_jobs(req, tmp_srt_path, tmp_srt2_path,
-                                extra_sub_tmps, target_h=target_h)
+    # Timeline (PR 4) drives "what to draw" when set; the legacy 5-channel
+    # fields are then ignored. clip stays on the legacy path until PR 5.
+    if req.timeline is not None:
+        jobs = _timeline_to_overlay_jobs(
+            req.timeline, req,
+            aspect_str=effective_aspect_str,
+            short_edge=effective_short_edge,
+            tmp_files=tmp_text_files,
+            target_h=target_h,
+        )
+    else:
+        jobs = _named_overlay_jobs(req, tmp_srt_path, tmp_srt2_path,
+                                    extra_sub_tmps, target_h=target_h)
     for job in jobs:
         if not _primitives.is_registered(job.kind):
             # Unknown kind (e.g. future overlay with no renderer registered
