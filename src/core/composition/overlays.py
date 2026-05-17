@@ -1,18 +1,11 @@
-"""Time-windowed overlay specifications — the per-render content data.
+"""Time-windowed overlay specifications.
 
-CompositionStyle holds reusable visual classes (look). OverlaySpec subclasses
-hold per-render content: what to draw, when, and which style class to use.
-The split mirrors AE's "character style + text layer content" or web's
-"CSS class + DOM element".
-
-Industry alignment: `TopicStripOverlay` is our internal name for what
-broadcast packages variously call "topic bar", "chapter marker strip", or
-"now playing strip" — a static labeled bar pinned to the top edge.
-`ChapterHeroCardOverlay` is a sidebar interstitial that announces a new
-chapter. Future overlay kinds extend the same discriminator pattern.
-
-Each kind dataclass is the single contract shared by: AI prompt JSON
-schema, on-disk JSON storage, UI list editor, and composition renderer.
+Generic `OverlaySpec` lives here; the typed kinds were moved into
+`core/composition/primitives/<kind>.py` by the PR 2 split. This module
+keeps the typed names as re-exports so existing callers (creations,
+preview.py, presets.py) still see the old import path. PR 5 (timeline
+migration) drops the typed re-exports when callers update to import
+from primitives directly.
 """
 
 from __future__ import annotations
@@ -20,13 +13,24 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Union
 
+# Typed overlay classes re-exported from primitives. The aliases
+# (TopicStripOverlay, ChapterHeroCardOverlay) keep legacy import paths
+# working during PR 2~5; the canonical names are <Kind>Spec on the
+# primitive side.
+from .primitives.chapter_hero_card import (
+    ChapterHeroCardOverlay,    # = ChapterHeroCardSpec alias
+)
+from .primitives.topic_strip import (
+    TopicStripOverlay,         # = TopicStripSpec alias
+)
+
 
 @dataclass
 class OverlaySpec:
     """Generic time-windowed overlay — fallback / forward-compat shape for
     overlay kinds that don't have a typed dataclass yet.
 
-    Fields (also present on every typed kind below — duck-typed):
+    Fields (also present on every typed kind — duck-typed):
         kind: discriminator that selects a registered renderer in render.py.
         start_sec / end_sec: time window in the composition's clip range
             (rebased to 0..duration), NOT absolute source video time.
@@ -43,48 +47,6 @@ class OverlaySpec:
     zone: str = "auto"
     z_order: int = 100
     payload: dict = field(default_factory=dict)
-
-
-@dataclass
-class ChapterHeroCardOverlay:
-    """Chapter intro/hero card — large title (+ optional body) on a
-    sidebar-anchored translucent panel, shown for the first few seconds
-    of a chapter as a "now showing" interstitial. The chapter component
-    routes its `start_card` visual mode here.
-
-    inline_style is a per-spec override hatch — chapter.py uses it so
-    the property panel's per-instance style fields actually drive the
-    render instead of being purely cosmetic. Empty dict = use the
-    resolved overlay_styles entry verbatim.
-    """
-    title: str = ""
-    body: str = ""
-    start_sec: float = 0.0
-    end_sec: float = 0.0
-    style_class: str = "default"
-    inline_style: dict = field(default_factory=dict)
-    kind: str = "chapter_hero_card"
-    z_order: int = 46
-    zone: str = "center"
-
-
-@dataclass
-class TopicStripOverlay:
-    """Top-edge labeled strip — chapter marker / topic bar.
-
-    A thin always-on strip (when active) showing the current chapter or
-    topic title. Auto-derivable from `analysis.json` (one strip per
-    chapter, time window = chapter [start, end]); also user-editable.
-
-    style_class: key into CompositionStyle.overlay_styles → TopicStripStyle.
-    """
-    topic_text: str = ""
-    start_sec: float = 0.0
-    end_sec: float = 0.0
-    style_class: str = "default"
-    kind: str = "topic_strip"
-    z_order: int = 40
-    zone: str = "banner_top"
 
 
 # Union for callers that want type-narrowing. Renderer dispatch keys off

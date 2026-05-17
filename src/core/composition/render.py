@@ -657,11 +657,110 @@ register_overlay_renderer("text_watermark",  _renderer_text_watermark)
 register_overlay_renderer("hook_text",       _renderer_hook_text)
 register_overlay_renderer("outro_text",      _renderer_outro_text)
 
-# News-desk overlay kinds (topic_strip + chapter_hero_card merged into
-# one .ass file via a single "news_desk_ass" job). Imported for the side
-# effect of registering its renderer with the table above.
-from . import news_desk_overlays as _news_desk_overlays
-_news_desk_overlays.register()
+
+# ── News-desk merged ASS orchestrator ───────────────────────────────────────
+#
+# topic_strip + chapter_hero_card primitives both emit libass dialogue
+# strings (rather than ffmpeg filter snippets). They are merged into a
+# single per-render .ass file consumed by one `subtitles=` filter — keeps
+# the filter_complex chain shallow and reuses the libass engine that
+# already handles bilingual subtitle tracks (font/anti-aliasing parity).
+#
+# The orchestrator dispatches by isinstance to pick the right primitive's
+# build_dialogues(). When timeline IR ships (PR 4/5) each Element will
+# carry its own kind string and this isinstance switch disappears.
+
+from .libass_helpers import ASS_HEADER_TMPL
+from .primitives import chapter_hero_card as _chapter_hero_card
+from .primitives import topic_strip as _topic_strip
+from .style import resolve_overlay_style
+from typing import Iterable
+
+
+def build_news_desk_ass_str(specs: Iterable, *,
+                              target_w: int, target_h: int,
+                              overlay_styles: dict) -> str | None:
+    """Pure ASS-content builder for all TopicStrip + ChapterHeroCard
+    overlays in one render. Returns the full .ass file content as a str,
+    or None if no overlays produced dialogues (caller skips the filter).
+
+    Separated from the temp-file write so PR 2's primitive-split refactor
+    can byte-equality test against this output via the golden suite.
+    """
+    dialogues: list[str] = []
+    for spec in specs:
+        if isinstance(spec, _topic_strip.TopicStripSpec):
+            style = resolve_overlay_style(
+                overlay_styles, "topic_strip", spec.style_class)
+            if style is None:
+                style = _topic_strip.TopicStripStyle()
+            dialogues.extend(_topic_strip.build_dialogues(
+                spec, style, target_w=target_w, target_h=target_h))
+        elif isinstance(spec, _chapter_hero_card.ChapterHeroCardSpec):
+            style = resolve_overlay_style(
+                overlay_styles, "chapter_hero_card", spec.style_class)
+            if style is None:
+                style = _chapter_hero_card.ChapterHeroCardStyle()
+            # Per-spec inline overrides — chapter component routes its
+            # property panel edits here so changes take effect without
+            # touching the project-wide overlay_styles dict.
+            for k, v in (spec.inline_style or {}).items():
+                if k in _chapter_hero_card.ChapterHeroCardStyle.__dataclass_fields__:
+                    setattr(style, k, v)
+            dialogues.extend(_chapter_hero_card.build_dialogues(
+                spec, style, target_w=target_w, target_h=target_h))
+
+    if not dialogues:
+        return None
+
+    return ASS_HEADER_TMPL.format(w=target_w, h=target_h) + \
+        "\n".join(dialogues) + "\n"
+
+
+def build_news_desk_ass(specs: Iterable, *,
+                          target_w: int, target_h: int,
+                          overlay_styles: dict) -> str | None:
+    """Thin write-to-tempfile wrapper around build_news_desk_ass_str.
+    Returns the file path so ffmpeg's subtitles= filter can consume it,
+    or None when there's nothing to render.
+    """
+    body = build_news_desk_ass_str(
+        specs, target_w=target_w, target_h=target_h,
+        overlay_styles=overlay_styles,
+    )
+    if body is None:
+        return None
+    out_path = os.path.join(
+        tempfile.gettempdir(),
+        f"composition-newsdesk-{os.getpid()}-{id(body)}.ass",
+    )
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(body)
+    return out_path
+
+
+def _renderer_news_desk_ass(job: _OverlayJob, prev_label: str,
+                              ctx: _RenderCtx) -> tuple[list[str], str]:
+    """Build the merged .ass on demand (now that ctx.target_w/h are known),
+    then chain a single subtitles= filter. Temp file is registered with
+    ctx.tmp_files so the parent render() cleans it up after ffmpeg returns.
+    """
+    specs = job.data.get("specs") or []
+    overlay_styles = job.data.get("overlay_styles") or {}
+    ass_path = build_news_desk_ass(
+        specs, target_w=ctx.target_w, target_h=ctx.target_h,
+        overlay_styles=overlay_styles,
+    )
+    if not ass_path:
+        return [], prev_label
+    ctx.tmp_files.append(ass_path)
+    ass_ff = escape_ffmpeg_path(ass_path)
+    out_label = ctx.next_label()
+    return ([f"{prev_label}subtitles=filename='{ass_ff}'{out_label}"],
+            out_label)
+
+
+register_overlay_renderer("news_desk_ass", _renderer_news_desk_ass)
 
 
 def _named_overlay_jobs(req: CompositionRequest,

@@ -30,7 +30,7 @@ import re
 
 import pytest
 
-from core.composition.news_desk_overlays import build_news_desk_ass_str
+from core.composition.render import build_news_desk_ass_str
 from core.composition.overlays import (
     ChapterHeroCardOverlay, TopicStripOverlay,
 )

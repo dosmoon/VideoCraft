@@ -131,84 +131,20 @@ class OutputGeometry:
             return (9, 16)
 
 
-# ── Overlay style classes (named library, used by news_desk overlays) ──────
+# ── Overlay style classes (re-exported from primitives) ────────────────────
 #
 # CompositionStyle.overlay_styles is a dict keyed by `style_class` name
-# (e.g. "default", "breaking", "interview"). Each value is one of these
-# style dataclasses, picked at render time by matching the overlay's
-# `kind` to the dataclass type. Storage on disk is dict-of-dicts (asdict
-# round-trips); the typed loader in presets.py coerces back to dataclass.
-
-@dataclass
-class TopicStripStyle:
-    """Visual style for TopicStripOverlay — top-edge labeled strip."""
-    bg_color: str = "#1E40AF"
-    bg_opacity: int = 90
-    text_color: str = "#FFFFFF"
-    fontsize: int = 26
-    bold: bool = True
-    font: str = "Microsoft YaHei"
-
-    # Strip geometry. height_pct = strip thickness as fraction of frame height.
-    height_pct: float = 0.055
-    # Distance from top edge (lets you leave a sliver of source video
-    # showing above the strip if desired).
-    top_margin_pct: float = 0.0
-    # Horizontal text alignment within the strip.
-    text_align: str = "left"          # "left" | "center" | "right"
-    # Inner left/right text padding (fraction of frame width).
-    text_padding_pct: float = 0.025
-
-
-@dataclass
-class ChapterHeroCardStyle:
-    """Sidebar hero card — left/right-anchored vertical panel carrying
-    a chapter title + multi-line body. Sits BESIDE the speaker rather
-    than over them; defaults are translucent so the underlying video
-    remains visible behind the card.
-
-    Geometry: card width is a fixed fraction of the frame; height
-    auto-fits the title + divider + body. Vertically centered.
-    """
-    # Title (large, top). Title-only mode is the default: body rendering
-    # is gated by show_body so the hero card stays a high-recognition
-    # broadcast-style topic flash, not a wall of summary text.
-    title_color: str = "#FFFFFF"
-    title_fontsize: int = 56
-    title_bold: bool = True
-    title_max_lines: int = 3
-    # Body (smaller, multi-line). Hidden by default — flip show_body to
-    # True to render the chapter's refined summary below the title.
-    show_body: bool = False
-    body_color: str = "#E5E7EB"
-    body_fontsize: int = 22
-    body_bold: bool = False
-    body_max_chars_per_line: int = 14
-    body_max_lines: int = 8
-    # Card backdrop — broadcast-navy + heavy transparency so the video
-    # behind the sidebar stays legible.
-    bg_color: str = "#0F1B2C"
-    bg_opacity: int = 55
-    # Geometry — fractions of frame dim. Sidebar mode: anchored to
-    # screen edge, vertically centered.
-    position: str = "left"                  # "left" | "right"
-    width_pct: float = 0.30                 # card width as fraction of frame
-    margin_x_pct: float = 0.025             # offset from anchored edge
-    padding_x_pct: float = 0.025
-    padding_y_pct: float = 0.030
-    title_body_gap_pct: float = 0.020
-    # Accent stripe on the screen-edge side (broadcast convention).
-    accent_color: str = "#DC2626"
-    accent_width_pct: float = 0.005
-    # Thin divider between title and body.
-    divider_color: str = "#FFFFFF"
-    divider_opacity: int = 30
-    divider_height_px: int = 2
-    # Animation — slide in from the screen edge + fade.
-    fade_in_ms: int = 400
-    fade_out_ms: int = 350
-    slide_in_px: int = 60
-    font: str = "Microsoft YaHei"
+# (e.g. "default", "breaking", "interview"). Each value is a style
+# dataclass picked at render time by matching the overlay's `kind` to
+# the dataclass type. Storage on disk is dict-of-dicts (asdict round-
+# trips); the typed loader in presets.py coerces back to dataclass.
+#
+# The typed style classes were moved into core/composition/primitives/
+# by the PR 2 split; re-exported here so existing callers (presets,
+# preview, creations) keep working without import-path churn until
+# PR 5 timeline migration updates them.
+from .primitives.topic_strip import TopicStripStyle
+from .primitives.chapter_hero_card import ChapterHeroCardStyle
 
 
 # Registry of typed overlay-style classes by `kind` discriminator. Render
