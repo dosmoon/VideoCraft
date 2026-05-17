@@ -40,8 +40,8 @@ from core.composition.render import (
 from creations.news_desk import presets as nd_presets
 from materials.news_video.model import NewsVideoModel
 from core.composition.style import (
-    CompositionStyle, OutputGeometry, SubtitleStyle, WatermarkStyle,
-    default_overlay_styles,
+    CompositionStyle, OutputGeometry, SubtitleLineStyle, SubtitleStyle,
+    WatermarkStyle, default_overlay_styles,
 )
 from ui.dialog_utils import center_dialog_on_parent
 
@@ -57,10 +57,18 @@ def _default_render_style() -> CompositionStyle:
     """News-desk's fixed CompositionStyle — passthrough geometry +
     veryfast encode + the standard overlay style library. Components
     own subtitle / watermark / overlays at render time; this style is
-    only the scaffolding the renderer needs around them."""
+    only the scaffolding the renderer needs around them.
+
+    sub1/sub2 must be explicitly disabled: SubtitleStyle()'s defaults
+    have sub1.enabled=True, which would make preview.set_style push an
+    "enabled" sub1 to the JS bridge and render the placeholder
+    "字幕预览第一行 sub1" over the news_desk frame."""
     return CompositionStyle(
         output=OutputGeometry(mode="passthrough"),
-        subtitle=SubtitleStyle(),                       # blanked — components own subs
+        subtitle=SubtitleStyle(
+            sub1=SubtitleLineStyle(enabled=False),
+            sub2=SubtitleLineStyle(enabled=False),
+        ),
         watermark=WatermarkStyle(enabled=False),        # blanked — components own watermarks
         encode_preset="veryfast",
         overlay_styles=default_overlay_styles(),
