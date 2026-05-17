@@ -1,0 +1,17 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1920
+PlayResY: 1080
+ScaledBorderAndShadow: yes
+WrapStyle: 2
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: NewsDeskRect,Arial,12,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+Style: NewsDeskText,Arial,24,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:02.50,0:00:08.00,NewsDeskRect,,0,0,0,,{\an7\move(-12,480,48,480,0,400)\fad(400,350)\bord0\shad0\1c&H002C1B0F&\1a&H73&\p1}m 0 0 l 576 0 576 120 0 120{\p0}
+Dialogue: 1,0:00:02.50,0:00:08.00,NewsDeskRect,,0,0,0,,{\an7\move(-12,480,48,480,0,400)\fad(400,350)\bord0\shad0\1c&H002626DC&\1a&H00&\p1}m 0 0 l 9 0 9 120 0 120{\p0}
+Dialogue: 3,0:00:02.50,0:00:08.00,NewsDeskText,,0,0,0,,{\an7\move(45,512,105,512,0,400)\fad(400,350)\fnMicrosoft YaHei\fs56\1c&H00FFFFFF&\bord0\shad0\b1}第一章 开场

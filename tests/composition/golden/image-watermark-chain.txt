@@ -1,0 +1,3 @@
+# out_label: [v1]
+movie='<IMG>',scale=288:-1,format=rgba,colorchannelmixer=aa=1.000[wm]
+[v0][wm]overlay=W-w-57:H-h-32[v1]

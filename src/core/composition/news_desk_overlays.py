@@ -413,12 +413,17 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
 
 
-def build_news_desk_ass(specs: Iterable, *,
-                          target_w: int, target_h: int,
-                          overlay_styles: dict) -> str | None:
-    """Build a temp .ass file containing all TopicStrip + ChapterHeroCard
-    overlays for one render. Returns the file path, or None if there
-    were no rendered dialogues (so the caller can skip the filter)."""
+def build_news_desk_ass_str(specs: Iterable, *,
+                              target_w: int, target_h: int,
+                              overlay_styles: dict) -> str | None:
+    """Pure ASS-content builder for all TopicStrip + ChapterHeroCard
+    overlays in one render. Returns the full .ass file content as a str,
+    or None if no overlays produced dialogues (caller skips the filter).
+
+    Separated from the temp-file write so PR 2's primitive-split refactor
+    can byte-equality test against this output. The string contract is
+    what render.py and the golden tests both depend on.
+    """
     dialogues: list[str] = []
     for spec in specs:
         if isinstance(spec, TopicStripOverlay):
@@ -445,12 +450,26 @@ def build_news_desk_ass(specs: Iterable, *,
     if not dialogues:
         return None
 
-    body = _ASS_HEADER_TMPL.format(w=target_w, h=target_h) + \
+    return _ASS_HEADER_TMPL.format(w=target_w, h=target_h) + \
         "\n".join(dialogues) + "\n"
 
+
+def build_news_desk_ass(specs: Iterable, *,
+                          target_w: int, target_h: int,
+                          overlay_styles: dict) -> str | None:
+    """Thin write-to-tempfile wrapper around build_news_desk_ass_str.
+    Returns the file path so ffmpeg's subtitles= filter can consume it,
+    or None when there's nothing to render.
+    """
+    body = build_news_desk_ass_str(
+        specs, target_w=target_w, target_h=target_h,
+        overlay_styles=overlay_styles,
+    )
+    if body is None:
+        return None
     out_path = os.path.join(
         tempfile.gettempdir(),
-        f"composition-newsdesk-{os.getpid()}-{id(dialogues)}.ass",
+        f"composition-newsdesk-{os.getpid()}-{id(body)}.ass",
     )
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(body)

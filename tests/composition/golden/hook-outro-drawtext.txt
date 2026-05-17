@@ -1,0 +1,5 @@
+# hook
+drawtext=textfile='C\:/Users/51798/AppData/Local/Temp/composition-hook-PID-ID.txt':fontfile='C\:/Windows/Fonts/msyh.ttc':fontcolor=#FFFFFF:fontsize=48:x=(w-text_w)/2:y=h*0.25:borderw=3:bordercolor=#000000:box=1:boxcolor=#000000@0.70:boxborderw=10:enable='between(t,0,5.0)'
+
+# outro
+drawtext=textfile='C\:/Users/51798/AppData/Local/Temp/composition-outro-PID-ID.txt':fontfile='C\:/Windows/Fonts/msyh.ttc':fontcolor=#FFFFFF:fontsize=48:x=(w-text_w)/2:y=h*0.65 - text_h/2:borderw=3:bordercolor=#000000:box=1:boxcolor=#000000@0.70:boxborderw=10:enable='between(t,55.0,60.0)'
