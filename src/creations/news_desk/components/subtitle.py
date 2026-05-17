@@ -365,6 +365,51 @@ def _to_render_fragment(instance: dict, ctx: ProjectContext) -> dict:
     }
 
 
+def _compile(instance: dict, clip_range, ctx: ProjectContext) -> list:
+    """Timeline-IR compile — reads the SRT at compile time and emits
+    one subtitle_cue Element per cue (clip-relative times). All cues in
+    the track share the same style dict; Element.data carries the cue
+    text. Out-of-range cues drop in compile_timeline's _clip_to_range
+    pass; partial overlaps clamp there too.
+    """
+    from core.composition.timeline import Element
+    if not instance.get("enabled", True) or not instance.get("srt_path"):
+        return []
+    abs_path = _resolve_srt_path(instance, ctx)
+    if not abs_path or not os.path.isfile(abs_path):
+        return []
+
+    try:
+        import srt as _srt
+        with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+            cues = list(_srt.parse(f.read()))
+    except (OSError, ValueError):
+        return []
+
+    style_dict = {
+        "fontsize": int(instance.get("fontsize", 28)),
+        "color": instance.get("color", "#FFFFFF"),
+        "is_chinese": bool(instance.get("is_chinese", False)),
+        "bg_color": instance.get("bg_color", "#000000"),
+        "bg_opacity": (int(instance.get("bg_opacity", 0))
+                        if instance.get("bg_enabled", True) else 0),
+        "position": instance.get("position", "bottom"),
+        "block_margin_pct": int(
+            instance.get("block_margin_pct", 9)) / 100.0,
+    }
+    base = clip_range.start_sec
+    elements: list = []
+    for cue in cues:
+        elements.append(Element(
+            kind="subtitle_cue",
+            start_sec=cue.start.total_seconds() - base,
+            end_sec=cue.end.total_seconds() - base,
+            style=style_dict,
+            data={"text": cue.content},
+        ))
+    return elements
+
+
 register(ComponentSpec(
     kind="subtitle",
     name_key="tool.news_desk.kind.subtitle",
@@ -374,4 +419,5 @@ register(ComponentSpec(
     default_instance=_default_instance,
     build_property_panel=_build_property_panel,
     to_overlays=_to_render_fragment,
+    compile=_compile,
 ))

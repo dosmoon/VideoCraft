@@ -22,6 +22,30 @@ from typing import Callable
 OverlayRenderer = Callable[..., object]
 
 
+# ── Primitive catalog (design-intent kind names for timeline IR) ────────────
+#
+# Frozen set of every kind string an Element may carry. compile_timeline()
+# validates each emitted element against this set so typos in component
+# code fail loudly at compile time rather than silently producing renders
+# with missing elements.
+#
+# Note: this is the *design-intent* catalog (Element.kind names). The
+# renderer-registration kind names overlap mostly but not entirely —
+# the legacy "subtitle_libass" renderer corresponds to the "subtitle_cue"
+# primitive; "news_desk_ass" is a render-internal renderer that merges
+# topic_strip + chapter_hero_card dialogues. PR 4 reconciles the two
+# name spaces by switching render dispatch to match the primitive names.
+KNOWN_KINDS: frozenset[str] = frozenset({
+    "subtitle_cue",
+    "text_watermark",
+    "image_watermark",
+    "hook_text",
+    "outro_text",
+    "topic_strip",
+    "chapter_hero_card",
+})
+
+
 _registry: dict[str, OverlayRenderer] = {}
 
 

@@ -149,6 +149,31 @@ def _to_render_fragment(instance: dict, _ctx: ProjectContext) -> dict:
     return {"watermark": wm}
 
 
+def _compile(instance: dict, clip_range, _ctx) -> list:
+    """Timeline-IR compile — emits at most one image_watermark Element
+    spanning the full clip range. Empty path or disabled returns []."""
+    from core.composition.timeline import Element
+    if not instance.get("enabled", True) or not instance.get("image_path"):
+        return []
+    style_dict = {
+        "image_scale": max(0.02, min(0.50,
+            float(instance.get("scale_pct", 15)) / 100.0)),
+        "image_opacity": max(0, min(100, int(instance.get("opacity", 100)))),
+        "position": instance.get("position", "top-right"),
+        "margin_x_pct": max(0.0, min(0.20,
+            float(instance.get("margin_x_pct", 2)) / 100.0)),
+        "margin_y_pct": max(0.0, min(0.20,
+            float(instance.get("margin_y_pct", 2)) / 100.0)),
+    }
+    return [Element(
+        kind="image_watermark",
+        start_sec=0.0,
+        end_sec=clip_range.duration_sec,
+        style=style_dict,
+        data={"image_path": instance.get("image_path", "")},
+    )]
+
+
 register(ComponentSpec(
     kind="image_watermark",
     name_key="tool.news_desk.kind.image_watermark",
@@ -158,5 +183,6 @@ register(ComponentSpec(
     default_instance=_default_instance,
     build_property_panel=_build_property_panel,
     to_overlays=_to_render_fragment,
+    compile=_compile,
     import_sources=[],
 ))

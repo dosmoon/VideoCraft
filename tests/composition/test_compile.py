@@ -75,10 +75,10 @@ def test_compile_duration_passthrough():
 def test_compile_skips_disabled_components():
     on = FakeComponent(id="a", enabled=True,
                        emit=lambda cr, ctx: [
-                           Element(kind="x", start_sec=0.0, end_sec=1.0)])
+                           Element(kind="text_watermark", start_sec=0.0, end_sec=1.0)])
     off = FakeComponent(id="b", enabled=False,
                         emit=lambda cr, ctx: [
-                            Element(kind="y", start_sec=0.0, end_sec=1.0)])
+                            Element(kind="image_watermark", start_sec=0.0, end_sec=1.0)])
     tl = compile_timeline([on, off, on], _range(), _ctx())
     # Only the two enabled components produced tracks.
     assert [t.id for t in tl.tracks] == ["a", "a"]
@@ -89,12 +89,12 @@ def test_compile_assigns_z_base_by_index():
     an index slot — z_base reflects emitted order, not original order."""
     a = FakeComponent(id="a", enabled=True,
                       emit=lambda cr, ctx: [
-                          Element(kind="x", start_sec=0.0, end_sec=1.0)])
+                          Element(kind="text_watermark", start_sec=0.0, end_sec=1.0)])
     off = FakeComponent(id="b", enabled=False,
                         emit=lambda cr, ctx: [])
     c = FakeComponent(id="c", enabled=True,
                       emit=lambda cr, ctx: [
-                          Element(kind="x", start_sec=0.0, end_sec=1.0)])
+                          Element(kind="text_watermark", start_sec=0.0, end_sec=1.0)])
     tl = compile_timeline([a, off, c], _range(), _ctx())
     # a is at index 0 → z_base 10; off skipped; c is at index 2 → z_base 30
     assert [(t.id, t.z_base) for t in tl.tracks] == [("a", 10), ("c", 30)]
@@ -102,9 +102,9 @@ def test_compile_assigns_z_base_by_index():
 
 def test_compile_drops_elements_fully_outside_range():
     comp = FakeComponent(emit=lambda cr, ctx: [
-        Element(kind="x", start_sec=-5.0, end_sec=-1.0),    # before
-        Element(kind="x", start_sec=100.0, end_sec=120.0),  # after
-        Element(kind="x", start_sec=10.0, end_sec=20.0),    # in range
+        Element(kind="text_watermark", start_sec=-5.0, end_sec=-1.0),    # before
+        Element(kind="text_watermark", start_sec=100.0, end_sec=120.0),  # after
+        Element(kind="text_watermark", start_sec=10.0, end_sec=20.0),    # in range
     ])
     tl = compile_timeline([comp], _range(0.0, 60.0), _ctx())
     assert len(tl.tracks) == 1
@@ -115,8 +115,8 @@ def test_compile_drops_elements_fully_outside_range():
 
 def test_compile_clamps_partial_overlap():
     comp = FakeComponent(emit=lambda cr, ctx: [
-        Element(kind="x", start_sec=-2.0, end_sec=3.0),     # head clipped
-        Element(kind="x", start_sec=58.0, end_sec=65.0),    # tail clipped
+        Element(kind="text_watermark", start_sec=-2.0, end_sec=3.0),     # head clipped
+        Element(kind="text_watermark", start_sec=58.0, end_sec=65.0),    # tail clipped
     ])
     tl = compile_timeline([comp], _range(0.0, 60.0), _ctx())
     elements = tl.tracks[0].elements

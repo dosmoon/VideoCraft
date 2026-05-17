@@ -17,6 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from .primitives import KNOWN_KINDS
 from .timeline import CompositionTimeline, Element, Track
 
 
@@ -77,13 +78,15 @@ def compile_timeline(
     """Walk components in sidebar order, emit element lists, wrap into
     tracks with z_base from position. Disabled components are dropped
     entirely. Elements outside [0, duration] are dropped; partial
-    overlaps get clamped to the range.
+    overlaps get clamped to the range. Element.kind must be in the
+    primitive catalog (primitives.KNOWN_KINDS); typos raise ValueError.
     """
     tracks: list[Track] = []
     for index, ci in enumerate(components):
         if not ci.is_enabled():
             continue
         elements = ci.compile(clip_range, ctx)
+        _validate_kinds(elements, ci)
         kept = _clip_to_range(elements, clip_range.duration_sec)
         tracks.append(Track(
             id=ci.id,
@@ -96,6 +99,20 @@ def compile_timeline(
         duration_sec=clip_range.duration_sec,
         tracks=tracks,
     )
+
+
+def _validate_kinds(elements: list[Element],
+                      ci: ComponentInstance) -> None:
+    """Component compile() must only emit elements whose kind is in the
+    primitive catalog. Anything else is a programming error — fail loud
+    rather than silently render-missing.
+    """
+    for e in elements:
+        if e.kind not in KNOWN_KINDS:
+            raise ValueError(
+                f"Component {ci.kind!r}/{ci.id!r} emitted Element with "
+                f"unknown kind {e.kind!r}. Known kinds: "
+                f"{sorted(KNOWN_KINDS)}.")
 
 
 def _clip_to_range(

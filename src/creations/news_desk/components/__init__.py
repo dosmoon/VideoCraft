@@ -104,6 +104,15 @@ class ComponentSpec:
     # the render (also use `enabled` flag for the same effect).
     to_overlays: Callable = None               # (instance, ctx) -> list
 
+    # Timeline-IR compile: pure function emitting a list of timeline
+    # Elements for this instance. PR 3 (Axis 7.2/7.6) — runs alongside
+    # to_overlays during the migration; PR 4 wires it to render. Signature:
+    #   (instance: dict, clip_range: ClipRange, ctx: CompileContext)
+    #     -> list[core.composition.timeline.Element]
+    # Must be pure: no UI, no writes, no side effects beyond reading
+    # material data. Element.kind must be in primitives.KNOWN_KINDS.
+    compile: Callable = None
+
     # Import options shown in the property panel ([⇩ Import...]).
     import_sources: list = field(default_factory=list)
 
@@ -131,6 +140,43 @@ def spec_for_instance(instance: dict) -> ComponentSpec | None:
     if not isinstance(instance, dict):
         return None
     return REGISTRY.get(instance.get("kind", ""))
+
+
+# ── ComponentInstance adapter for timeline-IR compile_timeline() ────────────
+#
+# news_desk stores components as dict instances; the engine's
+# ComponentInstance protocol expects objects with kind/id/is_enabled()/
+# compile(). This adapter bridges so the dict pipeline can feed into
+# core.composition.compile.compile_timeline() without rewriting all
+# components as classes.
+
+class ComponentDictAdapter:
+    """Wraps a news_desk instance dict + its registered ComponentSpec to
+    satisfy core.composition.compile.ComponentInstance protocol.
+
+    PR 3 introduces this as a thin shim; PR 4 wires news_desk's render
+    pipeline to feed compile_timeline() via these adapters. PR 5 may
+    drop it if the dict-based config becomes object-based.
+    """
+    def __init__(self, instance_dict: dict):
+        self.instance = instance_dict
+        self._spec = spec_for_instance(instance_dict)
+
+    @property
+    def kind(self) -> str:
+        return self.instance.get("kind", "")
+
+    @property
+    def id(self) -> str:
+        return self.instance.get("id", "")
+
+    def is_enabled(self) -> bool:
+        return bool(self.instance.get("enabled", True))
+
+    def compile(self, clip_range, ctx):
+        if self._spec is None or self._spec.compile is None:
+            return []
+        return self._spec.compile(self.instance, clip_range, ctx)
 
 
 # ── Side-effect imports — each module calls register() on import ────────────

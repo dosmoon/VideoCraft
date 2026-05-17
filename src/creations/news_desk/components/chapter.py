@@ -757,6 +757,50 @@ def _to_render_fragment(instance: dict, _ctx: ProjectContext) -> dict:
     return {"overlays": overlays}
 
 
+def _compile(instance: dict, clip_range, _ctx) -> list:
+    """Timeline-IR compile — mirrors _to_render_fragment semantics but
+    emits core.composition.timeline.Element instances (clip-relative
+    times). Per chapter: optionally a topic_strip and/or a chapter_hero_
+    card Element. Pure function; safe to call repeatedly."""
+    from core.composition.timeline import Element
+    if not instance.get("enabled", True):
+        return []
+    schedule = instance.get("schedule") or []
+    if not schedule:
+        return []
+    modes = instance.get("modes") or {}
+    style = instance.get("style") or {}
+    base = clip_range.start_sec
+    elements: list = []
+
+    for ch in schedule:
+        s = float(ch.get("start_sec", 0)) - base
+        e = float(ch.get("end_sec", 0)) - base
+        title = str(ch.get("title", "")).strip()
+        refined = str(ch.get("refined", "")).strip()
+        if e <= s:
+            continue
+
+        if modes.get("top_strip") and title:
+            elements.append(Element(
+                kind="topic_strip", start_sec=s, end_sec=e,
+                data={"topic_text": title, "style_class": "default"},
+            ))
+
+        if modes.get("start_card") and (title or refined):
+            sc = style.get("start_card", {}) or {}
+            dur = float(sc.get("duration_sec", 6))
+            inline = {k: v for k, v in sc.items() if k != "duration_sec"}
+            elements.append(Element(
+                kind="chapter_hero_card",
+                start_sec=s, end_sec=min(e, s + dur),
+                data={"title": title, "body": refined,
+                       "inline_style": inline, "style_class": "default"},
+            ))
+
+    return elements
+
+
 register(ComponentSpec(
     kind="chapter",
     name_key="tool.news_desk.kind.chapter",
@@ -766,6 +810,7 @@ register(ComponentSpec(
     default_instance=_default_instance,
     build_property_panel=_build_property_panel,
     to_overlays=_to_render_fragment,
+    compile=_compile,
     # No host-rendered import buttons — chapter owns its own [Import]
     # button inline in the toolbar (with explanation dialog).
     import_sources=[],
