@@ -1,10 +1,7 @@
 """outro_text primitive — clip-closing text card (last N seconds).
 
-Implementation: ffmpeg drawtext filter with role='outro'. Shares
-position + enable-expression logic with hook_text through the
-drawtext_helpers.drawtext_filter() helper. HookOutroStyle (which
-bundles both hook and outro visual fields) still lives in style.py
-until PR 5 splits it per Axis 7.5.
+Implementation: ffmpeg drawtext filter with role='outro'. Reads styling
+from element.style (no engine-level CompositionStyle reach).
 """
 
 from __future__ import annotations
@@ -17,8 +14,10 @@ KIND = "outro_text"
 
 
 def _renderer(job, prev_label, ctx):
+    text = job.data.get("text", "")
+    style_dict = job.data.get("style") or {}
     snippet = drawtext_filter(
-        job.data["text"], role="outro", ho=ctx.style.hook_outro,
+        text, role="outro", style=style_dict,
         duration=ctx.duration, aspect_ratio=ctx.aspect,
         tmp_files=ctx.tmp_files, short_edge=ctx.short_edge)
     if not snippet:

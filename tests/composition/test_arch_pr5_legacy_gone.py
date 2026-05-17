@@ -20,14 +20,17 @@ from core.composition.render import CompositionRequest
 
 EXPECTED_REQ_FIELDS = {
     "source_video", "start_sec", "end_sec", "output_path",
-    "style", "timeline", "crop_rect",
+    "output_geometry", "encode_preset", "timeline", "crop_rect",
 }
 
-# Legacy fields the PR 5 cleanup removed. Any reappearance fails this test.
+# Legacy fields the timeline migration removed. Any reappearance fails.
+# `style: CompositionStyle` went away too — engine no longer accepts the
+# clip-shaped god object; geometry + encode_preset are top-level.
 FORBIDDEN_REQ_FIELDS = {
     "source_srt", "source_srt_secondary",
     "hook_text", "outro_text",
     "overlays", "extra_subtitles", "extra_watermarks",
+    "style",
 }
 
 

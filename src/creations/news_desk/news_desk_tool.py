@@ -39,10 +39,7 @@ from core.composition.render import (
 )
 from creations.news_desk import presets as nd_presets
 from materials.news_video.model import NewsVideoModel
-from core.composition.style import (
-    CompositionStyle, OutputGeometry, SubtitleLineStyle, SubtitleStyle,
-    WatermarkStyle, default_overlay_styles,
-)
+from core.composition.style import OutputGeometry
 from ui.dialog_utils import center_dialog_on_parent
 
 # Importing the package triggers each component module's register()
@@ -53,26 +50,10 @@ from creations.news_desk import components as nd_components
 DERIVATIVE_TYPE = "news_desk"
 
 
-def _default_render_style() -> CompositionStyle:
-    """News-desk's fixed CompositionStyle — passthrough geometry +
-    veryfast encode + the standard overlay style library. Components
-    own subtitle / watermark / overlays at render time; this style is
-    only the scaffolding the renderer needs around them.
-
-    sub1/sub2 must be explicitly disabled: SubtitleStyle()'s defaults
-    have sub1.enabled=True, which would make preview.set_style push an
-    "enabled" sub1 to the JS bridge and render the placeholder
-    "字幕预览第一行 sub1" over the news_desk frame."""
-    return CompositionStyle(
-        output=OutputGeometry(mode="passthrough"),
-        subtitle=SubtitleStyle(
-            sub1=SubtitleLineStyle(enabled=False),
-            sub2=SubtitleLineStyle(enabled=False),
-        ),
-        watermark=WatermarkStyle(enabled=False),        # blanked — components own watermarks
-        encode_preset="veryfast",
-        overlay_styles=default_overlay_styles(),
-    )
+# Output geometry for news_desk renders. News_desk runs at the source
+# video's natural dimensions (passthrough) — overlay components paint
+# on top, no reframe or scaling happens.
+_NEWSDESK_GEOMETRY = OutputGeometry(mode="passthrough")
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -694,15 +675,13 @@ class NewsDeskApp(ToolBase):
     # ── Preview push ──────────────────────────────────────────────────────
 
     def _push_preview(self) -> None:
-        """Build the current timeline and push it to the preview via the
-        unified set_timeline bridge. set_style still drives output geometry
-        (passthrough mode, aspect, encode_preset) — those live on style.
-        Per-element rendering data rides the timeline."""
+        """Push output geometry + timeline to preview. News_desk doesn't
+        use CompositionStyle — geometry alone is enough since per-element
+        styling rides on the timeline elements themselves."""
         if self._preview is None:
             return
         try:
-            style = _default_render_style()
-            self._preview.set_style(style)
+            self._preview.set_geometry(_NEWSDESK_GEOMETRY)
             short = (min(self._src_w, self._src_h)
                       if self._src_w and self._src_h else 1080)
             aspect = (f"{self._src_w}:{self._src_h}"
@@ -910,8 +889,9 @@ class NewsDeskApp(ToolBase):
             source_video=src,
             start_sec=0.0, end_sec=self._duration,
             output_path=out,
-            style=_default_render_style(),
+            output_geometry=_NEWSDESK_GEOMETRY,
             timeline=timeline,
+            encode_preset="veryfast",
         )
         threading.Thread(
             target=self._export_thread, args=(req,), daemon=True).start()
@@ -976,8 +956,9 @@ class NewsDeskApp(ToolBase):
             source_video=src,
             start_sec=ws, end_sec=we,
             output_path=out,
-            style=_default_render_style(),
+            output_geometry=_NEWSDESK_GEOMETRY,
             timeline=timeline,
+            encode_preset="veryfast",
         )
         threading.Thread(
             target=self._export_thread, args=(req,), daemon=True).start()

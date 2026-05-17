@@ -1835,7 +1835,8 @@ class ClipToolApp(ToolBase):
                 source_video=video_path,
                 start_sec=start, end_sec=end,
                 output_path=out_path,
-                style=self._current_style,
+                output_geometry=self._current_style.output,
+                encode_preset=self._current_style.encode_preset,
                 crop_rect=self._effective_crop(src_idx),
                 timeline=timeline,
             )))
@@ -2146,7 +2147,8 @@ class ClipToolApp(ToolBase):
             source_video=video_path,
             start_sec=start, end_sec=end,
             output_path=out_path,
-            style=self._current_style,
+            output_geometry=self._current_style.output,
+            encode_preset=self._current_style.encode_preset,
             crop_rect=self._effective_crop(src_idx),
             timeline=timeline,
         )

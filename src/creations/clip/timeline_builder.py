@@ -103,6 +103,8 @@ def build_clip_timeline(
         z += 10
 
     ho = style.hook_outro
+    hook_outro_style_dict = _hook_outro_style_dict(ho)
+
     if hook_text and ho.hook_duration_sec > 0:
         end = min(clip_range.duration_sec, float(ho.hook_duration_sec))
         if end > 0:
@@ -112,7 +114,8 @@ def build_clip_timeline(
                 elements=[Element(
                     kind="hook_text",
                     start_sec=0.0, end_sec=end,
-                    data={"text": hook_text},
+                    data={"text": hook_text,
+                           "style": hook_outro_style_dict},
                 )],
             ))
             z += 10
@@ -128,7 +131,8 @@ def build_clip_timeline(
                     kind="outro_text",
                     start_sec=start_sec,
                     end_sec=clip_range.duration_sec,
-                    data={"text": outro_text},
+                    data={"text": outro_text,
+                           "style": hook_outro_style_dict},
                 )],
             ))
             z += 10
@@ -137,6 +141,25 @@ def build_clip_timeline(
         duration_sec=clip_range.duration_sec,
         tracks=tracks,
     )
+
+
+def _hook_outro_style_dict(ho) -> dict:
+    """Translate clip's HookOutroStyle dataclass into a flat dict the
+    drawtext_helpers.drawtext_filter renderer reads from element.style."""
+    return {
+        "font": ho.font,
+        "size": ho.size,
+        "color": ho.color,
+        "bg_color": ho.bg_color,
+        "bg_opacity": ho.bg_opacity,
+        "stroke_color": ho.stroke_color,
+        "stroke_width": ho.stroke_width,
+        "box_padding": ho.box_padding,
+        "hook_position": ho.hook_position,
+        "outro_position": ho.outro_position,
+        "hook_duration_sec": ho.hook_duration_sec,
+        "outro_duration_sec": ho.outro_duration_sec,
+    }
 
 
 def _srt_to_subtitle_elements(

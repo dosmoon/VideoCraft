@@ -17,8 +17,24 @@ import os
 import tempfile
 
 from .fonts import hook_outro_font_path, y_expr_for_position
-from .style import HookOutroStyle
 from .text_layout import wrap_hook_outro
+
+
+# Default field values for drawtext_filter when an element.style omits them.
+# Pulled from the original HookOutroStyle dataclass defaults so behavior
+# stays identical pre/post engine-style decoupling.
+_HOOK_OUTRO_DEFAULTS = {
+    "font": "Microsoft YaHei",
+    "size": 48,
+    "color": "#FFFFFF",
+    "bg_color": "#000000",
+    "bg_opacity": 70,
+    "stroke_color": "#000000",
+    "stroke_width": 3,
+    "box_padding": 10,
+    "hook_position": "upper-third",
+    "outro_position": "lower-third",
+}
 
 
 def hex_to_drawtext_rgba(hex_color: str, alpha: float) -> str:
@@ -29,27 +45,38 @@ def hex_to_drawtext_rgba(hex_color: str, alpha: float) -> str:
     return f"white@{a:.2f}"
 
 
-def drawtext_filter(text: str, *, role: str, ho: HookOutroStyle,
+def drawtext_filter(text: str, *, role: str, style: dict,
                       duration: float, aspect_ratio: tuple[int, int],
                       tmp_files: list[str], short_edge: int = 1080) -> str:
     """Build a drawtext snippet for hook (first hook_duration_sec) or outro
     (last outro_duration_sec). role ∈ {'hook', 'outro'}.
 
+    `style` is a flat dict with hook/outro rendering fields — font, size,
+    color, bg_color, bg_opacity, stroke_color, stroke_width, box_padding,
+    hook_position / outro_position, hook_duration_sec / outro_duration_sec.
+    The legacy HookOutroStyle dataclass is no longer required at render
+    time; engine reads dict directly.
+
     Multi-line behaviour: text is wrapped to fit the target frame width
     via core.composition.text_layout.wrap_hook_outro (same call as the
     WebView preview), then written to a temp file consumed by drawtext's
-    `textfile=` parameter. `text=` doesn't reliably accept newlines, so
-    going through a file is the only escape-safe path. The temp file is
-    appended to tmp_files for the caller to clean up after ffmpeg returns.
-
-    `short_edge` lets passthrough renders pass the actual source short
-    edge so wrap budgets scale with the real frame width.
+    `textfile=` parameter. The temp file is appended to tmp_files for the
+    caller to clean up after ffmpeg returns.
     """
     if not text:
         return ""
 
-    font_path = hook_outro_font_path(ho.font)
-    lines = wrap_hook_outro(text, aspect_ratio, font_path, ho.size,
+    def _g(key, default=None):
+        v = style.get(key)
+        if v is None:
+            v = _HOOK_OUTRO_DEFAULTS.get(key, default)
+        return v
+
+    font = _g("font")
+    size = int(_g("size"))
+    color = _g("color")
+    font_path = hook_outro_font_path(font)
+    lines = wrap_hook_outro(text, aspect_ratio, font_path, size,
                               short_edge=short_edge)
     if not lines:
         return ""
@@ -67,11 +94,13 @@ def drawtext_filter(text: str, *, role: str, ho: HookOutroStyle,
     tmp_files.append(tmp_path)
 
     if role == "hook":
-        position = ho.hook_position
-        enable = f"between(t,0,{ho.hook_duration_sec})"
+        position = _g("hook_position")
+        hook_dur = float(_g("hook_duration_sec", 5.0))
+        enable = f"between(t,0,{hook_dur})"
     else:
-        position = ho.outro_position
-        start = max(0.0, duration - ho.outro_duration_sec)
+        position = _g("outro_position")
+        outro_dur = float(_g("outro_duration_sec", 5.0))
+        start = max(0.0, duration - outro_dur)
         enable = f"between(t,{start},{duration})"
 
     fontfile_ff = font_path.replace(":", "\\:")
@@ -80,18 +109,20 @@ def drawtext_filter(text: str, *, role: str, ho: HookOutroStyle,
     parts = [
         f"drawtext=textfile='{textfile_ff}'",
         f"fontfile='{fontfile_ff}'",
-        f"fontcolor={ho.color}",
-        f"fontsize={ho.size}",
+        f"fontcolor={color}",
+        f"fontsize={size}",
         "x=(w-text_w)/2",
         f"y={y_expr}",
     ]
-    if ho.stroke_width > 0:
-        parts.append(f"borderw={int(ho.stroke_width)}")
-        parts.append(f"bordercolor={ho.stroke_color}")
-    if ho.bg_opacity > 0:
+    stroke_width = int(_g("stroke_width"))
+    if stroke_width > 0:
+        parts.append(f"borderw={stroke_width}")
+        parts.append(f"bordercolor={_g('stroke_color')}")
+    bg_opacity = int(_g("bg_opacity"))
+    if bg_opacity > 0:
         parts.append("box=1")
-        opacity = max(0.0, min(1.0, ho.bg_opacity / 100.0))
-        parts.append(f"boxcolor={ho.bg_color}@{opacity:.2f}")
-        parts.append(f"boxborderw={int(ho.box_padding)}")
+        opacity = max(0.0, min(1.0, bg_opacity / 100.0))
+        parts.append(f"boxcolor={_g('bg_color')}@{opacity:.2f}")
+        parts.append(f"boxborderw={int(_g('box_padding'))}")
     parts.append(f"enable='{enable}'")
     return ":".join(parts)

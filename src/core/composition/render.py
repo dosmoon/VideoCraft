@@ -54,18 +54,21 @@ ProgressCallback = Callable[[str, int], None]   # (stage, percent 0-100)
 class CompositionRequest:
     """All inputs needed for one render_composition() call.
 
-    PR 5 collapsed the legacy 5-channel "what to draw" fields into the
-    single `timeline` IR — callers (clip / news_desk) build a
-    CompositionTimeline via their own builders and hand it over here.
-    `style` still supplies output geometry + encode preset; per-element
-    visual data lives in timeline.tracks[i].elements[j].style/data.
+    Engine API speaks purely "what to render" — `timeline` carries the
+    visual content (each Element holds its own style/data dict), and
+    `output_geometry` / `encode_preset` are the only knobs the engine
+    needs about HOW to write the mp4. CompositionStyle (clip's UI
+    editor dataclass) is no longer part of the engine API; both clip
+    and news_desk build their CompositionRequest from their own
+    per-creation config.
     """
     source_video: str
     start_sec: float
     end_sec: float
     output_path: str
-    style: CompositionStyle                          # output geometry + encode preset
+    output_geometry: "OutputGeometry"                # crop + scale + aspect
     timeline: "CompositionTimeline"                  # required; "what to draw"
+    encode_preset: str = "veryfast"                  # ffmpeg x264 preset
     crop_rect: Optional[dict] = None                 # {x,y,w,h} normalized; None = center crop
 
 
@@ -295,7 +298,6 @@ class _RenderCtx:
     duration: float
     aspect: tuple[int, int]
     short_edge: int
-    style: CompositionStyle
     tmp_files: list[str]
     _label_seq: int = 0
 
@@ -365,14 +367,21 @@ from typing import Iterable
 
 def build_news_desk_ass_str(specs: Iterable, *,
                               target_w: int, target_h: int,
-                              overlay_styles: dict) -> str | None:
+                              overlay_styles: dict | None = None) -> str | None:
     """Pure ASS-content builder for all TopicStrip + ChapterHeroCard
     overlays in one render. Returns the full .ass file content as a str,
     or None if no overlays produced dialogues (caller skips the filter).
 
+    `overlay_styles` is the named-style library; when None / empty we
+    fall back to default_overlay_styles() so callers don't need to
+    thread the library through engine APIs.
+
     Separated from the temp-file write so PR 2's primitive-split refactor
     can byte-equality test against this output via the golden suite.
     """
+    from .style import default_overlay_styles
+    if not overlay_styles:
+        overlay_styles = default_overlay_styles()
     dialogues: list[str] = []
     for spec in specs:
         if isinstance(spec, _topic_strip.TopicStripSpec):
@@ -544,7 +553,7 @@ def _timeline_to_overlay_jobs(
                     if txt:
                         jobs.append(_OverlayJob(
                             kind="hook_text", z_order=z_base + e.z_offset,
-                            data={"text": txt}))
+                            data={"text": txt, "style": e.style}))
 
             elif kind == "outro_text":
                 for e in elements:
@@ -552,7 +561,7 @@ def _timeline_to_overlay_jobs(
                     if txt:
                         jobs.append(_OverlayJob(
                             kind="outro_text", z_order=z_base + e.z_offset,
-                            data={"text": txt}))
+                            data={"text": txt, "style": e.style}))
 
             elif kind == "topic_strip":
                 for e in elements:
@@ -578,12 +587,12 @@ def _timeline_to_overlay_jobs(
         # Match legacy behaviour: caller-driven z + sort-by-input-z so the
         # merged ASS preserves the relative stacking the timeline encoded.
         news_desk_specs.sort(key=lambda s: s.z_order if hasattr(s, "z_order") else 0)
-        overlay_styles = (req.style.overlay_styles if req.style is not None
-                            else {}) or {}
+        # The overlay-style library is a news_desk-internal default; the
+        # orchestrator resolves missing entries via default_overlay_styles()
+        # so callers never need to thread it through req.
         jobs.append(_OverlayJob(
             kind="news_desk_ass", z_order=news_desk_z,
-            data={"specs": news_desk_specs,
-                   "overlay_styles": overlay_styles}))
+            data={"specs": news_desk_specs, "overlay_styles": {}}))
 
     return jobs
 
@@ -691,7 +700,7 @@ def render_composition(
     Raises RuntimeError on ffmpeg failure. Raises InterruptedError when
     cancel_check returns True mid-render.
     """
-    style = req.style
+    geom = req.output_geometry
 
     src_w, src_h = probe_video_resolution(req.source_video)
     if src_w == 0 or src_h == 0:
@@ -699,9 +708,9 @@ def render_composition(
 
     # Resolve effective output geometry. In passthrough mode the canvas
     # matches the source verbatim (no crop, no scale); in reframe mode
-    # the canvas is derived from style.output.aspect + short_edge and the
-    # source is center-cropped (or per-request crop_rect) to fit.
-    if style.output.mode == "passthrough":
+    # the canvas is derived from geom.aspect + short_edge and the source
+    # is center-cropped (or per-request crop_rect) to fit.
+    if geom.mode == "passthrough":
         target_w, target_h = src_w, src_h
         effective_aspect = (src_w, src_h)
         effective_short_edge = min(src_w, src_h)
@@ -709,13 +718,13 @@ def render_composition(
         cw = ch = cx = cy = 0    # unused
     else:
         target_w, target_h = _target_dims_for_aspect(
-            style.output.aspect_ratio(),
-            short_edge=style.output.short_edge,
+            geom.aspect_ratio(),
+            short_edge=geom.short_edge,
         )
-        effective_aspect = style.output.aspect_ratio()
-        effective_short_edge = style.output.short_edge
+        effective_aspect = geom.aspect_ratio()
+        effective_short_edge = geom.short_edge
         rect = req.crop_rect or _center_crop_rect(
-            src_w, src_h, aspect_ratio=style.output.aspect_ratio())
+            src_w, src_h, aspect_ratio=geom.aspect_ratio())
         cw, ch, cx, cy = _crop_rect_to_pixels(rect, src_w, src_h)
 
     duration = max(0.0, req.end_sec - req.start_sec)
@@ -736,7 +745,7 @@ def render_composition(
 
     # ── Build filter_complex via overlay dispatch ─────────────────────────
     parts: list[str] = []
-    if style.output.mode == "passthrough":
+    if geom.mode == "passthrough":
         # Source frame is the output frame — just normalize SAR.
         parts.append("[0:v]setsar=1[v0]")
     else:
@@ -752,7 +761,7 @@ def render_composition(
         target_w=target_w, target_h=target_h,
         duration=duration, aspect=effective_aspect,
         short_edge=effective_short_edge,
-        style=style, tmp_files=tmp_text_files,
+        tmp_files=tmp_text_files,
     )
 
     jobs = _timeline_to_overlay_jobs(
@@ -782,7 +791,7 @@ def render_composition(
         "-i", os.path.abspath(req.source_video),
         "-filter_complex", filter_complex,
         "-map", "[vout]", "-map", "0:a?",
-        "-c:v", "libx264", "-preset", style.encode_preset, "-crf", str(crf),
+        "-c:v", "libx264", "-preset", req.encode_preset, "-crf", str(crf),
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "192k",
         "-movflags", "+faststart",

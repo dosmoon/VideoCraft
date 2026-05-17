@@ -242,16 +242,19 @@ def test_golden_image_watermark_chain(tmp_path):
 
 def test_golden_hook_outro_drawtext():
     """Both hook and outro snippets — same primitive (drawtext + textfile),
-    different role/position/enable expression.
-    """
-    ho = HookOutroStyle()    # defaults
+    different role/position/enable expression. After the engine-style
+    decoupling, drawtext_filter takes a flat dict rather than the
+    HookOutroStyle dataclass; we feed it the dataclass defaults
+    converted to a dict so the golden stays comparable."""
+    from dataclasses import asdict
+    style_dict = asdict(HookOutroStyle())
     hook_snippet = _run_with_tmp_cleanup(lambda tmp: _drawtext_filter(
         "下集预告：他们这次去了哪里？",
-        role="hook", ho=ho, duration=60.0,
+        role="hook", style=style_dict, duration=60.0,
         aspect_ratio=(16, 9), tmp_files=tmp, short_edge=1080))
     outro_snippet = _run_with_tmp_cleanup(lambda tmp: _drawtext_filter(
         "感谢观看，下集再见",
-        role="outro", ho=ho, duration=60.0,
+        role="outro", style=style_dict, duration=60.0,
         aspect_ratio=(16, 9), tmp_files=tmp, short_edge=1080))
     actual = (
         f"# hook\n{_normalize_tmp_paths(hook_snippet)}\n\n"

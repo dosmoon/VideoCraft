@@ -49,13 +49,15 @@ def _range() -> ClipRange:
 
 
 def _stub_req(timeline=None) -> CompositionRequest:
-    """Minimum CompositionRequest body — _timeline_to_overlay_jobs only
-    reads req.style.overlay_styles, the rest is unused for the jobs the
-    test inspects. timeline is required since PR 5."""
+    """Minimum CompositionRequest body — timeline + output_geometry are
+    the only fields _timeline_to_overlay_jobs / render_composition read
+    that matter for these tests."""
+    from core.composition.style import OutputGeometry
     from core.composition.timeline import CompositionTimeline
     return CompositionRequest(
         source_video="", start_sec=0.0, end_sec=60.0,
-        output_path="", style=CompositionStyle(),
+        output_path="",
+        output_geometry=OutputGeometry(mode="passthrough"),
         timeline=timeline or CompositionTimeline(duration_sec=60.0),
     )
 
@@ -262,12 +264,13 @@ def test_timeline_to_overlay_jobs_skips_disabled_tracks(tmp_path):
 
 
 def test_timeline_is_required_field():
-    """PR 5 made timeline a required field — render path is unified."""
+    """timeline + output_geometry are required (no defaults)."""
     import pytest
+    from core.composition.style import OutputGeometry
     with pytest.raises(TypeError):
         CompositionRequest(
             source_video="", start_sec=0.0, end_sec=0.0, output_path="",
-            style=CompositionStyle(),
+            output_geometry=OutputGeometry(mode="passthrough"),
         )
 
 

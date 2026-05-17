@@ -167,6 +167,14 @@ class CompositionPreview:
     def set_clip_range(self, start_sec: float, end_sec: float) -> None:
         self._call_js(f"window.vc.setClipRange({start_sec}, {end_sec})")
 
+    def set_geometry(self, output) -> None:
+        """Push just output mode + aspect — used by timeline-driven
+        consumers (news_desk) that don't carry a CompositionStyle.
+        Timeline elements (via set_timeline) drive everything else."""
+        aspect = output.aspect_ratio()
+        self._call_js(f"window.vc.setOutputMode({json.dumps(output.mode)})")
+        self._call_js(f"window.vc.setAspect({aspect[0]}, {aspect[1]})")
+
     def set_style(self, style: CompositionStyle) -> None:
         payload = style_to_web_dict(style)
         aspect = payload.pop("aspect")
