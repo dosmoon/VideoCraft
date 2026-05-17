@@ -597,17 +597,22 @@ def _timeline_to_overlay_jobs(
     return jobs
 
 
-def _subtitle_elements_to_temp_srt(
-    elements: list, *, aspect_str: str, short_edge: int, tag: str,
-) -> str | None:
-    """Rebuild a temp SRT file from a subtitle_cue track's Elements
-    (already clip-relative timing), then run process_srt_split to wrap
-    long lines into multiple cues — the same wrap policy the legacy
-    _slice_and_wrap_cues uses, kept in one place by reusing the helper.
-    Returns the wrapped temp SRT path, or None on failure.
+def wrap_subtitle_elements(
+    elements: list, *, aspect_str: str, short_edge: int,
+) -> list[_srt.Subtitle]:
+    """Single source of subtitle-wrap policy for the timeline path.
+
+    Build raw cues from a subtitle_cue track's Elements (already
+    clip-relative timing), run them through process_srt_split with a
+    max_chars budget derived from aspect / fontsize / short_edge, and
+    return the wrapped _srt.Subtitle list. Both render (writes to temp
+    SRT for libass) and preview (converts to JSON for the JS bridge)
+    call this helper — guaranteeing same wrap on both sides.
+
+    Returns [] on empty input or wrap failure.
     """
     if not elements:
-        return None
+        return []
     style_dict = elements[0].style
     max_chars = compute_subtitle_max_chars(
         aspect_str,
@@ -615,7 +620,7 @@ def _subtitle_elements_to_temp_srt(
         bool(style_dict.get("is_chinese", False)),
         short_edge=short_edge,
     )
-    cues = [
+    raw_cues = [
         _srt.Subtitle(
             index=i + 1,
             start=timedelta(seconds=float(e.start_sec)),
@@ -625,27 +630,37 @@ def _subtitle_elements_to_temp_srt(
         for i, e in enumerate(elements)
         if e.end_sec > e.start_sec
     ]
-    if not cues:
-        return None
+    if not raw_cues:
+        return []
+    # process_srt_split takes a path (legacy signature) — pipe through
+    # a transient tmp file. The wrap output is what we return.
     raw_tmp = os.path.join(
         tempfile.gettempdir(),
-        f"composition-timeline-raw-{tag}-{os.getpid()}-{id(cues)}.srt")
+        f"composition-wrap-{os.getpid()}-{id(raw_cues)}.srt")
     try:
         with open(raw_tmp, "w", encoding="utf-8") as f:
-            f.write(_srt.compose(cues))
-        wrapped = list(process_srt_split(
+            f.write(_srt.compose(raw_cues))
+        return list(process_srt_split(
             raw_tmp, max_chars,
             is_chinese=bool(style_dict.get("is_chinese", False))))
     except Exception:
+        return []
+    finally:
         try:
             os.unlink(raw_tmp)
         except OSError:
             pass
-        return None
-    try:
-        os.unlink(raw_tmp)
-    except OSError:
-        pass
+
+
+def _subtitle_elements_to_temp_srt(
+    elements: list, *, aspect_str: str, short_edge: int, tag: str,
+) -> str | None:
+    """Wrap a subtitle_cue track via wrap_subtitle_elements and write
+    the result to a temp SRT for libass consumption. Returns the path,
+    or None on failure / empty wrap output.
+    """
+    wrapped = wrap_subtitle_elements(
+        elements, aspect_str=aspect_str, short_edge=short_edge)
     if not wrapped:
         return None
     final_tmp = os.path.join(

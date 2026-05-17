@@ -306,6 +306,14 @@ class CompositionPreview:
                         bg_color=sd.get("bg_color", "#000000"),
                         bg_opacity=int(sd.get("bg_opacity", 0)),
                     )
+                    # Apply the SAME wrap pass render uses so preview
+                    # cue text matches what libass burns. Without this
+                    # long cues overflow the preview frame while the
+                    # burned mp4 wraps them — a silent preview≠render
+                    # divergence.
+                    from .render import wrap_subtitle_elements
+                    wrapped = wrap_subtitle_elements(
+                        elements, aspect_str=aspect, short_edge=short_edge)
                     sub_payload.append({
                         "line": {
                             "fontsize": line.fontsize,
@@ -320,10 +328,10 @@ class CompositionPreview:
                         "block_margin_pct": float(
                             sd.get("block_margin_pct", 0.09)),
                         "cues": [
-                            {"start": float(e.start_sec),
-                              "end": float(e.end_sec),
-                              "text": str(e.data.get("text", ""))}
-                            for e in elements
+                            {"start": c.start.total_seconds(),
+                              "end": c.end.total_seconds(),
+                              "text": c.content}
+                            for c in wrapped
                         ],
                         "z_order": track.z_base,
                     })

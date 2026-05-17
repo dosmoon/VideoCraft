@@ -276,6 +276,58 @@ def test_timeline_is_required_field():
 
 # ── Preview adapter sanity (Tk-free dryrun) ─────────────────────────────────
 
+def test_preview_and_render_share_same_subtitle_wrap():
+    """Preview and render must run the SAME wrap pass on subtitle
+    elements. Without parity a long cue overflows the preview frame
+    while the burned mp4 wraps it (silent preview≠render divergence).
+    Guards the regression fixed in followup to the engine-style
+    decoupling commit.
+    """
+    from core.composition.preview import CompositionPreview
+    from core.composition.render import wrap_subtitle_elements
+    from core.composition.timeline import (
+        CompositionTimeline, Element, Track,
+    )
+
+    long_text = "这是一行非常非常长的中文字幕，长得需要被自动换行成两行甚至三行才能塞进画面"
+    elements = [
+        Element(kind="subtitle_cue", start_sec=0.0, end_sec=5.0,
+                style={"fontsize": 28, "is_chinese": True,
+                        "color": "#FFFFFF", "bg_color": "#000000",
+                        "bg_opacity": 0, "position": "bottom",
+                        "block_margin_pct": 0.09},
+                data={"text": long_text}),
+    ]
+    # Both ride the same wrap_subtitle_elements helper.
+    wrapped_render = wrap_subtitle_elements(
+        elements, aspect_str="16:9", short_edge=1080)
+    # Preview path via set_timeline must produce cues with same text
+    # content as wrapped_render — verify by capturing the JS payload.
+    preview = CompositionPreview.__new__(CompositionPreview)
+    calls: list[str] = []
+    preview._call_js = lambda code: calls.append(code)
+    timeline = CompositionTimeline(
+        duration_sec=10.0,
+        tracks=[Track(id="sub", component_kind="subtitle",
+                       z_base=10, enabled=True, elements=elements)],
+    )
+    preview.set_timeline(timeline, aspect="16:9", short_edge=1080)
+    # The setExtraSubtitles call carries the wrapped cue list.
+    extras_call = next(c for c in calls
+                        if c.startswith("window.vc.setExtraSubtitles"))
+    import json
+    payload_json = extras_call[len("window.vc.setExtraSubtitles("):-1]
+    payload = json.loads(payload_json)
+    preview_texts = [cue["text"] for cue in payload[0]["cues"]]
+    render_texts = [c.content for c in wrapped_render]
+    assert preview_texts == render_texts, (
+        f"preview wrap diverged from render wrap:\n"
+        f"  preview: {preview_texts}\n"
+        f"  render:  {render_texts}")
+    # Sanity: long input got wrapped to MORE than 1 cue.
+    assert len(render_texts) > 1, "fixture too short to exercise wrap"
+
+
 def test_preview_set_timeline_translates_without_jsbridge(monkeypatch):
     """CompositionPreview is a Tk/WebView widget but its set_timeline
     method does pure data translation before any _call_js. Stub out
