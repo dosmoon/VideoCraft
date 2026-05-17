@@ -5,7 +5,7 @@
 
 ---
 
-## ▶ 下次会话主题：PR 4 — News_desk 切到 timeline (render + preview)
+## ▶ 下次会话主题：PR 5 — Clip 切到 timeline + 删老 5 通道
 
 **Axis 1~7 全部锁定 + PR 1/2 + ADR-0006 已合 main**。设计稿在 `docs/design/composition-timeline-v0.md`，权威 ADR 在 `docs/adr/0006-composition-timeline-ir.md`。
 
@@ -17,35 +17,34 @@
 - PR 2 part 1/2：删 `news_desk_overlays.py` 491 行，topic_strip + chapter_hero_card primitive 落地，libass_helpers.py 引擎级 helper（commit 在 main，本会话）
 - PR 2 part 2/2：5 个 primitive（subtitle_cue / text_watermark / image_watermark / hook_text / outro_text）+ drawtext_helpers.py；render.py 979 → 816 行；统一 primitives 注册中心（commit `66cd2c0`）
 - PR 3：`compile_timeline()` 真实现 + `primitives.KNOWN_KINDS` 7 kind catalog + 4 个 news_desk component 各加 `_compile()` + `ComponentDictAdapter` bridge dict→Protocol（commit `37b4e71`）
-- 全程 202 测试 + 8 goldens byte-equal
+- PR 4：news_desk 切到 timeline——`CompositionRequest.timeline` 双路径 + `CompositionPreview.set_timeline()` + `_rebuild_timeline()` + 删 `_build_render_inputs`+`_rebase_overlays`；`subtitle_libass` → `subtitle_cue` 双命名 reconcile；8 新 e2e 测试验证 timeline→Spec roundtrip byte-equal vs chapter+topic_strip golden（commit `04c11f1`）
+- 全程 210 测试 + 11 goldens byte-equal
 
-### PR 4 干啥
+### PR 5 干啥
 
-把 news_desk 工作台切到 timeline 路径——render + preview 同时切。两个老 callers 仍能跑（双路径并存：`CompositionRequest.timeline` 字段可空，None 走老路）。
+最后一公里——clip 切到 timeline + 老路径彻底删干净。
 
-**具体步骤**（见设计稿 Axis 7.2 PR 4 行）：
-1. `core/composition/render.py` 的 `CompositionRequest` 加 `timeline: CompositionTimeline | None = None` 字段；render 主循环：if timeline → 从 timeline.tracks 走 element 喂 registry dispatch；else 走老 5 通道路径
-2. `CompositionPreview.set_timeline(tl)` 新增；WebView JS 加统一 `setTimeline()` 入口处理新形态（per Axis 6 "5 桥 → 1 桥"）
-3. `news_desk_tool.py`:
-   - 新增 `_rebuild_timeline() → CompositionTimeline`（用 ComponentDictAdapter 包 components + 调 `compile_timeline()`）
-   - `_do_render` / `_do_preview_render` 改成"compile → req.timeline"，把 overlays/extra_*/style 留空
-   - `_push_preview` 改成 `preview.set_timeline(tl)`
-   - 删 `_build_render_inputs` + `_rebase_overlays`
-4. **关键**: 写 1~2 个端到端 ASS golden（news_desk render→timeline→ass 跟 PR 2 baseline byte-equal）—— PR 4 的硬验收标准
-5. clip 仍走老路径（PR 5 才切）；5 个老 preview JS 桥保留
+**具体步骤**（见设计稿 Axis 7.2 + 7.5）：
+1. clip 端走 timeline:
+   - clip 的 hook_text/outro_text/sub1/sub2/watermark 全部封装成 ComponentInstance（或直接构造 Element 列表）喂 compile_timeline
+   - `clip_tool.py` 的 render/preview 调用全切 timeline
+2. 删 `CompositionRequest` 老字段：`overlays / extra_subtitles / extra_watermarks / hook_text / outro_text / source_srt / source_srt_secondary`（保留 `timeline / source_video / start_sec / end_sec / output_path / crop_rect / style.output`）
+3. 删 `CompositionPreview` 老 5 桥（`set_overlays / set_cues / set_cues_secondary / set_extra_subtitles / set_extra_watermarks / set_clip_meta`），`set_timeline` 改走真正的 JS 单桥 `window.vc.setTimeline()`，删 webview JS 老桥
+4. 删 render.py 的 `_named_overlay_jobs`（legacy 路径）+ `ExtraSubtitleSpec` / `ExtraWatermarkSpec` dataclass
+5. **WatermarkStyle 拆**：`primitives/text_watermark.py` 和 `image_watermark.py` 各持窄 Style（无 `type` discriminator），删 `style.py` 里的 `WatermarkStyle` 统一类；clip + news_desk 调用同步更新
+6. **HookOutroStyle 拆**：`primitives/hook_text.py` / `outro_text.py` 各持窄 Style，共享字段经 `libass_helpers.BaseTextStyle` 继承
+7. **render.py 抽 ASS string 纯函数 + 写 hook/outro/text-watermark 的 ASS-text golden**（行为不变的最后一道闸；为 PR 5 行为变更场景提供 byte-equal 验证）—— 可选，但推荐
+8. 架构 grep guard 加：`CompositionRequest` 字段集合 == {预期 5 字段}、`CompositionPreview` 不准有 `set_overlays` 等老方法、preview.html 不准含 `setOverlays`/`setCues` 等老 JS 入口
 
-**核心 dispatch 不一致**: PR 2 留了一个 "subtitle_libass" vs "subtitle_cue" 双命名。PR 4 reconcile：要么 render dispatch 改成 subtitle_cue，要么有个 element.kind → renderer.kind 翻译层。倾向前者。
+### PR 5 风险
 
-### 不在下次会话做
-
-- clip 切 timeline（PR 5）
-- 删 CompositionRequest 老 5 字段（PR 5）
-- 删 preview 5 桥（PR 5）
-- WatermarkStyle / HookOutroStyle 拆分（PR 5）
+- 中等：clip 多输出（N 个 hotclip = N 次 compile + N 个 render request），但每个调用是独立的，timeline 转换照搬 news_desk 模式
+- WatermarkStyle 拆: clip 持 `WatermarkStyle(type='text', ...)` 的代码要改成各持新窄 dataclass，~5 个 callsite
+- HookOutroStyle 同上
 
 ### 起点 HEAD
 
-`37b4e71` — "composition: PR 3 — compile_timeline real impl"，已 push origin/main。202 测试全绿；8 goldens byte-equal。
+`04c11f1` — "composition: PR 4 — news_desk migrated to timeline"，已 push origin/main。210 测试全绿；11 goldens byte-equal。
 
 ---
 
