@@ -487,15 +487,26 @@ def _build_chapter_hero_card_dialogues(
     card_w = max(80, int(style.width_pct * target_w))
     text_region_w = max(40, card_w - pad_x * 2 - accent_w)
 
-    # Title wraps up to title_max_lines; body to body_max_lines.
+    # Pixel-fit wrap budget — the char "unit" in _wrap_text_cjk_n is
+    # ~1 CJK char ≈ fontsize px (Latin counts as 0.5 unit ≈ 0.55*fs px).
+    # A 0.92 safety factor absorbs bold-weight glyph widening + per-char
+    # variance so we don't clip at the card edge. Static field
+    # body_max_chars_per_line is now an upper cap, not a default.
+    def _budget(region_px: int, fs: int) -> int:
+        return max(2, int(region_px * 0.92 / max(8, fs)))
+
+    title_budget = _budget(text_region_w, title_size)
+    body_budget = _budget(text_region_w, body_size)
+    user_cap = int(style.body_max_chars_per_line) or 0
+    if user_cap > 0:
+        body_budget = min(body_budget, user_cap)
+
     title_max_lines = max(1, int(style.title_max_lines))
     title_wrapped = _wrap_text_cjk_n(
-        title, max(4, int(style.body_max_chars_per_line * 0.9)),
-        title_max_lines,
+        title, title_budget, title_max_lines,
     ) if title else []
     body_wrapped = _wrap_text_cjk_n(
-        body, max(4, int(style.body_max_chars_per_line)),
-        max(1, int(style.body_max_lines)),
+        body, body_budget, max(1, int(style.body_max_lines)),
     ) if body else []
 
     n_title = len(title_wrapped)

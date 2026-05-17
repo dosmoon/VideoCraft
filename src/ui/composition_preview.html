@@ -594,15 +594,22 @@ function _drawChapterHeroCard(ov, ox, oy, cw, ch) {
   const widthPct = st.width_pct != null ? st.width_pct : 0.30;
   const cardW = Math.max(80, widthPct * cw);
   const textRegionW = Math.max(40, cardW - padX * 2 - accentW);
-  const bodyMaxChars = Math.max(4, st.body_max_chars_per_line != null ? st.body_max_chars_per_line : 14);
+  // Pixel-fit wrap budget — mirrors news_desk_overlays.py _budget().
+  // 0.92 safety factor absorbs bold-weight + per-char variance so the
+  // line doesn't clip the card edge. body_max_chars_per_line acts as
+  // an optional upper cap, not a default.
+  const _budget = (regionPx, fs) => Math.max(2, Math.floor(regionPx * 0.92 / Math.max(8, fs)));
+  const titleBudget = _budget(textRegionW, titleSize);
+  let bodyBudget = _budget(textRegionW, bodySize);
+  const userCap = st.body_max_chars_per_line != null ? Math.floor(st.body_max_chars_per_line) : 0;
+  if (userCap > 0) bodyBudget = Math.min(bodyBudget, userCap);
   const bodyMaxLines = Math.max(1, st.body_max_lines != null ? st.body_max_lines : 8);
   const titleMaxLines = Math.max(1, st.title_max_lines != null ? st.title_max_lines : 2);
-  const titleMaxChars = Math.max(4, Math.floor(bodyMaxChars * 0.9));
 
   const title = (ov.title || "").trim();
   const body  = (ov.body  || "").trim();
-  const titleWrapped = title ? _wrapTextCjkN(title, titleMaxChars, titleMaxLines) : [];
-  const bodyWrapped  = body  ? _wrapTextCjkN(body, bodyMaxChars, bodyMaxLines) : [];
+  const titleWrapped = title ? _wrapTextCjkN(title, titleBudget, titleMaxLines) : [];
+  const bodyWrapped  = body  ? _wrapTextCjkN(body, bodyBudget, bodyMaxLines) : [];
 
   if (titleWrapped.length === 0 && bodyWrapped.length === 0) return;
 
