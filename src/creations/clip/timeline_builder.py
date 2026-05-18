@@ -20,6 +20,7 @@ from core.composition.compile import ClipRange, CompileContext, compile_timeline
 from core.composition.style import CompositionStyle
 from core.composition.timeline import CompositionTimeline, Element, Track
 from creations.clip.components.subtitle import subtitle_adapters_from_style
+from creations.clip.components.watermark import watermark_adapters_from_style
 
 
 def build_clip_timeline(
@@ -70,32 +71,22 @@ def build_clip_timeline(
                 z_base=z, enabled=True, elements=t.elements))
             z += 10
 
-    if style.watermark.enabled:
-        wm = style.watermark
-        is_image = (wm.type == "image")
-        kind = "image_watermark" if is_image else "text_watermark"
-        elements = [Element(
-            kind=kind,
-            start_sec=0.0, end_sec=clip_range.duration_sec,
-            style={
-                "text_fontsize": wm.text_fontsize,
-                "text_color": wm.text_color,
-                "text_opacity": wm.text_opacity,
-                "image_scale": wm.image_scale,
-                "image_opacity": wm.image_opacity,
-                "position": wm.position,
-                "margin_x_pct": wm.margin_x_pct,
-                "margin_y_pct": wm.margin_y_pct,
-            },
-            data={
-                "text": (wm.text or "") if not is_image else "",
-                "image_path": (wm.image_path or "") if is_image else "",
-            },
-        )]
-        tracks.append(Track(
-            id="wm", component_kind="watermark",
-            z_base=z, enabled=True, elements=elements))
-        z += 10
+    # Watermark track (Step 5.2) — at most one adapter (text or image)
+    # via the legacy WatermarkStyle.type switch. Same z-restamping
+    # trick as subtitle so contiguous z stays preserved.
+    wm_adapters = watermark_adapters_from_style(style)
+    if wm_adapters:
+        ctx = CompileContext(
+            project=None, material_model=None,
+            instance_dir="", duration=clip_range.duration_sec)
+        wm_timeline = compile_timeline(wm_adapters, clip_range, ctx)
+        for t in wm_timeline.tracks:
+            if not t.elements:
+                continue
+            tracks.append(Track(
+                id="wm", component_kind="watermark",
+                z_base=z, enabled=True, elements=t.elements))
+            z += 10
 
     ho = style.hook_outro
     hook_outro_style_dict = _hook_outro_style_dict(ho)
