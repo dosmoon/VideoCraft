@@ -150,75 +150,134 @@ def test_fresh_components_deepcopy_independence():
     assert preset.components[0].get("enabled") is not False
 
 
-def test_fresh_components_strips_chapter_project_content():
-    """A preset baked with imported analysis.json (schedule + titles)
-    must not leak that content when applied to a new project."""
-    preset = nd_presets.NewsDeskPreset(
-        name="dirty",
-        components=[{
-            "kind": "chapter", "name": "章节", "enabled": True,
-            "modes": {"start_card": True},
-            "schedule": [
-                {"start_sec": 0, "end_sec": 60, "title": "项目A的章节",
-                 "refined": "项目A的描述", "key_points": ["a", "b"]},
-            ],
-            "titles": ["项目A候选标题1", "项目A候选标题2"],
-            "style": {"start_card": {"title_color": "#FF0000"}},
-        }],
-    )
-    fresh = nd_presets.fresh_components_for(preset)
-    ch = fresh[0]
-    assert ch["schedule"] == [], "chapter schedule leaked across projects"
-    assert ch["titles"] == [], "chapter titles leaked across projects"
-    # Style + modes survive (those are preset-worthy)
-    assert ch["modes"]["start_card"] is True
-    assert ch["style"]["start_card"]["title_color"] == "#FF0000"
+# ── save_user_preset schema enforcement ─────────────────────────────────────
 
-
-def test_fresh_components_strips_image_watermark_path():
-    """image_path is an absolute disk path — preset must not carry it."""
-    preset = nd_presets.NewsDeskPreset(
-        name="dirty",
-        components=[{
-            "kind": "image_watermark", "name": "台标", "enabled": True,
-            "image_path": r"D:\projects\old\logo.png",
-            "scale": 0.12, "position": "top-right",
-        }],
-    )
-    fresh = nd_presets.fresh_components_for(preset)
-    wm = fresh[0]
-    assert wm["image_path"] == "", "image_path leaked across projects"
-    assert wm["scale"] == 0.12          # style survives
-    assert wm["position"] == "top-right"
-
-
-# ── save_user_preset strip ──────────────────────────────────────────────────
-
-def test_save_user_preset_strips_project_content(tmp_path):
-    """Save-side defence: even if the workbench passes in a polluted
-    components list, the preset on disk must be clean — so re-loading
-    it later cannot resurrect prior project content."""
-    dirty = nd_presets.NewsDeskPreset(
+def test_save_user_preset_drops_project_content(tmp_path):
+    """The preset on-disk schema carries style only. Per-project fields
+    that a buggy caller might pass in (chapter schedule / titles,
+    image_path, srt_path) are absent from the serialized form — not
+    cleared-to-empty-string, but key-not-present (the schema rejected
+    them outright)."""
+    polluted = nd_presets.NewsDeskPreset(
         name="user_preset",
         components=[
             {"kind": "chapter", "name": "章节", "enabled": True,
-             "schedule": [{"title": "stale chapter"}],
+             "modes": {"start_card": True},
+             "schedule": [{"title": "stale"}],
              "titles": ["stale title"]},
             {"kind": "image_watermark", "name": "logo",
+             "scale": 0.12,
              "image_path": r"D:\old\logo.png"},
             {"kind": "subtitle", "name": "字幕",
-             "id": "fixed-id", "srt_path": r"D:\old\zh.srt"},
+             "fontsize": 28,
+             "srt_path": r"D:\old\zh.srt"},
         ],
     )
     with mock.patch.object(nd_presets, "PRESETS_PATH",
                              str(tmp_path / "news_desk.json")):
-        nd_presets.save_user_preset(dirty)
+        nd_presets.save_user_preset(polluted)
         raw = json.load(open(nd_presets.PRESETS_PATH, encoding="utf-8"))
     saved = raw["user_presets"]["user_preset"]["components"]
     by_kind = {c["kind"]: c for c in saved}
-    assert by_kind["chapter"]["schedule"] == []
-    assert by_kind["chapter"]["titles"] == []
-    assert by_kind["image_watermark"]["image_path"] == ""
-    assert by_kind["subtitle"]["srt_path"] == ""
-    # Subtitle id must be regenerated, not preserved
-    assert by_kind["subtitle"]["id"] != "fixed-id"
+    # Schema rejects these — not just emptied, gone
+    assert "schedule" not in by_kind["chapter"]
+    assert "titles" not in by_kind["chapter"]
+    assert "image_path" not in by_kind["image_watermark"]
+    assert "srt_path" not in by_kind["subtitle"]
+    # Style survives
+    assert by_kind["chapter"]["modes"]["start_card"] is True
+    assert by_kind["image_watermark"]["scale"] == 0.12
+    assert by_kind["subtitle"]["fontsize"] == 28
+
+
+# ── audit_preset_pollution ──────────────────────────────────────────────────
+
+def test_audit_clean_preset_returns_empty():
+    """A preset built fresh has nothing to report."""
+    preset = nd_presets.get_preset("新闻发布会")
+    assert nd_presets.audit_preset_pollution(preset) == []
+
+
+def test_audit_detects_chapter_pollution():
+    polluted = nd_presets.NewsDeskPreset(
+        name="legacy",
+        components=[{
+            "kind": "chapter", "name": "章节",
+            "schedule": [{"x": 1}, {"x": 2}, {"x": 3}],
+            "titles": ["t1", "t2"],
+        }],
+    )
+    findings = nd_presets.audit_preset_pollution(polluted)
+    assert len(findings) == 2
+    assert any("schedule" in f and "3" in f for f in findings)
+    assert any("titles" in f and "2" in f for f in findings)
+
+
+def test_audit_detects_image_watermark_path():
+    polluted = nd_presets.NewsDeskPreset(
+        name="legacy",
+        components=[{
+            "kind": "image_watermark", "name": "logo",
+            "image_path": r"D:\old\logo.png",
+        }],
+    )
+    findings = nd_presets.audit_preset_pollution(polluted)
+    assert len(findings) == 1
+    assert "image_path" in findings[0]
+    assert "logo.png" in findings[0]
+
+
+def test_audit_ignores_empty_values():
+    """Empty string / empty list = clean; not flagged."""
+    preset = nd_presets.NewsDeskPreset(
+        name="clean",
+        components=[
+            {"kind": "chapter", "schedule": [], "titles": []},
+            {"kind": "image_watermark", "image_path": ""},
+            {"kind": "subtitle", "srt_path": ""},
+        ],
+    )
+    assert nd_presets.audit_preset_pollution(preset) == []
+
+
+# ── scrub_preset_pollution ──────────────────────────────────────────────────
+
+def test_scrub_drops_project_content_in_memory():
+    polluted = nd_presets.NewsDeskPreset(
+        name="legacy",
+        components=[{
+            "kind": "chapter", "name": "章节",
+            "modes": {"start_card": True},
+            "schedule": [{"x": 1}],
+            "titles": ["t"],
+        }],
+    )
+    cleaned = nd_presets.scrub_preset_pollution(polluted)
+    ch = cleaned.components[0]
+    assert "schedule" not in ch
+    assert "titles" not in ch
+    assert ch["modes"]["start_card"] is True       # style survives
+    # Original untouched (deep-copy semantics)
+    assert polluted.components[0]["schedule"] == [{"x": 1}]
+
+
+# ── fresh_components_for: no silent cleaning ────────────────────────────────
+
+def test_fresh_components_does_not_silently_clean_pollution():
+    """Apply path must NOT scrub pollution silently — that path now
+    surfaces findings through audit_preset_pollution + user dialog
+    instead. fresh_components_for only handles per-instance ids."""
+    polluted = nd_presets.NewsDeskPreset(
+        name="legacy",
+        components=[{
+            "kind": "chapter", "name": "章节",
+            "schedule": [{"x": 1}],
+            "titles": ["t"],
+        }],
+    )
+    fresh = nd_presets.fresh_components_for(polluted)
+    ch = fresh[0]
+    # Pollution survives — the caller is expected to audit + ask the
+    # user before this point.
+    assert ch["schedule"] == [{"x": 1}]
+    assert ch["titles"] == ["t"]

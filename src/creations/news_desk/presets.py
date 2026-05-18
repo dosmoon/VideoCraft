@@ -241,7 +241,7 @@ def save_user_preset(preset: NewsDeskPreset) -> None:
     clean = NewsDeskPreset(
         name=preset.name,
         description=preset.description,
-        components=_strip_project_content(preset.components),
+        components=_serialize_components_for_preset(preset.components),
     )
     raw = _read_store()
     user_dict = raw.get("user_presets")
@@ -288,38 +288,85 @@ def get_preset(name: str) -> Optional[NewsDeskPreset]:
 
 # ── Apply helpers ───────────────────────────────────────────────────────────
 
-def _strip_project_content(components: list[dict]) -> list[dict]:
-    """Reset per-PROJECT content while keeping per-component layout +
-    style. Runs at BOTH ends:
+# Per-kind fields that a preset, by definition, must not carry — these
+# describe the active *project's* imported data, not a reusable visual
+# decision. The save path drops them on serialization (they are not
+# part of a preset's schema); the apply path uses the same map to AUDIT
+# disk presets and surface findings to the user instead of silently
+# fixing them.
+_PROJECT_CONTENT_KEYS: dict[str, tuple[str, ...]] = {
+    "subtitle":        ("srt_path",),        # id is regenerated separately
+    "chapter":         ("schedule", "titles"),
+    "image_watermark": ("image_path",),
+    # text_watermark intentionally absent — text + style are preset-worthy
+}
 
-      - apply: protect against legacy disk presets saved before this
-        guard (and before [[project_creation_config_owner]] forbade
-        cross-project leaks)
-      - save:  keep new presets clean so they describe only the visual
-        decisions worth carrying between projects
 
-    Per-kind strip:
-      subtitle        regenerate id, clear srt_path (snapshot path)
-      chapter         clear schedule (imported analysis.json rows) +
-                      titles (candidate titles)
-      image_watermark clear image_path (absolute path on prior machine)
-      text_watermark  keep everything (text + style are preset-worthy)
+def _serialize_components_for_preset(components: list[dict]) -> list[dict]:
+    """Produce the on-disk representation of a preset's components.
+
+    A preset describes a *reusable visual configuration*, so its
+    serialized form contains style and layout only — never per-project
+    imported data (chapter schedules, SRT paths, local watermark files).
+    Dropping those fields here is the preset schema talking, not a
+    defensive strip pass.
     """
     out = copy.deepcopy(components)
     for c in out:
-        kind = c.get("kind")
-        if kind == "subtitle":
-            c["id"] = uuid.uuid4().hex[:8]
-            c["srt_path"] = ""
-        elif kind == "chapter":
-            c["schedule"] = []
-            c["titles"] = []
-        elif kind == "image_watermark":
-            c["image_path"] = ""
+        for k in _PROJECT_CONTENT_KEYS.get(c.get("kind"), ()):
+            c.pop(k, None)
     return out
 
 
+def audit_preset_pollution(preset: NewsDeskPreset) -> list[str]:
+    """Inspect a preset's components for fields that should not exist
+    in any preset — left behind by old code paths that serialized
+    everything. Returns a list of human-readable findings. Empty list
+    = preset is clean.
+
+    Apply-side surfaces these as a confirmation dialog ("this preset
+    still holds X, Y, Z from a prior project — clear and apply?"). It
+    is NOT a silent auto-fix; the user decides.
+    """
+    findings: list[str] = []
+    for c in preset.components:
+        kind = c.get("kind")
+        label = c.get("name") or kind or "?"
+        for key in _PROJECT_CONTENT_KEYS.get(kind, ()):
+            v = c.get(key)
+            present = (v not in (None, "", [], {}, ()))
+            if not present:
+                continue
+            if isinstance(v, list):
+                findings.append(
+                    f"{label}（{kind}）.{key}: {len(v)} 条遗留数据")
+            else:
+                findings.append(f"{label}（{kind}）.{key}: {v!r}")
+    return findings
+
+
+def scrub_preset_pollution(preset: NewsDeskPreset) -> NewsDeskPreset:
+    """Drop all project-content fields from a preset (in-memory). Used
+    by the apply path after the user confirms the audit dialog.
+    Returns a NEW preset; caller is responsible for persisting if
+    desired."""
+    return NewsDeskPreset(
+        name=preset.name,
+        description=preset.description,
+        components=_serialize_components_for_preset(preset.components),
+    )
+
+
 def fresh_components_for(preset: NewsDeskPreset) -> list[dict]:
-    """Apply-side: deep-copy preset.components and reset per-PROJECT
-    content. See _strip_project_content for the strip rules."""
-    return _strip_project_content(preset.components)
+    """Apply-side: deep-copy preset.components and regenerate per-INSTANCE
+    identifiers (subtitle id) so two instances applied from the same
+    preset don't share state.
+
+    Does NOT silently clean project-content pollution — callers must
+    audit_preset_pollution() up front and route findings through the UI.
+    """
+    out = copy.deepcopy(preset.components)
+    for c in out:
+        if c.get("kind") == "subtitle":
+            c["id"] = uuid.uuid4().hex[:8]
+    return out

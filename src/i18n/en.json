@@ -1942,6 +1942,8 @@
   "tool.news_desk.preset.save_as.prompt": "New preset name:",
   "tool.news_desk.preset.save_as.builtin_protected": "“{name}” is a built-in preset; pick a different name.",
   "tool.news_desk.preset.apply.confirm": "Applying preset “{name}” will wipe the current {n} component(s) and replace them. This cannot be undone — continue?",
+  "tool.news_desk.preset.apply.pollution_intro": "Preset “{name}” still holds data from a prior project. Findings:",
+  "tool.news_desk.preset.apply.pollution_prompt": "Clear and apply?",
   "tool.news_desk.preset.delete.no_user_presets": "(no user presets yet)",
   "tool.news_desk.preset.delete.confirm": "Delete user preset “{name}”? Removal is global and cannot be undone.",
   "tool.news_desk.subs.frame": "Subtitle Tracks",

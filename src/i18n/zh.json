@@ -1941,6 +1941,8 @@
   "tool.news_desk.preset.save_as.builtin_protected": "名称 {name} 已被内置预设占用，请换一个。",
   "tool.news_desk.preset.save_as.name_taken": "「{name}」已存在，若要覆盖请在「保存当前布局」子菜单里点对应条目。",
   "tool.news_desk.preset.apply.confirm": "应用预设「{name}」将清空当前的 {n} 个组件并替换为预设内容（不可撤销）。继续？",
+  "tool.news_desk.preset.apply.pollution_intro": "预设「{name}」中保存了上一个项目的数据，应当清除：",
+  "tool.news_desk.preset.apply.pollution_prompt": "清除并应用？",
   "tool.news_desk.preset.delete": "删除用户预设",
   "tool.news_desk.preset.delete.no_user_presets": "（暂无用户预设）",
   "tool.news_desk.preset.delete.confirm": "确认删除用户预设「{name}」？删除是全局的，不可撤销。",

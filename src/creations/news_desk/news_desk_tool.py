@@ -518,10 +518,33 @@ class NewsDeskApp(ToolBase):
 
     def _on_preset_apply(self, name: str) -> None:
         """Wholesale replace components with the preset's. Confirms
-        first when there's anything to lose; never merges."""
+        first when there's anything to lose; never merges.
+
+        Also audits the preset for cross-project pollution (legacy
+        disk presets written before serialize-only-style was enforced
+        may still carry imported chapter rows / SRT paths / image
+        paths). Findings are surfaced as a confirm dialog — the user
+        decides whether to scrub and proceed."""
         preset = nd_presets.get_preset(name)
         if preset is None:
             return
+
+        findings = nd_presets.audit_preset_pollution(preset)
+        if findings:
+            body = (tr("tool.news_desk.preset.apply.pollution_intro",
+                        name=name) + "\n\n  • "
+                     + "\n  • ".join(findings)
+                     + "\n\n"
+                     + tr("tool.news_desk.preset.apply.pollution_prompt"))
+            if not messagebox.askyesno(
+                    "VideoCraft", body, parent=self.master):
+                return
+            preset = nd_presets.scrub_preset_pollution(preset)
+            # Persist the cleaned preset so this dialog doesn't recur
+            # on next apply. Builtins live in code, not on disk.
+            if not nd_presets.is_builtin(preset.name):
+                nd_presets.save_user_preset(preset)
+
         if self.config.components:
             if not messagebox.askyesno(
                     "VideoCraft",
