@@ -46,11 +46,17 @@ def hex_to_drawtext_rgba(hex_color: str, alpha: float) -> str:
     return f"white@{a:.2f}"
 
 
-# Per-line vertical advance as a multiple of fontsize. Mirrors the
-# preview canvas (composition_preview.html: lineHeight = px * 1.15) —
-# without per-line drawtext, ffmpeg's default line metric stacks lines
-# tighter than the preview, a visible preview≠render divergence.
-_LINE_HEIGHT_PCT = 1.15
+# Per-line vertical advance as a multiple of fontsize. Must clear the
+# drawtext per-line `text_h` so consecutive lines never overlap.
+# ffmpeg drawtext sizes each line's bounding box from the font's OS/2
+# winAscent + winDescent metric, which for Microsoft YaHei is ~1.37 of
+# the EM (the CJK win-metrics are tall to accommodate diacritics that
+# never appear in CJK glyphs). Anything below 1.37 collides line N+1
+# top into line N's box; 1.4 leaves a small visible gap.
+# Preview canvas uses the SAME constant for parity (its baseline-
+# anchored text wouldn't strictly need this much headroom, but matched
+# spacing is the preview≡render contract).
+_LINE_HEIGHT_PCT = 1.4
 
 
 def drawtext_filter(text: str, *, role: str, style: dict,

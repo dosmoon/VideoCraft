@@ -856,7 +856,12 @@ function drawHookOutro() {
   const lines = (preWrapped && preWrapped.length > 0)
     ? preWrapped
     : wrapTextToWidth(text, maxTextWidth);
-  const lineHeight = px * 1.15;
+  // 1.4 matches drawtext_helpers._LINE_HEIGHT_PCT — the render side
+  // needs that much headroom so per-line drawtext boxes don't collide
+  // (Microsoft YaHei's OS/2 winAscent+winDescent ≈ 1.37·EM, so anything
+  // tighter overlaps in render). Canvas keeps the same value for
+  // preview ≡ render parity, slightly looser visually for CJK.
+  const lineHeight = px * 1.4;
   const totalTextHeight = lines.length * lineHeight;
   const widestLine = lines.reduce(
     (m, l) => Math.max(m, ctx.measureText(l).width), 0);
