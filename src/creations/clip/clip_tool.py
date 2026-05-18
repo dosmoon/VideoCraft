@@ -19,7 +19,6 @@ import os
 import re
 import subprocess
 import tkinter as tk
-from dataclasses import asdict
 from datetime import datetime, timezone
 from tkinter import messagebox, ttk
 from typing import Optional
@@ -28,7 +27,7 @@ from materials.news_video.model import NewsVideoModel
 
 from tools.base import ToolBase
 from core.composition import (
-    CompositionRequest, CompositionStyle, render_composition,
+    CompositionRequest, render_composition,
 )
 from core.composition import presets as comp_presets
 from core.composition.preview import CompositionPreview
@@ -121,13 +120,12 @@ class ClipToolApp(ToolBase):
         self._hotclips_data: dict = {}
 
         # ── Composition state ─────────────────────────────────────────────
+        # Preset stores stay (preset apply / save still use them); the
+        # legacy _current_style dataclass is gone — output settings,
+        # encode_preset, and component templates live on self.config now.
         self._project_store = comp_presets.load_project_store()
         self._hook_outro_store = comp_presets.load_hook_outro_store()
         last = comp_presets.get_last_used_project(self._project_store)
-        self._current_style: CompositionStyle = (
-            comp_presets.get_project_preset(self._project_store, last)
-            or CompositionStyle()
-        )
         self._preset_name_var = tk.StringVar(value=last)
         # Tab 1 staging rect: pure in-memory UI scratchpad, NOT persisted
         # and NOT a fallback for clips without overrides. Users push it
@@ -147,7 +145,6 @@ class ClipToolApp(ToolBase):
 
         self._build_ui()
         self._restore_persisted_state()
-        self._maybe_seed_components_from_style()
         self._reload_languages()
         self._style.populate_form_from_style()
 
@@ -428,8 +425,16 @@ class ClipToolApp(ToolBase):
             return 0.0
 
     def _preview_aspect_short_edge(self) -> tuple[str, int]:
-        out = self._current_style.output
-        return out.aspect, int(out.short_edge)
+        return self.config.output_aspect, int(self.config.output_short_edge)
+
+    def _output_geometry(self):
+        """Build an OutputGeometry from the flat config fields. Called
+        per render — cheap construction, no caching needed."""
+        from core.composition.style import OutputGeometry
+        return OutputGeometry(
+            aspect=self.config.output_aspect,
+            short_edge=int(self.config.output_short_edge),
+            mode=self.config.output_mode)
 
     def _build_preview_timeline(self, start: float, end: float, *,
                                   hook: str = "", outro: str = ""):
@@ -488,42 +493,12 @@ class ClipToolApp(ToolBase):
 
     # ── Persistence ──────────────────────────────────────────────────────
 
-    def _maybe_seed_components_from_style(self) -> None:
-        """First-launch migration: if config.components is empty, seed
-        it from the legacy CompositionStyle.subtitle / watermark /
-        hook_outro fields and persist. Idempotent — once components
-        exists, this is a no-op."""
-        if self.config.components:
-            return
-        from creations.clip.components import (
-            hook_outro as _ho_mod,
-            subtitle as _sub_mod,
-            watermark as _wm_mod,
-        )
-        seeded: list[dict] = []
-        seeded.extend(_sub_mod.template_from_style(self._current_style))
-        seeded.extend(_wm_mod.template_from_style(self._current_style))
-        seeded.extend(_ho_mod.template_from_style(self._current_style))
-        if seeded:
-            self.config.components = seeded
-            self._save_all()
-
     def _restore_persisted_state(self) -> None:
         cfg = self.config
         if cfg.source_subtitle:
             self._lang_var.set(cfg.source_subtitle)
         if cfg.preset_name:
-            style = comp_presets.get_project_preset(
-                self._project_store, cfg.preset_name)
-            if style is not None:
-                self._current_style = style
-                self._preset_name_var.set(cfg.preset_name)
-        if cfg.style is not None:
-            try:
-                self._current_style = comp_presets.composition_style_from_dict(
-                    cfg.style)
-            except (comp_presets.PresetSchemaError, TypeError, ValueError):
-                pass
+            self._preset_name_var.set(cfg.preset_name)
         self._clips_overrides = dict(cfg.clips_overrides)
         # Drop rendered entries whose mp4 no longer exists on disk
         inst = self._instance_dir()
@@ -541,7 +516,6 @@ class ClipToolApp(ToolBase):
         self.config.selected_clip_indices = [
             i for i, v in enumerate(self._candidate_vars) if v.get()]
         self.config.preset_name = self._preset_name_var.get()
-        self.config.style = asdict(self._current_style)
         self.config.clips_overrides = dict(self._clips_overrides)
         self.config.rendered = list(self._rendered)
         self.config.save(self._config_path)
@@ -730,8 +704,8 @@ class ClipToolApp(ToolBase):
             line = SubtitleLineStyle(enabled=True)
         return prepare_subtitle_cues(
             srt_path, line,
-            aspect=self._current_style.output.aspect,
-            short_edge=self._current_style.output.short_edge)
+            aspect=self.config.output_aspect,
+            short_edge=int(self.config.output_short_edge))
 
     def _resolve_source_srt(self) -> Optional[str]:
         return self._hotclips.resolve_source_srt(self._lang_var.get())
@@ -828,8 +802,8 @@ class ClipToolApp(ToolBase):
                     source_video=video_path,
                     start_sec=start, end_sec=end,
                     output_path=out_path,
-                    output_geometry=self._current_style.output,
-                    encode_preset=self._current_style.encode_preset,
+                    output_geometry=self._output_geometry(),
+                    encode_preset=self.config.encode_preset,
                     crop_rect=self._effective_crop(src_idx),
                     timeline=timeline,
                 )))
@@ -1125,8 +1099,8 @@ class ClipToolApp(ToolBase):
             source_video=video_path,
             start_sec=start, end_sec=end,
             output_path=out_path,
-            output_geometry=self._current_style.output,
-            encode_preset=self._current_style.encode_preset,
+            output_geometry=self._output_geometry(),
+            encode_preset=self.config.encode_preset,
             crop_rect=self._effective_crop(src_idx),
             timeline=timeline,
         )

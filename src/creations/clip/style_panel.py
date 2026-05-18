@@ -19,18 +19,19 @@ Authoritative model: `host.config.components` (list of instance dicts).
 Each row in the list maps 1:1 to a component dict. Selection drives
 the property panel via the spec's `build_property_panel` callback.
 
-Output settings (aspect, encode_preset) still live on `host._current_style`
-until 5.5.c (where presets switch to a components-based schema and
-`_current_style` can retire). The toolbar reads/writes them directly.
+All authoritative state is on host.config (a ClipInstanceConfig).
+Output settings (aspect / short_edge / mode / encode_preset) are flat
+fields on the config dataclass; preset apply/save uses a thin
+CompositionStyle wrapper (presets carry output only, since component
+templates are project-level not preset-level).
 
 Host contract — methods/attrs the panel touches:
     Attributes:
       master                 Tk widget root for dialogs
-      _current_style         CompositionStyle (output / encode_preset only)
       _project_store         comp_presets project preset store
       _global_crop_rect      Optional[dict]
       _candidate_meta        list[dict]
-      config                 ClipInstanceConfig (components list lives here)
+      config                 ClipInstanceConfig (everything lives here)
       material_model         NewsVideoModel
       _detail                Optional[ClipDetailPanel]
     Methods:
@@ -38,6 +39,7 @@ Host contract — methods/attrs the panel touches:
       _full_srt_cues() -> list[dict]
       _build_preview_timeline(start, end, *, hook, outro) -> Timeline
       _preview_aspect_short_edge() -> (str, int)
+      _output_geometry() -> OutputGeometry
       _reload_candidates() -> None
       _save_all() -> None
       _refresh_render_tv() -> None
@@ -103,22 +105,22 @@ class StylePanel:
             self._preview = None
 
     def populate_form_from_style(self) -> None:
-        """Wire up toolbar values from _current_style.output and refresh
-        the component list from config.components."""
-        s = self._host._current_style
-        self._aspect_var.set(s.output.aspect)
-        self._encode_var.set(s.encode_preset)
+        """Pull toolbar values out of host.config and refresh the
+        component list. Called once at workbench startup and again after
+        preset-apply."""
+        cfg = self._host.config
+        self._aspect_var.set(cfg.output_aspect)
+        self._encode_var.set(cfg.encode_preset)
         self.refresh_preset_combos()
         self._reload_component_list()
         self.schedule_preview_refresh()
 
     def read_form_into_style(self) -> None:
-        """Push toolbar values back into _current_style.output / encode_preset.
-        Component edits don't go here — they live directly in
-        config.components via property-panel commits."""
-        s = self._host._current_style
-        s.output.aspect = self._aspect_var.get() or "9:16"
-        s.encode_preset = self._encode_var.get() or "medium"
+        """Push toolbar values back into host.config. Component edits go
+        directly into config.components via the property-panel commits."""
+        cfg = self._host.config
+        cfg.output_aspect = self._aspect_var.get() or "9:16"
+        cfg.encode_preset = self._encode_var.get() or "medium"
 
     def schedule_preview_refresh(self) -> None:
         if self._preview_job is not None:
@@ -489,7 +491,7 @@ class StylePanel:
             sample_hook = tr("clip_tool.sample_hook_placeholder")
             sample_outro = ""
         self._preview.set_source(video_path, 0.0, 0.0)
-        self._preview.set_geometry(host._current_style.output)
+        self._preview.set_geometry(host._output_geometry())
         if host._global_crop_rect is not None:
             self._preview.set_crop(host._global_crop_rect)
         self._preview.enable_crop_drag(True)
@@ -504,8 +506,8 @@ class StylePanel:
             self._host._detail.push_preview()
 
     def _on_output_changed(self) -> None:
-        # Output changes flow into _current_style for now (5.5.c moves
-        # them to a config-level dataclass).
+        # Output changes flow into host.config (5.5.c made the fields
+        # flat primitives on the config dataclass).
         self.read_form_into_style()
         self._host._save_all()
         self.schedule_preview_refresh()
@@ -536,6 +538,13 @@ class StylePanel:
         self._host._save_all()
 
     # ── preset operations ─────────────────────────────────────────────────
+    #
+    # Presets in 5.5.c only carry output settings (aspect / short_edge /
+    # mode / encode_preset). Component templates stay per-project — they
+    # don't roundtrip through the preset store. Persisting via the
+    # legacy comp_presets module needs a CompositionStyle wrapper, so
+    # we build one with default subtitle/watermark/hook_outro values
+    # and only the output fields the user cares about.
 
     def _on_preset_applied(self) -> None:
         name = self._preset_name_var.get()
@@ -545,10 +554,11 @@ class StylePanel:
             self._host._project_store, name)
         if style is None:
             return
-        self._host._current_style = style
-        # Re-derive components from the newly applied style. Presets are
-        # still CompositionStyle dicts in 5.5.b — 5.5.c switches the schema.
-        self._resync_components_from_style()
+        cfg = self._host.config
+        cfg.output_aspect = style.output.aspect
+        cfg.output_short_edge = int(style.output.short_edge)
+        cfg.output_mode = style.output.mode
+        cfg.encode_preset = style.encode_preset
         comp_presets.set_last_used_project(
             self._host._project_store, name)
         comp_presets.save_project_store(self._host._project_store)
@@ -571,7 +581,7 @@ class StylePanel:
             return
         self.read_form_into_style()
         comp_presets.upsert_project_preset(
-            self._host._project_store, name, self._host._current_style)
+            self._host._project_store, name, self._build_style_for_preset())
         comp_presets.set_last_used_project(
             self._host._project_store, name)
         comp_presets.save_project_store(self._host._project_store)
@@ -590,7 +600,7 @@ class StylePanel:
             return
         self.read_form_into_style()
         comp_presets.upsert_project_preset(
-            self._host._project_store, name, self._host._current_style)
+            self._host._project_store, name, self._build_style_for_preset())
         comp_presets.save_project_store(self._host._project_store)
         self._host._save_all()
 
@@ -610,25 +620,20 @@ class StylePanel:
         self.refresh_preset_combos()
         self._host._save_all()
 
-    def _resync_components_from_style(self) -> None:
-        """Replace config.components with a fresh seed from
-        _current_style. Used after preset-apply to mirror the new
-        style into the component list. Lossy — drops any per-component
-        edits the user made that diverged from the preset."""
-        from creations.clip.components import (
-            hook_outro as _ho_mod,
-            subtitle as _sub_mod,
-            watermark as _wm_mod,
-        )
-        seeded: list[dict] = []
-        seeded.extend(_sub_mod.template_from_style(self._host._current_style))
-        seeded.extend(_wm_mod.template_from_style(self._host._current_style))
-        seeded.extend(_ho_mod.template_from_style(self._host._current_style))
-        self._host.config.components = seeded
-        self._selected_idx = None
-        self._reload_component_list()
-        self._rebuild_add_menu()
-        self._render_empty_property_pane()
+    def _build_style_for_preset(self):
+        """Wrap config's output fields into a CompositionStyle so the
+        legacy preset store can persist them. subtitle / watermark /
+        hook_outro use dataclass defaults — they're not meaningful in
+        a preset under the new component model."""
+        from core.composition.style import CompositionStyle, OutputGeometry
+        cfg = self._host.config
+        style = CompositionStyle()
+        style.output = OutputGeometry(
+            aspect=cfg.output_aspect,
+            short_edge=int(cfg.output_short_edge),
+            mode=cfg.output_mode)
+        style.encode_preset = cfg.encode_preset
+        return style
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────

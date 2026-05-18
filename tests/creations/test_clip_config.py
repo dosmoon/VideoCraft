@@ -18,8 +18,11 @@ def test_load_missing_returns_empty(tmp_path):
     assert cfg.preset_name == ""
     assert cfg.source_subtitle == ""
     assert cfg.selected_clip_indices == []
-    assert cfg.style is None
     assert cfg.components == []
+    assert cfg.output_aspect == "9:16"
+    assert cfg.output_short_edge == 1080
+    assert cfg.output_mode == "reframe"
+    assert cfg.encode_preset == "medium"
     assert cfg.clips_overrides == {}
     assert cfg.rendered == []
 
@@ -41,11 +44,14 @@ def test_load_full_roundtrip(tmp_path):
         source_subtitle="en",
         selected_clip_indices=[0, 2, 5],
         preset_name="MyPreset",
-        style={"output": {"aspect": "9:16"}},
         components=[
             {"kind": "subtitle", "name": "main", "enabled": True},
             {"kind": "hook_text_card", "name": "hook", "enabled": False},
         ],
+        output_aspect="16:9",
+        output_short_edge=720,
+        output_mode="passthrough",
+        encode_preset="fast",
         clips_overrides={3: {"hook": "boom"}},
         rendered=[{"file": "clip01.mp4", "src_idx": 0}],
     )
@@ -56,13 +62,52 @@ def test_load_full_roundtrip(tmp_path):
     assert loaded.source_subtitle == "en"
     assert loaded.selected_clip_indices == [0, 2, 5]
     assert loaded.preset_name == "MyPreset"
-    assert loaded.style == {"output": {"aspect": "9:16"}}
     assert loaded.components == [
         {"kind": "subtitle", "name": "main", "enabled": True},
         {"kind": "hook_text_card", "name": "hook", "enabled": False},
     ]
+    assert loaded.output_aspect == "16:9"
+    assert loaded.output_short_edge == 720
+    assert loaded.output_mode == "passthrough"
+    assert loaded.encode_preset == "fast"
     assert loaded.clips_overrides == {3: {"hook": "boom"}}
     assert loaded.rendered == [{"file": "clip01.mp4", "src_idx": 0}]
+
+
+def test_load_migrates_legacy_style_to_output_fields(tmp_path):
+    """Old configs persist `style` (CompositionStyle dict). Load should
+    extract output settings + encode_preset into the new flat fields."""
+    p = str(tmp_path / "config.json")
+    legacy_style = {
+        "output": {"aspect": "1:1", "short_edge": 540, "mode": "reframe"},
+        "encode_preset": "slow",
+        "subtitle": {"sub1": {"enabled": False}, "sub2": {"enabled": False}},
+        "watermark": {"enabled": False},
+    }
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump({"style": legacy_style}, f)
+    cfg = ClipInstanceConfig.load(p)
+    assert cfg.output_aspect == "1:1"
+    assert cfg.output_short_edge == 540
+    assert cfg.encode_preset == "slow"
+
+
+def test_load_seeds_components_from_legacy_style(tmp_path):
+    """If components is empty but legacy style has enabled subtitle /
+    watermark / hook_outro, seed components from those templates."""
+    p = str(tmp_path / "config.json")
+    legacy_style = {
+        "output": {"aspect": "9:16", "short_edge": 1080, "mode": "reframe"},
+        "encode_preset": "medium",
+        "subtitle": {"sub1": {"enabled": True}, "sub2": {"enabled": False}},
+        "watermark": {"enabled": True, "type": "text", "text": "@chan"},
+    }
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump({"style": legacy_style}, f)
+    cfg = ClipInstanceConfig.load(p)
+    kinds = [c["kind"] for c in cfg.components]
+    assert "clip_subtitle" in kinds
+    assert "clip_text_watermark" in kinds
 
 
 def test_load_partial_bound_material_treated_as_none(tmp_path):
