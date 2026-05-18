@@ -28,7 +28,7 @@ from tkinter import (
 )
 from typing import Optional
 
-from materials.news_video import paths as _nv_paths
+from materials.news_video.model import NewsVideoModel
 
 from tools.base import ToolBase
 from core.composition import (
@@ -107,15 +107,27 @@ class ClipToolApp(ToolBase):
         self._tool_title = tr("clip_tool.tab_title", instance=instance_name)
 
         # Slice Q (ADR-0005): pick or recall the bound material instance.
+        # Persistence lives in this instance's config.json; the picker UI
+        # is invoked only when the field is missing or stale. Step-2 of
+        # the clip refactor will fold these reads/writes into
+        # ClipInstanceConfig — the single owner.
         from creations import material_binding
-        import os as _os
-        config_path = _os.path.join(
-            project.creation_instance_dir("clip", instance_name),
-            "config.json")
-        bound = material_binding.get_or_bind(master, project, config_path)
-        if bound is None:
-            raise RuntimeError("Clip: material binding cancelled.")
-        self.material_type, self.material_instance_id = bound
+        instance_dir = project.creation_instance_dir("clip", instance_name)
+        cfg = _load_instance_config(instance_dir)
+        bound = cfg.get("bound_material") if isinstance(cfg, dict) else None
+        if (not isinstance(bound, dict)
+                or not bound.get("type") or not bound.get("instance")):
+            picked = material_binding.show_material_picker(master, project)
+            if picked is None:
+                raise RuntimeError("Clip: material binding cancelled.")
+            mt, mi = picked
+            cfg["bound_material"] = {"type": mt, "instance": mi}
+            _save_instance_config(instance_dir, cfg)
+            self.material_type, self.material_instance_id = mt, mi
+        else:
+            self.material_type = bound["type"]
+            self.material_instance_id = bound["instance"]
+        self.material_model = NewsVideoModel(project, self.material_instance_id)
 
         # ── Data state ────────────────────────────────────────────────────
         self._lang_var = tk.StringVar()
@@ -1014,7 +1026,7 @@ class ClipToolApp(ToolBase):
         # Hotclips — required
         hot_snap = self._hotclips_snapshot_path(lang)
         if not os.path.isfile(hot_snap):
-            upstream = os.path.join(_nv_paths.subtitles_dir(self.project, self.material_instance_id),
+            upstream = os.path.join(self.material_model.subtitles_dir,
                                       f"{lang}.hotclips.json")
             if not os.path.isfile(upstream):
                 return None
@@ -1027,7 +1039,7 @@ class ClipToolApp(ToolBase):
         # cannot affect this instance's renders.
         srt_snap = self._srt_snapshot_path(lang)
         if not os.path.isfile(srt_snap):
-            upstream_srt = os.path.join(_nv_paths.subtitles_dir(self.project, self.material_instance_id),
+            upstream_srt = os.path.join(self.material_model.subtitles_dir,
                                           f"{lang}.srt")
             if os.path.isfile(upstream_srt):
                 try:
@@ -1051,7 +1063,7 @@ class ClipToolApp(ToolBase):
         except OSError:
             pass
         try:
-            for name in os.listdir(_nv_paths.subtitles_dir(self.project, self.material_instance_id)):
+            for name in os.listdir(self.material_model.subtitles_dir):
                 if name.endswith(".hotclips.json"):
                     langs.add(name[:-len(".hotclips.json")])
         except OSError:
@@ -1208,7 +1220,7 @@ class ClipToolApp(ToolBase):
         # Push preview source
         if self._clip_preview is not None:
             start, end = self._effective_start_end(idx)
-            video_path = _nv_paths.source_video_path(self.project, self.material_instance_id)
+            video_path = self.material_model.source_video_path
             if os.path.isfile(video_path):
                 self._clip_preview.set_source(video_path, start, end)
                 hook = self._effective_hook(idx)
@@ -1278,7 +1290,7 @@ class ClipToolApp(ToolBase):
         snap = self._srt_snapshot_path(lang)
         if os.path.isfile(snap):
             return snap
-        upstream = os.path.join(_nv_paths.subtitles_dir(self.project, self.material_instance_id), f"{lang}.srt")
+        upstream = os.path.join(self.material_model.subtitles_dir, f"{lang}.srt")
         return upstream if os.path.isfile(upstream) else None
 
     # ── Detail field handlers ────────────────────────────────────────────
@@ -1460,7 +1472,7 @@ class ClipToolApp(ToolBase):
         if self._global_crop_rect is not None:
             self._style_preview.set_crop(self._global_crop_rect)
         # Load source video (whole file) as preview backdrop
-        video_path = _nv_paths.source_video_path(self.project, self.material_instance_id)
+        video_path = self.material_model.source_video_path
         if os.path.isfile(video_path):
             self._style_preview.set_source(video_path, 0.0, 0.0)
             # Push the full SRT so the subtitle layer shows real text as
@@ -1785,7 +1797,7 @@ class ClipToolApp(ToolBase):
                 "VideoCraft", tr("clip_tool.warn_no_selection"),
                 parent=self.master)
             return
-        video_path = _nv_paths.source_video_path(self.project, self.material_instance_id)
+        video_path = self.material_model.source_video_path
         if not os.path.isfile(video_path):
             messagebox.showerror(
                 "VideoCraft", tr("clip_tool.err_no_source"),
@@ -2115,7 +2127,7 @@ class ClipToolApp(ToolBase):
             return
         out_idx, src_idx = row
         # Single-clip render: build one request, run worker on it
-        video_path = _nv_paths.source_video_path(self.project, self.material_instance_id)
+        video_path = self.material_model.source_video_path
         if not os.path.isfile(video_path):
             return
         start, end = self._effective_start_end(src_idx)
