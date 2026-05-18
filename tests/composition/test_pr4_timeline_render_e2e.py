@@ -145,11 +145,13 @@ def test_timeline_news_desk_ass_matches_chapter_plus_topic_strip_golden():
 
 def test_element_to_watermark_style_roundtrip_text():
     inst = {"id": "twm-1", "kind": "text_watermark", "enabled": True,
-             "text": "@chan", "fontsize": 40, "color": "#FFCC00",
-             "opacity": 80, "position": "bottom-left",
+             "text": "@chan", "fontsize_pct": 40 / 1080.0,
+             "color": "#FFCC00", "opacity": 80, "position": "bottom-left",
              "margin_x_pct": 3, "margin_y_pct": 4}
     elements = twm_mod._compile(inst, _range(), _ctx())
-    wm = _element_to_watermark_style(elements[0])
+    # short_edge=1080 → fontsize_pct=40/1080 should yield 40px on the
+    # dataclass field (engine-internal int-px representation).
+    wm = _element_to_watermark_style(elements[0], short_edge=1080)
     assert isinstance(wm, WatermarkStyle)
     assert wm.type == "text"
     assert wm.enabled is True
@@ -171,7 +173,7 @@ def test_element_to_watermark_style_roundtrip_image(tmp_path):
              "margin_x_pct": 2, "margin_y_pct": 2}
     from creations.news_desk.components import image_watermark as iwm
     elements = iwm._compile(inst, _range(), _ctx())
-    wm = _element_to_watermark_style(elements[0])
+    wm = _element_to_watermark_style(elements[0], short_edge=1080)
     assert wm.type == "image"
     assert wm.image_path == str(img)
     assert wm.image_scale == 0.25
@@ -343,7 +345,8 @@ def test_preview_and_render_share_same_hook_outro_wrap():
     )
 
     long_hook = "Three reasons this changes everything about the way we think about modern video production"
-    style_dict = {"font": "default", "size": 56, "color": "#FFFFFF"}
+    style_dict = {"font": "default", "size_pct": 56 / 1080.0,
+                   "color": "#FFFFFF"}
 
     timeline = CompositionTimeline(
         duration_sec=12.0,
@@ -352,7 +355,8 @@ def test_preview_and_render_share_same_hook_outro_wrap():
             enabled=True,
             elements=[Element(
                 kind="hook_text", start_sec=0.0, end_sec=3.0,
-                data={"text": long_hook, "style": style_dict},
+                style=style_dict,
+                data={"text": long_hook},
             )],
         )],
     )
@@ -362,9 +366,11 @@ def test_preview_and_render_share_same_hook_outro_wrap():
     preview._call_js = lambda code: calls.append(code)
     preview.set_timeline(timeline, aspect="9:16", short_edge=1080)
 
+    from core.composition.layout import font_size_px
     font_path = hook_outro_font_path(style_dict["font"])
+    size_px = font_size_px(style_dict["size_pct"], 1080)
     render_lines = wrap_hook_outro(
-        long_hook, (9, 16), font_path, style_dict["size"], short_edge=1080)
+        long_hook, (9, 16), font_path, size_px, short_edge=1080)
 
     import json
     meta_call = next(c for c in calls

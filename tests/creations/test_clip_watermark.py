@@ -44,7 +44,8 @@ def test_text_compile_emits_one_element_spanning_full_range():
     spec = spec_for_kind(KIND_TEXT)
     out = spec.compile({
         "kind": KIND_TEXT, "text": "@channel",
-        "text_fontsize": 36, "text_color": "#FFFFFF", "text_opacity": 70,
+        "text_fontsize_pct": 0.033,
+        "text_color": "#FFFFFF", "text_opacity": 70,
         "position": "top-right",
         "margin_x_pct": 0.025, "margin_y_pct": 0.025,
         "image_scale": 0.15, "image_opacity": 100,
@@ -55,7 +56,7 @@ def test_text_compile_emits_one_element_spanning_full_range():
     assert e.start_sec == 0.0
     assert e.end_sec == 7.5
     assert e.data == {"text": "@channel", "image_path": ""}
-    assert e.style["text_fontsize"] == 36
+    assert e.style["text_fontsize_pct"] == pytest.approx(0.033)
     assert e.style["position"] == "top-right"
     assert e.style["margin_x_pct"] == pytest.approx(0.025)
 
@@ -129,7 +130,7 @@ def test_template_propagates_all_fields():
     style.watermark.margin_y_pct = 0.05
     inst = template_from_style(style)[0]
     assert inst["text"] == "@chan"
-    assert inst["text_fontsize"] == 48
+    assert inst["text_fontsize_pct"] == pytest.approx(48 / 1080.0)
     assert inst["text_color"] == "#FF0000"
     assert inst["text_opacity"] == 90
     assert inst["position"] == "bottom-left"

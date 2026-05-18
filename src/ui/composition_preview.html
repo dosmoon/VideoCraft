@@ -49,30 +49,33 @@ let vSrcW = 0, vSrcH = 0;
 // editor) explicitly pushes the chrome it wants via setStyle /
 // enableCropDrag / setExtraSubtitles. The bare default = neutral
 // readable subtitle, no crop UI, no aspect reframe.
+// All size-like fields are fractions of the short edge (canonical
+// 1080). The previous integer-pixel fields are gone — Python writes
+// pct on every setStyle / setExtraSubtitles / setClipMeta payload.
 let styleState = {
   subtitle: {
     position: "bottom",
     stroke_color: "#000000",
-    stroke_width: 2,
+    stroke_pct: 0.002,
     block_margin_pct: 0.08,
     track_gap_pct: 0.12,
-    sub1: { enabled: true, fontsize: 24, color: "#FFFFFF", bold: false,
-            text: "" },
-    sub2: { enabled: false, fontsize: 24, color: "#FFFFFF", bold: false,
-            text: "" },
+    sub1: { enabled: true, fontsize_pct: 0.022, color: "#FFFFFF",
+            bold: false, text: "" },
+    sub2: { enabled: false, fontsize_pct: 0.022, color: "#FFFFFF",
+            bold: false, text: "" },
   },
   watermark: {
     enabled: false, type: "text", text: "@channel",
-    text_fontsize: 36, text_color: "#FFFFFF", text_opacity: 70,
+    text_fontsize_pct: 0.033, text_color: "#FFFFFF", text_opacity: 70,
     image_scale: 0.15, image_opacity: 100,
     position: "top-right",
     margin_x_pct: 0.025,
     margin_y_pct: 0.025,
   },
   hookOutro: {
-    size: 48, color: "#FFFFFF",
+    size_pct: 0.044, color: "#FFFFFF",
     bg_color: "#000000", bg_opacity: 70,
-    stroke_color: "#000000", stroke_width: 3, box_padding: 10,
+    stroke_color: "#000000", stroke_pct: 0.003, box_padding_pct: 0.009,
     hook_position: "upper-third", outro_position: "lower-third",
     hook_duration_sec: 5.0, outro_duration_sec: 5.0,
   },
@@ -81,7 +84,8 @@ let styleState = {
 // hook / outro = raw text; hookLines / outroLines = Python-pre-wrapped
 // canonical lines. When Lines is non-null we use it as-is; otherwise we
 // fall back to JS-side wrapping (legacy / safety path).
-let clipMeta = { hook: "", outro: "", hookLines: null, outroLines: null };
+let clipMeta = { hook: "", outro: "", hookLines: null, outroLines: null,
+                 hookStyle: null, outroStyle: null };
 // Real SRT cues in *source-video* timeline: [{start, end, text}]. Empty
 // means render placeholder text from styleState.subtitle.sub*.text.
 let cues  = [];   // sub1 — primary
@@ -113,7 +117,14 @@ let overlays = [];
 let overlayStyles = {};   // populated from styleState.overlay_styles via setStyle
 
 const SHORT_EDGE = 1080;
-const ASS_RENDER_SCALE = 4.7;
+// Pixel conversion for "fraction of short edge" sized fields
+// (fontsize_pct, stroke_pct, box_padding_pct, text_fontsize_pct):
+// canvas_px = pct * canvas_short_edge. Mirrors core/composition/
+// layout.font_size_px on the Python side — keep changes in lockstep.
+function pctToCanvasPx(pct) {
+  const { cw, ch } = cropBox();
+  return Math.max(1, pct * Math.min(cw, ch));
+}
 
 function targetDims() {
   if (aspectRatio < 1.0) {
@@ -189,6 +200,11 @@ window.vc = {
       // ffmpeg drawtext output exactly). `null` means "use JS fallback".
       clipMeta.hookLines  = Array.isArray(meta.hookLines)  ? meta.hookLines  : null;
       clipMeta.outroLines = Array.isArray(meta.outroLines) ? meta.outroLines : null;
+      // Per-component style dicts (clip workbench passes one per
+      // hook/outro instance). Null means "no per-instance style —
+      // fall back to legacy styleState.hookOutro defaults".
+      clipMeta.hookStyle  = (meta.hookStyle  && typeof meta.hookStyle  === 'object') ? meta.hookStyle  : null;
+      clipMeta.outroStyle = (meta.outroStyle && typeof meta.outroStyle === 'object') ? meta.outroStyle : null;
     }
     drawOverlay();
   },
@@ -594,16 +610,14 @@ function cropBox() {
   };
 }
 
-function subtitleFontPx(configSize) {
-  const { ch } = cropBox();
-  const { th } = targetDims();
-  return Math.max(8, configSize * ASS_RENDER_SCALE * (ch / th));
-}
-function drawtextFontPx(configSize) {
-  const { ch } = cropBox();
-  const { th } = targetDims();
-  return Math.max(8, configSize * (ch / th));
-}
+// Both subtitle (libass) and drawtext (hook/outro/watermark) sizing
+// now ride a single short-edge fraction. The previous split
+// (ASS_RENDER_SCALE=4.7 for subtitle, 1.0 for drawtext) came from
+// libass' default PlayResY differing from the video resolution; the
+// renderer now sets `original_size=target_w x target_h` on libass so
+// script units map 1:1 to target pixels — same scale on both sides.
+function subtitleFontPx(pct) { return pctToCanvasPx(pct); }
+function drawtextFontPx(pct) { return pctToCanvasPx(pct); }
 
 function pickActiveCueFrom(arr) {
   // Pick the cue whose [start, end] brackets the playhead. Cues are in
@@ -664,7 +678,7 @@ function drawLegacySubtitles() {
       const isOuter = (anchor === "top") ? (line === sub1) : (line === sub2);
       y = subtitleBaselineY(blockPct, gapPct, !isOuter, anchor, oy, ch);
     }
-    drawSubtitleLine(line, y, ox, cw, ch, sub.stroke_color, sub.stroke_width);
+    drawSubtitleLine(line, y, ox, cw, ch, sub.stroke_color, sub.stroke_pct);
   }
 }
 
@@ -685,11 +699,17 @@ function drawOneExtraSub(es) {
   const eBlock = (typeof es.block_margin_pct === "number")
                    ? es.block_margin_pct : 0.09;
   const y = (eAnchor === "top")
-              ? oy + ch * eBlock + subtitleFontPx(line.fontsize)
+              ? oy + ch * eBlock + subtitleFontPx(line.fontsize_pct)
               : oy + ch * (1.0 - eBlock);
+  // Per-line stroke (clip subtitle component) takes precedence over
+  // the legacy global styleState.subtitle stroke (news_desk path).
+  const strokeColor = (line.stroke_color
+                          || (sub ? sub.stroke_color : "#000"));
+  const strokePct = (typeof line.stroke_pct === "number")
+                       ? line.stroke_pct
+                       : (sub ? sub.stroke_pct : 0.002);
   drawSubtitleLine(renderLine, y, ox, cw, ch,
-                     sub ? sub.stroke_color : "#000",
-                     sub ? sub.stroke_width : 2);
+                     strokeColor, strokePct);
 }
 
 // One news_desk overlay (TopicStrip / ChapterHeroCard).
@@ -707,10 +727,17 @@ function drawOneNewsDeskOverlay(ov) {
 
 // One subtitle line at a fixed baseline `y`. Pulled out of drawSubtitles
 // so the legacy sub1/sub2 stack and the N-track extras path share styling.
-function drawSubtitleLine(line, y, ox, cw, ch, strokeColor, strokeWidth) {
-  const px = subtitleFontPx(line.fontsize);
+function drawSubtitleLine(line, y, ox, cw, ch, strokeColor, strokePct) {
+  const px = subtitleFontPx(line.fontsize_pct);
   const weight = line.bold ? "bold " : "";
-  ctx.font = `${weight}${px}px sans-serif`;
+  // Match libass font selection: Chinese tracks use Microsoft YaHei
+  // (tall glyphs), non-Chinese use Arial. Generic `sans-serif` made
+  // preview show CJK and Latin at the same visual height while libass
+  // burns them at very different heights — a silent preview≠render
+  // divergence the user sees as "the EN sub looks tiny in the mp4".
+  const family = line.is_chinese ? '"Microsoft YaHei", sans-serif'
+                                  : 'Arial, sans-serif';
+  ctx.font = `${weight}${px}px ${family}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
   const text = line.text || "";
@@ -726,9 +753,9 @@ function drawSubtitleLine(line, y, ox, cw, ch, strokeColor, strokeWidth) {
     ctx.fillStyle = _hexToRgba(line.bg_color || "#000000", line.bg_opacity);
     ctx.fillRect(boxX, boxY, boxW, boxH);
   }
-  if ((strokeWidth || 0) > 0 && line.bg_opacity <= 0) {
+  if ((strokePct || 0) > 0 && line.bg_opacity <= 0) {
     ctx.strokeStyle = strokeColor || "#000";
-    ctx.lineWidth = (strokeWidth || 2) * (px / 24);
+    ctx.lineWidth = pctToCanvasPx(strokePct);
     ctx.lineJoin = "round";
     ctx.strokeText(text, ox + cw / 2, y);
   }
@@ -773,43 +800,55 @@ function wrapTextToWidth(text, maxWidth) {
 }
 
 function drawHookOutro() {
-  const ho = styleState.hookOutro;
-  if (!ho) return;
+  const base = styleState.hookOutro;
+  if (!base) return;
   const { ox, oy, cw, ch } = cropBox();
 
-  // Hook window: [clipStart, clipStart + hook_duration_sec]
-  // Outro window: [clipEnd - outro_duration_sec, clipEnd]
+  // Pick the active window and overlay its per-component style on top
+  // of the legacy defaults. clip workbench passes per-instance style
+  // dicts via setClipMeta; news_desk path leaves them null and falls
+  // back to styleState.hookOutro (set via setStyle).
   const t = vid.currentTime || 0;
   let text = "";
-  let position = ho.hook_position;
   let preWrapped = null;
+  let ho = base;
+  let position = base.hook_position;
   if (clipStart > 0 || clipEnd > 0) {
-    const hookEnd  = clipStart + (ho.hook_duration_sec  || 0);
-    const outroStart = clipEnd - (ho.outro_duration_sec || 0);
+    const hookEnd  = clipStart + (base.hook_duration_sec  || 0);
+    const outroStart = clipEnd - (base.outro_duration_sec || 0);
     if (clipMeta.hook && t >= clipStart && t < hookEnd) {
       text = clipMeta.hook;
       preWrapped = clipMeta.hookLines;
+      ho = Object.assign({}, base, clipMeta.hookStyle || {});
       position = ho.hook_position;
     } else if (clipMeta.outro && t >= outroStart && t <= clipEnd) {
       text = clipMeta.outro;
       preWrapped = clipMeta.outroLines;
+      ho = Object.assign({}, base, clipMeta.outroStyle || {});
       position = ho.outro_position;
     }
   } else if (clipMeta.hook) {
     text = clipMeta.hook;
     preWrapped = clipMeta.hookLines;
+    ho = Object.assign({}, base, clipMeta.hookStyle || {});
     position = ho.hook_position;
   }
   if (!text) return;
 
-  const px = drawtextFontPx(ho.size);
-  ctx.font = `bold ${px}px sans-serif`;
+  const px = drawtextFontPx(ho.size_pct);
+  // Use the libass-matching font family so preview text width / height
+  // matches render. `ho.font` is the user-picked family (defaults to
+  // Microsoft YaHei for CJK-friendly metrics).
+  const hoFamily = (ho.font && typeof ho.font === "string")
+                     ? `"${ho.font}", sans-serif`
+                     : '"Microsoft YaHei", sans-serif';
+  ctx.font = `bold ${px}px ${hoFamily}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
 
   // Lines come from Python (canonical) if available; otherwise wrap here
   // as a fallback (layout will diverge from final mp4 — last resort).
-  const padding = (ho.box_padding || 10) * (px / 24);
+  const padding = pctToCanvasPx(ho.box_padding_pct || 0);
   const maxTextWidth = Math.max(40, cw * 0.88 - padding * 2);
   const lines = (preWrapped && preWrapped.length > 0)
     ? preWrapped
@@ -839,9 +878,9 @@ function drawHookOutro() {
 
   for (let i = 0; i < lines.length; i++) {
     const ly = firstBaselineY + i * lineHeight;
-    if ((ho.stroke_width || 0) > 0) {
+    if ((ho.stroke_pct || 0) > 0) {
       ctx.strokeStyle = ho.stroke_color || "#000";
-      ctx.lineWidth = ho.stroke_width * (px / 24);
+      ctx.lineWidth = pctToCanvasPx(ho.stroke_pct);
       ctx.lineJoin = "round";
       ctx.strokeText(lines[i], cx, ly);
     }
@@ -864,7 +903,7 @@ function drawSingleWatermark(wm) {
   const right  = wm.position && wm.position.endsWith("right");
   const bottom = wm.position && wm.position.startsWith("bottom");
   if (wm.type === "text") {
-    const px = drawtextFontPx(wm.text_fontsize || 36);
+    const px = drawtextFontPx(wm.text_fontsize_pct || 0.033);
     ctx.font = `bold ${px}px sans-serif`;
     ctx.textAlign = right ? "right" : "left";
     ctx.textBaseline = bottom ? "bottom" : "top";

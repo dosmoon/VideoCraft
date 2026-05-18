@@ -345,6 +345,11 @@ class StylePanel:
             return
         duration = self._host._full_video_duration()
         instance = spec.default_instance(duration or 0.0)
+        # New subtitle component inherits the active Tab-1 language so
+        # the first add "just works" without users having to open the
+        # property panel.
+        if kind == "clip_subtitle":
+            instance["language"] = self._host._lang_var.get()
         self._host.config.components.append(instance)
         self._selected_idx = len(self._host.config.components) - 1
         self._host._save_all()
@@ -451,13 +456,18 @@ class StylePanel:
 
     def _build_project_context(self) -> ProjectContext:
         duration = self._host._full_video_duration() or 0.0
+        try:
+            langs = list(self._host._hotclips.list_subtitle_langs())
+        except Exception:
+            langs = []
         return ProjectContext(
             project=None,
             duration=duration,
             instance_dir=getattr(self._host, "_instance_dir",
                                   lambda: "")(),
             material_model=self._host.material_model,
-            seek_to=None)
+            seek_to=None,
+            subtitle_languages=langs)
 
     def _on_property_changed(self) -> None:
         self._host._save_all()

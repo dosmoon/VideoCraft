@@ -36,13 +36,15 @@ KIND_IMAGE = "clip_image_watermark"
 # ── default_instance ───────────────────────────────────────────────────────
 
 def _default_text_instance(_duration: float) -> dict:
+    # text_fontsize_pct is a fraction of the short edge (see
+    # core/composition/layout.py). 0.033 ≈ 36px at 1080 short edge.
     return {
         "kind": KIND_TEXT,
         "id": "wm_text",
         "name": "text watermark",
         "enabled": True,
         "text": "",
-        "text_fontsize": 36,
+        "text_fontsize_pct": 0.033,
         "text_color": "#FFFFFF",
         "text_opacity": 70,
         "position": "top-right",
@@ -73,7 +75,7 @@ def _style_dict(instance: dict) -> dict:
     overlay_filter expect at render time. Mirrors the dict the pre-5.2
     inline watermark branch emitted so byte-shape stays stable."""
     return {
-        "text_fontsize": int(instance.get("text_fontsize", 36)),
+        "text_fontsize_pct": float(instance.get("text_fontsize_pct", 0.033)),
         "text_color": instance.get("text_color", "#FFFFFF"),
         "text_opacity": int(instance.get("text_opacity", 70)),
         "image_scale": float(instance.get("image_scale", 0.15)),
@@ -134,7 +136,7 @@ def template_from_style(style: CompositionStyle) -> list[dict]:
         "position": wm.position,
         "margin_x_pct": float(wm.margin_x_pct),
         "margin_y_pct": float(wm.margin_y_pct),
-        "text_fontsize": int(wm.text_fontsize),
+        "text_fontsize_pct": int(wm.text_fontsize) / 1080.0,
         "text_color": wm.text_color,
         "text_opacity": int(wm.text_opacity),
         "image_scale": float(wm.image_scale),
@@ -153,7 +155,8 @@ def _build_text_panel(parent: ttk.Frame, instance: dict,
     name_v = tk.StringVar(value=instance.get("name", ""))
     enabled_v = tk.BooleanVar(value=bool(instance.get("enabled", True)))
     text_v = tk.StringVar(value=instance.get("text", ""))
-    fs_v = tk.IntVar(value=int(instance.get("text_fontsize", 36)))
+    fs_v = tk.IntVar(value=int(round(
+        float(instance.get("text_fontsize_pct", 0.033)) * 1080)))
     color_v = tk.StringVar(value=instance.get("text_color", "#FFFFFF"))
     op_v = tk.IntVar(value=int(instance.get("text_opacity", 70)))
     pos_v = tk.StringVar(value=instance.get("position", "top-right"))
@@ -181,8 +184,9 @@ def _build_text_panel(parent: ttk.Frame, instance: dict,
 
     row = ttk.Frame(parent); row.pack(fill="x", pady=2)
     ttk.Label(row, text="字号", width=10).pack(side="left")
-    ttk.Spinbox(row, from_=8, to=96, width=4, textvariable=fs_v
+    ttk.Spinbox(row, from_=8, to=200, width=4, textvariable=fs_v
                  ).pack(side="left")
+    ttk.Label(row, text="px").pack(side="left")
     ttk.Label(row, text="颜色").pack(side="left", padx=(8, 2))
     add_color_picker(row, color_v)
     ttk.Label(row, text="不透明").pack(side="left", padx=(8, 2))
@@ -211,7 +215,7 @@ def _build_text_panel(parent: ttk.Frame, instance: dict,
         instance["enabled"] = bool(enabled_v.get())
         instance["text"] = text_v.get()
         try:
-            instance["text_fontsize"] = int(fs_v.get())
+            instance["text_fontsize_pct"] = float(fs_v.get()) / 1080.0
             instance["text_opacity"] = int(op_v.get())
             instance["margin_x_pct"] = float(mx_v.get()) / 100.0
             instance["margin_y_pct"] = float(my_v.get()) / 100.0

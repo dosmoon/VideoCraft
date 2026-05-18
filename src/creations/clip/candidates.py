@@ -110,6 +110,27 @@ class HotclipsRepo:
             pass
         return sorted(langs)
 
+    def list_subtitle_langs(self) -> list[str]:
+        """Languages with an SRT available — union of instance SRT
+        snapshots and upstream `.srt` files in subtitles_dir. Broader
+        than list_available_langs(): no hotclips JSON required, so any
+        SRT the material has can be picked as a subtitle burn source."""
+        langs: set[str] = set()
+        try:
+            for name in os.listdir(self._instance_dir):
+                if (name.startswith("source-subtitles.")
+                        and name.endswith(".srt")):
+                    langs.add(name[len("source-subtitles."):-len(".srt")])
+        except OSError:
+            pass
+        try:
+            for name in os.listdir(self._model.subtitles_dir):
+                if name.endswith(".srt"):
+                    langs.add(name[:-len(".srt")])
+        except OSError:
+            pass
+        return sorted(langs)
+
     def load_hotclips(self, lang: str) -> Optional[dict]:
         """Parse the snapshot hotclips JSON. Returns the dict or None
         when the snapshot is missing or malformed (caller decides how

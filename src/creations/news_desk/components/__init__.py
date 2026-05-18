@@ -53,6 +53,11 @@ class ProjectContext:
     # drive the WebView preview (e.g. chapter list click-to-seek).
     # None when no preview is mounted; callers must guard.
     seek_to: Callable = None         # (sec: float) -> None
+    # Optional language codes that the bound material exposes as
+    # subtitle tracks. clip's host fills this from the hotclips SRT
+    # pool so the subtitle property panel can show a language picker.
+    # Empty list when the host doesn't know (e.g. news_desk).
+    subtitle_languages: list = field(default_factory=list)
 
 
 # ── Import source declaration ──────────────────────────────────────────────

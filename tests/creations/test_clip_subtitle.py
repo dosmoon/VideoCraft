@@ -83,13 +83,15 @@ def test_compile_style_dict_carries_all_required_fields(srt_file):
     spec = spec_for_kind(KIND)
     out = spec.compile({
         "kind": KIND, "srt_path": srt_file,
-        "fontsize": 32, "color": "#FF0000", "bold": True, "is_chinese": True,
+        "fontsize_pct": 0.03, "color": "#FF0000", "bold": True,
+        "is_chinese": True,
         "bg_color": "#000000", "bg_opacity": 70, "bg_padding_x_pct": 0.05,
-        "stroke_color": "#222222", "stroke_width": 3,
-        "position": "top", "block_margin_pct": 0.12, "margin_v": 150,
+        "stroke_color": "#222222", "stroke_pct": 0.003,
+        "position": "top", "block_margin_pct": 0.12,
+        "effective_block_margin_pct": 0.15,
     }, ClipRange(0.0, 10.0), _empty_ctx())
     s = out[0].style
-    assert s["fontsize"] == 32
+    assert s["fontsize_pct"] == pytest.approx(0.03)
     assert s["color"] == "#FF0000"
     assert s["bold"] is True
     assert s["is_chinese"] is True
@@ -97,40 +99,32 @@ def test_compile_style_dict_carries_all_required_fields(srt_file):
     assert s["bg_opacity"] == 70
     assert s["bg_padding_x_pct"] == pytest.approx(0.05)
     assert s["stroke_color"] == "#222222"
-    assert s["stroke_width"] == 3
+    assert s["stroke_pct"] == pytest.approx(0.003)
     assert s["position"] == "top"
     assert s["block_margin_pct"] == pytest.approx(0.12)
-    # margin_v only stamped when instance carries it (composer fills it
-    # post-5.5.b). When absent, render falls back to block_margin_pct.
-    assert s["margin_v"] == 150
+    # effective_block_margin_pct only stamped when composer computed
+    # one (multi-track stacking). When absent, render falls back to
+    # block_margin_pct.
+    assert s["effective_block_margin_pct"] == pytest.approx(0.15)
 
 
-# ── template_from_style migration ──────────────────────────────────────────
+# ── template_from_style legacy migration ───────────────────────────────────
 
-def test_template_skips_disabled_tracks():
+def test_template_disabled_sub1_returns_empty():
     style = CompositionStyle()
     style.subtitle.sub1.enabled = False
-    style.subtitle.sub2.enabled = False
+    style.subtitle.sub2.enabled = True    # ignored — dual-track dropped
     assert template_from_style(style) == []
 
 
-def test_template_one_dict_for_sub1_only():
+def test_template_one_dict_for_enabled_sub1():
     style = CompositionStyle()
     style.subtitle.sub1.enabled = True
-    style.subtitle.sub2.enabled = False
+    style.subtitle.sub2.enabled = True    # ignored — only sub1 migrates
     out = template_from_style(style)
     assert len(out) == 1
     assert out[0]["kind"] == KIND
-    assert out[0]["track"] == "primary"
-    assert out[0]["srt_path"] == ""    # composer fills per candidate
-
-
-def test_template_two_dicts_for_dual_track():
-    style = CompositionStyle()
-    style.subtitle.sub1.enabled = True
-    style.subtitle.sub2.enabled = True
-    out = template_from_style(style)
-    assert [c["track"] for c in out] == ["primary", "secondary"]
+    assert out[0]["language"] == ""    # host fills on first open
 
 
 def test_template_propagates_line_and_shared_style():
@@ -141,7 +135,8 @@ def test_template_propagates_line_and_shared_style():
     style.subtitle.position = "top"
     style.subtitle.stroke_color = "#123456"
     out = template_from_style(style)
-    assert out[0]["fontsize"] == 28
+    # Legacy int-px fields convert to pct via /1080 (canonical baseline).
+    assert out[0]["fontsize_pct"] == pytest.approx(28 / 1080.0)
     assert out[0]["color"] == "#00FF00"
     assert out[0]["position"] == "top"
     assert out[0]["stroke_color"] == "#123456"

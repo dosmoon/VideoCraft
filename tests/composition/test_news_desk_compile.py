@@ -169,7 +169,9 @@ def _subtitle_instance(*, enabled=True, srt_path: str = "",
         "enabled": enabled,
         "srt_path": srt_path,
         "is_chinese": is_chinese,
-        "fontsize": fontsize,
+        # Helper takes int-px for callsite ergonomics; converts to the
+        # engine-canonical short-edge pct (1080 baseline).
+        "fontsize_pct": fontsize / 1080.0,
         "position": position,
     }
 
@@ -207,7 +209,7 @@ def test_subtitle_compile_style_dict_carries_track_fields(srt_file):
         srt_path=srt_file, fontsize=32, position="top", is_chinese=False)
     elements = subtitle_mod._compile(inst, _range(), _ctx())
     style = elements[0].style
-    assert style["fontsize"] == 32
+    assert style["fontsize_pct"] == pytest.approx(32 / 1080.0)
     assert style["position"] == "top"
     assert style["is_chinese"] is False
     assert style["color"] == "#FFFFFF"
@@ -240,8 +242,8 @@ def test_text_watermark_compile_empty_text_returns_empty():
 
 def test_text_watermark_compile_emits_full_duration_element():
     inst = {"id": "twm-1", "kind": "text_watermark", "enabled": True,
-             "text": "@channel", "fontsize": 40, "color": "#FFCC00",
-             "position": "bottom-left",
+             "text": "@channel", "fontsize_pct": 40 / 1080.0,
+             "color": "#FFCC00", "position": "bottom-left",
              "margin_x_pct": 3, "margin_y_pct": 4, "opacity": 80}
     elements = twm_mod._compile(inst, _range(0.0, 120.0), _ctx())
     assert len(elements) == 1
@@ -249,7 +251,7 @@ def test_text_watermark_compile_emits_full_duration_element():
     assert e.kind == "text_watermark"
     assert (e.start_sec, e.end_sec) == (0.0, 120.0)
     assert e.data["text"] == "@channel"
-    assert e.style["text_fontsize"] == 40
+    assert e.style["text_fontsize_pct"] == pytest.approx(40 / 1080.0)
     assert e.style["text_color"] == "#FFCC00"
     assert e.style["text_opacity"] == 80
     assert e.style["position"] == "bottom-left"

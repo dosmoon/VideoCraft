@@ -29,6 +29,8 @@ def _new_comp_id() -> str:
 
 
 def _default_instance(_duration: float) -> dict:
+    # fontsize_pct / stroke_pct are fractions of the short edge —
+    # core/composition/layout.py is the engine-wide convention.
     return {
         "kind": "subtitle",
         "id": _new_comp_id(),
@@ -37,11 +39,11 @@ def _default_instance(_duration: float) -> dict:
         "srt_path": "",                # snapshot-relative once imported
         "position": "bottom",          # "top" | "bottom"
         "block_margin_pct": 9,         # % from anchored edge
-        "fontsize": 28,
+        "fontsize_pct": 0.026,         # ≈ 28px at 1080 short edge
         "color": "#FFFF00",
         "is_chinese": True,
         "stroke_color": "#000000",
-        "stroke_width": 2,
+        "stroke_pct": 0.002,           # ≈ 2px at 1080 short edge
         "bg_enabled": True,
         "bg_color": "#000000",
         "bg_opacity": 55,              # 0..100
@@ -197,14 +199,18 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
                  ).pack(side="left")
     ttk.Label(row, text="%").pack(side="left")
 
-    fs_v = tk.IntVar(value=int(instance.get("fontsize", 28)))
+    # fontsize / stroke shown as px @ 1080 short edge (intuitive), stored
+    # as pct of short edge for engine-wide consistency.
+    fs_v = tk.IntVar(value=int(round(
+        float(instance.get("fontsize_pct", 0.026)) * 1080)))
     color_v = tk.StringVar(value=instance.get("color", "#FFFF00"))
     cn_v = tk.BooleanVar(value=bool(instance.get("is_chinese", True)))
     row = ttk.Frame(parent); row.pack(fill="x", pady=2)
     ttk.Label(row, text=tr("tool.news_desk.field.fontsize"), width=10
               ).pack(side="left")
-    ttk.Spinbox(row, from_=10, to=72, width=4, textvariable=fs_v
+    ttk.Spinbox(row, from_=10, to=200, width=4, textvariable=fs_v
                  ).pack(side="left")
+    ttk.Label(row, text="px").pack(side="left")
     ttk.Label(row, text=tr("tool.news_desk.field.text_color")
               ).pack(side="left", padx=(8, 2))
     _add_color_picker(row, color_v)
@@ -212,15 +218,17 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
                      variable=cn_v).pack(side="left", padx=(8, 0))
 
     sc_v = tk.StringVar(value=instance.get("stroke_color", "#000000"))
-    sw_v = tk.IntVar(value=int(instance.get("stroke_width", 2)))
+    sw_v = tk.IntVar(value=int(round(
+        float(instance.get("stroke_pct", 0.002)) * 1080)))
     row = ttk.Frame(parent); row.pack(fill="x", pady=2)
     ttk.Label(row, text=tr("tool.news_desk.subtitle.stroke"), width=10
               ).pack(side="left")
     _add_color_picker(row, sc_v)
     ttk.Label(row, text=tr("tool.news_desk.subtitle.stroke_width")
               ).pack(side="left", padx=(8, 2))
-    ttk.Spinbox(row, from_=0, to=8, width=4, textvariable=sw_v
+    ttk.Spinbox(row, from_=0, to=20, width=4, textvariable=sw_v
                  ).pack(side="left")
+    ttk.Label(row, text="px").pack(side="left")
 
     # Backdrop (libass opaque box mode).
     bg_en_v = tk.BooleanVar(value=bool(instance.get("bg_enabled", True)))
@@ -249,8 +257,8 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
         instance["position"] = pos_v.get() or "bottom"
         try:
             instance["block_margin_pct"] = int(bm_v.get())
-            instance["fontsize"] = int(fs_v.get())
-            instance["stroke_width"] = int(sw_v.get())
+            instance["fontsize_pct"] = float(fs_v.get()) / 1080.0
+            instance["stroke_pct"] = float(sw_v.get()) / 1080.0
             instance["bg_opacity"] = int(bg_op_v.get())
         except (tk.TclError, ValueError):
             return
@@ -387,12 +395,15 @@ def _compile(instance: dict, clip_range, ctx: ProjectContext) -> list:
         return []
 
     style_dict = {
-        "fontsize": int(instance.get("fontsize", 28)),
+        # Pct-based sizes — render multiplies by short_edge.
+        "fontsize_pct": float(instance.get("fontsize_pct", 0.026)),
         "color": instance.get("color", "#FFFFFF"),
         "is_chinese": bool(instance.get("is_chinese", False)),
         "bg_color": instance.get("bg_color", "#000000"),
         "bg_opacity": (int(instance.get("bg_opacity", 0))
                         if instance.get("bg_enabled", True) else 0),
+        "stroke_color": instance.get("stroke_color", "#000000"),
+        "stroke_pct": float(instance.get("stroke_pct", 0.002)),
         "position": instance.get("position", "bottom"),
         "block_margin_pct": int(
             instance.get("block_margin_pct", 9)) / 100.0,

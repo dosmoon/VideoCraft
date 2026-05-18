@@ -1,4 +1,4 @@
-"""composer.expand_for_candidate + compile_for_candidate — Step 5.5.b."""
+"""composer.expand_for_candidate + compile_for_candidate."""
 
 from __future__ import annotations
 
@@ -59,91 +59,86 @@ def test_expand_preserves_user_set_text():
     assert out[0]["text"] == "custom"
 
 
-def test_expand_routes_srt_primary_to_source_srt():
+def test_expand_routes_srt_by_language():
     out = expand_for_candidate(
-        [{"kind": "clip_subtitle", "track": "primary"}],
-        source_srt="/a/en.srt")
+        [{"kind": "clip_subtitle", "language": "en"},
+         {"kind": "clip_subtitle", "language": "zh"}],
+        srt_by_lang={"en": "/a/en.srt", "zh": "/a/zh.srt"})
     assert out[0]["srt_path"] == "/a/en.srt"
+    assert out[1]["srt_path"] == "/a/zh.srt"
 
 
-def test_expand_routes_srt_secondary_to_secondary():
+def test_expand_unknown_language_empty_srt():
     out = expand_for_candidate(
-        [{"kind": "clip_subtitle", "track": "secondary"}],
-        source_srt="/a/en.srt", source_srt_secondary="/a/zh.srt")
-    assert out[0]["srt_path"] == "/a/zh.srt"
+        [{"kind": "clip_subtitle", "language": "fr"}],
+        srt_by_lang={"en": "/a/en.srt"})
+    assert out[0]["srt_path"] == ""
 
 
-# ── margin_v stacking ──────────────────────────────────────────────────────
-
-def test_expand_single_subtitle_stamps_margin_from_block_margin_pct():
-    """Single track: margin_v = libass_margin_v(block_margin_pct)."""
+def test_expand_empty_language_empty_srt():
     out = expand_for_candidate(
-        [{"kind": "clip_subtitle", "track": "primary",
+        [{"kind": "clip_subtitle", "language": ""}],
+        srt_by_lang={"en": "/a/en.srt"})
+    assert out[0]["srt_path"] == ""
+
+
+# ── stacking pct (composer stamps `effective_block_margin_pct`) ────────────
+
+def test_expand_single_subtitle_stamps_effective_pct_eq_base():
+    out = expand_for_candidate(
+        [{"kind": "clip_subtitle", "language": "en",
            "position": "bottom", "block_margin_pct": 0.09}],
-        source_srt="/a/en.srt")
-    from core.composition.layout import libass_margin_v
-    assert out[0]["margin_v"] == libass_margin_v(0.09)
+        srt_by_lang={"en": "/a/en.srt"})
+    assert out[0]["effective_block_margin_pct"] == pytest.approx(0.09)
 
 
-def test_expand_dual_track_same_position_stacks():
-    """Two subtitles on same position: outer = block_margin, inner =
-    block_margin + track_gap."""
+def test_expand_two_subtitles_same_position_stack_in_list_order():
+    """Two subtitles at the same position: list-order earlier is outer
+    (block_margin), the next is inner (block_margin + gap)."""
     out = expand_for_candidate([
-        {"kind": "clip_subtitle", "track": "primary",
-          "position": "bottom", "block_margin_pct": 0.09,
-          "track_gap_pct": 0.04},
-        {"kind": "clip_subtitle", "track": "secondary",
-          "position": "bottom", "block_margin_pct": 0.09,
-          "track_gap_pct": 0.04},
-    ], source_srt="/a/en.srt", source_srt_secondary="/a/zh.srt")
-    from core.composition.layout import libass_margin_v
-    assert out[0]["margin_v"] == libass_margin_v(0.09)
-    assert out[1]["margin_v"] == libass_margin_v(0.13)
+        {"kind": "clip_subtitle", "language": "en",
+          "position": "bottom", "block_margin_pct": 0.09},
+        {"kind": "clip_subtitle", "language": "zh",
+          "position": "bottom", "block_margin_pct": 0.09},
+    ], srt_by_lang={"en": "/a/en.srt", "zh": "/a/zh.srt"})
+    assert out[0]["effective_block_margin_pct"] == pytest.approx(0.09)
+    assert out[1]["effective_block_margin_pct"] == pytest.approx(0.13)
 
 
-def test_expand_two_tracks_different_positions_no_stack():
-    """Subs on different positions don't share an anchor edge → each is
-    treated as single-track, both at block_margin_pct from their own
-    edge."""
+def test_expand_two_subtitles_different_positions_no_stack():
     out = expand_for_candidate([
-        {"kind": "clip_subtitle", "track": "primary",
-          "position": "top", "block_margin_pct": 0.09,
-          "track_gap_pct": 0.04},
-        {"kind": "clip_subtitle", "track": "secondary",
-          "position": "bottom", "block_margin_pct": 0.09,
-          "track_gap_pct": 0.04},
-    ], source_srt="/a/en.srt", source_srt_secondary="/a/zh.srt")
-    from core.composition.layout import libass_margin_v
-    assert out[0]["margin_v"] == libass_margin_v(0.09)
-    assert out[1]["margin_v"] == libass_margin_v(0.09)
+        {"kind": "clip_subtitle", "language": "en",
+          "position": "top", "block_margin_pct": 0.09},
+        {"kind": "clip_subtitle", "language": "zh",
+          "position": "bottom", "block_margin_pct": 0.09},
+    ], srt_by_lang={"en": "/a/en.srt", "zh": "/a/zh.srt"})
+    assert out[0]["effective_block_margin_pct"] == pytest.approx(0.09)
+    assert out[1]["effective_block_margin_pct"] == pytest.approx(0.09)
 
 
 def test_expand_disabled_subtitle_skipped_in_stacking():
-    """Disabled subtitle doesn't participate in stacking math."""
     out = expand_for_candidate([
-        {"kind": "clip_subtitle", "track": "primary",
+        {"kind": "clip_subtitle", "language": "en",
+          "position": "bottom", "block_margin_pct": 0.09},
+        {"kind": "clip_subtitle", "language": "zh",
           "position": "bottom", "block_margin_pct": 0.09,
-          "track_gap_pct": 0.04},
-        {"kind": "clip_subtitle", "track": "secondary",
-          "position": "bottom", "block_margin_pct": 0.09,
-          "track_gap_pct": 0.04, "enabled": False},
-    ], source_srt="/a/en.srt", source_srt_secondary="/a/zh.srt")
-    from core.composition.layout import libass_margin_v
-    # Primary still treated as single-track (secondary disabled)
-    assert out[0]["margin_v"] == libass_margin_v(0.09)
+          "enabled": False},
+    ], srt_by_lang={"en": "/a/en.srt", "zh": "/a/zh.srt"})
+    # First subtitle still treated as single (disabled doesn't count)
+    assert out[0]["effective_block_margin_pct"] == pytest.approx(0.09)
 
 
 # ── compile_for_candidate end-to-end ───────────────────────────────────────
 
 def test_compile_end_to_end_with_subtitle(srt_file):
     components = [
-        {"kind": "clip_subtitle", "id": "sub1", "track": "primary",
+        {"kind": "clip_subtitle", "id": "sub1", "language": "en",
           "position": "bottom", "block_margin_pct": 0.09,
           "fontsize": 24, "color": "#FFFFFF"},
     ]
     timeline = compile_for_candidate(
         components, ClipRange(0.0, 10.0),
-        source_srt=srt_file)
+        srt_by_lang={"en": srt_file})
     assert len(timeline.tracks) == 1
     t = timeline.tracks[0]
     assert t.component_kind == "clip_subtitle"
@@ -165,11 +160,11 @@ def test_compile_end_to_end_with_hook(srt_file):
 
 def test_compile_skips_disabled_components(srt_file):
     components = [
-        {"kind": "clip_subtitle", "id": "s", "track": "primary",
+        {"kind": "clip_subtitle", "id": "s", "language": "en",
           "enabled": False, "position": "bottom",
           "block_margin_pct": 0.09},
     ]
     timeline = compile_for_candidate(
         components, ClipRange(0.0, 10.0),
-        source_srt=srt_file)
+        srt_by_lang={"en": srt_file})
     assert timeline.tracks == []

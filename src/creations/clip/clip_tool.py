@@ -443,12 +443,11 @@ class ClipToolApp(ToolBase):
         and preview — set_timeline pushes the same IR ffmpeg renders."""
         from creations.clip.composer import compile_for_candidate
         from core.composition.compile import ClipRange
-        srt_path = self._resolve_source_srt() or ""
         return compile_for_candidate(
             self.config.components,
             ClipRange(start_sec=start, end_sec=end),
             hook_text=hook, outro_text=outro,
-            source_srt=srt_path,
+            srt_by_lang=self._srt_by_lang(),
         )
 
     def _effective_outro(self, idx: int) -> str:
@@ -684,11 +683,12 @@ class ClipToolApp(ToolBase):
             return []
         from core.composition import prepare_subtitle_cues
         from core.composition.style import SubtitleLineStyle
-        # Find the primary-track subtitle component for char-wrap params;
-        # fall back to defaults if none is configured.
+        # Pick the first enabled subtitle component for char-wrap params
+        # (components-list order = outer-to-inner z); fall back to
+        # defaults if none is configured.
         sub1_comp = next((c for c in self.config.components
                             if c.get("kind") == "clip_subtitle"
-                            and c.get("track", "primary") == "primary"), None)
+                            and c.get("enabled", True)), None)
         if sub1_comp is not None:
             line = SubtitleLineStyle(
                 enabled=True,
@@ -709,6 +709,17 @@ class ClipToolApp(ToolBase):
 
     def _resolve_source_srt(self) -> Optional[str]:
         return self._hotclips.resolve_source_srt(self._lang_var.get())
+
+    def _srt_by_lang(self) -> dict[str, str]:
+        """Map every language with an available SRT to its path so the
+        composer can resolve subtitle components by their `language`
+        field. Broader than the hotclips-langs list — any SRT the
+        material has can be picked as a subtitle burn source."""
+        out: dict[str, str] = {}
+        for lang in self._hotclips.list_subtitle_langs():
+            p = self._hotclips.resolve_source_srt(lang)
+            out[lang] = p or ""
+        return out
 
     # ── Tab 1: global crop handler + apply-to-all ────────────────────────
 
@@ -777,7 +788,7 @@ class ClipToolApp(ToolBase):
         self._save_all()
 
         # Build jobs
-        srt_path = self._resolve_source_srt()
+        srt_by_lang = self._srt_by_lang()
         jobs: list[RenderJob] = []
         for out_idx, src_idx in enumerate(selected, 1):
             if out_idx in skip_indices:
@@ -794,7 +805,7 @@ class ClipToolApp(ToolBase):
                 ClipRange(start_sec=start, end_sec=end),
                 hook_text=self._effective_hook(src_idx),
                 outro_text=self._effective_outro(src_idx),
-                source_srt=srt_path,
+                srt_by_lang=srt_by_lang,
             )
             jobs.append(RenderJob(
                 out_idx=out_idx, src_idx=src_idx,
@@ -1093,7 +1104,7 @@ class ClipToolApp(ToolBase):
             ClipRange(start_sec=start, end_sec=end),
             hook_text=self._effective_hook(src_idx),
             outro_text="",
-            source_srt=self._resolve_source_srt(),
+            srt_by_lang=self._srt_by_lang(),
         )
         req = CompositionRequest(
             source_video=video_path,

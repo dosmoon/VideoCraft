@@ -41,7 +41,6 @@ from core.composition.primitives.image_watermark import (
 )
 from core.composition.primitives.subtitle_cue import (
     build_force_style as _build_subtitle_force_style,
-    track_margins as _track_margins,
 )
 from core.composition.primitives.text_watermark import (
     build_drawtext as _build_text_watermark_drawtext,
@@ -84,7 +83,8 @@ def _check_golden(actual: str, filename: str) -> None:
 # Drawtext snippets reference `composition-<role>-<pid>-<id>.txt` temp
 # files. The pid/id parts shift every run; normalize to `PID-ID` so the
 # golden stays stable while the snippet structure stays verifiable.
-_TMP_NORMALIZE = re.compile(r"composition-([\w-]+?)-(\d+)-(\d+)\.txt")
+_TMP_NORMALIZE = re.compile(
+    r"composition-([a-z_]+)-\d+-\d+(?:-\d+)?\.txt")
 
 
 def _normalize_tmp_paths(s: str) -> str:
@@ -175,11 +175,28 @@ def _default_subtitle_style() -> SubtitleStyle:
     return SubtitleStyle()    # all dataclass defaults
 
 
+def _force_style_from_sub_line(line, sub, *, margin_v: int):
+    """Helper bridging the legacy SubtitleStyle dataclass to the new
+    flat-pct build_force_style API. Translates int-px fields to short-
+    edge pct using the canonical 1080 baseline."""
+    return _build_subtitle_force_style(
+        fontsize_pct=int(line.fontsize) / 1080.0,
+        color=line.color, bold=line.bold,
+        is_chinese=line.is_chinese,
+        bg_color=line.bg_color, bg_opacity=int(line.bg_opacity),
+        bg_padding_x_pct=float(line.bg_padding_x_pct),
+        stroke_color=sub.stroke_color,
+        stroke_pct=int(sub.stroke_width) / 1080.0,
+        position=sub.position,
+        margin_v=margin_v,
+        short_edge=1080, target_h=H)
+
+
 def test_golden_subtitle_sub1_force_style():
+    from core.composition.layout import libass_margin_v
     sub = _default_subtitle_style()
-    margin_v1, _ = _track_margins(sub)
-    actual = _build_subtitle_force_style(
-        sub.sub1, sub, margin_v=margin_v1, target_h=H)
+    margin_v1 = libass_margin_v(sub.block_margin_pct, H)
+    actual = _force_style_from_sub_line(sub.sub1, sub, margin_v=margin_v1)
     _check_golden(actual, "subtitle-sub1-force-style.txt")
 
 
@@ -188,13 +205,14 @@ def test_golden_subtitle_sub1_sub2_force_styles():
     enabled. Goldens both force_style strings separated by a sentinel
     so a single file covers the two-track case.
     """
+    from core.composition.layout import libass_margin_v
     sub = _default_subtitle_style()
     sub.sub2.enabled = True   # bilingual mode
-    margin_v1, margin_v2 = _track_margins(sub)
-    s1 = _build_subtitle_force_style(
-        sub.sub1, sub, margin_v=margin_v1, target_h=H)
-    s2 = _build_subtitle_force_style(
-        sub.sub2, sub, margin_v=margin_v2, target_h=H)
+    margin_v1 = libass_margin_v(sub.block_margin_pct, H)
+    margin_v2 = libass_margin_v(
+        sub.block_margin_pct + sub.track_gap_pct, H)
+    s1 = _force_style_from_sub_line(sub.sub1, sub, margin_v=margin_v1)
+    s2 = _force_style_from_sub_line(sub.sub2, sub, margin_v=margin_v2)
     actual = f"# sub1\n{s1}\n\n# sub2\n{s2}\n"
     _check_golden(actual, "subtitle-sub1-sub2-force-styles.txt")
 

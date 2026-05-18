@@ -1,21 +1,14 @@
-"""Clip subtitle component — one track per instance.
+"""Clip subtitle component — one language per instance.
 
-Each clip uses up to two subtitle tracks (primary + secondary language).
-Each track is one ClipSubtitleSpec instance. The host (composer or the
-future component-list UI) decides how many tracks exist and seeds each
-instance with its SRT path + the margin_v that reflects whether the
-other track is also enabled (so the two tracks stack correctly).
+Each subtitle component is bound to ONE language code (e.g. "en", "zh").
+Want a bilingual clip? Add two subtitle components, each picking a
+different language. Style/position are independent per component.
 
-This spec exists ALONGSIDE news_desk's subtitle spec, not as a
-replacement. News_desk's subtitle is single-track with a snapshot SRT
-in instance_dir; clip's is dual-capable with a dynamic SRT path
-resolved from the active language at render time.
-
-Step 5.1 — render path: composer.compile_for_candidate calls
-`subtitle_adapters_from_style()` to translate the legacy
-CompositionStyle.subtitle into transient instance dicts; once Step 5.5
-swaps the UI to a component list, those dicts will live in
-ClipInstanceConfig.components and this seeder retires.
+Unlike news_desk subtitles (which snapshot a user-picked SRT file into
+the instance dir), clip subtitles never store a path: the SRT comes
+from the bound material's hotclips pool, looked up by language code at
+compile time. `composer.expand_for_candidate` stamps `srt_path` into a
+deep-copied instance dict before each spec.compile invocation.
 """
 
 from __future__ import annotations
@@ -27,7 +20,7 @@ from tkinter import ttk
 import srt as _srt
 
 from core.composition.compile import ClipRange, CompileContext
-from core.composition.style import CompositionStyle, SubtitleLineStyle, SubtitleStyle
+from core.composition.style import CompositionStyle
 from core.composition.timeline import Element
 from creations.news_desk.components import ComponentSpec, ProjectContext
 
@@ -40,36 +33,36 @@ KIND = "clip_subtitle"
 # ── default_instance ───────────────────────────────────────────────────────
 
 def _default_instance(_duration: float) -> dict:
-    """Used by [+ Add Subtitle]. Sane mid-range defaults; first add
-    gets the primary track, subsequent adds slot in as secondary."""
+    """Used by [+ Add Subtitle]. `language` is filled by the host
+    (style_panel._on_add) after creation so it can default to the
+    active Tab-1 language pick."""
     return {
         "kind": KIND,
         "id": "sub1",
         "name": "subtitle",
         "enabled": True,
-        # Which language stream the composer wires this track to.
-        # "primary" → resolve_source_srt(lang_var); "secondary" → the
-        # bilingual second track. Default first-add = primary.
-        "track": "primary",
-        # Source SRT — composer fills at compile time based on `track`.
-        "srt_path": "",
-        # Per-line style
-        "fontsize": 24,
+        # Language code — host fills on add, user changes via property
+        # panel dropdown. composer.expand_for_candidate resolves this
+        # against the material's SRT pool to stamp `srt_path`.
+        "language": "",
+        # Per-line style. fontsize_pct / stroke_pct are FRACTIONS OF THE
+        # SHORT EDGE (canonical 1080) — see core/composition/layout.py.
+        # That single convention is what keeps preview ≡ render for
+        # font sizing across the engine. 0.05 ≈ 54px at 1080 short edge,
+        # a normal subtitle size.
+        "fontsize_pct": 0.05,
         "color": "#FFFFFF",
         "bold": False,
         "is_chinese": False,
         "bg_color": "#000000",
         "bg_opacity": 0,
         "bg_padding_x_pct": 0.0,
-        # Track-shared style
+        # Position / stroke shared style. stroke_pct also fraction of
+        # short edge; 0.002 ≈ 2px.
         "stroke_color": "#000000",
-        "stroke_width": 2,
+        "stroke_pct": 0.002,
         "position": "bottom",
         "block_margin_pct": 0.09,
-        # track_gap_pct only matters when two subtitle components sit on
-        # the same position — composer.expand_for_candidate uses it to
-        # stack them via libass margin_v.
-        "track_gap_pct": 0.04,
     }
 
 
@@ -90,7 +83,9 @@ def _compile(instance: dict, clip_range: ClipRange,
         return []
 
     style_dict = {
-        "fontsize": int(instance.get("fontsize", 24)),
+        # Sizes carried as short-edge fractions; consumers (libass force
+        # style, preview canvas) multiply by short_edge to get pixels.
+        "fontsize_pct": float(instance.get("fontsize_pct", 0.05)),
         "color": instance.get("color", "#FFFFFF"),
         "bold": bool(instance.get("bold", False)),
         "is_chinese": bool(instance.get("is_chinese", False)),
@@ -98,16 +93,18 @@ def _compile(instance: dict, clip_range: ClipRange,
         "bg_opacity": int(instance.get("bg_opacity", 0)),
         "bg_padding_x_pct": float(instance.get("bg_padding_x_pct", 0.0)),
         "stroke_color": instance.get("stroke_color", "#000000"),
-        "stroke_width": int(instance.get("stroke_width", 2)),
+        "stroke_pct": float(instance.get("stroke_pct", 0.002)),
         "position": instance.get("position", "bottom"),
         "block_margin_pct": float(instance.get("block_margin_pct", 0.09)),
     }
-    # Only stamp margin_v when composer.expand_for_candidate computed
-    # one — render's libass code falls back to block_margin_pct
-    # otherwise. (Stamping zero would be wrong: render takes "present"
-    # as a signal that the value is authoritative.)
-    if "margin_v" in instance:
-        style_dict["margin_v"] = int(instance["margin_v"])
+    # Composer.expand_for_candidate stamps `effective_block_margin_pct`
+    # with the post-stacking edge offset. Render (libass MarginV) and
+    # preview (canvas edge) both multiply this single pct by their own
+    # frame height — no separate margin_v cache needed now that libass
+    # script units equal target pixels (see subtitle_cue.original_size).
+    if "effective_block_margin_pct" in instance:
+        style_dict["effective_block_margin_pct"] = float(
+            instance["effective_block_margin_pct"])
 
     base = float(clip_range.start_sec)
     eff_end = float(clip_range.end_sec)
@@ -134,55 +131,46 @@ def _compile(instance: dict, clip_range: ClipRange,
 # ── Migration — extract template dicts from legacy CompositionStyle ────────
 
 def template_from_style(style: CompositionStyle) -> list[dict]:
-    """One-time bootstrap helper: turn a legacy CompositionStyle.subtitle
-    into the matching subtitle component instance dicts (primary +
-    optional secondary). Pure template — srt_path and margin_v stay
-    unset; composer.expand_for_candidate fills both at compile time.
-
-    Used only by the clip_tool startup migration when config.components
-    is empty. Once config.components is the authoritative store, this
-    function is dead code and goes away.
-    """
+    """One-shot bootstrap from legacy CompositionStyle.subtitle (pre-5.5
+    config shape). Only sub1's visual style is preserved; dual-track
+    (sub2) is dropped — users who had bilingual clips re-add a second
+    subtitle component via the new language picker. `language` is left
+    empty for the host to fill on first open."""
     sub = style.subtitle
-    out: list[dict] = []
-    if sub.sub1.enabled:
-        out.append(_line_to_template(sub.sub1, sub, "sub1", "primary"))
-    if sub.sub2.enabled:
-        out.append(_line_to_template(sub.sub2, sub, "sub2", "secondary"))
-    return out
-
-
-def _line_to_template(line: SubtitleLineStyle, subtitle_style: SubtitleStyle,
-                       track_id: str, track_role: str) -> dict:
-    return {
+    if not sub.sub1.enabled:
+        return []
+    # Legacy CompositionStyle.subtitle stores fontsize / stroke_width
+    # as integers. Pre-alpha: lossy convert to pct by dividing by the
+    # canonical 1080 short-edge baseline — user can re-tune in the
+    # property panel if the visual size is off.
+    line = sub.sub1
+    return [{
         "kind": KIND,
-        "id": track_id,
-        "name": track_id,
+        "id": "sub1",
+        "name": "sub1",
         "enabled": True,
-        "track": track_role,
-        "srt_path": "",
-        "fontsize": int(line.fontsize),
+        "language": "",
+        "fontsize_pct": int(line.fontsize) / 1080.0,
         "color": line.color,
         "bold": bool(line.bold),
         "is_chinese": bool(line.is_chinese),
         "bg_color": line.bg_color,
         "bg_opacity": int(line.bg_opacity),
         "bg_padding_x_pct": float(line.bg_padding_x_pct),
-        "stroke_color": subtitle_style.stroke_color,
-        "stroke_width": int(subtitle_style.stroke_width),
-        "position": subtitle_style.position,
-        "block_margin_pct": float(subtitle_style.block_margin_pct),
-        "track_gap_pct": float(subtitle_style.track_gap_pct),
-    }
+        "stroke_color": sub.stroke_color,
+        "stroke_pct": int(sub.stroke_width) / 1080.0,
+        "position": sub.position,
+        "block_margin_pct": float(sub.block_margin_pct),
+    }]
 
 
 # ── property panel ─────────────────────────────────────────────────────────
 
 def _build_property_panel(parent: ttk.Frame, instance: dict,
-                           _ctx: ProjectContext, on_change) -> None:
+                           ctx: ProjectContext, on_change) -> None:
     name_v = tk.StringVar(value=instance.get("name", ""))
     enabled_v = tk.BooleanVar(value=bool(instance.get("enabled", True)))
-    track_v = tk.StringVar(value=instance.get("track", "primary"))
+    lang_v = tk.StringVar(value=instance.get("language", ""))
 
     # Identity row
     row = ttk.Frame(parent); row.pack(fill="x", pady=2)
@@ -192,10 +180,19 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
 
     row = ttk.Frame(parent); row.pack(fill="x", pady=2)
     ttk.Checkbutton(row, text="启用", variable=enabled_v).pack(side="left")
-    ttk.Label(row, text="轨道").pack(side="left", padx=(12, 4))
-    for label, val in (("主语言", "primary"), ("副语言", "secondary")):
-        ttk.Radiobutton(row, text=label, variable=track_v, value=val
-                        ).pack(side="left", padx=(2, 0))
+    ttk.Label(row, text="语言").pack(side="left", padx=(12, 4))
+    # Available languages come from the bound material's SRT pool; host
+    # passes them through ProjectContext. Empty list = no material bound
+    # or no extracted subtitles yet — combobox stays editable as a
+    # fallback so the value isn't lost on display.
+    langs = list(getattr(ctx, "subtitle_languages", None) or [])
+    cur = lang_v.get()
+    if cur and cur not in langs:
+        langs.append(cur)
+    lang_combo = ttk.Combobox(row, textvariable=lang_v, values=langs,
+                                state="readonly" if langs else "normal",
+                                width=12)
+    lang_combo.pack(side="left", padx=(2, 0))
 
     # Position
     ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=6)
@@ -220,14 +217,19 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
     ttk.Label(parent, text="字体",
               font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
 
-    fs_v = tk.IntVar(value=int(instance.get("fontsize", 24)))
+    # fontsize / stroke shown to user as "px at 1080 short edge" — the
+    # natural intuition. Internally stored as fraction of short edge so
+    # render and preview use the same pct (see layout.font_size_px).
+    fs_v = tk.IntVar(value=int(round(
+        float(instance.get("fontsize_pct", 0.05)) * 1080)))
     color_v = tk.StringVar(value=instance.get("color", "#FFFFFF"))
     bold_v = tk.BooleanVar(value=bool(instance.get("bold", False)))
     cn_v = tk.BooleanVar(value=bool(instance.get("is_chinese", False)))
     row = ttk.Frame(parent); row.pack(fill="x", pady=2)
     ttk.Label(row, text="字号", width=10).pack(side="left")
-    ttk.Spinbox(row, from_=10, to=96, width=4, textvariable=fs_v
+    ttk.Spinbox(row, from_=10, to=200, width=4, textvariable=fs_v
                  ).pack(side="left")
+    ttk.Label(row, text="px").pack(side="left")
     ttk.Label(row, text="颜色").pack(side="left", padx=(8, 2))
     add_color_picker(row, color_v)
     ttk.Checkbutton(row, text="粗体", variable=bold_v
@@ -237,13 +239,15 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
 
     # Stroke
     sc_v = tk.StringVar(value=instance.get("stroke_color", "#000000"))
-    sw_v = tk.IntVar(value=int(instance.get("stroke_width", 2)))
+    sw_v = tk.IntVar(value=int(round(
+        float(instance.get("stroke_pct", 0.002)) * 1080)))
     row = ttk.Frame(parent); row.pack(fill="x", pady=2)
     ttk.Label(row, text="描边", width=10).pack(side="left")
     add_color_picker(row, sc_v)
     ttk.Label(row, text="宽度").pack(side="left", padx=(8, 2))
-    ttk.Spinbox(row, from_=0, to=8, width=4, textvariable=sw_v
+    ttk.Spinbox(row, from_=0, to=20, width=4, textvariable=sw_v
                  ).pack(side="left")
+    ttk.Label(row, text="px").pack(side="left")
 
     # Backdrop
     ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=6)
@@ -268,12 +272,12 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
     def _commit(*_):
         instance["name"] = name_v.get()
         instance["enabled"] = bool(enabled_v.get())
-        instance["track"] = track_v.get() or "primary"
+        instance["language"] = lang_v.get()
         instance["position"] = pos_v.get() or "bottom"
         try:
             instance["block_margin_pct"] = float(bm_v.get()) / 100.0
-            instance["fontsize"] = int(fs_v.get())
-            instance["stroke_width"] = int(sw_v.get())
+            instance["fontsize_pct"] = float(fs_v.get()) / 1080.0
+            instance["stroke_pct"] = float(sw_v.get()) / 1080.0
             instance["bg_opacity"] = int(bg_op_v.get())
             instance["bg_padding_x_pct"] = float(bg_pad_v.get()) / 100.0
         except (tk.TclError, ValueError):
@@ -285,7 +289,7 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
         instance["bg_color"] = bg_color_v.get() or "#000000"
         on_change()
 
-    for v in (name_v, enabled_v, track_v, pos_v, bm_v, fs_v, color_v,
+    for v in (name_v, enabled_v, lang_v, pos_v, bm_v, fs_v, color_v,
                bold_v, cn_v, sc_v, sw_v, bg_color_v, bg_op_v, bg_pad_v):
         v.trace_add("write", _commit)
 

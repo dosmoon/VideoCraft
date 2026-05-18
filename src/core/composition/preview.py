@@ -27,6 +27,9 @@ def style_to_web_dict(style: CompositionStyle) -> dict:
     The page renders placeholder subtitle text; the real per-cue text is
     pushed separately via set_cues() so layout and content stay orthogonal.
     """
+    # Legacy CompositionStyle still carries integer-pixel size fields;
+    # we convert each to its short-edge pct here (the canvas only reads
+    # pct now). Single point of legacy-px → pct translation.
     sub = style.subtitle
     wm = style.watermark
     ho = style.hook_outro
@@ -34,12 +37,12 @@ def style_to_web_dict(style: CompositionStyle) -> dict:
         "subtitle": {
             "position": sub.position,
             "stroke_color": sub.stroke_color,
-            "stroke_width": sub.stroke_width,
+            "stroke_pct": int(sub.stroke_width) / 1080.0,
             "block_margin_pct": sub.block_margin_pct,
             "track_gap_pct": sub.track_gap_pct,
             "sub1": {
                 "enabled": sub.sub1.enabled,
-                "fontsize": sub.sub1.fontsize,
+                "fontsize_pct": int(sub.sub1.fontsize) / 1080.0,
                 "color": sub.sub1.color,
                 "bold": sub.sub1.bold,
                 "bg_color": sub.sub1.bg_color,
@@ -51,7 +54,7 @@ def style_to_web_dict(style: CompositionStyle) -> dict:
             },
             "sub2": {
                 "enabled": sub.sub2.enabled,
-                "fontsize": sub.sub2.fontsize,
+                "fontsize_pct": int(sub.sub2.fontsize) / 1080.0,
                 "color": sub.sub2.color,
                 "bold": sub.sub2.bold,
                 "bg_color": sub.sub2.bg_color,
@@ -66,7 +69,7 @@ def style_to_web_dict(style: CompositionStyle) -> dict:
             "enabled": wm.enabled,
             "type": wm.type,
             "text": wm.text or "@channel",
-            "text_fontsize": wm.text_fontsize,
+            "text_fontsize_pct": int(wm.text_fontsize) / 1080.0,
             "text_color": wm.text_color,
             "text_opacity": wm.text_opacity,
             "image_path": wm.image_path,
@@ -77,13 +80,13 @@ def style_to_web_dict(style: CompositionStyle) -> dict:
             "margin_y_pct": wm.margin_y_pct,
         },
         "hookOutro": {
-            "size":               ho.size,
+            "size_pct":           int(ho.size) / 1080.0,
             "color":              ho.color,
             "bg_color":           ho.bg_color,
             "bg_opacity":         ho.bg_opacity,
             "stroke_color":       ho.stroke_color,
-            "stroke_width":       ho.stroke_width,
-            "box_padding":        ho.box_padding,
+            "stroke_pct":         int(ho.stroke_width) / 1080.0,
+            "box_padding_pct":    int(ho.box_padding) / 1080.0,
             "hook_position":      ho.hook_position,
             "outro_position":     ho.outro_position,
             "hook_duration_sec":  ho.hook_duration_sec,
@@ -278,14 +281,6 @@ class CompositionPreview:
                         })
                 elif kind == "subtitle_cue":
                     sd = elements[0].style
-                    line = SubtitleLineStyle(
-                        enabled=True,
-                        fontsize=int(sd.get("fontsize", 24)),
-                        color=sd.get("color", "#FFFFFF"),
-                        is_chinese=bool(sd.get("is_chinese", False)),
-                        bg_color=sd.get("bg_color", "#000000"),
-                        bg_opacity=int(sd.get("bg_opacity", 0)),
-                    )
                     # Apply the SAME wrap pass render uses so preview
                     # cue text matches what libass burns. Without this
                     # long cues overflow the preview frame while the
@@ -294,19 +289,28 @@ class CompositionPreview:
                     from .render import wrap_subtitle_elements
                     wrapped = wrap_subtitle_elements(
                         elements, aspect_str=aspect, short_edge=short_edge)
+                    # All visible sizes ride as pct of short edge; JS
+                    # multiplies them by canvas short edge to get px.
+                    anchor_pct = float(sd.get(
+                        "effective_block_margin_pct",
+                        sd.get("block_margin_pct", 0.09)))
                     sub_payload.append({
                         "line": {
-                            "fontsize": line.fontsize,
-                            "color": line.color,
-                            "bold": line.bold,
-                            "is_chinese": line.is_chinese,
-                            "bg_color": line.bg_color,
-                            "bg_opacity": line.bg_opacity,
-                            "bg_padding_x_pct": line.bg_padding_x_pct,
+                            "fontsize_pct": float(
+                                sd.get("fontsize_pct", 0.05)),
+                            "color": sd.get("color", "#FFFFFF"),
+                            "bold": bool(sd.get("bold", False)),
+                            "is_chinese": bool(sd.get("is_chinese", False)),
+                            "bg_color": sd.get("bg_color", "#000000"),
+                            "bg_opacity": int(sd.get("bg_opacity", 0)),
+                            "bg_padding_x_pct": float(
+                                sd.get("bg_padding_x_pct", 0.0)),
+                            "stroke_color": sd.get("stroke_color", "#000000"),
+                            "stroke_pct": float(
+                                sd.get("stroke_pct", 0.002)),
                         },
                         "position": sd.get("position", "bottom"),
-                        "block_margin_pct": float(
-                            sd.get("block_margin_pct", 0.09)),
+                        "block_margin_pct": anchor_pct,
                         "cues": [
                             {"start": c.start.total_seconds(),
                               "end": c.end.total_seconds(),
@@ -316,20 +320,29 @@ class CompositionPreview:
                         "z_order": track.z_base,
                     })
                 elif kind in ("text_watermark", "image_watermark"):
+                    # Preview side passes pct verbatim — canvas does its
+                    # own `pct * canvas_short_edge` math, unaware of the
+                    # target_h short_edge value.
                     for e in elements:
-                        wm = _element_to_watermark_style(e)
+                        sd = e.style or {}
                         wm_payload.append({
-                            "enabled": wm.enabled, "type": wm.type,
-                            "text": wm.text,
-                            "text_fontsize": wm.text_fontsize,
-                            "text_color": wm.text_color,
-                            "text_opacity": wm.text_opacity,
-                            "image_path": wm.image_path,
-                            "image_scale": wm.image_scale,
-                            "image_opacity": wm.image_opacity,
-                            "position": wm.position,
-                            "margin_x_pct": wm.margin_x_pct,
-                            "margin_y_pct": wm.margin_y_pct,
+                            "enabled": True,
+                            "type": ("image" if e.kind == "image_watermark"
+                                       else "text"),
+                            "text": str((e.data or {}).get("text", "")),
+                            "text_fontsize_pct": float(sd.get(
+                                "text_fontsize_pct", 0.033)),
+                            "text_color": sd.get("text_color", "#FFFFFF"),
+                            "text_opacity": int(sd.get("text_opacity", 70)),
+                            "image_path": str((e.data or {}).get(
+                                "image_path", "")),
+                            "image_scale": float(sd.get("image_scale", 0.15)),
+                            "image_opacity": int(sd.get("image_opacity", 100)),
+                            "position": sd.get("position", "top-right"),
+                            "margin_x_pct": float(sd.get(
+                                "margin_x_pct", 0.025)),
+                            "margin_y_pct": float(sd.get(
+                                "margin_y_pct", 0.025)),
                             "z_order": track.z_base + e.z_offset,
                         })
                 elif kind == "hook_text":
@@ -337,17 +350,17 @@ class CompositionPreview:
                         t = str(e.data.get("text", ""))
                         if t:
                             hook_text = t
-                            s = e.data.get("style")
-                            if isinstance(s, dict):
-                                hook_style = s
+                            # Per timeline.py convention, visual style
+                            # lives on Element.style (not data).
+                            if isinstance(e.style, dict) and e.style:
+                                hook_style = e.style
                 elif kind == "outro_text":
                     for e in elements:
                         t = str(e.data.get("text", ""))
                         if t:
                             outro_text = t
-                            s = e.data.get("style")
-                            if isinstance(s, dict):
-                                outro_style = s
+                            if isinstance(e.style, dict) and e.style:
+                                outro_style = e.style
 
         # Drive the existing bridges with the translated payloads. Legacy
         # sub1/sub2 stack stays empty — timeline tracks ride the N-track
@@ -372,15 +385,29 @@ class CompositionPreview:
             except (TypeError, ValueError):
                 aspect_tuple = (16, 9)
             meta: dict = {"hook": hook_text, "outro": outro_text}
+            # Per-component styling: clip's hook/outro instances each
+            # carry their own bg_color/color/etc. Pass the style dicts
+            # through so JS reads the user's actual styling instead of
+            # the legacy global styleState.hookOutro defaults.
+            if hook_style is not None:
+                meta["hookStyle"] = hook_style
+            if outro_style is not None:
+                meta["outroStyle"] = outro_style
+            # font_size_px = pct * short_edge — single engine-wide
+            # convention. wrap_hook_outro takes the px value because
+            # PIL needs concrete pixels for measurement.
+            from .layout import font_size_px
             if hook_text and hook_style is not None:
                 font_path = hook_outro_font_path(hook_style.get("font"))
-                size = int(hook_style.get("size") or 40)
+                size = font_size_px(
+                    float(hook_style.get("size_pct", 0.05)), short_edge)
                 meta["hookLines"] = wrap_hook_outro(
                     hook_text, aspect_tuple, font_path, size,
                     short_edge=short_edge)
             if outro_text and outro_style is not None:
                 font_path = hook_outro_font_path(outro_style.get("font"))
-                size = int(outro_style.get("size") or 40)
+                size = font_size_px(
+                    float(outro_style.get("size_pct", 0.05)), short_edge)
                 meta["outroLines"] = wrap_hook_outro(
                     outro_text, aspect_tuple, font_path, size,
                     short_edge=short_edge)

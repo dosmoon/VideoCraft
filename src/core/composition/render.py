@@ -283,7 +283,6 @@ def _escape_drawtext(text: str) -> str:
 # renderer concerns). Underscore-aliased to keep diffs minimal.
 from .primitives.subtitle_cue import (
     build_force_style as _build_subtitle_force_style,
-    track_margins as _track_margins,
 )
 
 
@@ -476,8 +475,8 @@ def _timeline_to_overlay_jobs(
     from .primitives.chapter_hero_card import (
         ChapterHeroCardSpec, ChapterHeroCardStyle,
     )
+    from .layout import libass_margin_v
     from .primitives.subtitle_cue import build_force_style as _bfs
-    from .primitives.subtitle_cue import track_margins as _tm
     from .primitives.topic_strip import TopicStripSpec
 
     jobs: list[_OverlayJob] = []
@@ -501,40 +500,36 @@ def _timeline_to_overlay_jobs(
                 if not tmp_srt:
                     continue
                 tmp_files.append(tmp_srt)
-                # All cues in one track share the same style dict (set by
-                # the producing component). Recover SubtitleLineStyle +
-                # SubtitleStyle for force_style; prefer element-supplied
-                # margin_v (clip pre-computes for dual-track layouts);
-                # else compute from block_margin_pct (news_desk single-
-                # track path).
+                # All cues in one track share the same style dict (set
+                # by the producing component). Component schemas carry
+                # font / stroke as fractions of the short edge — see
+                # core/composition/layout.py. Margin: prefer the
+                # composer-supplied margin_v (multi-track stacking
+                # pre-computed); else derive from block_margin_pct.
                 style_dict = elements[0].style
-                line = SubtitleLineStyle(
-                    enabled=True,
-                    fontsize=int(style_dict.get("fontsize", 24)),
+                position = style_dict.get("position", "bottom")
+                # Use the composer-stacked pct when present (clip dual-
+                # subtitle stacking writes it); else fall back to the
+                # plain per-component pct (news_desk single-track path).
+                pct_from_edge = float(style_dict.get(
+                    "effective_block_margin_pct",
+                    style_dict.get("block_margin_pct", 0.09)))
+                margin_v = libass_margin_v(pct_from_edge, target_h)
+                force_style = _bfs(
+                    fontsize_pct=float(style_dict.get("fontsize_pct", 0.05)),
                     color=style_dict.get("color", "#FFFFFF"),
                     bold=bool(style_dict.get("bold", False)),
                     is_chinese=bool(style_dict.get("is_chinese", False)),
                     bg_color=style_dict.get("bg_color", "#000000"),
                     bg_opacity=int(style_dict.get("bg_opacity", 0)),
                     bg_padding_x_pct=float(
-                        style_dict.get("bg_padding_x_pct", 0.006)),
-                )
-                sub_style = SubtitleStyle(
-                    sub1=line, sub2=SubtitleLineStyle(enabled=False),
+                        style_dict.get("bg_padding_x_pct", 0.0)),
                     stroke_color=style_dict.get("stroke_color", "#000000"),
-                    stroke_width=int(style_dict.get("stroke_width", 2)),
-                    position=style_dict.get("position", "bottom"),
-                    block_margin_pct=float(
-                        style_dict.get("block_margin_pct", 0.09)),
-                    track_gap_pct=0.0,
-                )
-                if "margin_v" in style_dict:
-                    margin_v = int(style_dict["margin_v"])
-                else:
-                    margin_v, _ = _tm(sub_style)
-                force_style = _bfs(line, sub_style,
-                                     margin_v=margin_v, target_h=target_h,
-                                     position=sub_style.position)
+                    stroke_pct=float(style_dict.get("stroke_pct", 0.002)),
+                    position=position,
+                    margin_v=margin_v,
+                    short_edge=short_edge,
+                    target_h=target_h)
                 jobs.append(_OverlayJob(
                     kind="subtitle_cue", z_order=z_base,
                     data={"srt_path": tmp_srt,
@@ -542,7 +537,7 @@ def _timeline_to_overlay_jobs(
 
             elif kind in ("text_watermark", "image_watermark"):
                 for e in elements:
-                    wm = _element_to_watermark_style(e)
+                    wm = _element_to_watermark_style(e, short_edge=short_edge)
                     jobs.append(_OverlayJob(
                         kind=kind, z_order=z_base + e.z_offset,
                         data={"watermark": wm}))
@@ -674,10 +669,12 @@ def _subtitle_elements_to_temp_srt(
         return None
 
 
-def _element_to_watermark_style(e) -> "WatermarkStyle":
+def _element_to_watermark_style(e, *, short_edge: int) -> "WatermarkStyle":
     """Reconstruct a unified WatermarkStyle dataclass from a text_watermark
-    or image_watermark Element. PR 5 splits WatermarkStyle into two narrow
-    primitives; until then both kinds share this dataclass."""
+    or image_watermark Element. Component schema carries text_fontsize as
+    pct of short edge; we materialize the int-pixel field on the
+    dataclass here so the text_watermark renderer keeps its old API."""
+    from .layout import font_size_px
     style_dict = e.style
     data = e.data
     is_image = (e.kind == "image_watermark")
@@ -685,7 +682,9 @@ def _element_to_watermark_style(e) -> "WatermarkStyle":
         enabled=True,
         type="image" if is_image else "text",
         text=data.get("text", "") if not is_image else "",
-        text_fontsize=int(style_dict.get("text_fontsize", 36)),
+        text_fontsize=font_size_px(
+            float(style_dict.get("text_fontsize_pct", 0.033)),
+            short_edge),
         text_color=style_dict.get("text_color", "#FFFFFF"),
         text_opacity=int(style_dict.get("text_opacity", 70)),
         image_path=data.get("image_path", "") if is_image else "",

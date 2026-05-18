@@ -40,6 +40,10 @@ KIND_OUTRO = "clip_outro_card"
 # ── default_instance ───────────────────────────────────────────────────────
 
 def _default_hook_instance(_duration: float) -> dict:
+    # size_pct / stroke_pct / box_padding_pct are FRACTIONS OF THE SHORT
+    # EDGE — see core/composition/layout.py. 0.05 ≈ 54px at 1080
+    # short-edge target. drawtext on render and canvas on preview both
+    # multiply pct by their own frame's short edge to get pixels.
     return {
         "kind": KIND_HOOK,
         "id": "hook",
@@ -47,13 +51,13 @@ def _default_hook_instance(_duration: float) -> dict:
         "enabled": True,
         "text": "",
         "font": "Microsoft YaHei",
-        "size": 48,
+        "size_pct": 0.05,
         "color": "#FFFFFF",
         "bg_color": "#000000",
         "bg_opacity": 70,
         "stroke_color": "#000000",
-        "stroke_width": 3,
-        "box_padding": 10,
+        "stroke_pct": 0.003,
+        "box_padding_pct": 0.012,
         "position": "upper-third",
         "duration_sec": 5.0,
     }
@@ -67,13 +71,13 @@ def _default_outro_instance(_duration: float) -> dict:
         "enabled": True,
         "text": "",
         "font": "Microsoft YaHei",
-        "size": 48,
+        "size_pct": 0.05,
         "color": "#FFFFFF",
         "bg_color": "#000000",
         "bg_opacity": 70,
         "stroke_color": "#000000",
-        "stroke_width": 3,
-        "box_padding": 10,
+        "stroke_pct": 0.003,
+        "box_padding_pct": 0.012,
         "position": "lower-third",
         "duration_sec": 5.0,
     }
@@ -83,21 +87,23 @@ def _default_outro_instance(_duration: float) -> dict:
 
 def _card_style_dict(instance: dict, position_role: str) -> dict:
     """Pack flat style dict the renderer's drawtext_filter consumes.
+    Sizes ride as fractions of the short edge — drawtext_filter
+    multiplies by short_edge to get the actual fontsize / borderw /
+    boxborderw in target pixels.
 
     `position_role` is "hook" or "outro"; the renderer expects
     hook_position / outro_position keys (not a generic "position"),
-    so we stamp both — only the role-matching one is actually read
-    but keeping both keeps byte-equality with the pre-5.3 dict shape.
+    so we stamp both — only the role-matching one is actually read.
     """
     return {
         "font": instance.get("font", "Microsoft YaHei"),
-        "size": int(instance.get("size", 48)),
+        "size_pct": float(instance.get("size_pct", 0.05)),
         "color": instance.get("color", "#FFFFFF"),
         "bg_color": instance.get("bg_color", "#000000"),
         "bg_opacity": int(instance.get("bg_opacity", 70)),
         "stroke_color": instance.get("stroke_color", "#000000"),
-        "stroke_width": int(instance.get("stroke_width", 3)),
-        "box_padding": int(instance.get("box_padding", 10)),
+        "stroke_pct": float(instance.get("stroke_pct", 0.003)),
+        "box_padding_pct": float(instance.get("box_padding_pct", 0.012)),
         # Stamp the role-specific position the renderer looks up
         "hook_position": (instance.get("position", "upper-third")
                             if position_role == "hook" else "upper-third"),
@@ -121,12 +127,17 @@ def _compile_hook(instance: dict, clip_range: ClipRange,
     end = min(clip_range.duration_sec, duration)
     if end <= 0:
         return []
+    # Per timeline.py convention: visual fields → Element.style, content
+    # fields → Element.data. Older versions of this compile fn nested
+    # style inside data["style"]; that violated the convention and made
+    # render.py silently fall back to defaults (preview had a hack to
+    # accommodate it). All consumers now read Element.style uniformly.
     return [Element(
         kind="hook_text",
         start_sec=0.0,
         end_sec=end,
-        data={"text": instance.get("text", ""),
-               "style": _card_style_dict(instance, "hook")},
+        style=_card_style_dict(instance, "hook"),
+        data={"text": instance.get("text", "")},
     )]
 
 
@@ -145,8 +156,8 @@ def _compile_outro(instance: dict, clip_range: ClipRange,
         kind="outro_text",
         start_sec=start,
         end_sec=clip_range.duration_sec,
-        data={"text": instance.get("text", ""),
-               "style": _card_style_dict(instance, "outro")},
+        style=_card_style_dict(instance, "outro"),
+        data={"text": instance.get("text", "")},
     )]
 
 
@@ -158,16 +169,19 @@ def template_from_style(style: CompositionStyle) -> list[dict]:
     it per candidate. Both components enabled by default if their
     duration is positive.
     """
+    # Legacy HookOutroStyle stored sizes as integer pixels. Pre-alpha
+    # lossy convert: pct = px / 1080 (1080 is the canonical short-edge
+    # baseline). User can re-tune in the property panel.
     ho = style.hook_outro
     common = {
         "font": ho.font,
-        "size": int(ho.size),
+        "size_pct": int(ho.size) / 1080.0,
         "color": ho.color,
         "bg_color": ho.bg_color,
         "bg_opacity": int(ho.bg_opacity),
         "stroke_color": ho.stroke_color,
-        "stroke_width": int(ho.stroke_width),
-        "box_padding": int(ho.box_padding),
+        "stroke_pct": int(ho.stroke_width) / 1080.0,
+        "box_padding_pct": int(ho.box_padding) / 1080.0,
         "text": "",
     }
     out: list[dict] = []
@@ -192,13 +206,18 @@ def _build_card_panel(parent: ttk.Frame, instance: dict,
     enabled_v = tk.BooleanVar(value=bool(instance.get("enabled", True)))
     dur_v = tk.IntVar(value=int(float(instance.get("duration_sec", 5.0))))
     font_v = tk.StringVar(value=instance.get("font", "Microsoft YaHei"))
-    size_v = tk.IntVar(value=int(instance.get("size", 48)))
+    # size / stroke / padding shown to user as px @1080 short edge; the
+    # underlying schema field is the pct fraction.
+    size_v = tk.IntVar(value=int(round(
+        float(instance.get("size_pct", 0.05)) * 1080)))
     color_v = tk.StringVar(value=instance.get("color", "#FFFFFF"))
     bg_color_v = tk.StringVar(value=instance.get("bg_color", "#000000"))
     bg_op_v = tk.IntVar(value=int(instance.get("bg_opacity", 70)))
     sc_v = tk.StringVar(value=instance.get("stroke_color", "#000000"))
-    sw_v = tk.IntVar(value=int(instance.get("stroke_width", 3)))
-    pad_v = tk.IntVar(value=int(instance.get("box_padding", 10)))
+    sw_v = tk.IntVar(value=int(round(
+        float(instance.get("stroke_pct", 0.003)) * 1080)))
+    pad_v = tk.IntVar(value=int(round(
+        float(instance.get("box_padding_pct", 0.012)) * 1080)))
     pos_v = tk.StringVar(value=instance.get(
         "position",
         "upper-third" if "upper-third" in positions else positions[0]))
@@ -223,8 +242,9 @@ def _build_card_panel(parent: ttk.Frame, instance: dict,
     ttk.Label(row, text="字体", width=10).pack(side="left")
     ttk.Entry(row, textvariable=font_v, width=22).pack(side="left")
     ttk.Label(row, text="字号").pack(side="left", padx=(8, 2))
-    ttk.Spinbox(row, from_=12, to=120, width=4, textvariable=size_v
+    ttk.Spinbox(row, from_=12, to=300, width=4, textvariable=size_v
                  ).pack(side="left")
+    ttk.Label(row, text="px").pack(side="left")
 
     row = ttk.Frame(parent); row.pack(fill="x", pady=2)
     ttk.Label(row, text="颜色", width=10).pack(side="left")
@@ -238,8 +258,9 @@ def _build_card_panel(parent: ttk.Frame, instance: dict,
     ttk.Label(row, text="描边", width=10).pack(side="left")
     add_color_picker(row, sc_v)
     ttk.Label(row, text="宽度").pack(side="left", padx=(8, 2))
-    ttk.Spinbox(row, from_=0, to=8, width=4, textvariable=sw_v
+    ttk.Spinbox(row, from_=0, to=20, width=4, textvariable=sw_v
                  ).pack(side="left")
+    ttk.Label(row, text="px").pack(side="left")
 
     row = ttk.Frame(parent); row.pack(fill="x", pady=2)
     ttk.Label(row, text="背景色", width=10).pack(side="left")
@@ -247,9 +268,10 @@ def _build_card_panel(parent: ttk.Frame, instance: dict,
     ttk.Label(row, text="不透明").pack(side="left", padx=(8, 2))
     ttk.Spinbox(row, from_=0, to=100, width=4, textvariable=bg_op_v
                  ).pack(side="left")
-    ttk.Label(row, text="%  padding").pack(side="left", padx=(8, 2))
-    ttk.Spinbox(row, from_=0, to=30, width=4, textvariable=pad_v
+    ttk.Label(row, text="padding").pack(side="left", padx=(8, 2))
+    ttk.Spinbox(row, from_=0, to=60, width=4, textvariable=pad_v
                  ).pack(side="left")
+    ttk.Label(row, text="px").pack(side="left")
 
     ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=6)
     ttk.Label(parent, text="位置",
@@ -264,10 +286,10 @@ def _build_card_panel(parent: ttk.Frame, instance: dict,
         instance["enabled"] = bool(enabled_v.get())
         try:
             instance["duration_sec"] = float(dur_v.get())
-            instance["size"] = int(size_v.get())
+            instance["size_pct"] = float(size_v.get()) / 1080.0
             instance["bg_opacity"] = int(bg_op_v.get())
-            instance["stroke_width"] = int(sw_v.get())
-            instance["box_padding"] = int(pad_v.get())
+            instance["stroke_pct"] = float(sw_v.get()) / 1080.0
+            instance["box_padding_pct"] = float(pad_v.get()) / 1080.0
         except (tk.TclError, ValueError):
             return
         instance["font"] = font_v.get() or "Microsoft YaHei"

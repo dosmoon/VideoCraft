@@ -14,7 +14,7 @@ extraction is a near-mechanical move rather than an API redesign.
     master                       Tk widget root for dialogs
     _candidate_meta              list[dict]  candidate hotclips entries
     _clips_overrides             dict[int, dict]  per-candidate edits
-    _current_style               CompositionStyle  active style
+    _output_geometry()           -> OutputGeometry  built from config
     material_model               NewsVideoModel  for source_video_path
 
   Methods:
@@ -141,7 +141,7 @@ class ClipDetailPanel:
             return
         start, end = host._effective_start_end(idx)
         self._preview.set_source(video_path, start, end)
-        self._preview.set_geometry(host._current_style.output)
+        self._preview.set_geometry(host._output_geometry())
         self._preview.set_crop(host._effective_crop(idx))
         self._preview.enable_crop_drag(True)
         aspect, short = host._preview_aspect_short_edge()

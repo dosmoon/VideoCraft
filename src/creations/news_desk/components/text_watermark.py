@@ -17,12 +17,14 @@ _POSITIONS = ["top-left", "top-right", "bottom-left", "bottom-right"]
 
 
 def _default_instance(_duration: float) -> dict:
+    # fontsize_pct is a fraction of the short edge — engine-wide
+    # convention, see core/composition/layout.py.
     return {
         "kind": "text_watermark",
         "name": tr("tool.news_desk.text_wm.default_name"),
         "enabled": True,
         "text": "",
-        "fontsize": 36,
+        "fontsize_pct": 0.033,         # ≈ 36px at 1080 short edge
         "color": "#FFFFFF",
         "opacity": 70,
         "position": "top-right",
@@ -74,12 +76,14 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
               ).pack(side="left")
     ttk.Entry(row, textvariable=text_v).pack(side="left", fill="x", expand=True)
 
-    fs_v = tk.IntVar(value=int(instance.get("fontsize", 36)))
+    fs_v = tk.IntVar(value=int(round(
+        float(instance.get("fontsize_pct", 0.033)) * 1080)))
     row = ttk.Frame(parent); row.pack(fill="x", pady=2)
     ttk.Label(row, text=tr("tool.news_desk.field.fontsize"), width=10
               ).pack(side="left")
-    ttk.Spinbox(row, from_=8, to=96, width=5, textvariable=fs_v
+    ttk.Spinbox(row, from_=8, to=200, width=5, textvariable=fs_v
                  ).pack(side="left")
+    ttk.Label(row, text="px").pack(side="left")
 
     color_v = tk.StringVar(value=instance.get("color", "#FFFFFF"))
     row = ttk.Frame(parent); row.pack(fill="x", pady=2)
@@ -125,7 +129,7 @@ def _build_property_panel(parent: ttk.Frame, instance: dict,
         instance["enabled"] = bool(enabled_v.get())
         instance["text"] = text_v.get()
         try:
-            instance["fontsize"] = int(fs_v.get())
+            instance["fontsize_pct"] = float(fs_v.get()) / 1080.0
             instance["opacity"] = int(op_v.get())
             instance["margin_x_pct"] = int(mx_v.get())
             instance["margin_y_pct"] = int(my_v.get())
@@ -170,7 +174,8 @@ def _compile(instance: dict, clip_range, _ctx) -> list:
     if not instance.get("enabled", True) or not instance.get("text", "").strip():
         return []
     style_dict = {
-        "text_fontsize": max(8, int(instance.get("fontsize", 36))),
+        # Pct of short edge — render multiplies by short_edge to get px.
+        "text_fontsize_pct": float(instance.get("fontsize_pct", 0.033)),
         "text_color": instance.get("color", "#FFFFFF"),
         "text_opacity": max(0, min(100, int(instance.get("opacity", 70)))),
         "position": instance.get("position", "top-right"),
@@ -197,7 +202,7 @@ def _import_event_date(instance: dict, ctx: ProjectContext) -> None:
         return
     instance["text"] = date
     # Datestamp look: smaller font, bottom-left, more transparent.
-    instance["fontsize"] = 28
+    instance["fontsize_pct"] = 0.026     # ≈ 28px at 1080 short edge
     instance["position"] = "bottom-left"
     if not instance.get("name") or instance["name"] == tr(
             "tool.news_desk.text_wm.default_name"):

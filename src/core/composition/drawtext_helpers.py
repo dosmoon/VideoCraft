@@ -20,18 +20,19 @@ from .fonts import hook_outro_font_path, y_expr_for_position
 from .text_layout import wrap_hook_outro
 
 
-# Default field values for drawtext_filter when an element.style omits them.
-# Pulled from the original HookOutroStyle dataclass defaults so behavior
-# stays identical pre/post engine-style decoupling.
+# Default field values for drawtext_filter when an element.style omits
+# them. Sizes carried as fractions of the short edge per the engine-wide
+# normalization — drawtext multiplies by short_edge at render to get
+# pixel values.
 _HOOK_OUTRO_DEFAULTS = {
     "font": "Microsoft YaHei",
-    "size": 48,
+    "size_pct": 0.05,
     "color": "#FFFFFF",
     "bg_color": "#000000",
     "bg_opacity": 70,
     "stroke_color": "#000000",
-    "stroke_width": 3,
-    "box_padding": 10,
+    "stroke_pct": 0.003,
+    "box_padding_pct": 0.012,
     "hook_position": "upper-third",
     "outro_position": "lower-third",
 }
@@ -45,9 +46,17 @@ def hex_to_drawtext_rgba(hex_color: str, alpha: float) -> str:
     return f"white@{a:.2f}"
 
 
+# Per-line vertical advance as a multiple of fontsize. Mirrors the
+# preview canvas (composition_preview.html: lineHeight = px * 1.15) —
+# without per-line drawtext, ffmpeg's default line metric stacks lines
+# tighter than the preview, a visible preview≠render divergence.
+_LINE_HEIGHT_PCT = 1.15
+
+
 def drawtext_filter(text: str, *, role: str, style: dict,
                       duration: float, aspect_ratio: tuple[int, int],
-                      tmp_files: list[str], short_edge: int = 1080) -> str:
+                      tmp_files: list[str], short_edge: int = 1080,
+                      target_h: int | None = None) -> str:
     """Build a drawtext snippet for hook (first hook_duration_sec) or outro
     (last outro_duration_sec). role ∈ {'hook', 'outro'}.
 
@@ -59,9 +68,12 @@ def drawtext_filter(text: str, *, role: str, style: dict,
 
     Multi-line behaviour: text is wrapped to fit the target frame width
     via core.composition.text_layout.wrap_hook_outro (same call as the
-    WebView preview), then written to a temp file consumed by drawtext's
-    `textfile=` parameter. The temp file is appended to tmp_files for the
-    caller to clean up after ffmpeg returns.
+    WebView preview); EACH wrapped line emits its own drawtext sub-filter
+    with `x=(w-text_w)/2` so each line is centered to its own width
+    (single-textfile drawtext left-aligns lines to the widest one's
+    block, which diverges from the per-line centered preview canvas).
+    Line vertical spacing is `_LINE_HEIGHT_PCT * fontsize`, matching the
+    preview's lineHeight factor.
     """
     if not text:
         return ""
@@ -73,25 +85,15 @@ def drawtext_filter(text: str, *, role: str, style: dict,
         return v
 
     font = _g("font")
-    size = int(_g("size"))
+    # Resolve px from short-edge pct (single engine-wide convention).
+    from .layout import font_size_px
+    size = font_size_px(float(_g("size_pct")), short_edge)
     color = _g("color")
     font_path = hook_outro_font_path(font)
     lines = wrap_hook_outro(text, aspect_ratio, font_path, size,
                               short_edge=short_edge)
     if not lines:
         return ""
-    wrapped = "\n".join(lines)
-
-    tmp_path = os.path.join(
-        tempfile.gettempdir(),
-        f"composition-{role}-{os.getpid()}-{id(text)}.txt",
-    )
-    try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            f.write(wrapped)
-    except OSError:
-        return ""
-    tmp_files.append(tmp_path)
 
     if role == "hook":
         position = _g("hook_position")
@@ -104,25 +106,62 @@ def drawtext_filter(text: str, *, role: str, style: dict,
         enable = f"between(t,{start},{duration})"
 
     fontfile_ff = font_path.replace(":", "\\:")
-    textfile_ff = tmp_path.replace("\\", "/").replace(":", "\\:")
-    y_expr = y_expr_for_position(position)
-    parts = [
-        f"drawtext=textfile='{textfile_ff}'",
-        f"fontfile='{fontfile_ff}'",
-        f"fontcolor={color}",
-        f"fontsize={size}",
-        "x=(w-text_w)/2",
-        f"y={y_expr}",
-    ]
-    stroke_width = int(_g("stroke_width"))
-    if stroke_width > 0:
-        parts.append(f"borderw={stroke_width}")
-        parts.append(f"bordercolor={_g('stroke_color')}")
+    line_h = int(round(size * _LINE_HEIGHT_PCT))
+    total_h = line_h * len(lines)
+    # Vertical anchor of the multi-line block top (matches the y= expr
+    # the canvas uses via _hoYForPosition). We replace text_h with a
+    # known total_h so the position formula evaluates server-side.
+    top_y_expr = _block_top_y(position, total_h)
+
+    stroke_width = font_size_px(float(_g("stroke_pct")), short_edge)
+    stroke_color = _g("stroke_color")
     bg_opacity = int(_g("bg_opacity"))
-    if bg_opacity > 0:
-        parts.append("box=1")
-        opacity = max(0.0, min(1.0, bg_opacity / 100.0))
-        parts.append(f"boxcolor={_g('bg_color')}@{opacity:.2f}")
-        parts.append(f"boxborderw={int(_g('box_padding'))}")
-    parts.append(f"enable='{enable}'")
-    return ":".join(parts)
+    bg_color = _g("bg_color")
+    box_padding = font_size_px(float(_g("box_padding_pct")), short_edge)
+
+    snippets: list[str] = []
+    for i, line in enumerate(lines):
+        tmp_path = os.path.join(
+            tempfile.gettempdir(),
+            f"composition-{role}-{os.getpid()}-{id(text)}-{i}.txt",
+        )
+        try:
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                f.write(line)
+        except OSError:
+            continue
+        tmp_files.append(tmp_path)
+        textfile_ff = tmp_path.replace("\\", "/").replace(":", "\\:")
+        parts = [
+            f"drawtext=textfile='{textfile_ff}'",
+            f"fontfile='{fontfile_ff}'",
+            f"fontcolor={color}",
+            f"fontsize={size}",
+            "x=(w-text_w)/2",
+            f"y=({top_y_expr})+{i * line_h}",
+        ]
+        if stroke_width > 0:
+            parts.append(f"borderw={stroke_width}")
+            parts.append(f"bordercolor={stroke_color}")
+        if bg_opacity > 0:
+            parts.append("box=1")
+            opacity = max(0.0, min(1.0, bg_opacity / 100.0))
+            parts.append(f"boxcolor={bg_color}@{opacity:.2f}")
+            parts.append(f"boxborderw={box_padding}")
+        parts.append(f"enable='{enable}'")
+        snippets.append(":".join(parts))
+
+    return ",".join(snippets)
+
+
+def _block_top_y(position: str, total_h: int) -> str:
+    """ffmpeg-expression for the top Y of a multi-line drawtext block,
+    given the total wrapped block height in pixels. Mirrors
+    canvas-side _hoYForPosition exactly."""
+    return {
+        "top":          "h*0.08",
+        "upper-third":  "h*0.25",
+        "center":       f"(h-{total_h})/2",
+        "lower-third":  f"h*0.65 - {total_h}/2",
+        "bottom":       f"h*0.85 - {total_h}",
+    }.get(position, "h*0.25")

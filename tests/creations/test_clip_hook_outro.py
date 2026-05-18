@@ -70,20 +70,20 @@ def test_hook_style_dict_carries_renderer_fields():
     spec = spec_for_kind(KIND_HOOK)
     out = spec.compile({
         "kind": KIND_HOOK, "text": "x", "duration_sec": 5.0,
-        "font": "Arial", "size": 60, "color": "#FF0000",
+        "font": "Arial", "size_pct": 0.056, "color": "#FF0000",
         "bg_color": "#222222", "bg_opacity": 80,
-        "stroke_color": "#111111", "stroke_width": 4,
-        "box_padding": 12, "position": "lower-third",
+        "stroke_color": "#111111", "stroke_pct": 0.004,
+        "box_padding_pct": 0.011, "position": "lower-third",
     }, ClipRange(0.0, 30.0), _ctx(30.0))
-    s = out[0].data["style"]
+    s = out[0].style
     assert s["font"] == "Arial"
-    assert s["size"] == 60
+    assert s["size_pct"] == pytest.approx(0.056)
     assert s["color"] == "#FF0000"
     assert s["bg_color"] == "#222222"
     assert s["bg_opacity"] == 80
     assert s["stroke_color"] == "#111111"
-    assert s["stroke_width"] == 4
-    assert s["box_padding"] == 12
+    assert s["stroke_pct"] == pytest.approx(0.004)
+    assert s["box_padding_pct"] == pytest.approx(0.011)
     # Role-specific position: hook stamps hook_position from instance
     assert s["hook_position"] == "lower-third"
     assert s["hook_duration_sec"] == 5.0
@@ -125,7 +125,7 @@ def test_outro_role_stamps_outro_position():
     out = spec.compile({"kind": KIND_OUTRO, "text": "x",
                           "duration_sec": 5.0, "position": "upper-third"},
                          ClipRange(0.0, 30.0), _ctx(30.0))
-    s = out[0].data["style"]
+    s = out[0].style
     assert s["outro_position"] == "upper-third"
     assert s["outro_duration_sec"] == 5.0
 
@@ -159,7 +159,8 @@ def test_template_propagates_style_fields():
     out = template_from_style(style)
     h, o = out[0], out[1]
     assert h["font"] == "Custom"
-    assert h["size"] == 60
+    # Legacy int-px size migrates to pct via /1080.
+    assert h["size_pct"] == pytest.approx(60 / 1080.0)
     assert h["color"] == "#00FF00"
     assert h["position"] == "lower-third"
     assert h["duration_sec"] == 7.0

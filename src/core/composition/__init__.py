@@ -26,9 +26,8 @@ from .style import (
 )
 from .overlays import OverlaySpec
 from .layout import (
-    libass_margin_v, pixel_offset,
+    libass_margin_v, font_size_px, pixel_offset,
     subtitle_baseline_y_from_canvas_top,
-    LIBASS_DEFAULT_PLAY_RES_Y,
 )
 from .render import (
     CompositionRequest,
@@ -52,9 +51,9 @@ __all__ = [
     "HookOutroStyle",
     "OverlaySpec",
     "libass_margin_v",
+    "font_size_px",
     "pixel_offset",
     "subtitle_baseline_y_from_canvas_top",
-    "LIBASS_DEFAULT_PLAY_RES_Y",
     "compute_subtitle_max_chars",
     "effective_max_chars",
     "CompositionRequest",

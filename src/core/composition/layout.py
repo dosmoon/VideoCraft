@@ -1,13 +1,28 @@
 """Single source of truth for layout math.
 
-CompositionStyle carries normalized [0, 1] frame coordinates
-(`block_margin_pct`, `track_gap_pct`, `margin_x_pct`, `margin_y_pct`).
-Two completely independent rendering engines — ffmpeg + libass on the
-burn side, HTML5 Canvas + CSS on the WebView preview side — consume
-those normalized values via the helpers in this module. The engines
-still differ in font metrics, anti-aliasing, hinting, etc., but the
-*position math* is now a shared semantic instead of two engines'
-hand-tuned magic numbers drifting against each other.
+All visible quantities in component schemas — positions AND sizes — are
+expressed as fractions of the frame:
+
+  - position offsets / paddings: fraction of frame height (target_h),
+    e.g. `block_margin_pct = 0.09` = 9% of frame height from the
+    anchored edge.
+  - font sizes / stroke widths: fraction of the SHORT edge (smaller of
+    target_w / target_h), e.g. `fontsize_pct = 0.04` = 4% of short
+    edge → ~43 px at 1080p short edge. Short-edge baseline makes text
+    look the same visual size across 9:16, 16:9, etc.
+
+Two rendering engines consume these:
+
+  - ffmpeg + libass on burn (renders subtitles via `subtitles=` filter
+    with `original_size=target_w x target_h` → ASS Fontsize / Outline /
+    MarginV in script units map 1:1 to video pixels).
+  - HTML5 Canvas in preview (`fontPx = pct * canvas_short_edge`).
+
+Both engines compute pixel quantities by multiplying pct fields by the
+appropriate frame dimension. No empirically-calibrated scale constants
+sit between them — that was the old `ASS_RENDER_SCALE = 4.7` /
+`LIBASS_DEFAULT_PLAY_RES_Y = 230` / `ASS_DESIGN_SCALE = 4.7` family,
+all retired.
 
 If preview and burn still disagree visually after applying these
 helpers, the discrepancy is in pixel-level font rendering (libass vs.
@@ -18,30 +33,20 @@ contract.
 from __future__ import annotations
 
 
-# Empirical libass default PlayResY when neither PlayResX nor PlayResY
-# are set in the ASS script. libass scales script-pixels by
-# (video_h / PlayResY) at render time, so MarginV is independent of
-# output_h as long as PlayResY is constant — which it is for libass'
-# unset-default codepath.
-#
-# Calibrated against the existing `ASS_RENDER_SCALE = 4.7` constant in
-# core/composition/style.py:compute_subtitle_max_chars (1080 / 4.7 ≈ 230).
-# If a different libass build defaults to a different PlayResY, retune
-# here once and both `compute_subtitle_max_chars` and `libass_margin_v`
-# stay in sync.
-LIBASS_DEFAULT_PLAY_RES_Y = 230
-
-
-def libass_margin_v(margin_pct: float) -> int:
+def libass_margin_v(margin_pct: float, target_h: int) -> int:
     """Convert "fraction of frame height from anchored edge" → ASS
-    MarginV (script-pixel space).
+    MarginV value. With `original_size=target_w x target_h` set on the
+    subtitle filter, libass' script-pixel space matches target-pixel
+    space 1:1, so MarginV is just pct of target_h."""
+    return max(0, int(margin_pct * target_h))
 
-    Output-resolution-independent: same MarginV produces the same %-of-
-    frame position whether the video is 720p, 1080p, or 4K, because both
-    the desired output-pixel offset and libass' script-px→output-px scale
-    grow linearly with video_h.
-    """
-    return max(0, int(margin_pct * LIBASS_DEFAULT_PLAY_RES_Y))
+
+def font_size_px(pct: float, short_edge: int) -> int:
+    """Convert "fraction of short edge" → pixel font size on a frame of
+    the given short edge. Used uniformly for libass Fontsize, drawtext
+    fontsize, and canvas-side font px. Short edge keeps text visually
+    consistent across 9:16 and 16:9 aspects."""
+    return max(1, int(round(pct * short_edge)))
 
 
 def pixel_offset(margin_pct: float, frame_dim_px: int,
