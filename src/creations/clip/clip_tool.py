@@ -129,7 +129,10 @@ class ClipToolApp(ToolBase):
             or CompositionStyle()
         )
         self._preset_name_var = tk.StringVar(value=last)
-        self._global_crop_rect: Optional[dict] = None    # None = center default
+        # Tab 1 staging rect: pure in-memory UI scratchpad, NOT persisted
+        # and NOT a fallback for clips without overrides. Users push it
+        # onto clips explicitly via "apply crop to all".
+        self._global_crop_rect: Optional[dict] = None
         self._clips_overrides: dict[int, dict] = {}      # idx -> override fields
 
         # ── UI handles, filled in build phase ─────────────────────────────
@@ -472,11 +475,15 @@ class ClipToolApp(ToolBase):
         return []
 
     def _effective_crop(self, idx: int) -> Optional[dict]:
-        """Three-level fallback: per-clip override > global > None (= center)."""
+        """Per-clip crop or None (= center default at render time).
+
+        The Tab 1 "staging" rect (`_global_crop_rect`) is NOT a fallback;
+        it's a pure UI scratchpad. Users push it onto clips explicitly via
+        the "apply crop to all" button — see StylePanel._on_apply_crop_to_all.
+        """
         ov = self._clips_overrides.get(idx) or {}
-        if "crop_rect" in ov and ov["crop_rect"]:
-            return ov["crop_rect"]
-        return self._global_crop_rect    # None → center default at render time
+        rect = ov.get("crop_rect")
+        return rect if rect else None
 
     # ── Persistence ──────────────────────────────────────────────────────
 
@@ -496,8 +503,6 @@ class ClipToolApp(ToolBase):
                     cfg.style)
             except (comp_presets.PresetSchemaError, TypeError, ValueError):
                 pass
-        if cfg.global_crop_rect is not None:
-            self._global_crop_rect = cfg.global_crop_rect
         self._clips_overrides = dict(cfg.clips_overrides)
         # Drop rendered entries whose mp4 no longer exists on disk
         inst = self._instance_dir()
@@ -516,7 +521,6 @@ class ClipToolApp(ToolBase):
             i for i, v in enumerate(self._candidate_vars) if v.get()]
         self.config.preset_name = self._preset_name_var.get()
         self.config.style = asdict(self._current_style)
-        self.config.global_crop_rect = self._global_crop_rect
         self.config.clips_overrides = dict(self._clips_overrides)
         self.config.rendered = list(self._rendered)
         self.config.save(self._config_path)

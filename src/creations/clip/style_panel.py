@@ -784,10 +784,13 @@ class StylePanel:
             self._wm_image_path.set(path)
 
     def _on_crop_changed(self, rect: dict) -> None:
+        # Drag on the Style-tab preview only updates the in-memory staging
+        # rect — no side effects on any clip's crop until the user clicks
+        # "apply crop to all". Not persisted (intentional: staging is a
+        # workbench-session scratchpad, not project state).
         if not rect or "x" not in rect:
             return
         self._host._global_crop_rect = rect
-        self._host._save_all()
 
     def _on_apply_crop_to_all(self) -> None:
         if not messagebox.askyesno(
@@ -795,11 +798,18 @@ class StylePanel:
                 tr("clip_tool.confirm_apply_crop_to_all"),
                 parent=self._host.master):
             return
-        # Drop per-clip crop_rect entries; keep other override fields
-        for idx, ov in list(self._host._clips_overrides.items()):
-            ov.pop("crop_rect", None)
-            if not ov:
-                self._host._clips_overrides.pop(idx, None)
+        # Push the Tab 1 staging rect onto every candidate's override. When
+        # staging is None we pop the field instead, so every clip falls back
+        # to the centered render-time default.
+        staging = self._host._global_crop_rect
+        if staging is None:
+            for idx, ov in list(self._host._clips_overrides.items()):
+                ov.pop("crop_rect", None)
+                if not ov:
+                    self._host._clips_overrides.pop(idx, None)
+        else:
+            for idx in range(len(self._host._candidate_meta)):
+                self._host._override(idx)["crop_rect"] = dict(staging)
         if getattr(self._host, "_detail", None) is not None:
             self._host._detail.refresh_crop()
         self._host._save_all()

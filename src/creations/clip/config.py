@@ -52,7 +52,6 @@ class ClipInstanceConfig:
     selected_clip_indices: list[int] = field(default_factory=list)
     preset_name: str = ""
     style: Optional[dict] = None          # raw CompositionStyle dict
-    global_crop_rect: Optional[dict] = None
     clips_overrides: dict[int, dict] = field(default_factory=dict)
     rendered: list[dict] = field(default_factory=list)
 
@@ -83,9 +82,6 @@ class ClipInstanceConfig:
         style = raw.get("style")
         style = style if isinstance(style, dict) else None
 
-        crop = raw.get("global_crop_rect")
-        crop = crop if isinstance(crop, dict) else None
-
         ovs_raw = raw.get("clips_overrides")
         overrides: dict[int, dict] = {}
         if isinstance(ovs_raw, dict):
@@ -107,7 +103,6 @@ class ClipInstanceConfig:
             selected_clip_indices=selected,
             preset_name=str(raw.get("preset_name", "")),
             style=style,
-            global_crop_rect=crop,
             clips_overrides=overrides,
             rendered=rendered,
         )
@@ -125,8 +120,6 @@ class ClipInstanceConfig:
         }
         if self.style is not None:
             out["style"] = self.style
-        if self.global_crop_rect is not None:
-            out["global_crop_rect"] = self.global_crop_rect
         if self.bound_material is not None:
             out["bound_material"] = self.bound_material.to_dict()
         os.makedirs(os.path.dirname(path), exist_ok=True)

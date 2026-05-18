@@ -19,7 +19,6 @@ def test_load_missing_returns_empty(tmp_path):
     assert cfg.source_subtitle == ""
     assert cfg.selected_clip_indices == []
     assert cfg.style is None
-    assert cfg.global_crop_rect is None
     assert cfg.clips_overrides == {}
     assert cfg.rendered == []
 
@@ -42,7 +41,6 @@ def test_load_full_roundtrip(tmp_path):
         selected_clip_indices=[0, 2, 5],
         preset_name="MyPreset",
         style={"output": {"aspect": "9:16"}},
-        global_crop_rect={"x": 0.1, "y": 0.0, "w": 0.8, "h": 1.0},
         clips_overrides={3: {"hook": "boom"}},
         rendered=[{"file": "clip01.mp4", "src_idx": 0}],
     )
@@ -54,7 +52,6 @@ def test_load_full_roundtrip(tmp_path):
     assert loaded.selected_clip_indices == [0, 2, 5]
     assert loaded.preset_name == "MyPreset"
     assert loaded.style == {"output": {"aspect": "9:16"}}
-    assert loaded.global_crop_rect == {"x": 0.1, "y": 0.0, "w": 0.8, "h": 1.0}
     assert loaded.clips_overrides == {3: {"hook": "boom"}}
     assert loaded.rendered == [{"file": "clip01.mp4", "src_idx": 0}]
 
