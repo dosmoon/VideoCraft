@@ -435,10 +435,10 @@ class ClipToolApp(ToolBase):
         """Compose a CompositionTimeline for [start, end] using the current
         style + the instance's source SRT. Single-source for both render
         and preview — set_timeline pushes the same IR ffmpeg renders."""
-        from creations.clip.timeline_builder import build_clip_timeline
+        from creations.clip.composer import compile_for_candidate
         from core.composition.compile import ClipRange
         srt_path = self._resolve_source_srt() or ""
-        return build_clip_timeline(
+        return compile_for_candidate(
             self._current_style,
             ClipRange(start_sec=start, end_sec=end),
             hook_text=hook, outro_text=outro,
@@ -774,9 +774,9 @@ class ClipToolApp(ToolBase):
                 continue
             base = self._clip_basename(out_idx, src_idx)
             out_path = os.path.join(inst, base + ".mp4")
-            from creations.clip.timeline_builder import build_clip_timeline
+            from creations.clip.composer import compile_for_candidate
             from core.composition.compile import ClipRange
-            timeline = build_clip_timeline(
+            timeline = compile_for_candidate(
                 self._current_style,
                 ClipRange(start_sec=start, end_sec=end),
                 hook_text=self._effective_hook(src_idx),
@@ -1073,9 +1073,9 @@ class ClipToolApp(ToolBase):
         base = self._clip_basename(out_idx, src_idx)
         out_path = os.path.join(self._instance_dir(), base + ".mp4")
         self._style.read_form_into_style()
-        from creations.clip.timeline_builder import build_clip_timeline
+        from creations.clip.composer import compile_for_candidate
         from core.composition.compile import ClipRange
-        timeline = build_clip_timeline(
+        timeline = compile_for_candidate(
             self._current_style,
             ClipRange(start_sec=start, end_sec=end),
             hook_text=self._effective_hook(src_idx),

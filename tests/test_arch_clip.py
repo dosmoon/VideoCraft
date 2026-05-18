@@ -221,6 +221,24 @@ def test_clip_tool_uses_style_panel():
         f"style_panel.py): {leaked}")
 
 
+def test_timeline_builder_retired():
+    """Step 5.4 retires creations/clip/timeline_builder.py — the
+    inline Element/Track construction is gone, replaced by
+    composer.compile_for_candidate which drives compile_timeline()
+    against component-spec adapters. Any resurrection is a regression."""
+    assert not os.path.isfile(
+        os.path.join(CLIP_DIR, "timeline_builder.py")), (
+        "creations/clip/timeline_builder.py must stay deleted")
+    for fn in os.listdir(CLIP_DIR):
+        if not fn.endswith(".py") or fn.startswith("__"):
+            continue
+        p = os.path.join(CLIP_DIR, fn)
+        with open(p, "r", encoding="utf-8") as f:
+            src = f.read()
+        assert "build_clip_timeline" not in src, (
+            f"{fn} still references retired build_clip_timeline")
+
+
 def test_clip_subtree_does_not_call_nv_paths():
     """No module under creations/clip/ may reach into _nv_paths."""
     violations: list[str] = []

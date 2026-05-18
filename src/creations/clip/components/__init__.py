@@ -4,7 +4,7 @@ A "component" in clip is the same edit-time unit news_desk uses
 (see creations/news_desk/components/__init__.py). Clip migrates to the
 component model so its hook / outro / subtitle / watermark each become
 a registered ComponentSpec and the render path can go through
-compile_timeline() instead of build_clip_timeline.
+compile_timeline() against composed adapters.
 
 Why a clip-local registry instead of sharing news_desk's:
     Each creation owns its own set of component kinds (clip's subtitle

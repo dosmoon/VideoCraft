@@ -1,17 +1,17 @@
 """Clip subtitle component — one track per instance.
 
 Each clip uses up to two subtitle tracks (primary + secondary language).
-Each track is one ClipSubtitleSpec instance. The host (build_clip_timeline
-or the future component-list UI) decides how many tracks exist and seeds
-each instance with its SRT path + the margin_v that reflects whether
-the other track is also enabled (so the two tracks stack correctly).
+Each track is one ClipSubtitleSpec instance. The host (composer or the
+future component-list UI) decides how many tracks exist and seeds each
+instance with its SRT path + the margin_v that reflects whether the
+other track is also enabled (so the two tracks stack correctly).
 
 This spec exists ALONGSIDE news_desk's subtitle spec, not as a
 replacement. News_desk's subtitle is single-track with a snapshot SRT
 in instance_dir; clip's is dual-capable with a dynamic SRT path
 resolved from the active language at render time.
 
-Step 5.1 — render path: build_clip_timeline calls
+Step 5.1 — render path: composer.compile_for_candidate calls
 `subtitle_adapters_from_style()` to translate the legacy
 CompositionStyle.subtitle into transient instance dicts; once Step 5.5
 swaps the UI to a component list, those dicts will live in

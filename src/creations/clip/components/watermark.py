@@ -60,12 +60,12 @@ def _default_image_instance(_duration: float) -> dict:
     }
 
 
-# ── Shared style-dict packer — byte-equal to legacy build_clip_timeline ────
+# ── Shared style-dict packer — byte-equal to the legacy inline builder ────
 
 def _style_dict(instance: dict) -> dict:
     """Pack the style fields into the dict shape that drawtext_filter /
-    overlay_filter expect at render time. Mirrors the dict emitted by
-    pre-5.2 build_clip_timeline so byte-shape stays stable."""
+    overlay_filter expect at render time. Mirrors the dict the pre-5.2
+    inline watermark branch emitted so byte-shape stays stable."""
     return {
         "text_fontsize": int(instance.get("text_fontsize", 36)),
         "text_color": instance.get("text_color", "#FFFFFF"),

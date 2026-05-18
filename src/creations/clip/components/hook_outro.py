@@ -3,8 +3,8 @@
 Two registered specs: clip_hook_card (compiles to hook_text primitive)
 and clip_outro_card (compiles to outro_text primitive). Each instance
 dict carries its own text and the full style field set; the renderer
-reads the same flat style dict shape build_clip_timeline used to emit
-inline, so byte-shape stays stable.
+reads the same flat style dict shape the pre-5.3 inline hook/outro
+branch emitted, so byte-shape stays stable.
 
 Per-candidate text (the AI-generated or user-edited hook / outro
 text) is filled into the instance dict by `hookoutro_adapters_from_style`
@@ -72,7 +72,7 @@ def _default_outro_instance(_duration: float) -> dict:
     }
 
 
-# ── style dict — matches what build_clip_timeline emitted pre-5.3 ─────────
+# ── style dict — matches what the pre-5.3 inline branch emitted ─────────
 
 def _card_style_dict(instance: dict, position_role: str) -> dict:
     """Pack flat style dict the renderer's drawtext_filter consumes.
