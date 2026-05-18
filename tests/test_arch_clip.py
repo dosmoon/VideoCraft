@@ -134,6 +134,25 @@ def test_clip_tool_uses_hotclips_repo():
         f"clip_tool still defines repo helpers (move to candidates.py): {bad}")
 
 
+def test_clip_tool_uses_render_queue():
+    """Batch rendering must funnel through RenderQueue. The workbench
+    no longer owns a raw thread, _render_worker is retired, and
+    cancellation goes through the queue's cancel()."""
+    with open(CLIP_TOOL_PATH, "r", encoding="utf-8") as f:
+        src = f.read()
+    assert "RenderQueue(" in src, "clip_tool must construct RenderQueue"
+    forbidden = (
+        "def _render_worker",
+        "threading.Thread(",
+        "self._cancel_flag",
+        "self._render_thread",
+    )
+    bad = [pat for pat in forbidden if pat in src]
+    assert not bad, (
+        f"clip_tool still owns raw threading state (move to "
+        f"render_queue.py): {bad}")
+
+
 def test_clip_subtree_does_not_call_nv_paths():
     """No module under creations/clip/ may reach into _nv_paths."""
     violations: list[str] = []

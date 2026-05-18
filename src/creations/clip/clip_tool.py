@@ -18,7 +18,6 @@ import json
 import os
 import re
 import subprocess
-import threading
 import tkinter as tk
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -39,6 +38,7 @@ from creations.clip.candidates import HotclipsRepo
 from creations.clip.config import (
     BoundMaterial, ClipInstanceConfig, now_iso,
 )
+from creations.clip.render_queue import RenderJob, RenderQueue
 from i18n import tr
 
 
@@ -143,8 +143,7 @@ class ClipToolApp(ToolBase):
         self._detail_widgets: dict = {}
 
         # ── Render state ──────────────────────────────────────────────────
-        self._render_thread: Optional[threading.Thread] = None
-        self._cancel_flag = False
+        self._render_queue: Optional[RenderQueue] = None
         self._render_status: dict[int, str] = {}    # candidate idx -> status
         self._current_render_idx: Optional[int] = None
         self._rendered: list[dict] = []
@@ -1740,9 +1739,9 @@ class ClipToolApp(ToolBase):
         self._read_form_into_style()
         self._save_all()
 
-        # Build requests
+        # Build jobs
         srt_path = self._resolve_source_srt()
-        requests: list[tuple[int, int, CompositionRequest]] = []  # (out_idx, src_idx, req)
+        jobs: list[RenderJob] = []
         for out_idx, src_idx in enumerate(selected, 1):
             if out_idx in skip_indices:
                 continue
@@ -1760,32 +1759,28 @@ class ClipToolApp(ToolBase):
                 outro_text=self._effective_outro(src_idx),
                 source_srt=srt_path,
             )
-            requests.append((out_idx, src_idx, CompositionRequest(
-                source_video=video_path,
-                start_sec=start, end_sec=end,
-                output_path=out_path,
-                output_geometry=self._current_style.output,
-                encode_preset=self._current_style.encode_preset,
-                crop_rect=self._effective_crop(src_idx),
-                timeline=timeline,
-            )))
+            jobs.append(RenderJob(
+                out_idx=out_idx, src_idx=src_idx,
+                request=CompositionRequest(
+                    source_video=video_path,
+                    start_sec=start, end_sec=end,
+                    output_path=out_path,
+                    output_geometry=self._current_style.output,
+                    encode_preset=self._current_style.encode_preset,
+                    crop_rect=self._effective_crop(src_idx),
+                    timeline=timeline,
+                )))
 
-        if not requests:
+        if not jobs:
             messagebox.showinfo(
                 "VideoCraft", tr("clip_tool.warn_no_valid_plan"),
                 parent=self.master)
             return
 
-        self._cancel_flag = False
-        self._render_btn.configure(state="disabled")
-        self._cancel_btn.configure(state="normal")
-        for _o, src_idx, _r in requests:
-            self._render_status[src_idx] = "queued"
+        for job in jobs:
+            self._render_status[job.src_idx] = "queued"
         self._refresh_render_tv()
-        self.set_busy(tr("clip_tool.rendering"))
-        self._render_thread = threading.Thread(
-            target=self._render_worker, args=(requests,), daemon=True)
-        self._render_thread.start()
+        self._start_render_queue(jobs)
 
     def _prompt_conflict(self, existing: list[tuple[int, str]]) -> str:
         n = len(existing)
@@ -1820,68 +1815,63 @@ class ClipToolApp(ToolBase):
         dlg.wait_window()
         return result["action"]
 
-    def _render_worker(self, requests):
-        total = len(requests)
-        last_error: Optional[str] = None
-        for done, (out_idx, src_idx, req) in enumerate(requests, 1):
-            if self._cancel_flag:
-                break
-            self._current_render_idx = src_idx
-            self._render_status[src_idx] = "in_progress"
-            self.master.after(
-                0, lambda d=done, t=total, oi=out_idx:
-                    self._on_render_progress(d - 1, t, oi, 0))
+    def _start_render_queue(self, jobs: list[RenderJob]) -> None:
+        """Spin up a one-shot RenderQueue for `jobs`. UI gets put into
+        the busy state synchronously here; reset happens in
+        _on_render_done after the queue's all-done callback fires."""
+        self._render_btn.configure(state="disabled")
+        self._cancel_btn.configure(state="normal")
+        self.set_busy(tr("clip_tool.rendering"))
+        self._render_queue = RenderQueue(
+            self.master,
+            on_progress=self._on_render_progress,
+            on_succeeded=self._on_clip_succeeded,
+            on_failed=self._on_clip_failed,
+            on_all_done=self._on_render_done,
+            cleanup_stale_fn=self._cleanup_stale_for_out_idx,
+        )
+        self._render_queue.start(jobs)
 
-            def _on_pct(_stage, pct, oi=out_idx, d=done, t=total):
-                self.master.after(0,
-                    lambda: self._on_render_progress(d - 1, t, oi, pct))
-
+    def _cleanup_stale_for_out_idx(self, out_idx: int,
+                                     new_basename: str) -> None:
+        """Worker-thread callback: wipe any prior paired files for
+        `out_idx` whose basename differs from the upcoming render. A
+        hook edit changes basename, so we must clear the old shape or
+        end up with two paired sets for one logical clip."""
+        for stale in self._existing_clip_files(out_idx):
+            if os.path.splitext(os.path.basename(stale))[0] == new_basename:
+                continue
             try:
-                # If a previous render for this out_idx left files
-                # under a different hook (and thus a different
-                # basename), wipe them so we never end up with two
-                # paired sets for one logical clip.
-                new_base = os.path.basename(
-                    os.path.splitext(req.output_path)[0])
-                for stale in self._existing_clip_files(out_idx):
-                    if os.path.splitext(os.path.basename(stale))[0] == new_base:
-                        continue
-                    try:
-                        os.unlink(stale)
-                    except OSError:
-                        pass
+                os.unlink(stale)
+            except OSError:
+                pass
 
-                result = render_composition(
-                    req, on_progress=_on_pct,
-                    cancel_check=lambda: self._cancel_flag)
-                # Sidecar JSON + publish markdown
-                self._write_sidecar(req, result, out_idx, src_idx)
-                self._write_publish_sidecar(req.output_path)
-                self._render_status[src_idx] = "done"
-                fname = os.path.basename(req.output_path)
-                self._rendered = [
-                    r for r in self._rendered
-                    if int(r.get("output_index") or -1) != out_idx
-                ]
-                self._rendered.insert(0, {
-                    "file": fname,
-                    "source_clip_idx": src_idx,
-                    "output_index": out_idx,
-                    "duration_sec": result.duration_sec,
-                    "rendered_at": datetime.now(timezone.utc)
-                                    .isoformat(timespec="seconds"),
-                })
-            except InterruptedError:
-                self._render_status[src_idx] = "queued"
-                break
-            except Exception as e:
-                last_error = f"#{out_idx}: {e}"
-                self._render_status[src_idx] = "failed"
-                self._set_failure_reason(src_idx, str(e))
-            self.master.after(0, self._refresh_render_tv)
+    def _on_clip_succeeded(self, job: RenderJob, result) -> None:
+        """Tk-thread callback after one job's render returned. Writes
+        sidecars + bookkeeping + refreshes the render table."""
+        req = job.request
+        self._write_sidecar(req, result, job.out_idx, job.src_idx)
+        self._write_publish_sidecar(req.output_path)
+        self._render_status[job.src_idx] = "done"
+        self._rendered = [
+            r for r in self._rendered
+            if int(r.get("output_index") or -1) != job.out_idx
+        ]
+        self._rendered.insert(0, {
+            "file": os.path.basename(req.output_path),
+            "source_clip_idx": job.src_idx,
+            "output_index": job.out_idx,
+            "duration_sec": result.duration_sec,
+            "rendered_at": datetime.now(timezone.utc)
+                            .isoformat(timespec="seconds"),
+        })
+        self._refresh_render_tv()
 
-        self.master.after(0, lambda err=last_error:
-                            self._on_render_done(err))
+    def _on_clip_failed(self, job: RenderJob, error_msg: str) -> None:
+        """Tk-thread callback after one job's render raised."""
+        self._render_status[job.src_idx] = "failed"
+        self._set_failure_reason(job.src_idx, error_msg)
+        self._refresh_render_tv()
 
     def _on_render_progress(self, done: int, total: int,
                               current_out_idx: int, pct: int) -> None:
@@ -1907,9 +1897,17 @@ class ClipToolApp(ToolBase):
         self._progress_overall_var.set("")
         self._progress_current_var.set("")
         self._current_render_idx = None
+        # Cancelled jobs landed in "queued" via on_failed never firing —
+        # restore that signal for queued-but-unfinished items.
+        for src_idx, status in list(self._render_status.items()):
+            if status == "in_progress":
+                self._render_status[src_idx] = "queued"
         self._save_all()
         self._refresh_render_tv()
-        if self._cancel_flag:
+        was_cancelled = (self._render_queue is not None
+                          and self._render_queue.is_cancelled)
+        self._render_queue = None
+        if was_cancelled:
             self.set_warning(tr("clip_tool.cancelled_msg"))
         elif last_error:
             self.set_warning(tr("clip_tool.done_with_warning"))
@@ -1917,9 +1915,8 @@ class ClipToolApp(ToolBase):
             self.set_done()
 
     def _on_cancel_render(self) -> None:
-        if not self._render_thread or not self._render_thread.is_alive():
-            return
-        self._cancel_flag = True
+        if self._render_queue is not None:
+            self._render_queue.cancel()
 
     def _write_sidecar(self, req: CompositionRequest, result,
                          out_idx: int, src_idx: int) -> None:
@@ -2043,7 +2040,6 @@ class ClipToolApp(ToolBase):
         if not row:
             return
         out_idx, src_idx = row
-        # Single-clip render: build one request, run worker on it
         video_path = self.material_model.source_video_path
         if not os.path.isfile(video_path):
             return
@@ -2052,16 +2048,6 @@ class ClipToolApp(ToolBase):
             return
         base = self._clip_basename(out_idx, src_idx)
         out_path = os.path.join(self._instance_dir(), base + ".mp4")
-        # Wipe any prior paired files for this out_idx — hook may have
-        # changed, so basename may differ from the existing files. Same
-        # cleanup as the bulk-render path runs inside _render_worker;
-        # do it eagerly here too so a mid-render cancel can't leave us
-        # with both old and new naming side-by-side.
-        for stale in self._existing_clip_files(out_idx):
-            try:
-                os.unlink(stale)
-            except OSError:
-                pass
         self._read_form_into_style()
         from creations.clip.timeline_builder import build_clip_timeline
         from core.composition.compile import ClipRange
@@ -2081,14 +2067,8 @@ class ClipToolApp(ToolBase):
             crop_rect=self._effective_crop(src_idx),
             timeline=timeline,
         )
-        self._cancel_flag = False
-        self._render_btn.configure(state="disabled")
-        self._cancel_btn.configure(state="normal")
-        self.set_busy(tr("clip_tool.rendering"))
-        self._render_thread = threading.Thread(
-            target=self._render_worker, args=([(out_idx, src_idx, req)],),
-            daemon=True)
-        self._render_thread.start()
+        self._start_render_queue(
+            [RenderJob(out_idx=out_idx, src_idx=src_idx, request=req)])
 
     def _on_act_delete(self) -> None:
         row = self._selected_render_row()
