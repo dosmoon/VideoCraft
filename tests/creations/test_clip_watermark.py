@@ -8,7 +8,7 @@ from core.composition.compile import ClipRange, CompileContext
 from core.composition.style import CompositionStyle
 from creations.clip.components import spec_for_kind
 from creations.clip.components.watermark import (
-    KIND_IMAGE, KIND_TEXT, watermark_adapters_from_style,
+    KIND_IMAGE, KIND_TEXT, template_from_style,
 )
 
 
@@ -88,35 +88,35 @@ def test_image_compile_emits_one_element_spanning_full_range():
     assert e.style["image_opacity"] == 80
 
 
-# ── Seeder ─────────────────────────────────────────────────────────────────
+# ── template_from_style migration ──────────────────────────────────────────
 
-def test_seeder_emits_no_adapter_when_disabled():
+def test_template_empty_when_disabled():
     style = CompositionStyle()
     style.watermark.enabled = False
-    assert watermark_adapters_from_style(style) == []
+    assert template_from_style(style) == []
 
 
-def test_seeder_picks_text_spec_when_type_text():
+def test_template_picks_text_kind():
     style = CompositionStyle()
     style.watermark.enabled = True
     style.watermark.type = "text"
     style.watermark.text = "hello"
-    adapters = watermark_adapters_from_style(style)
-    assert len(adapters) == 1
-    assert adapters[0].kind == KIND_TEXT
+    out = template_from_style(style)
+    assert len(out) == 1
+    assert out[0]["kind"] == KIND_TEXT
 
 
-def test_seeder_picks_image_spec_when_type_image():
+def test_template_picks_image_kind():
     style = CompositionStyle()
     style.watermark.enabled = True
     style.watermark.type = "image"
     style.watermark.image_path = "C:/wm/logo.png"
-    adapters = watermark_adapters_from_style(style)
-    assert len(adapters) == 1
-    assert adapters[0].kind == KIND_IMAGE
+    out = template_from_style(style)
+    assert len(out) == 1
+    assert out[0]["kind"] == KIND_IMAGE
 
 
-def test_seeder_propagates_all_style_fields():
+def test_template_propagates_all_fields():
     style = CompositionStyle()
     style.watermark.enabled = True
     style.watermark.type = "text"
@@ -127,8 +127,7 @@ def test_seeder_propagates_all_style_fields():
     style.watermark.position = "bottom-left"
     style.watermark.margin_x_pct = 0.04
     style.watermark.margin_y_pct = 0.05
-    adapters = watermark_adapters_from_style(style)
-    inst = adapters[0].instance
+    inst = template_from_style(style)[0]
     assert inst["text"] == "@chan"
     assert inst["text_fontsize"] == 48
     assert inst["text_color"] == "#FF0000"

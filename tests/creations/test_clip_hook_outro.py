@@ -8,7 +8,7 @@ from core.composition.compile import ClipRange, CompileContext
 from core.composition.style import CompositionStyle
 from creations.clip.components import spec_for_kind
 from creations.clip.components.hook_outro import (
-    KIND_HOOK, KIND_OUTRO, hookoutro_adapters_from_style,
+    KIND_HOOK, KIND_OUTRO, template_from_style,
 )
 
 
@@ -130,38 +130,25 @@ def test_outro_role_stamps_outro_position():
     assert s["outro_duration_sec"] == 5.0
 
 
-# ── Seeder ─────────────────────────────────────────────────────────────────
+# ── template_from_style migration ──────────────────────────────────────────
 
-def test_seeder_no_text_no_adapter():
+def test_template_default_emits_both():
+    """Default CompositionStyle has hook/outro durations > 0 → both cards
+    seeded with text="" (composer fills per candidate)."""
     style = CompositionStyle()
-    assert hookoutro_adapters_from_style(
-        style, hook_text="", outro_text="") == []
+    out = template_from_style(style)
+    assert [c["kind"] for c in out] == [KIND_HOOK, KIND_OUTRO]
+    assert all(c["text"] == "" for c in out)
 
 
-def test_seeder_hook_only():
+def test_template_zero_duration_drops_role():
     style = CompositionStyle()
-    adapters = hookoutro_adapters_from_style(
-        style, hook_text="boom", outro_text="")
-    assert [a.kind for a in adapters] == [KIND_HOOK]
-    assert adapters[0].instance["text"] == "boom"
+    style.hook_outro.hook_duration_sec = 0.0
+    out = template_from_style(style)
+    assert [c["kind"] for c in out] == [KIND_OUTRO]
 
 
-def test_seeder_outro_only():
-    style = CompositionStyle()
-    adapters = hookoutro_adapters_from_style(
-        style, hook_text="", outro_text="thanks")
-    assert [a.kind for a in adapters] == [KIND_OUTRO]
-    assert adapters[0].instance["text"] == "thanks"
-
-
-def test_seeder_both_in_order():
-    style = CompositionStyle()
-    adapters = hookoutro_adapters_from_style(
-        style, hook_text="hi", outro_text="bye")
-    assert [a.kind for a in adapters] == [KIND_HOOK, KIND_OUTRO]
-
-
-def test_seeder_propagates_style_fields():
+def test_template_propagates_style_fields():
     style = CompositionStyle()
     style.hook_outro.font = "Custom"
     style.hook_outro.size = 60
@@ -169,20 +156,11 @@ def test_seeder_propagates_style_fields():
     style.hook_outro.hook_position = "lower-third"
     style.hook_outro.outro_position = "upper-third"
     style.hook_outro.hook_duration_sec = 7.0
-    adapters = hookoutro_adapters_from_style(
-        style, hook_text="hi", outro_text="bye")
-    h, o = adapters[0].instance, adapters[1].instance
+    out = template_from_style(style)
+    h, o = out[0], out[1]
     assert h["font"] == "Custom"
     assert h["size"] == 60
     assert h["color"] == "#00FF00"
     assert h["position"] == "lower-third"
     assert h["duration_sec"] == 7.0
     assert o["position"] == "upper-third"
-
-
-def test_seeder_zero_duration_drops_track():
-    style = CompositionStyle()
-    style.hook_outro.hook_duration_sec = 0.0
-    adapters = hookoutro_adapters_from_style(
-        style, hook_text="hi", outro_text="bye")
-    assert [a.kind for a in adapters] == [KIND_OUTRO]

@@ -1,63 +1,71 @@
-"""Style tab for the clip workbench.
+"""Style tab for the clip workbench — three-pane component-driven UI.
 
-Owns:
-  - Tab 1's UI (preset header, scrollable form, style-side preview,
-    global-crop bar)
-  - All form Tk vars (aspect / encode / subtitle / watermark /
-    hook-outro) and their write traces
-  - The style-side CompositionPreview
-  - Preset apply/save-as/overwrite/delete + the hook_outro preset apply
-  - Watermark image browse, global crop callback, apply-to-all
+Layout (mirrors news_desk):
+  ┌─────────────────────────────────────────────────────────────┐
+  │ [toolbar] lang | aspect | encode | preset combo + buttons   │
+  ├──────────────────────────────────┬──────────────────────────┤
+  │ [preview]                        │                          │
+  │   WebView + crop bar +           │  [property panel]        │
+  │   apply-crop-to-all              │  (selected component)    │
+  ├──────────────────────────────────┤                          │
+  │ [component list] + [+ add] menu  │                          │
+  │ ☑ subtitle (primary)             │                          │
+  │ ☑ hook card                      │                          │
+  │ ☑ outro card                     │                          │
+  │ ...                              │                          │
+  └──────────────────────────────────┴──────────────────────────┘
 
-The host owns `_current_style` (the dataclass written into config) and
-the language/preset StringVars that bridge Tab 1 with the rest of the
-workbench. The panel reads style off the host, mutates it via
-read_form_into_style, then pokes host._save_all + repush detail
-preview when anything changes.
+Authoritative model: `host.config.components` (list of instance dicts).
+Each row in the list maps 1:1 to a component dict. Selection drives
+the property panel via the spec's `build_property_panel` callback.
+
+Output settings (aspect, encode_preset) still live on `host._current_style`
+until 5.5.c (where presets switch to a components-based schema and
+`_current_style` can retire). The toolbar reads/writes them directly.
 
 Host contract — methods/attrs the panel touches:
-
-  Attributes:
-    master                        Tk widget root for dialogs
-    _current_style                CompositionStyle (read/write)
-    _project_store                comp_presets project preset store
-    _hook_outro_store             comp_presets hook/outro preset store
-    _global_crop_rect             Optional[dict]
-    _clips_overrides              dict[int, dict]  per-candidate edits
-    _candidate_meta               list[dict]
-    material_model                NewsVideoModel
-    _detail                       Optional[ClipDetailPanel]
-
-  Methods:
-    _full_video_duration() -> float
-    _full_srt_cues() -> list[dict]
-    _build_preview_timeline(start, end, *, hook, outro) -> Timeline
-    _preview_aspect_short_edge() -> (str, int)
-    _reload_candidates() -> None
-    _save_all() -> None
-    _refresh_render_tv() -> None
-    _refresh_overview() -> None
+    Attributes:
+      master                 Tk widget root for dialogs
+      _current_style         CompositionStyle (output / encode_preset only)
+      _project_store         comp_presets project preset store
+      _global_crop_rect      Optional[dict]
+      _candidate_meta        list[dict]
+      config                 ClipInstanceConfig (components list lives here)
+      material_model         NewsVideoModel
+      _detail                Optional[ClipDetailPanel]
+    Methods:
+      _full_video_duration() -> float
+      _full_srt_cues() -> list[dict]
+      _build_preview_timeline(start, end, *, hook, outro) -> Timeline
+      _preview_aspect_short_edge() -> (str, int)
+      _reload_candidates() -> None
+      _save_all() -> None
+      _refresh_render_tv() -> None
 """
 
 from __future__ import annotations
 
+import os
 import tkinter as tk
-from tkinter import colorchooser, filedialog, messagebox, simpledialog, ttk
+from dataclasses import asdict
+from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Optional
 
-from core.composition import (
-    CompositionStyle,
-)
 from core.composition import presets as comp_presets
 from core.composition.preview import CompositionPreview
 from i18n import tr
 
+from creations.clip import components as cc
+from creations.news_desk.components import ProjectContext
 
-# ── StylePanel ─────────────────────────────────────────────────────────────
+
+_ENCODE_PRESETS = ["ultrafast", "superfast", "veryfast", "faster",
+                    "fast", "medium", "slow", "slower"]
+_ASPECTS = ["9:16", "1:1", "16:9", "4:5"]
+
 
 class StylePanel:
-    """Style tab body — preset / aspect / subtitle / watermark /
-    hook-outro form + the style-side preview."""
+    """Style tab body — component-list editor + preview + property pane."""
 
     _PREVIEW_DEBOUNCE_MS = 120
 
@@ -67,12 +75,15 @@ class StylePanel:
         self._host = host
         self._lang_var = lang_var
         self._preset_name_var = preset_name_var
-        self._suspend_traces = False
         self._preview: Optional[CompositionPreview] = None
         self._preview_job: Optional[str] = None
-        self._build_tab(parent)
+        self._selected_idx: Optional[int] = None
+        self._property_frame: Optional[ttk.Frame] = None
+        self._comp_tree: Optional[ttk.Treeview] = None
+        self._status_var = tk.StringVar(value="")
+        self._build_ui(parent)
 
-    # ── public surface ────────────────────────────────────────────────────
+    # ── public API ────────────────────────────────────────────────────────
 
     @property
     def preview(self) -> Optional[CompositionPreview]:
@@ -92,129 +103,24 @@ class StylePanel:
             self._preview = None
 
     def populate_form_from_style(self) -> None:
-        if not hasattr(self, "_aspect_var"):
-            return
-        self._suspend_traces = True
-        try:
-            s = self._host._current_style
-            self._aspect_var.set(s.output.aspect)
-            self._encode_preset_var.set(s.encode_preset)
-            sub = s.subtitle
-            self._sub1_enabled.set(sub.sub1.enabled)
-            self._sub1_fontsize.set(sub.sub1.fontsize)
-            self._sub1_color.set(sub.sub1.color)
-            self._sub1_bold.set(sub.sub1.bold)
-            self._sub1_is_chinese.set(sub.sub1.is_chinese)
-            self._sub2_enabled.set(sub.sub2.enabled)
-            self._sub2_fontsize.set(sub.sub2.fontsize)
-            self._sub2_color.set(sub.sub2.color)
-            self._sub2_bold.set(sub.sub2.bold)
-            self._sub2_is_chinese.set(sub.sub2.is_chinese)
-            self._sub_stroke_color.set(sub.stroke_color)
-            self._sub_stroke_width.set(sub.stroke_width)
-            self._sub_position.set(sub.position)
-            self._sub_block_margin_pct.set(round(sub.block_margin_pct * 100.0, 1))
-            self._sub_track_gap_pct.set(round(sub.track_gap_pct * 100.0, 1))
-            w = s.watermark
-            self._wm_enabled.set(w.enabled)
-            self._wm_type.set(w.type)
-            self._wm_position.set(w.position)
-            self._wm_image_path.set(w.image_path)
-            self._wm_image_scale.set(w.image_scale)
-            self._wm_image_opacity.set(w.image_opacity)
-            self._wm_text.set(w.text)
-            self._wm_text_fontsize.set(w.text_fontsize)
-            self._wm_text_color.set(w.text_color)
-            self._wm_text_opacity.set(w.text_opacity)
-            self._wm_margin_x_pct.set(round(w.margin_x_pct * 100.0, 1))
-            self._wm_margin_y_pct.set(round(w.margin_y_pct * 100.0, 1))
-            h = s.hook_outro
-            self._ho_font.set(h.font)
-            self._ho_size.set(h.size)
-            self._ho_color.set(h.color)
-            self._ho_bg_color.set(h.bg_color)
-            self._ho_bg_opacity.set(h.bg_opacity)
-            self._ho_stroke_color.set(h.stroke_color)
-            self._ho_stroke_width.set(h.stroke_width)
-            self._ho_box_padding.set(h.box_padding)
-            self._ho_hook_position.set(h.hook_position)
-            self._ho_outro_position.set(h.outro_position)
-            self._ho_hook_duration.set(h.hook_duration_sec)
-            self._ho_outro_duration.set(h.outro_duration_sec)
-        finally:
-            self._suspend_traces = False
+        """Wire up toolbar values from _current_style.output and refresh
+        the component list from config.components."""
+        s = self._host._current_style
+        self._aspect_var.set(s.output.aspect)
+        self._encode_var.set(s.encode_preset)
+        self.refresh_preset_combos()
+        self._reload_component_list()
         self.schedule_preview_refresh()
-        self._repush_clip_preview()
 
     def read_form_into_style(self) -> None:
-        from core.composition import (
-            SubtitleStyle, SubtitleLineStyle, WatermarkStyle,
-            HookOutroStyle,
-        )
-        from core.composition.style import OutputGeometry
-        cur = self._host._current_style
-        self._host._current_style = CompositionStyle(
-            output=OutputGeometry(
-                mode=cur.output.mode,
-                aspect=self._aspect_var.get(),
-                short_edge=cur.output.short_edge,
-            ),
-            encode_preset=self._encode_preset_var.get(),
-            subtitle=SubtitleStyle(
-                sub1=SubtitleLineStyle(
-                    enabled=self._sub1_enabled.get(),
-                    fontsize=int(self._sub1_fontsize.get()),
-                    color=self._sub1_color.get(),
-                    bold=self._sub1_bold.get(),
-                    is_chinese=self._sub1_is_chinese.get(),
-                ),
-                sub2=SubtitleLineStyle(
-                    enabled=self._sub2_enabled.get(),
-                    fontsize=int(self._sub2_fontsize.get()),
-                    color=self._sub2_color.get(),
-                    bold=self._sub2_bold.get(),
-                    is_chinese=self._sub2_is_chinese.get(),
-                ),
-                stroke_color=self._sub_stroke_color.get(),
-                stroke_width=int(self._sub_stroke_width.get()),
-                position=self._sub_position.get(),
-                block_margin_pct=float(self._sub_block_margin_pct.get()) / 100.0,
-                track_gap_pct=float(self._sub_track_gap_pct.get()) / 100.0,
-            ),
-            watermark=WatermarkStyle(
-                enabled=self._wm_enabled.get(),
-                type=self._wm_type.get(),
-                position=self._wm_position.get(),
-                margin_x_pct=float(self._wm_margin_x_pct.get()) / 100.0,
-                margin_y_pct=float(self._wm_margin_y_pct.get()) / 100.0,
-                image_path=self._wm_image_path.get(),
-                image_scale=float(self._wm_image_scale.get()),
-                image_opacity=int(self._wm_image_opacity.get()),
-                text=self._wm_text.get(),
-                text_fontsize=int(self._wm_text_fontsize.get()),
-                text_color=self._wm_text_color.get(),
-                text_opacity=int(self._wm_text_opacity.get()),
-            ),
-            hook_outro=HookOutroStyle(
-                font=self._ho_font.get(),
-                size=int(self._ho_size.get()),
-                color=self._ho_color.get(),
-                bg_color=self._ho_bg_color.get(),
-                bg_opacity=int(self._ho_bg_opacity.get()),
-                stroke_color=self._ho_stroke_color.get(),
-                stroke_width=int(self._ho_stroke_width.get()),
-                box_padding=int(self._ho_box_padding.get()),
-                hook_position=self._ho_hook_position.get(),
-                outro_position=self._ho_outro_position.get(),
-                hook_duration_sec=float(self._ho_hook_duration.get()),
-                outro_duration_sec=float(self._ho_outro_duration.get()),
-            ),
-            overlay_styles=dict(cur.overlay_styles),
-        )
+        """Push toolbar values back into _current_style.output / encode_preset.
+        Component edits don't go here — they live directly in
+        config.components via property-panel commits."""
+        s = self._host._current_style
+        s.output.aspect = self._aspect_var.get() or "9:16"
+        s.encode_preset = self._encode_var.get() or "medium"
 
     def schedule_preview_refresh(self) -> None:
-        if self._preview is None:
-            return
         if self._preview_job is not None:
             try:
                 self._host.master.after_cancel(self._preview_job)
@@ -225,423 +131,356 @@ class StylePanel:
 
     def refresh_preset_combos(self) -> None:
         names = comp_presets.list_project_presets(self._host._project_store)
-        if hasattr(self, "_preset_combo"):
+        if self._preset_combo is not None:
             self._preset_combo["values"] = names
-        if hasattr(self, "_preset_combo_quick"):
-            self._preset_combo_quick["values"] = names
-        if hasattr(self, "_ho_preset_combo"):
-            self._ho_preset_combo["values"] = (
-                comp_presets.list_hook_outro_presets(
-                    self._host._hook_outro_store))
 
     # ── UI build ──────────────────────────────────────────────────────────
 
-    def _build_tab(self, parent) -> None:
-        f = tk.Frame(parent, bg="white")
-        f.pack(fill="both", expand=True)
+    def _build_ui(self, parent: ttk.Frame) -> None:
+        # Tab notebook tabs are styled at workbench level; we just fill.
+        outer = tk.Frame(parent, bg="white")
+        outer.pack(fill="both", expand=True)
 
-        # Header: language picker + preset shortcut
-        header = tk.Frame(f, bg="white")
-        header.pack(fill="x", padx=8, pady=(8, 4))
-        tk.Label(header, text=tr("clip_tool.lang_label"),
-                 bg="white").pack(side="left")
+        self._build_toolbar(outer)
+
+        body = ttk.PanedWindow(outer, orient="horizontal")
+        body.pack(fill="both", expand=True, padx=4, pady=(0, 4))
+
+        left = ttk.Frame(body)
+        right = ttk.Frame(body)
+        body.add(left, weight=3)
+        body.add(right, weight=2)
+
+        # Left: preview top, component list bottom (resizable)
+        left_split = ttk.PanedWindow(left, orient="vertical")
+        left_split.pack(fill="both", expand=True)
+        preview_pane = ttk.Frame(left_split)
+        list_pane = ttk.Frame(left_split)
+        left_split.add(preview_pane, weight=3)
+        left_split.add(list_pane, weight=2)
+
+        self._build_preview(preview_pane)
+        self._build_component_list(list_pane)
+
+        # Right: scrollable property panel
+        self._build_property_pane(right)
+
+        # Without this, clicking any Entry/Spinbox after the WebView2
+        # preview has had focus leaves keystrokes stranded in the
+        # WebView's input thread.
+        from ui.web_preview import attach_focus_grab_fix
+        attach_focus_grab_fix(parent)
+
+    def _build_toolbar(self, parent) -> None:
+        bar = tk.Frame(parent, bg="white")
+        bar.pack(fill="x", padx=6, pady=(6, 4))
+
+        # Language picker (combobox state populated by host._reload_languages)
+        tk.Label(bar, text=tr("clip_tool.lang_label"), bg="white"
+                 ).pack(side="left")
         self._lang_combo = ttk.Combobox(
-            header, textvariable=self._lang_var, values=[],
-            state="readonly", width=14)
-        self._lang_combo.pack(side="left", padx=(4, 12))
-        self._lang_combo.bind("<<ComboboxSelected>>",
-                              lambda _e: self._host._reload_candidates())
+            bar, textvariable=self._lang_var, state="readonly", width=10)
+        self._lang_combo.pack(side="left", padx=(2, 8))
+        self._lang_combo.bind(
+            "<<ComboboxSelected>>",
+            lambda _e: self._host._reload_candidates())
 
-        tk.Label(header, text=tr("clip_tool.preset_label"),
+        # Aspect ratio + encode preset
+        tk.Label(bar, text=tr("clip_tool.aspect_label"), bg="white"
+                 ).pack(side="left")
+        self._aspect_var = tk.StringVar(value="9:16")
+        ttk.Combobox(bar, textvariable=self._aspect_var,
+                      values=_ASPECTS, state="readonly", width=6
+                      ).pack(side="left", padx=(2, 8))
+        self._aspect_var.trace_add("write", lambda *_: self._on_output_changed())
+
+        tk.Label(bar, text=tr("clip_tool.encode_label"), bg="white"
+                 ).pack(side="left")
+        self._encode_var = tk.StringVar(value="medium")
+        ttk.Combobox(bar, textvariable=self._encode_var,
+                      values=_ENCODE_PRESETS, state="readonly", width=10
+                      ).pack(side="left", padx=(2, 8))
+        self._encode_var.trace_add("write", lambda *_: self._on_output_changed())
+
+        # Preset section (apply / save-as / overwrite / delete)
+        tk.Label(bar, text=tr("clip_tool.preset_section"), bg="white"
+                 ).pack(side="left", padx=(12, 2))
+        self._preset_combo = ttk.Combobox(
+            bar, textvariable=self._preset_name_var,
+            state="readonly", width=22)
+        self._preset_combo.pack(side="left", padx=(2, 4))
+        ttk.Button(bar, text=tr("clip_tool.btn_apply"),
+                   command=self._on_preset_applied, width=6
+                   ).pack(side="left", padx=(2, 0))
+        ttk.Button(bar, text=tr("clip_tool.btn_save_as"),
+                   command=self._on_preset_save_as, width=10
+                   ).pack(side="left", padx=(2, 0))
+        ttk.Button(bar, text=tr("clip_tool.btn_overwrite"),
+                   command=self._on_preset_overwrite, width=8
+                   ).pack(side="left", padx=(2, 0))
+        ttk.Button(bar, text=tr("clip_tool.btn_delete"),
+                   command=self._on_preset_delete, width=6
+                   ).pack(side="left", padx=(2, 0))
+
+        # Status line (right-aligned)
+        tk.Label(bar, textvariable=self._status_var, bg="white",
+                 fg="#666").pack(side="right", padx=(4, 0))
+
+    def _build_preview(self, parent) -> None:
+        crop_bar = tk.Frame(parent, bg="white")
+        crop_bar.pack(fill="x", padx=4, pady=(4, 2))
+        tk.Label(crop_bar, text=tr("clip_tool.tab1_global_crop_label"),
                  bg="white").pack(side="left")
-        self._preset_combo_quick = ttk.Combobox(
-            header, textvariable=self._preset_name_var,
-            values=comp_presets.list_project_presets(
-                self._host._project_store),
-            state="readonly", width=28)
-        self._preset_combo_quick.pack(side="left", padx=(4, 4))
-        self._preset_combo_quick.bind(
-            "<<ComboboxSelected>>", lambda _e: self._on_preset_applied())
+        ttk.Button(crop_bar, text=tr("clip_tool.btn_apply_crop_to_all"),
+                   command=self._on_apply_crop_to_all
+                   ).pack(side="right")
 
-        self._status_var = tk.StringVar(value="")
-        tk.Label(header, textvariable=self._status_var,
-                 bg="white", fg="#666").pack(side="left", padx=(12, 0))
+        self._preview = CompositionPreview(
+            parent, on_crop_changed=self._on_crop_changed,
+            width=420, height=420)
+        self._preview.widget.pack(fill="both", expand=True,
+                                    padx=4, pady=(0, 4))
 
-        # Body: form left | preview right
-        pw = ttk.PanedWindow(f, orient="horizontal")
-        pw.pack(fill="both", expand=True, padx=4, pady=(0, 4))
-        form_outer = ttk.Frame(pw)
-        preview_outer = ttk.Frame(pw)
-        pw.add(form_outer, weight=3)
-        pw.add(preview_outer, weight=4)
+    def _build_component_list(self, parent) -> None:
+        header = tk.Frame(parent, bg="white")
+        header.pack(fill="x", padx=4, pady=(2, 2))
+        tk.Label(header, text="组件", bg="white",
+                 font=("TkDefaultFont", 10, "bold")).pack(side="left")
 
-        # Scrollable form
-        canvas = tk.Canvas(form_outer, highlightthickness=0)
-        sb = ttk.Scrollbar(form_outer, orient="vertical", command=canvas.yview)
+        # [+ Add] menu button on the right
+        self._add_mb = ttk.Menubutton(header, text="+ 添加")
+        self._add_menu = tk.Menu(self._add_mb, tearoff=0)
+        self._add_mb["menu"] = self._add_menu
+        self._add_mb.pack(side="right")
+        ttk.Button(header, text="删除", width=5,
+                   command=self._on_remove).pack(side="right", padx=(2, 2))
+        ttk.Button(header, text="↓", width=2,
+                   command=self._on_move_down).pack(side="right", padx=(2, 0))
+        ttk.Button(header, text="↑", width=2,
+                   command=self._on_move_up).pack(side="right", padx=(2, 0))
+
+        wrap = ttk.Frame(parent); wrap.pack(fill="both", expand=True,
+                                              padx=4, pady=(0, 4))
+        self._comp_tree = ttk.Treeview(
+            wrap, columns=("on", "kind", "name"), show="headings",
+            selectmode="browse", height=8)
+        self._comp_tree.heading("on", text="")
+        self._comp_tree.heading("kind", text="类型")
+        self._comp_tree.heading("name", text="名称")
+        self._comp_tree.column("on", width=24, anchor="center", stretch=False)
+        self._comp_tree.column("kind", width=120, anchor="w", stretch=False)
+        self._comp_tree.column("name", width=140, anchor="w", stretch=True)
+        vsb = ttk.Scrollbar(wrap, orient="vertical",
+                             command=self._comp_tree.yview)
+        self._comp_tree.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        self._comp_tree.pack(side="left", fill="both", expand=True)
+        self._comp_tree.bind("<<TreeviewSelect>>", self._on_list_select)
+        # Click in the "on" column toggles enabled
+        self._comp_tree.bind("<Button-1>", self._on_tree_click)
+
+        self._rebuild_add_menu()
+
+    def _build_property_pane(self, parent) -> None:
+        # Scrollable container so long property panels can fit
+        outer = ttk.Frame(parent); outer.pack(fill="both", expand=True)
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        sb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
         inner = ttk.Frame(canvas)
         inner_id = canvas.create_window((0, 0), window=inner, anchor="nw")
         canvas.configure(yscrollcommand=sb.set)
         canvas.pack(side="left", fill="both", expand=True)
         sb.pack(side="right", fill="y")
         inner.bind("<Configure>",
-                   lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+                   lambda _e: canvas.configure(
+                       scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>",
                     lambda e: canvas.itemconfigure(inner_id, width=e.width))
-        self._build_form(inner)
+        self._property_frame = inner
+        self._render_empty_property_pane()
 
-        # Preview pane with global-crop controls
-        crop_bar = tk.Frame(preview_outer, bg="white")
-        crop_bar.pack(fill="x", padx=4, pady=(4, 2))
-        tk.Label(crop_bar, text=tr("clip_tool.tab1_global_crop_label"),
-                 bg="white").pack(side="left")
-        ttk.Button(crop_bar, text=tr("clip_tool.btn_apply_crop_to_all"),
-                   command=self._on_apply_crop_to_all).pack(side="right")
+    # ── component list ops ────────────────────────────────────────────────
 
-        self._preview = CompositionPreview(
-            preview_outer,
-            on_crop_changed=self._on_crop_changed,
-            width=420, height=520)
-        self._preview.widget.pack(fill="both", expand=True,
-                                    padx=4, pady=(0, 4))
+    def _reload_component_list(self) -> None:
+        if self._comp_tree is None:
+            return
+        self._comp_tree.delete(*self._comp_tree.get_children())
+        for i, c in enumerate(self._host.config.components):
+            spec = cc.spec_for_instance(c)
+            kind_label = (tr(spec.name_key)
+                            if spec and spec.name_key.startswith("clip.")
+                            else c.get("kind", ""))
+            # Spec name_key may not be registered in i18n yet — fall back
+            # to a hard-coded Chinese label.
+            kind_label = _KIND_LABELS.get(c.get("kind", ""), kind_label)
+            checkbox = "☑" if c.get("enabled", True) else "☐"
+            self._comp_tree.insert(
+                "", "end", iid=str(i),
+                values=(checkbox, kind_label, c.get("name", "")))
+        if self._selected_idx is not None:
+            iid = str(self._selected_idx)
+            if self._comp_tree.exists(iid):
+                self._comp_tree.selection_set(iid)
+            else:
+                self._selected_idx = None
+                self._render_empty_property_pane()
 
-        # Bottom info note
-        note = tk.Label(
-            preview_outer, text=tr("clip_tool.tab1_note_per_clip_content"),
-            bg="white", fg="#666", anchor="w", justify="left",
-            wraplength=420)
-        note.pack(fill="x", padx=4, pady=(0, 4))
+    def _rebuild_add_menu(self) -> None:
+        self._add_menu.delete(0, "end")
+        existing_kinds = {c.get("kind")
+                            for c in self._host.config.components}
+        for spec in cc.all_specs():
+            label = _KIND_LABELS.get(spec.kind, spec.kind)
+            disabled = (not spec.multi_instance) and (
+                spec.kind in existing_kinds)
+            self._add_menu.add_command(
+                label=label, state=("disabled" if disabled else "normal"),
+                command=lambda k=spec.kind: self._on_add(k))
 
-        # Without this, clicking any Entry/Spinbox after the WebView2
-        # preview has had focus leaves keystrokes stranded in the
-        # WebView's input thread (see ui/web_preview attach_focus_grab_fix).
-        from ui.web_preview import attach_focus_grab_fix
-        attach_focus_grab_fix(parent)
-
+    def _on_add(self, kind: str) -> None:
+        spec = cc.spec_for_kind(kind)
+        if spec is None:
+            return
+        duration = self._host._full_video_duration()
+        instance = spec.default_instance(duration or 0.0)
+        self._host.config.components.append(instance)
+        self._selected_idx = len(self._host.config.components) - 1
+        self._host._save_all()
+        self._reload_component_list()
+        self._rebuild_add_menu()
+        self._render_property_for_selected()
         self.schedule_preview_refresh()
 
-    def _build_form(self, parent: ttk.Frame) -> None:
-        # Preset row (full controls)
-        preset_row = ttk.LabelFrame(parent, text=tr("clip_tool.preset_section"))
-        preset_row.pack(fill="x", padx=6, pady=(6, 4))
-        self._preset_combo = ttk.Combobox(
-            preset_row, textvariable=self._preset_name_var,
-            values=comp_presets.list_project_presets(
-                self._host._project_store),
-            state="readonly", width=30)
-        self._preset_combo.grid(row=0, column=0, columnspan=4,
-                                 padx=4, pady=4, sticky="ew")
-        ttk.Button(preset_row, text=tr("clip_tool.btn_apply"),
-                   command=self._on_preset_applied).grid(
-                       row=1, column=0, padx=2, pady=2)
-        ttk.Button(preset_row, text=tr("clip_tool.btn_save_as"),
-                   command=self._on_preset_save_as).grid(
-                       row=1, column=1, padx=2, pady=2)
-        ttk.Button(preset_row, text=tr("clip_tool.btn_overwrite"),
-                   command=self._on_preset_overwrite).grid(
-                       row=1, column=2, padx=2, pady=2)
-        ttk.Button(preset_row, text=tr("clip_tool.btn_delete"),
-                   command=self._on_preset_delete).grid(
-                       row=1, column=3, padx=2, pady=2)
-        for c in range(4):
-            preset_row.columnconfigure(c, weight=1)
+    def _on_remove(self) -> None:
+        if self._selected_idx is None:
+            return
+        if not messagebox.askyesno("VideoCraft",
+                                     "删除选中的组件？",
+                                     parent=self._host.master):
+            return
+        del self._host.config.components[self._selected_idx]
+        self._selected_idx = None
+        self._host._save_all()
+        self._reload_component_list()
+        self._rebuild_add_menu()
+        self._render_empty_property_pane()
+        self.schedule_preview_refresh()
 
-        s = self._host._current_style
+    def _on_move_up(self) -> None:
+        idx = self._selected_idx
+        if idx is None or idx <= 0:
+            return
+        comps = self._host.config.components
+        comps[idx - 1], comps[idx] = comps[idx], comps[idx - 1]
+        self._selected_idx = idx - 1
+        self._host._save_all()
+        self._reload_component_list()
+        self.schedule_preview_refresh()
 
-        # Aspect + encode
-        ae = ttk.LabelFrame(parent, text=tr("clip_tool.section_output"))
-        ae.pack(fill="x", padx=6, pady=4)
-        self._aspect_var = tk.StringVar(value=s.output.aspect)
-        row = ttk.Frame(ae); row.pack(fill="x", padx=4, pady=2)
-        ttk.Label(row, text=tr("clip_tool.aspect")).pack(side="left")
-        for val in ("9:16", "16:9", "1:1", "4:5"):
-            ttk.Radiobutton(row, text=val, variable=self._aspect_var,
-                            value=val).pack(side="left", padx=(4, 0))
-        self._encode_preset_var = tk.StringVar(value=s.encode_preset)
-        row = ttk.Frame(ae); row.pack(fill="x", padx=4, pady=2)
-        ttk.Label(row, text=tr("clip_tool.encode_preset")).pack(side="left")
-        ttk.Combobox(row, textvariable=self._encode_preset_var,
-                     values=("ultrafast", "superfast", "veryfast",
-                             "faster", "fast", "medium"),
-                     state="readonly", width=12).pack(side="left", padx=(4, 0))
+    def _on_move_down(self) -> None:
+        idx = self._selected_idx
+        comps = self._host.config.components
+        if idx is None or idx >= len(comps) - 1:
+            return
+        comps[idx + 1], comps[idx] = comps[idx], comps[idx + 1]
+        self._selected_idx = idx + 1
+        self._host._save_all()
+        self._reload_component_list()
+        self.schedule_preview_refresh()
 
-        # Subtitle
-        sub = ttk.LabelFrame(parent, text=tr("clip_tool.section_subtitle"))
-        sub.pack(fill="x", padx=6, pady=4)
-        ss = s.subtitle
-        self._sub1_enabled = tk.BooleanVar(value=ss.sub1.enabled)
-        self._sub1_fontsize = tk.IntVar(value=ss.sub1.fontsize)
-        self._sub1_color = tk.StringVar(value=ss.sub1.color)
-        self._sub1_bold = tk.BooleanVar(value=ss.sub1.bold)
-        self._sub1_is_chinese = tk.BooleanVar(value=ss.sub1.is_chinese)
-        self._sub2_enabled = tk.BooleanVar(value=ss.sub2.enabled)
-        self._sub2_fontsize = tk.IntVar(value=ss.sub2.fontsize)
-        self._sub2_color = tk.StringVar(value=ss.sub2.color)
-        self._sub2_bold = tk.BooleanVar(value=ss.sub2.bold)
-        self._sub2_is_chinese = tk.BooleanVar(value=ss.sub2.is_chinese)
-        self._sub_stroke_color = tk.StringVar(value=ss.stroke_color)
-        self._sub_stroke_width = tk.IntVar(value=ss.stroke_width)
-        self._sub_position = tk.StringVar(value=ss.position)
-        self._sub_block_margin_pct = tk.DoubleVar(value=ss.block_margin_pct * 100.0)
-        self._sub_track_gap_pct = tk.DoubleVar(value=ss.track_gap_pct * 100.0)
-
-        for tag, en_var, fs_var, c_var, bold_var, cn_var in (
-                ("sub1", self._sub1_enabled, self._sub1_fontsize,
-                 self._sub1_color, self._sub1_bold, self._sub1_is_chinese),
-                ("sub2", self._sub2_enabled, self._sub2_fontsize,
-                 self._sub2_color, self._sub2_bold, self._sub2_is_chinese)):
-            row = ttk.Frame(sub); row.pack(fill="x", padx=4, pady=2)
-            ttk.Checkbutton(row, text=tag, variable=en_var).pack(side="left")
-            ttk.Label(row, text=tr("clip_tool.fontsize")).pack(side="left", padx=(8, 2))
-            ttk.Spinbox(row, from_=8, to=120, textvariable=fs_var,
-                         width=4).pack(side="left")
-            self._color_picker(row, c_var)
-            ttk.Checkbutton(row, text=tr("clip_tool.bold"),
-                            variable=bold_var).pack(side="left", padx=(6, 0))
-            ttk.Checkbutton(row, text=tr("clip_tool.is_chinese"),
-                            variable=cn_var).pack(side="left", padx=(6, 0))
-
-        row = ttk.Frame(sub); row.pack(fill="x", padx=4, pady=2)
-        ttk.Label(row, text=tr("clip_tool.stroke")).pack(side="left")
-        self._color_picker(row, self._sub_stroke_color)
-        ttk.Spinbox(row, from_=0, to=12, textvariable=self._sub_stroke_width,
-                     width=3).pack(side="left", padx=(4, 0))
-        ttk.Label(row, text=tr("clip_tool.position")).pack(side="left", padx=(8, 2))
-        ttk.Combobox(row, textvariable=self._sub_position,
-                     values=("top", "middle", "bottom"),
-                     state="readonly", width=8).pack(side="left")
-
-        row = ttk.Frame(sub); row.pack(fill="x", padx=4, pady=2)
-        ttk.Label(row, text=tr("clip_tool.layout_block_margin")
-                  ).pack(side="left")
-        ttk.Spinbox(row, from_=0, to=30, increment=0.5, width=6,
-                    format="%.1f",
-                    textvariable=self._sub_block_margin_pct
-                    ).pack(side="left", padx=(4, 0))
-        ttk.Label(row, text="%").pack(side="left")
-        ttk.Label(row, text=tr("clip_tool.layout_track_gap")
-                  ).pack(side="left", padx=(16, 0))
-        ttk.Spinbox(row, from_=0, to=25, increment=0.5, width=6,
-                    format="%.1f",
-                    textvariable=self._sub_track_gap_pct
-                    ).pack(side="left", padx=(4, 0))
-        ttk.Label(row, text="%").pack(side="left")
-
-        # Watermark
-        wm = ttk.LabelFrame(parent, text=tr("clip_tool.section_watermark"))
-        wm.pack(fill="x", padx=6, pady=4)
-        w = s.watermark
-        self._wm_enabled = tk.BooleanVar(value=w.enabled)
-        self._wm_type = tk.StringVar(value=w.type)
-        self._wm_position = tk.StringVar(value=w.position)
-        self._wm_image_path = tk.StringVar(value=w.image_path)
-        self._wm_image_scale = tk.DoubleVar(value=w.image_scale)
-        self._wm_image_opacity = tk.IntVar(value=w.image_opacity)
-        self._wm_text = tk.StringVar(value=w.text)
-        self._wm_text_fontsize = tk.IntVar(value=w.text_fontsize)
-        self._wm_text_color = tk.StringVar(value=w.text_color)
-        self._wm_text_opacity = tk.IntVar(value=w.text_opacity)
-        self._wm_margin_x_pct = tk.DoubleVar(value=w.margin_x_pct * 100.0)
-        self._wm_margin_y_pct = tk.DoubleVar(value=w.margin_y_pct * 100.0)
-
-        row = ttk.Frame(wm); row.pack(fill="x", padx=4, pady=2)
-        ttk.Checkbutton(row, text=tr("clip_tool.enabled"),
-                        variable=self._wm_enabled).pack(side="left")
-        ttk.Radiobutton(row, text=tr("clip_tool.wm_image"), variable=self._wm_type,
-                        value="image").pack(side="left", padx=(8, 0))
-        ttk.Radiobutton(row, text=tr("clip_tool.wm_text"), variable=self._wm_type,
-                        value="text").pack(side="left", padx=(4, 0))
-        ttk.Label(row, text=tr("clip_tool.position")).pack(side="left", padx=(8, 2))
-        ttk.Combobox(row, textvariable=self._wm_position,
-                     values=("top-left", "top-right",
-                             "bottom-left", "bottom-right"),
-                     state="readonly", width=12).pack(side="left")
-
-        row = ttk.Frame(wm); row.pack(fill="x", padx=4, pady=2)
-        ttk.Label(row, text=tr("clip_tool.wm_image_path")).pack(side="left")
-        ttk.Entry(row, textvariable=self._wm_image_path,
-                  width=24).pack(side="left", padx=(4, 0), fill="x", expand=True)
-        ttk.Button(row, text="...",
-                   command=self._browse_watermark, width=3).pack(side="left", padx=(2, 0))
-        row = ttk.Frame(wm); row.pack(fill="x", padx=4, pady=2)
-        ttk.Label(row, text=tr("clip_tool.wm_image_scale")).pack(side="left")
-        ttk.Scale(row, from_=0.05, to=0.5, variable=self._wm_image_scale,
-                   orient="horizontal", length=120).pack(side="left", padx=(4, 4))
-        ttk.Label(row, text=tr("clip_tool.wm_image_opacity")).pack(side="left", padx=(8, 0))
-        ttk.Spinbox(row, from_=0, to=100, textvariable=self._wm_image_opacity,
-                     width=4).pack(side="left", padx=(4, 0))
-
-        row = ttk.Frame(wm); row.pack(fill="x", padx=4, pady=2)
-        ttk.Label(row, text=tr("clip_tool.wm_text")).pack(side="left")
-        ttk.Entry(row, textvariable=self._wm_text,
-                  width=20).pack(side="left", padx=(4, 0))
-        ttk.Spinbox(row, from_=8, to=120, textvariable=self._wm_text_fontsize,
-                     width=4).pack(side="left", padx=(4, 0))
-        self._color_picker(row, self._wm_text_color)
-        ttk.Spinbox(row, from_=0, to=100, textvariable=self._wm_text_opacity,
-                     width=4).pack(side="left", padx=(4, 0))
-
-        row = ttk.Frame(wm); row.pack(fill="x", padx=4, pady=2)
-        ttk.Label(row, text=tr("clip_tool.layout_margin_x")
-                  ).pack(side="left")
-        ttk.Spinbox(row, from_=0, to=10, increment=0.5, width=6,
-                    format="%.1f",
-                    textvariable=self._wm_margin_x_pct
-                    ).pack(side="left", padx=(4, 0))
-        ttk.Label(row, text="%").pack(side="left")
-        ttk.Label(row, text=tr("clip_tool.layout_margin_y")
-                  ).pack(side="left", padx=(16, 0))
-        ttk.Spinbox(row, from_=0, to=10, increment=0.5, width=6,
-                    format="%.1f",
-                    textvariable=self._wm_margin_y_pct
-                    ).pack(side="left", padx=(4, 0))
-        ttk.Label(row, text="%").pack(side="left")
-
-        # Hook/Outro
-        ho = ttk.LabelFrame(parent, text=tr("clip_tool.section_hook_outro"))
-        ho.pack(fill="x", padx=6, pady=4)
-        h = s.hook_outro
-        self._ho_preset_var = tk.StringVar(
-            value=comp_presets.get_last_used_hook_outro(
-                self._host._hook_outro_store))
-        self._ho_font = tk.StringVar(value=h.font)
-        self._ho_size = tk.IntVar(value=h.size)
-        self._ho_color = tk.StringVar(value=h.color)
-        self._ho_bg_color = tk.StringVar(value=h.bg_color)
-        self._ho_bg_opacity = tk.IntVar(value=h.bg_opacity)
-        self._ho_stroke_color = tk.StringVar(value=h.stroke_color)
-        self._ho_stroke_width = tk.IntVar(value=h.stroke_width)
-        self._ho_box_padding = tk.IntVar(value=h.box_padding)
-        self._ho_hook_position = tk.StringVar(value=h.hook_position)
-        self._ho_outro_position = tk.StringVar(value=h.outro_position)
-        self._ho_hook_duration = tk.DoubleVar(value=h.hook_duration_sec)
-        self._ho_outro_duration = tk.DoubleVar(value=h.outro_duration_sec)
-
-        row = ttk.Frame(ho); row.pack(fill="x", padx=4, pady=2)
-        ttk.Label(row, text=tr("clip_tool.ho_preset")).pack(side="left")
-        self._ho_preset_combo = ttk.Combobox(
-            row, textvariable=self._ho_preset_var,
-            values=comp_presets.list_hook_outro_presets(
-                self._host._hook_outro_store),
-            state="readonly", width=26)
-        self._ho_preset_combo.pack(side="left", padx=(4, 4))
-        ttk.Button(row, text=tr("clip_tool.btn_apply"),
-                   command=self._on_ho_preset_applied).pack(side="left")
-
-        row = ttk.Frame(ho); row.pack(fill="x", padx=4, pady=2)
-        ttk.Label(row, text=tr("clip_tool.ho_font")).pack(side="left")
-        ttk.Combobox(row, textvariable=self._ho_font,
-                     values=("Microsoft YaHei", "SimHei", "SimSun",
-                             "KaiTi", "DengXian", "Arial"),
-                     state="readonly", width=16).pack(side="left", padx=(4, 0))
-        ttk.Label(row, text=tr("clip_tool.fontsize")).pack(side="left", padx=(8, 2))
-        ttk.Spinbox(row, from_=12, to=180, textvariable=self._ho_size,
-                     width=4).pack(side="left")
-        self._color_picker(row, self._ho_color)
-
-        row = ttk.Frame(ho); row.pack(fill="x", padx=4, pady=2)
-        ttk.Label(row, text=tr("clip_tool.ho_bg")).pack(side="left")
-        self._color_picker(row, self._ho_bg_color)
-        ttk.Spinbox(row, from_=0, to=100, textvariable=self._ho_bg_opacity,
-                     width=4).pack(side="left", padx=(4, 0))
-        ttk.Label(row, text=tr("clip_tool.stroke")).pack(side="left", padx=(8, 2))
-        self._color_picker(row, self._ho_stroke_color)
-        ttk.Spinbox(row, from_=0, to=12, textvariable=self._ho_stroke_width,
-                     width=3).pack(side="left", padx=(4, 0))
-        ttk.Label(row, text=tr("clip_tool.ho_padding")).pack(side="left", padx=(8, 2))
-        ttk.Spinbox(row, from_=0, to=60, textvariable=self._ho_box_padding,
-                     width=3).pack(side="left")
-
-        positions = ("top", "upper-third", "center", "lower-third", "bottom")
-        row = ttk.Frame(ho); row.pack(fill="x", padx=4, pady=2)
-        ttk.Label(row, text=tr("clip_tool.ho_hook_pos")).pack(side="left")
-        ttk.Combobox(row, textvariable=self._ho_hook_position,
-                     values=positions, state="readonly",
-                     width=12).pack(side="left", padx=(4, 0))
-        ttk.Label(row, text=tr("clip_tool.ho_outro_pos")).pack(side="left", padx=(8, 0))
-        ttk.Combobox(row, textvariable=self._ho_outro_position,
-                     values=positions, state="readonly",
-                     width=12).pack(side="left", padx=(4, 0))
-        row = ttk.Frame(ho); row.pack(fill="x", padx=4, pady=2)
-        ttk.Label(row, text=tr("clip_tool.ho_hook_dur")).pack(side="left")
-        ttk.Spinbox(row, from_=0.0, to=30.0, increment=0.5,
-                     textvariable=self._ho_hook_duration,
-                     width=5).pack(side="left", padx=(4, 0))
-        ttk.Label(row, text=tr("clip_tool.ho_outro_dur")).pack(side="left", padx=(8, 0))
-        ttk.Spinbox(row, from_=0.0, to=30.0, increment=0.5,
-                     textvariable=self._ho_outro_duration,
-                     width=5).pack(side="left", padx=(4, 0))
-
-        self._wire_traces()
-
-    def _color_picker(self, parent: tk.Misc, var: tk.StringVar) -> None:
-        swatch = tk.Label(parent, text="  ", bg=var.get() or "#FFFFFF",
-                          relief="solid", borderwidth=1, width=2)
-        swatch.pack(side="left", padx=(4, 0))
-
-        def _pick(_e=None):
-            (_, hex_v) = colorchooser.askcolor(
-                color=var.get() or "#FFFFFF", parent=parent.winfo_toplevel())
-            if hex_v:
-                var.set(hex_v)
-                swatch.configure(bg=hex_v)
-        swatch.bind("<Button-1>", _pick)
-        var.trace_add("write",
-                       lambda *_a, s=swatch, v=var: s.configure(bg=v.get() or "#FFFFFF"))
-
-    def _wire_traces(self) -> None:
-        for var in (
-            self._aspect_var, self._encode_preset_var,
-            self._sub1_enabled, self._sub1_fontsize, self._sub1_color,
-            self._sub1_bold, self._sub1_is_chinese,
-            self._sub2_enabled, self._sub2_fontsize, self._sub2_color,
-            self._sub2_bold, self._sub2_is_chinese,
-            self._sub_stroke_color, self._sub_stroke_width, self._sub_position,
-            self._sub_block_margin_pct, self._sub_track_gap_pct,
-            self._wm_enabled, self._wm_type, self._wm_position,
-            self._wm_image_path, self._wm_image_scale, self._wm_image_opacity,
-            self._wm_text, self._wm_text_fontsize, self._wm_text_color,
-            self._wm_text_opacity,
-            self._wm_margin_x_pct, self._wm_margin_y_pct,
-            self._ho_font, self._ho_size, self._ho_color,
-            self._ho_bg_color, self._ho_bg_opacity,
-            self._ho_stroke_color, self._ho_stroke_width, self._ho_box_padding,
-            self._ho_hook_position, self._ho_outro_position,
-            self._ho_hook_duration, self._ho_outro_duration,
-        ):
-            var.trace_add("write", lambda *_a: self._on_form_changed())
-
-    # ── form/style sync ───────────────────────────────────────────────────
-
-    def _on_form_changed(self) -> None:
-        if self._suspend_traces:
+    def _on_list_select(self, _e=None) -> None:
+        sel = self._comp_tree.selection()
+        if not sel:
+            self._selected_idx = None
+            self._render_empty_property_pane()
             return
         try:
-            self.read_form_into_style()
-        except (tk.TclError, ValueError):
+            self._selected_idx = int(sel[0])
+        except (TypeError, ValueError):
+            self._selected_idx = None
             return
-        self.schedule_preview_refresh()
-        self._repush_clip_preview()
+        self._render_property_for_selected()
+
+    def _on_tree_click(self, evt) -> None:
+        # Toggle enabled when user clicks the "on" column
+        col = self._comp_tree.identify_column(evt.x)
+        row = self._comp_tree.identify_row(evt.y)
+        if col != "#1" or not row:
+            return
+        try:
+            i = int(row)
+        except (TypeError, ValueError):
+            return
+        comp = self._host.config.components[i]
+        comp["enabled"] = not bool(comp.get("enabled", True))
         self._host._save_all()
+        self._reload_component_list()
+        self.schedule_preview_refresh()
+
+    # ── property pane ─────────────────────────────────────────────────────
+
+    def _render_empty_property_pane(self) -> None:
+        if self._property_frame is None:
+            return
+        for child in self._property_frame.winfo_children():
+            child.destroy()
+        tk.Label(self._property_frame, text="未选中组件",
+                  fg="#888").pack(pady=20)
+
+    def _render_property_for_selected(self) -> None:
+        if (self._property_frame is None
+                or self._selected_idx is None):
+            return
+        for child in self._property_frame.winfo_children():
+            child.destroy()
+        comps = self._host.config.components
+        if not (0 <= self._selected_idx < len(comps)):
+            return
+        instance = comps[self._selected_idx]
+        spec = cc.spec_for_instance(instance)
+        if spec is None or spec.build_property_panel is None:
+            tk.Label(self._property_frame,
+                      text=f"未知组件类型: {instance.get('kind', '')}",
+                      fg="#c00").pack(pady=20)
+            return
+        ctx = self._build_project_context()
+        spec.build_property_panel(
+            self._property_frame, instance, ctx, self._on_property_changed)
+
+    def _build_project_context(self) -> ProjectContext:
+        duration = self._host._full_video_duration() or 0.0
+        return ProjectContext(
+            project=None,
+            duration=duration,
+            instance_dir=getattr(self._host, "_instance_dir",
+                                  lambda: "")(),
+            material_model=self._host.material_model,
+            seek_to=None)
+
+    def _on_property_changed(self) -> None:
+        self._host._save_all()
+        self._reload_component_list()
+        self.schedule_preview_refresh()
+
+    # ── preview ───────────────────────────────────────────────────────────
 
     def _do_preview_refresh(self) -> None:
         self._preview_job = None
         self._push_preview()
 
     def _push_preview(self) -> None:
-        """Push unified state to the Style-tab preview using sample hook /
-        outro from candidate 0 and the full SRT range."""
         if self._preview is None:
             return
-        video_path = self._host.material_model.source_video_path
-        import os
+        host = self._host
+        video_path = host.material_model.source_video_path
         if not os.path.isfile(video_path):
             return
-        duration = self._host._full_video_duration()
+        duration = host._full_video_duration()
         if duration <= 0:
-            cues = self._host._full_srt_cues()
+            cues = host._full_srt_cues()
             duration = (cues[-1]["end"] + 60.0) if cues else 600.0
-        if self._host._candidate_meta:
-            first = self._host._candidate_meta[0]
+        if host._candidate_meta:
+            first = host._candidate_meta[0]
             sample_hook = (first.get("hook")
                             or first.get("suggested_title")
                             or tr("clip_tool.sample_hook_placeholder"))
@@ -650,144 +489,29 @@ class StylePanel:
             sample_hook = tr("clip_tool.sample_hook_placeholder")
             sample_outro = ""
         self._preview.set_source(video_path, 0.0, 0.0)
-        self._preview.set_geometry(self._host._current_style.output)
-        if self._host._global_crop_rect is not None:
-            self._preview.set_crop(self._host._global_crop_rect)
+        self._preview.set_geometry(host._current_style.output)
+        if host._global_crop_rect is not None:
+            self._preview.set_crop(host._global_crop_rect)
         self._preview.enable_crop_drag(True)
-        aspect, short = self._host._preview_aspect_short_edge()
-        tl = self._host._build_preview_timeline(
+        aspect, short = host._preview_aspect_short_edge()
+        tl = host._build_preview_timeline(
             0.0, duration, hook=sample_hook, outro=sample_outro)
         self._preview.set_timeline(
             tl, aspect=aspect, short_edge=short)
 
     def _repush_clip_preview(self) -> None:
-        """Tell the host's clip-detail preview to re-render with the new
-        style. Safe when the detail panel hasn't been built yet."""
         if getattr(self._host, "_detail", None) is not None:
             self._host._detail.push_preview()
 
-    # ── preset handlers ───────────────────────────────────────────────────
-
-    def _on_preset_applied(self) -> None:
-        name = self._preset_name_var.get()
-        if not name:
-            return
-        style = comp_presets.get_project_preset(
-            self._host._project_store, name)
-        if style is None:
-            return
-        self._host._current_style = style
-        self.populate_form_from_style()
-        comp_presets.set_last_used_project(self._host._project_store, name)
-        comp_presets.save_project_store(self._host._project_store)
-        self.refresh_preset_combos()
-        self._host._save_all()
-
-    def _on_preset_save_as(self) -> None:
-        name = simpledialog.askstring(
-            tr("clip_tool.dlg_preset_save_title"),
-            tr("clip_tool.dlg_preset_save_prompt"),
-            parent=self._host.master)
-        if not name:
-            return
-        name = name.strip()
-        if not name:
-            return
-        if name in self._host._project_store.get("presets", {}):
-            messagebox.showwarning(
-                "VideoCraft",
-                tr("clip_tool.warn_preset_taken", name=name),
-                parent=self._host.master)
-            return
+    def _on_output_changed(self) -> None:
+        # Output changes flow into _current_style for now (5.5.c moves
+        # them to a config-level dataclass).
         self.read_form_into_style()
-        comp_presets.upsert_project_preset(
-            self._host._project_store, name, self._host._current_style)
-        comp_presets.set_last_used_project(self._host._project_store, name)
-        comp_presets.save_project_store(self._host._project_store)
-        self._preset_name_var.set(name)
-        self.refresh_preset_combos()
         self._host._save_all()
-
-    def _on_preset_overwrite(self) -> None:
-        name = self._preset_name_var.get()
-        if not name or comp_presets.is_builtin_project(name):
-            messagebox.showinfo(
-                "VideoCraft",
-                tr("clip_tool.info_builtin_protected"),
-                parent=self._host.master)
-            return
-        self.read_form_into_style()
-        comp_presets.upsert_project_preset(
-            self._host._project_store, name, self._host._current_style)
-        comp_presets.save_project_store(self._host._project_store)
-        self._host._save_all()
-
-    def _on_preset_delete(self) -> None:
-        name = self._preset_name_var.get()
-        if not name or comp_presets.is_builtin_project(name):
-            messagebox.showinfo(
-                "VideoCraft",
-                tr("clip_tool.info_builtin_protected"),
-                parent=self._host.master)
-            return
-        if not messagebox.askyesno(
-                "VideoCraft",
-                tr("clip_tool.confirm_delete", name=name),
-                parent=self._host.master):
-            return
-        if comp_presets.delete_project_preset(
-                self._host._project_store, name):
-            comp_presets.save_project_store(self._host._project_store)
-            self._preset_name_var.set(comp_presets.BUILTIN_DEFAULT_PROJECT)
-            self._on_preset_applied()
-            self.refresh_preset_combos()
-
-    def _on_ho_preset_applied(self) -> None:
-        name = self._ho_preset_var.get()
-        if not name:
-            return
-        h = comp_presets.get_hook_outro_preset(
-            self._host._hook_outro_store, name)
-        if h is None:
-            return
-        self._suspend_traces = True
-        try:
-            self._ho_font.set(h.font)
-            self._ho_size.set(h.size)
-            self._ho_color.set(h.color)
-            self._ho_bg_color.set(h.bg_color)
-            self._ho_bg_opacity.set(h.bg_opacity)
-            self._ho_stroke_color.set(h.stroke_color)
-            self._ho_stroke_width.set(h.stroke_width)
-            self._ho_box_padding.set(h.box_padding)
-            self._ho_hook_position.set(h.hook_position)
-            self._ho_outro_position.set(h.outro_position)
-            self._ho_hook_duration.set(h.hook_duration_sec)
-            self._ho_outro_duration.set(h.outro_duration_sec)
-        finally:
-            self._suspend_traces = False
-        self.read_form_into_style()
-        comp_presets.set_last_used_hook_outro(
-            self._host._hook_outro_store, name)
-        comp_presets.save_hook_outro_store(self._host._hook_outro_store)
         self.schedule_preview_refresh()
         self._repush_clip_preview()
-        self._host._save_all()
-
-    # ── crop / browse ─────────────────────────────────────────────────────
-
-    def _browse_watermark(self) -> None:
-        path = filedialog.askopenfilename(
-            parent=self._host.master,
-            filetypes=[("Image", "*.png *.jpg *.jpeg *.bmp")])
-        if path:
-            self._wm_image_path.set(path)
 
     def _on_crop_changed(self, rect: dict) -> None:
-        # Drag on the Style-tab preview only updates the in-memory staging
-        # rect — no side effects on any clip's crop until the user clicks
-        # "apply crop to all". Not persisted (intentional: staging is a
-        # workbench-session scratchpad, not project state).
         if not rect or "x" not in rect:
             return
         self._host._global_crop_rect = rect
@@ -798,9 +522,6 @@ class StylePanel:
                 tr("clip_tool.confirm_apply_crop_to_all"),
                 parent=self._host.master):
             return
-        # Push the Tab 1 staging rect onto every candidate's override. When
-        # staging is None we pop the field instead, so every clip falls back
-        # to the centered render-time default.
         staging = self._host._global_crop_rect
         if staging is None:
             for idx, ov in list(self._host._clips_overrides.items()):
@@ -813,3 +534,109 @@ class StylePanel:
         if getattr(self._host, "_detail", None) is not None:
             self._host._detail.refresh_crop()
         self._host._save_all()
+
+    # ── preset operations ─────────────────────────────────────────────────
+
+    def _on_preset_applied(self) -> None:
+        name = self._preset_name_var.get()
+        if not name:
+            return
+        style = comp_presets.get_project_preset(
+            self._host._project_store, name)
+        if style is None:
+            return
+        self._host._current_style = style
+        # Re-derive components from the newly applied style. Presets are
+        # still CompositionStyle dicts in 5.5.b — 5.5.c switches the schema.
+        self._resync_components_from_style()
+        comp_presets.set_last_used_project(
+            self._host._project_store, name)
+        comp_presets.save_project_store(self._host._project_store)
+        self.populate_form_from_style()
+        self._host._save_all()
+
+    def _on_preset_save_as(self) -> None:
+        name = simpledialog.askstring(
+            tr("clip_tool.dlg_preset_save_title"),
+            tr("clip_tool.dlg_preset_save_prompt"),
+            parent=self._host.master)
+        if not name or not name.strip():
+            return
+        name = name.strip()
+        if name in self._host._project_store.get("presets", {}):
+            messagebox.showwarning(
+                "VideoCraft",
+                tr("clip_tool.warn_preset_taken", name=name),
+                parent=self._host.master)
+            return
+        self.read_form_into_style()
+        comp_presets.upsert_project_preset(
+            self._host._project_store, name, self._host._current_style)
+        comp_presets.set_last_used_project(
+            self._host._project_store, name)
+        comp_presets.save_project_store(self._host._project_store)
+        self._preset_name_var.set(name)
+        self.refresh_preset_combos()
+        self._host._save_all()
+
+    def _on_preset_overwrite(self) -> None:
+        name = self._preset_name_var.get()
+        if not name:
+            return
+        if not messagebox.askyesno(
+                "VideoCraft",
+                tr("clip_tool.confirm_preset_overwrite", name=name),
+                parent=self._host.master):
+            return
+        self.read_form_into_style()
+        comp_presets.upsert_project_preset(
+            self._host._project_store, name, self._host._current_style)
+        comp_presets.save_project_store(self._host._project_store)
+        self._host._save_all()
+
+    def _on_preset_delete(self) -> None:
+        name = self._preset_name_var.get()
+        if not name:
+            return
+        if not messagebox.askyesno(
+                "VideoCraft",
+                tr("clip_tool.confirm_preset_delete", name=name),
+                parent=self._host.master):
+            return
+        comp_presets.delete_project_preset(
+            self._host._project_store, name)
+        comp_presets.save_project_store(self._host._project_store)
+        self._preset_name_var.set("")
+        self.refresh_preset_combos()
+        self._host._save_all()
+
+    def _resync_components_from_style(self) -> None:
+        """Replace config.components with a fresh seed from
+        _current_style. Used after preset-apply to mirror the new
+        style into the component list. Lossy — drops any per-component
+        edits the user made that diverged from the preset."""
+        from creations.clip.components import (
+            hook_outro as _ho_mod,
+            subtitle as _sub_mod,
+            watermark as _wm_mod,
+        )
+        seeded: list[dict] = []
+        seeded.extend(_sub_mod.template_from_style(self._host._current_style))
+        seeded.extend(_wm_mod.template_from_style(self._host._current_style))
+        seeded.extend(_ho_mod.template_from_style(self._host._current_style))
+        self._host.config.components = seeded
+        self._selected_idx = None
+        self._reload_component_list()
+        self._rebuild_add_menu()
+        self._render_empty_property_pane()
+
+
+# ── Helpers ─────────────────────────────────────────────────────────────────
+
+_KIND_LABELS = {
+    "clip_subtitle": "字幕",
+    "clip_text_watermark": "文字水印",
+    "clip_image_watermark": "图片水印",
+    "clip_hook_card": "Hook 卡片",
+    "clip_outro_card": "Outro 卡片",
+}

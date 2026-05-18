@@ -23,7 +23,7 @@ from core.composition.style import CompositionStyle
 from core.composition.timeline import Element
 from creations.news_desk.components import ComponentSpec, ProjectContext
 
-from . import ComponentDictAdapter, add_color_picker, register
+from . import add_color_picker, register
 
 
 _POSITIONS = ["top-left", "top-right", "bottom-left", "bottom-right"]
@@ -116,58 +116,34 @@ def _compile_image(instance: dict, clip_range: ClipRange,
     )]
 
 
-# ── Seeder — legacy WatermarkStyle → at most one adapter ───────────────────
+# ── Migration — extract template dict from legacy WatermarkStyle ──────────
 
-def watermark_adapters_from_style(
-    style: CompositionStyle,
-) -> list[ComponentDictAdapter]:
-    """Translate the legacy CompositionStyle.watermark into at most one
-    transient watermark component adapter (text or image based on
-    `wm.type`). Disabled or empty content → no adapter.
-
-    Step 5.2 — temporary bridge. Retires with Step 5.5 alongside
-    StylePanel's watermark form.
+def template_from_style(style: CompositionStyle) -> list[dict]:
+    """One-time bootstrap: turn a legacy CompositionStyle.watermark into
+    the matching component instance dict (text or image based on
+    `wm.type`). Disabled or empty content → []. Pure template; used
+    only by clip_tool startup migration.
     """
     wm = style.watermark
     if not wm.enabled:
         return []
-    is_image = (wm.type == "image")
-    if is_image:
-        instance = {
-            "kind": KIND_IMAGE,
-            "id": "wm",
-            "name": "watermark",
-            "enabled": True,
-            "image_path": wm.image_path or "",
-            "image_scale": float(wm.image_scale),
-            "image_opacity": int(wm.image_opacity),
-            "position": wm.position,
-            "margin_x_pct": float(wm.margin_x_pct),
-            "margin_y_pct": float(wm.margin_y_pct),
-            # carry text-side fields too so _style_dict has consistent
-            # shape regardless of mode (byte-equal with legacy)
-            "text_fontsize": int(wm.text_fontsize),
-            "text_color": wm.text_color,
-            "text_opacity": int(wm.text_opacity),
-        }
-    else:
-        instance = {
-            "kind": KIND_TEXT,
-            "id": "wm",
-            "name": "watermark",
-            "enabled": True,
-            "text": wm.text or "",
-            "text_fontsize": int(wm.text_fontsize),
-            "text_color": wm.text_color,
-            "text_opacity": int(wm.text_opacity),
-            "position": wm.position,
-            "margin_x_pct": float(wm.margin_x_pct),
-            "margin_y_pct": float(wm.margin_y_pct),
-            # image fields too — same reason
-            "image_scale": float(wm.image_scale),
-            "image_opacity": int(wm.image_opacity),
-        }
-    return [ComponentDictAdapter(instance)]
+    common = {
+        "id": "wm",
+        "name": "watermark",
+        "enabled": True,
+        "position": wm.position,
+        "margin_x_pct": float(wm.margin_x_pct),
+        "margin_y_pct": float(wm.margin_y_pct),
+        "text_fontsize": int(wm.text_fontsize),
+        "text_color": wm.text_color,
+        "text_opacity": int(wm.text_opacity),
+        "image_scale": float(wm.image_scale),
+        "image_opacity": int(wm.image_opacity),
+    }
+    if wm.type == "image":
+        return [{**common, "kind": KIND_IMAGE,
+                  "image_path": wm.image_path or ""}]
+    return [{**common, "kind": KIND_TEXT, "text": wm.text or ""}]
 
 
 # ── property panels ────────────────────────────────────────────────────────

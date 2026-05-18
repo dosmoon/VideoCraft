@@ -27,12 +27,11 @@ from tkinter import ttk
 import srt as _srt
 
 from core.composition.compile import ClipRange, CompileContext
-from core.composition.primitives.subtitle_cue import track_margins
 from core.composition.style import CompositionStyle, SubtitleLineStyle, SubtitleStyle
 from core.composition.timeline import Element
 from creations.news_desk.components import ComponentSpec, ProjectContext
 
-from . import ComponentDictAdapter, add_color_picker, register
+from . import add_color_picker, register
 
 
 KIND = "clip_subtitle"
@@ -67,8 +66,10 @@ def _default_instance(_duration: float) -> dict:
         "stroke_width": 2,
         "position": "bottom",
         "block_margin_pct": 0.09,
-        # Pre-computed by seeder so compile() stays pure (single-track view)
-        "margin_v": 0,
+        # track_gap_pct only matters when two subtitle components sit on
+        # the same position — composer.expand_for_candidate uses it to
+        # stack them via libass margin_v.
+        "track_gap_pct": 0.04,
     }
 
 
@@ -100,8 +101,13 @@ def _compile(instance: dict, clip_range: ClipRange,
         "stroke_width": int(instance.get("stroke_width", 2)),
         "position": instance.get("position", "bottom"),
         "block_margin_pct": float(instance.get("block_margin_pct", 0.09)),
-        "margin_v": int(instance.get("margin_v", 0)),
     }
+    # Only stamp margin_v when composer.expand_for_candidate computed
+    # one — render's libass code falls back to block_margin_pct
+    # otherwise. (Stamping zero would be wrong: render takes "present"
+    # as a signal that the value is authoritative.)
+    if "margin_v" in instance:
+        style_dict["margin_v"] = int(instance["margin_v"])
 
     base = float(clip_range.start_sec)
     eff_end = float(clip_range.end_sec)
@@ -125,47 +131,36 @@ def _compile(instance: dict, clip_range: ClipRange,
     return out
 
 
-# ── Seeder — legacy CompositionStyle → transient instance adapters ─────────
+# ── Migration — extract template dicts from legacy CompositionStyle ────────
 
-def subtitle_adapters_from_style(
-    style: CompositionStyle,
-    *,
-    source_srt: str = "",
-    source_srt_secondary: str = "",
-) -> list[ComponentDictAdapter]:
-    """Translate the legacy CompositionStyle.subtitle into transient
-    subtitle component adapters for compile_timeline().
+def template_from_style(style: CompositionStyle) -> list[dict]:
+    """One-time bootstrap helper: turn a legacy CompositionStyle.subtitle
+    into the matching subtitle component instance dicts (primary +
+    optional secondary). Pure template — srt_path and margin_v stay
+    unset; composer.expand_for_candidate fills both at compile time.
 
-    Both tracks are inspected; disabled tracks or tracks without a
-    bound SRT return no adapter. margin_v is pre-computed via
-    track_margins(subtitle_style) so each compile() call stays pure.
-
-    Step 5.1 — temporary bridge. Step 5.5 will replace this with
-    ClipInstanceConfig.components-driven discovery.
+    Used only by the clip_tool startup migration when config.components
+    is empty. Once config.components is the authoritative store, this
+    function is dead code and goes away.
     """
     sub = style.subtitle
-    margin_v1, margin_v2 = track_margins(sub)
-    adapters: list[ComponentDictAdapter] = []
-
-    if sub.sub1.enabled and source_srt:
-        adapters.append(ComponentDictAdapter(
-            _line_to_instance(sub.sub1, sub, "sub1", source_srt, margin_v1)))
-    if sub.sub2.enabled and source_srt_secondary:
-        adapters.append(ComponentDictAdapter(
-            _line_to_instance(sub.sub2, sub, "sub2", source_srt_secondary,
-                               margin_v2)))
-    return adapters
+    out: list[dict] = []
+    if sub.sub1.enabled:
+        out.append(_line_to_template(sub.sub1, sub, "sub1", "primary"))
+    if sub.sub2.enabled:
+        out.append(_line_to_template(sub.sub2, sub, "sub2", "secondary"))
+    return out
 
 
-def _line_to_instance(line: SubtitleLineStyle, subtitle_style: SubtitleStyle,
-                       track_id: str, srt_path: str, margin_v: int) -> dict:
+def _line_to_template(line: SubtitleLineStyle, subtitle_style: SubtitleStyle,
+                       track_id: str, track_role: str) -> dict:
     return {
         "kind": KIND,
         "id": track_id,
         "name": track_id,
         "enabled": True,
-        "track": "primary" if track_id == "sub1" else "secondary",
-        "srt_path": srt_path,
+        "track": track_role,
+        "srt_path": "",
         "fontsize": int(line.fontsize),
         "color": line.color,
         "bold": bool(line.bold),
@@ -177,7 +172,7 @@ def _line_to_instance(line: SubtitleLineStyle, subtitle_style: SubtitleStyle,
         "stroke_width": int(subtitle_style.stroke_width),
         "position": subtitle_style.position,
         "block_margin_pct": float(subtitle_style.block_margin_pct),
-        "margin_v": int(margin_v),
+        "track_gap_pct": float(subtitle_style.track_gap_pct),
     }
 
 

@@ -147,6 +147,7 @@ class ClipToolApp(ToolBase):
 
         self._build_ui()
         self._restore_persisted_state()
+        self._maybe_seed_components_from_style()
         self._reload_languages()
         self._style.populate_form_from_style()
 
@@ -439,7 +440,7 @@ class ClipToolApp(ToolBase):
         from core.composition.compile import ClipRange
         srt_path = self._resolve_source_srt() or ""
         return compile_for_candidate(
-            self._current_style,
+            self.config.components,
             ClipRange(start_sec=start, end_sec=end),
             hook_text=hook, outro_text=outro,
             source_srt=srt_path,
@@ -486,6 +487,26 @@ class ClipToolApp(ToolBase):
         return rect if rect else None
 
     # ── Persistence ──────────────────────────────────────────────────────
+
+    def _maybe_seed_components_from_style(self) -> None:
+        """First-launch migration: if config.components is empty, seed
+        it from the legacy CompositionStyle.subtitle / watermark /
+        hook_outro fields and persist. Idempotent — once components
+        exists, this is a no-op."""
+        if self.config.components:
+            return
+        from creations.clip.components import (
+            hook_outro as _ho_mod,
+            subtitle as _sub_mod,
+            watermark as _wm_mod,
+        )
+        seeded: list[dict] = []
+        seeded.extend(_sub_mod.template_from_style(self._current_style))
+        seeded.extend(_wm_mod.template_from_style(self._current_style))
+        seeded.extend(_ho_mod.template_from_style(self._current_style))
+        if seeded:
+            self.config.components = seeded
+            self._save_all()
 
     def _restore_persisted_state(self) -> None:
         cfg = self.config
@@ -688,9 +709,27 @@ class ClipToolApp(ToolBase):
         if not srt_path or not os.path.isfile(srt_path):
             return []
         from core.composition import prepare_subtitle_cues
-        sub1 = self._current_style.subtitle.sub1
+        from core.composition.style import SubtitleLineStyle
+        # Find the primary-track subtitle component for char-wrap params;
+        # fall back to defaults if none is configured.
+        sub1_comp = next((c for c in self.config.components
+                            if c.get("kind") == "clip_subtitle"
+                            and c.get("track", "primary") == "primary"), None)
+        if sub1_comp is not None:
+            line = SubtitleLineStyle(
+                enabled=True,
+                fontsize=int(sub1_comp.get("fontsize", 24)),
+                color=sub1_comp.get("color", "#FFFFFF"),
+                bold=bool(sub1_comp.get("bold", False)),
+                is_chinese=bool(sub1_comp.get("is_chinese", False)),
+                bg_color=sub1_comp.get("bg_color", "#000000"),
+                bg_opacity=int(sub1_comp.get("bg_opacity", 0)),
+                bg_padding_x_pct=float(sub1_comp.get(
+                    "bg_padding_x_pct", 0.0)))
+        else:
+            line = SubtitleLineStyle(enabled=True)
         return prepare_subtitle_cues(
-            srt_path, sub1,
+            srt_path, line,
             aspect=self._current_style.output.aspect,
             short_edge=self._current_style.output.short_edge)
 
@@ -777,7 +816,7 @@ class ClipToolApp(ToolBase):
             from creations.clip.composer import compile_for_candidate
             from core.composition.compile import ClipRange
             timeline = compile_for_candidate(
-                self._current_style,
+                self.config.components,
                 ClipRange(start_sec=start, end_sec=end),
                 hook_text=self._effective_hook(src_idx),
                 outro_text=self._effective_outro(src_idx),
@@ -1076,7 +1115,7 @@ class ClipToolApp(ToolBase):
         from creations.clip.composer import compile_for_candidate
         from core.composition.compile import ClipRange
         timeline = compile_for_candidate(
-            self._current_style,
+            self.config.components,
             ClipRange(start_sec=start, end_sec=end),
             hook_text=self._effective_hook(src_idx),
             outro_text="",

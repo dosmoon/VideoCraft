@@ -8,9 +8,7 @@ import pytest
 
 from core.composition.compile import ClipRange, CompileContext
 from core.composition.style import CompositionStyle
-from creations.clip.components.subtitle import (
-    KIND, subtitle_adapters_from_style,
-)
+from creations.clip.components.subtitle import KIND, template_from_style
 from creations.clip.components import spec_for_kind
 
 
@@ -102,65 +100,48 @@ def test_compile_style_dict_carries_all_required_fields(srt_file):
     assert s["stroke_width"] == 3
     assert s["position"] == "top"
     assert s["block_margin_pct"] == pytest.approx(0.12)
+    # margin_v only stamped when instance carries it (composer fills it
+    # post-5.5.b). When absent, render falls back to block_margin_pct.
     assert s["margin_v"] == 150
 
 
-# ── Seeder ─────────────────────────────────────────────────────────────────
+# ── template_from_style migration ──────────────────────────────────────────
 
-def test_seeder_emits_no_adapters_when_disabled():
+def test_template_skips_disabled_tracks():
     style = CompositionStyle()
     style.subtitle.sub1.enabled = False
     style.subtitle.sub2.enabled = False
-    adapters = subtitle_adapters_from_style(
-        style, source_srt="/anything.srt", source_srt_secondary="")
-    assert adapters == []
+    assert template_from_style(style) == []
 
 
-def test_seeder_emits_no_adapters_without_srt_path():
-    """sub1 enabled but no srt → no adapter (mirrors legacy behaviour)."""
-    style = CompositionStyle()
-    style.subtitle.sub1.enabled = True
-    adapters = subtitle_adapters_from_style(
-        style, source_srt="", source_srt_secondary="")
-    assert adapters == []
-
-
-def test_seeder_emits_one_adapter_for_sub1_only(srt_file):
+def test_template_one_dict_for_sub1_only():
     style = CompositionStyle()
     style.subtitle.sub1.enabled = True
     style.subtitle.sub2.enabled = False
-    adapters = subtitle_adapters_from_style(
-        style, source_srt=srt_file, source_srt_secondary="")
-    assert len(adapters) == 1
-    assert adapters[0].id == "sub1"
-    assert adapters[0].instance["srt_path"] == srt_file
+    out = template_from_style(style)
+    assert len(out) == 1
+    assert out[0]["kind"] == KIND
+    assert out[0]["track"] == "primary"
+    assert out[0]["srt_path"] == ""    # composer fills per candidate
 
 
-def test_seeder_emits_two_adapters_for_dual_track(srt_file, tmp_path):
-    srt2 = tmp_path / "zh.srt"
-    srt2.write_text(SRT_BODY, encoding="utf-8")
+def test_template_two_dicts_for_dual_track():
     style = CompositionStyle()
     style.subtitle.sub1.enabled = True
     style.subtitle.sub2.enabled = True
-    adapters = subtitle_adapters_from_style(
-        style, source_srt=srt_file, source_srt_secondary=str(srt2))
-    assert [a.id for a in adapters] == ["sub1", "sub2"]
-    # margin_v differs between tracks (dual-track stacking)
-    assert (adapters[0].instance["margin_v"]
-            != adapters[1].instance["margin_v"])
+    out = template_from_style(style)
+    assert [c["track"] for c in out] == ["primary", "secondary"]
 
 
-def test_seeder_propagates_line_and_shared_style(srt_file):
+def test_template_propagates_line_and_shared_style():
     style = CompositionStyle()
     style.subtitle.sub1.enabled = True
     style.subtitle.sub1.fontsize = 28
     style.subtitle.sub1.color = "#00FF00"
     style.subtitle.position = "top"
     style.subtitle.stroke_color = "#123456"
-    adapters = subtitle_adapters_from_style(
-        style, source_srt=srt_file, source_srt_secondary="")
-    inst = adapters[0].instance
-    assert inst["fontsize"] == 28
-    assert inst["color"] == "#00FF00"
-    assert inst["position"] == "top"
-    assert inst["stroke_color"] == "#123456"
+    out = template_from_style(style)
+    assert out[0]["fontsize"] == 28
+    assert out[0]["color"] == "#00FF00"
+    assert out[0]["position"] == "top"
+    assert out[0]["stroke_color"] == "#123456"

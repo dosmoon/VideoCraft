@@ -26,7 +26,7 @@ from core.composition.style import CompositionStyle
 from core.composition.timeline import Element
 from creations.news_desk.components import ComponentSpec, ProjectContext
 
-from . import ComponentDictAdapter, add_color_picker, register
+from . import add_color_picker, register
 
 
 _HOOK_POSITIONS = ["upper-third", "center", "lower-third"]
@@ -150,65 +150,37 @@ def _compile_outro(instance: dict, clip_range: ClipRange,
     )]
 
 
-# ── Seeder — legacy HookOutroStyle + per-candidate text → adapters ─────────
+# ── Migration — extract template dicts from legacy HookOutroStyle ─────────
 
-def hookoutro_adapters_from_style(
-    style: CompositionStyle,
-    *,
-    hook_text: str = "",
-    outro_text: str = "",
-) -> list[ComponentDictAdapter]:
-    """Build at most two transient adapters — one hook, one outro —
-    using the legacy HookOutroStyle as the style template and the
-    per-candidate texts as the data fill-ins. Empty text → no adapter
-    for that role (matches pre-5.3 behaviour where empty hook_text or
-    outro_text simply produced no Element).
-
-    Step 5.3 — temporary bridge. Retires with Step 5.5 alongside
-    StylePanel's hook/outro form.
+def template_from_style(style: CompositionStyle) -> list[dict]:
+    """One-time bootstrap: turn HookOutroStyle into hook + outro
+    component templates. text="" — composer.expand_for_candidate fills
+    it per candidate. Both components enabled by default if their
+    duration is positive.
     """
     ho = style.hook_outro
-    adapters: list[ComponentDictAdapter] = []
-
-    if hook_text and ho.hook_duration_sec > 0:
-        adapters.append(ComponentDictAdapter({
-            "kind": KIND_HOOK,
-            "id": "hook",
-            "name": "hook",
-            "enabled": True,
-            "text": hook_text,
-            "font": ho.font,
-            "size": int(ho.size),
-            "color": ho.color,
-            "bg_color": ho.bg_color,
-            "bg_opacity": int(ho.bg_opacity),
-            "stroke_color": ho.stroke_color,
-            "stroke_width": int(ho.stroke_width),
-            "box_padding": int(ho.box_padding),
-            "position": ho.hook_position,
-            "duration_sec": float(ho.hook_duration_sec),
-        }))
-
-    if outro_text and ho.outro_duration_sec > 0:
-        adapters.append(ComponentDictAdapter({
-            "kind": KIND_OUTRO,
-            "id": "outro",
-            "name": "outro",
-            "enabled": True,
-            "text": outro_text,
-            "font": ho.font,
-            "size": int(ho.size),
-            "color": ho.color,
-            "bg_color": ho.bg_color,
-            "bg_opacity": int(ho.bg_opacity),
-            "stroke_color": ho.stroke_color,
-            "stroke_width": int(ho.stroke_width),
-            "box_padding": int(ho.box_padding),
-            "position": ho.outro_position,
-            "duration_sec": float(ho.outro_duration_sec),
-        }))
-
-    return adapters
+    common = {
+        "font": ho.font,
+        "size": int(ho.size),
+        "color": ho.color,
+        "bg_color": ho.bg_color,
+        "bg_opacity": int(ho.bg_opacity),
+        "stroke_color": ho.stroke_color,
+        "stroke_width": int(ho.stroke_width),
+        "box_padding": int(ho.box_padding),
+        "text": "",
+    }
+    out: list[dict] = []
+    if ho.hook_duration_sec > 0:
+        out.append({**common, "kind": KIND_HOOK, "id": "hook", "name": "hook",
+                     "enabled": True, "position": ho.hook_position,
+                     "duration_sec": float(ho.hook_duration_sec)})
+    if ho.outro_duration_sec > 0:
+        out.append({**common, "kind": KIND_OUTRO, "id": "outro",
+                     "name": "outro", "enabled": True,
+                     "position": ho.outro_position,
+                     "duration_sec": float(ho.outro_duration_sec)})
+    return out
 
 
 # ── property panels (hook + outro share the same shape) ───────────────────
