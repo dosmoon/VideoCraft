@@ -92,29 +92,3 @@ def test_adapter_disabled_flag():
     assert default.is_enabled() is True
 
 
-# ── ClipProjectContext ─────────────────────────────────────────────────────
-
-def test_clip_project_context_is_a_compile_context():
-    """Specs that accept a CompileContext must accept ClipProjectContext."""
-    ctx = cc.ClipProjectContext(
-        project="p", material_model="m", instance_dir="/x", duration=10.0,
-        clip_overrides={"hook_text": "boom"})
-    assert isinstance(ctx, CompileContext)
-    assert ctx.duration == 10.0
-    assert ctx.clip_overrides == {"hook_text": "boom"}
-
-
-def test_clip_project_context_default_overrides_empty():
-    ctx = cc.ClipProjectContext(
-        project="p", material_model="m", instance_dir="/x", duration=10.0)
-    assert ctx.clip_overrides == {}
-
-
-def test_clip_project_context_overrides_is_per_instance():
-    """Regression: dataclass mutable default must be a factory, not shared."""
-    a = cc.ClipProjectContext(
-        project=None, material_model=None, instance_dir="", duration=1.0)
-    b = cc.ClipProjectContext(
-        project=None, material_model=None, instance_dir="", duration=1.0)
-    a.clip_overrides["x"] = 1
-    assert "x" not in b.clip_overrides

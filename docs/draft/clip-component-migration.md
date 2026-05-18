@@ -12,36 +12,43 @@
 
 ### 2.1 1-to-many vs 1-to-1：component 抽象能承载吗？
 
-**能。** news_desk 是"一个项目 → 一条 timeline"，clip 是"一个项目 → N 个 candidate，每个 candidate 一条 timeline"。但 `compile_timeline(adapters, clip_range, ctx)` 已经把 clip_range 参数化了——同一组 adapters（共享 config.components）配不同 clip_range 调用 N 次即可。
+**能。** news_desk 是"一个项目 → 一条 timeline"，clip 是"一个项目 → N 个 candidate，每个 candidate 一条 timeline"。整套模型就是：用户编辑一份**模板**（component instance dict 列表），render 时给每个 candidate 实例化一份**具体**的 instance 列表（填上这个 candidate 的 hook 文案 / SRT 路径等），喂给同一个 `compile_timeline()`。
 
 ```python
 for cand_idx in selected_candidates:
     start, end = effective_start_end(cand_idx)
     clip_range = ClipRange(start, end)
-    ctx = build_ctx_for(cand_idx)  # 带 candidate-specific 数据
-    timeline = compile_timeline(adapters, clip_range, ctx)
+    # 模板 + 这个 candidate 的数据 → 具体 instance dicts
+    concrete = expand_template_for_candidate(
+        config.components,
+        hook_text=effective_hook(cand_idx),
+        outro_text=effective_outro(cand_idx),
+        source_srt=resolve_source_srt(),
+    )
+    timeline = compile_timeline(
+        [ComponentDictAdapter(c) for c in concrete],
+        clip_range,
+        ctx,   # vanilla CompileContext
+    )
     render_one(cand_idx, timeline)
 ```
 
-### 2.2 per-candidate 数据（hook_text / outro_text / title / tags）怎么传？
+### 2.2 per-candidate 数据（hook_text / outro_text / title / SRT 路径）怎么传？
 
-这些是**素材数据**不是**样式配置**，绝不能塞进 component instance dict（否则一个 component 装 N 份 candidate 数据，违反 component = 项目级模板的语义）。
+**填到具体 instance dict 里，不进 ctx。**
 
-**方案**：扩展 `CompileContext`，加 `clip_overrides: dict | None` 字段：
+`spec.compile(instance, clip_range, ctx)` 永远从 `instance` 自包含读完所有数据，ctx 保持 vanilla `CompileContext` 不动。"模板填充器"（`expand_template_for_candidate`）是个普通函数，住在 clip 层，负责把项目级模板（user-edited components）+ 这个 candidate 的特殊数据，深拷贝 + 字段填充出一份具体 instance dicts。
 
-```python
-@dataclass
-class CompileContext:
-    project: object
-    material_model: object
-    instance_dir: str
-    duration: float
-    clip_overrides: dict = field(default_factory=dict)  # 新增
-```
+跟 news_desk 的 chapter（内容来自分析 JSON，spec 只配样式）思路一致：spec 配"长啥样"，per-candidate 数据由填充器写进 instance。区别只是 news_desk 是"1 个项目 1 次填充"，clip 是"N 个 candidate N 次填充"。
 
-hook/outro 的 spec.compile() 读 `ctx.clip_overrides.get("hook_text") or ""`，没有就静默不出 Element。这样 component spec 只配"样式 + 行为模板"，文本永远从 candidate 来——跟 news_desk 的 chapter（内容来自分析 JSON，spec 只配样式）同构。
+**关键好处**：
+- `spec.compile` 是纯 `(instance, clip_range, ctx) → Elements`，零隐藏通道，跟 news_desk 完全同构
+- 引擎层 `CompileContext` 不需要扩展，不需要 clip 子类
+- 5.1 / 5.2 实际上已经是这套——`subtitle_adapters_from_style()` 就是填充器的雏形（虽然名字叫 "seeder"）
 
-**注意**：`CompileContext` 是 core 层共享数据结构，加字段不影响 news_desk（news_desk 不读 clip_overrides，保持默认空 dict）。
+### 2.2.1 已落地：5.1 / 5.2 模式
+
+`subtitle_adapters_from_style(style, source_srt, source_srt_secondary)` 和 `watermark_adapters_from_style(style)` 就是按这套模式工作的小填充器。5.5 替换 UI 后，这些会合并成统一的 `expand_template_for_candidate(template, ...)`。
 
 ### 2.3 hook + outro 是 1 个 component 还是 2 个？
 

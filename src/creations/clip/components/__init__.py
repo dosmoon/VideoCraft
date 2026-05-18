@@ -25,10 +25,6 @@ package, each calling register() at import time.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Callable
-
-from core.composition.compile import CompileContext
 from creations.news_desk.components import ComponentSpec, ImportSource
 
 
@@ -85,23 +81,6 @@ class ComponentDictAdapter:
         if self._spec is None or self._spec.compile is None:
             return []
         return self._spec.compile(self.instance, clip_range, ctx)
-
-
-# ── ClipProjectContext — engine ctx + clip-specific per-candidate hooks ─────
-# Per the design (docs/draft/clip-component-migration.md §2.2): hook/outro
-# text and other per-candidate data are NOT component instance fields —
-# they ride in the ctx via clip_overrides so each candidate render reuses
-# the same component set with different per-candidate data.
-
-@dataclass
-class ClipProjectContext(CompileContext):
-    """Clip's compile context. Carries the engine-required 4 fields plus
-    per-candidate data the component specs need (hook/outro text, title,
-    tags, crop_rect). Spec.compile() reads these via getattr(ctx,
-    "clip_overrides", {}) so it stays compatible with vanilla
-    CompileContext at test time.
-    """
-    clip_overrides: dict = field(default_factory=dict)
 
 
 # ── Side-effect imports — each module calls register() on import ────────────
