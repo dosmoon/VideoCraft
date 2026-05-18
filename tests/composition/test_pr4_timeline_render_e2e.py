@@ -122,7 +122,7 @@ def test_timeline_news_desk_ass_matches_chapter_plus_topic_strip_golden():
     tmp_files: list[str] = []
     jobs = _timeline_to_overlay_jobs(
         timeline, _stub_req(), aspect_str="16:9", short_edge=1080,
-        tmp_files=tmp_files, target_h=H,
+        tmp_files=tmp_files, target_w=W, target_h=H,
     )
     # Find the news_desk_ass job — should have both specs merged.
     nd_jobs = [j for j in jobs if j.kind == "news_desk_ass"]
@@ -210,7 +210,7 @@ def test_timeline_to_overlay_jobs_produces_expected_kinds(tmp_path):
     tmp_files: list[str] = []
     jobs = _timeline_to_overlay_jobs(
         timeline, _stub_req(), aspect_str="16:9", short_edge=1080,
-        tmp_files=tmp_files, target_h=H,
+        tmp_files=tmp_files, target_w=W, target_h=H,
     )
     kinds = sorted(j.kind for j in jobs)
     assert kinds == ["image_watermark", "news_desk_ass", "text_watermark"]
@@ -230,17 +230,22 @@ def test_timeline_to_overlay_jobs_subtitle_writes_temp_srt(tmp_path):
     tmp_files: list[str] = []
     jobs = _timeline_to_overlay_jobs(
         timeline, _stub_req(), aspect_str="16:9", short_edge=1080,
-        tmp_files=tmp_files, target_h=H,
+        tmp_files=tmp_files, target_w=W, target_h=H,
     )
     sub_jobs = [j for j in jobs if j.kind == "subtitle_cue"]
     assert len(sub_jobs) == 1
     job = sub_jobs[0]
-    # A wrapped temp SRT was written + tracked in tmp_files for cleanup.
-    assert job.data["srt_path"] in tmp_files
-    assert os.path.isfile(job.data["srt_path"])
-    # force_style string non-empty + carries the line config.
-    assert "Fontname=" in job.data["force_style"]
-    assert "MarginV=" in job.data["force_style"]
+    # A full ASS file is now written (vs SRT + force_style) so libass
+    # uses an explicit PlayResY matching target_h.
+    assert job.data["ass_path"] in tmp_files
+    assert os.path.isfile(job.data["ass_path"])
+    with open(job.data["ass_path"], "r", encoding="utf-8") as f:
+        body = f.read()
+    # ASS header forces target PlayRes; Style line carries the
+    # composed force_style fields; Dialogue lines emit per cue.
+    assert f"PlayResY: {H}" in body
+    assert "Style: Default," in body
+    assert "Dialogue: 0," in body
 
     # Clean up the temp files this test created.
     for p in tmp_files:
@@ -260,7 +265,7 @@ def test_timeline_to_overlay_jobs_skips_disabled_tracks(tmp_path):
     # has no tracks → _timeline_to_overlay_jobs returns [].
     jobs = _timeline_to_overlay_jobs(
         timeline, _stub_req(), aspect_str="16:9", short_edge=1080,
-        tmp_files=[], target_h=H,
+        tmp_files=[], target_w=W, target_h=H,
     )
     assert jobs == []
 

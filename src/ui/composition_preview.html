@@ -620,10 +620,13 @@ function subtitleFontPx(pct) { return pctToCanvasPx(pct); }
 function drawtextFontPx(pct) { return pctToCanvasPx(pct); }
 
 function pickActiveCueFrom(arr) {
-  // Pick the cue whose [start, end] brackets the playhead. Cues are in
-  // source-video timeline. Returns the cue text, or null.
+  // Cues come from the timeline IR in CLIP-relative seconds (Element
+  // start_sec / end_sec are rebased to clip start = 0). The <video>
+  // element plays in source-video time and seeks to clipStart, so
+  // subtract clipStart before comparing. For news_desk (clipStart=0)
+  // and clip Tab 1 (clipStart=0, full duration) this is a no-op.
   if (!arr || arr.length === 0) return null;
-  const t = vid.currentTime || 0;
+  const t = (vid.currentTime || 0) - (clipStart || 0);
   for (const c of arr) {
     if (t >= c.start && t < c.end) return c.text;
   }

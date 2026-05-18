@@ -470,6 +470,7 @@ def _timeline_to_overlay_jobs(
     aspect_str: str,
     short_edge: int,
     tmp_files: list[str],
+    target_w: int,
     target_h: int,
 ) -> list[_OverlayJob]:
     from .primitives.chapter_hero_card import (
@@ -494,23 +495,16 @@ def _timeline_to_overlay_jobs(
 
         for kind, elements in elements_by_kind.items():
             if kind == "subtitle_cue":
-                tmp_srt = _subtitle_elements_to_temp_srt(
-                    elements, aspect_str=aspect_str,
-                    short_edge=short_edge, tag=f"timeline-{track.id}")
-                if not tmp_srt:
+                wrapped = wrap_subtitle_elements(
+                    elements, aspect_str=aspect_str, short_edge=short_edge)
+                if not wrapped:
                     continue
-                tmp_files.append(tmp_srt)
                 # All cues in one track share the same style dict (set
-                # by the producing component). Component schemas carry
-                # font / stroke as fractions of the short edge — see
-                # core/composition/layout.py. Margin: prefer the
-                # composer-supplied margin_v (multi-track stacking
-                # pre-computed); else derive from block_margin_pct.
+                # by the producing component). Margin: prefer the
+                # composer-supplied effective pct (multi-track stacking
+                # pre-computed); else use the plain per-component pct.
                 style_dict = elements[0].style
                 position = style_dict.get("position", "bottom")
-                # Use the composer-stacked pct when present (clip dual-
-                # subtitle stacking writes it); else fall back to the
-                # plain per-component pct (news_desk single-track path).
                 pct_from_edge = float(style_dict.get(
                     "effective_block_margin_pct",
                     style_dict.get("block_margin_pct", 0.09)))
@@ -530,10 +524,27 @@ def _timeline_to_overlay_jobs(
                     margin_v=margin_v,
                     short_edge=short_edge,
                     target_h=target_h)
+                # Write a complete ASS file with explicit PlayRes so
+                # libass renders font/stroke at the pixel sizes the pct
+                # math intended. Bare SRT + force_style lets libass fall
+                # back to PlayResY=288 and inflates everything ~6.7x.
+                from .primitives.subtitle_cue import build_subtitle_ass
+                ass_body = build_subtitle_ass(
+                    wrapped, force_style=force_style,
+                    target_w=target_w, target_h=target_h)
+                ass_path = os.path.join(
+                    tempfile.gettempdir(),
+                    f"composition-timeline-{track.id}-"
+                    f"{os.getpid()}-{id(ass_body)}.ass")
+                try:
+                    with open(ass_path, "w", encoding="utf-8") as f:
+                        f.write(ass_body)
+                except OSError:
+                    continue
+                tmp_files.append(ass_path)
                 jobs.append(_OverlayJob(
                     kind="subtitle_cue", z_order=z_base,
-                    data={"srt_path": tmp_srt,
-                           "force_style": force_style}))
+                    data={"ass_path": ass_path}))
 
             elif kind in ("text_watermark", "image_watermark"):
                 for e in elements:
@@ -645,28 +656,6 @@ def wrap_subtitle_elements(
             os.unlink(raw_tmp)
         except OSError:
             pass
-
-
-def _subtitle_elements_to_temp_srt(
-    elements: list, *, aspect_str: str, short_edge: int, tag: str,
-) -> str | None:
-    """Wrap a subtitle_cue track via wrap_subtitle_elements and write
-    the result to a temp SRT for libass consumption. Returns the path,
-    or None on failure / empty wrap output.
-    """
-    wrapped = wrap_subtitle_elements(
-        elements, aspect_str=aspect_str, short_edge=short_edge)
-    if not wrapped:
-        return None
-    final_tmp = os.path.join(
-        tempfile.gettempdir(),
-        f"composition-timeline-{tag}-{os.getpid()}-{id(wrapped)}.srt")
-    try:
-        with open(final_tmp, "w", encoding="utf-8") as f:
-            f.write(_srt.compose(wrapped))
-        return final_tmp
-    except OSError:
-        return None
 
 
 def _element_to_watermark_style(e, *, short_edge: int) -> "WatermarkStyle":
@@ -783,6 +772,7 @@ def render_composition(
         aspect_str=effective_aspect_str,
         short_edge=effective_short_edge,
         tmp_files=tmp_text_files,
+        target_w=target_w,
         target_h=target_h,
     )
     for job in jobs:

@@ -2,21 +2,24 @@
 
 All visible sizes (font, stroke) consumed here are FRACTIONS OF THE
 SHORT EDGE, per the engine-wide normalization (core/composition/layout.py).
-The libass ASS values (Fontsize, Outline, MarginV) are pixel-equivalent
-because we force `original_size = target_w x target_h` on the
-`subtitles=` filter — libass' script-px space then maps 1:1 to target
-pixels, eliminating the old ASS_RENDER_SCALE / PlayResY guess-work.
+We write a full ASS file with explicit `PlayResX/Y = target_w/target_h`
+so libass' script-px coordinate system maps 1:1 to target pixels —
+Fontsize / Outline / MarginV are direct video pixels with no hidden
+scaling. ffmpeg's bare `subtitles=` on an SRT would use libass'
+default PlayResY (288), making fonts render at ~6.7x the intended
+size; this module sidesteps that.
 """
 
 from __future__ import annotations
 
 import os
+import tempfile
 
 from core.subtitle_ops import escape_ffmpeg_path, hex_color_to_ass
 
 from ..fonts import ass_alignment_for_position
-from ..layout import font_size_px, libass_margin_v
-from ..libass_helpers import ass_bgr_with_alpha
+from ..layout import font_size_px
+from ..libass_helpers import ass_bgr_with_alpha, ass_escape_text, ass_time
 from . import register_overlay_renderer
 
 
@@ -74,25 +77,101 @@ def build_force_style(*, fontsize_pct: float, color: str, bold: bool,
     return ",".join(parts)
 
 
+# ── ASS file builder ───────────────────────────────────────────────────────
+
+# ASS Style fields (Format line for [V4+ Styles]). Used as the canonical
+# column order when assembling Style lines from a force_style dict.
+_STYLE_FIELDS = (
+    "Name", "Fontname", "Fontsize",
+    "PrimaryColour", "SecondaryColour", "OutlineColour", "BackColour",
+    "Bold", "Italic", "Underline", "StrikeOut",
+    "ScaleX", "ScaleY", "Spacing", "Angle",
+    "BorderStyle", "Outline", "Shadow", "Alignment",
+    "MarginL", "MarginR", "MarginV", "Encoding",
+)
+
+
+def _force_style_to_style_line(force_style: str, *, name: str = "Default") -> str:
+    """Promote a `Key=Value,...` force_style string into a full ASS
+    `Style: ...` line. Defaults fill the fields the caller didn't set
+    (Italic/Underline/StrikeOut=0, ScaleX/Y=100, Spacing/Angle=0,
+    SecondaryColour matches PrimaryColour, MarginL/R=0, Encoding=1)."""
+    kv: dict[str, str] = {}
+    for pair in force_style.split(","):
+        if "=" in pair:
+            k, v = pair.split("=", 1)
+            kv[k.strip()] = v.strip()
+    primary = kv.get("PrimaryColour", "&H00FFFFFF")
+    defaults = {
+        "Name": name,
+        "Fontname": kv.get("Fontname", "Arial"),
+        "Fontsize": kv.get("Fontsize", "24"),
+        "PrimaryColour": primary,
+        "SecondaryColour": primary,
+        "OutlineColour": kv.get("OutlineColour", "&H00000000"),
+        "BackColour": kv.get("BackColour", "&H00000000"),
+        "Bold": kv.get("Bold", "0"),
+        "Italic": "0", "Underline": "0", "StrikeOut": "0",
+        "ScaleX": "100", "ScaleY": "100",
+        "Spacing": "0", "Angle": "0",
+        "BorderStyle": kv.get("BorderStyle", "1"),
+        "Outline": kv.get("Outline", "0"),
+        "Shadow": kv.get("Shadow", "0"),
+        "Alignment": kv.get("Alignment", "2"),
+        "MarginL": "0", "MarginR": "0",
+        "MarginV": kv.get("MarginV", "0"),
+        "Encoding": "1",
+    }
+    values = [defaults[f] for f in _STYLE_FIELDS]
+    return "Style: " + ",".join(values)
+
+
+def _ass_header(target_w: int, target_h: int, style_line: str) -> str:
+    """[Script Info] + [V4+ Styles] header. PlayResX/Y locked to the
+    target frame so libass script units equal video pixels (no hidden
+    PlayResY=288 scale)."""
+    return (
+        "[Script Info]\n"
+        "ScriptType: v4.00+\n"
+        f"PlayResX: {target_w}\n"
+        f"PlayResY: {target_h}\n"
+        "ScaledBorderAndShadow: yes\n"
+        "WrapStyle: 2\n"
+        "\n"
+        "[V4+ Styles]\n"
+        "Format: " + ",".join(_STYLE_FIELDS) + "\n"
+        + style_line + "\n"
+        "\n"
+        "[Events]\n"
+        "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+    )
+
+
+def build_subtitle_ass(wrapped_cues, *, force_style: str,
+                         target_w: int, target_h: int) -> str:
+    """Assemble a complete ASS file string. `wrapped_cues` is a list of
+    srt.Subtitle objects (clip-relative times); `force_style` is the
+    Key=Value,... string built by `build_force_style`."""
+    style_line = _force_style_to_style_line(force_style, name="Default")
+    body = _ass_header(target_w, target_h, style_line)
+    for c in wrapped_cues:
+        start = ass_time(c.start.total_seconds())
+        end = ass_time(c.end.total_seconds())
+        text = ass_escape_text(c.content)
+        body += f"Dialogue: 0,{start},{end},Default,,0,0,0,,{text}\n"
+    return body
+
+
 # ── Renderer ────────────────────────────────────────────────────────────────
 
 def _renderer(job, prev_label, ctx):
-    srt_path = job.data.get("srt_path")
-    force_style = job.data.get("force_style")
-    if not (srt_path and os.path.exists(srt_path)
-            and os.path.getsize(srt_path) > 0):
+    ass_path = job.data.get("ass_path")
+    if not (ass_path and os.path.exists(ass_path)
+            and os.path.getsize(ass_path) > 0):
         return [], prev_label
-    srt_ff = escape_ffmpeg_path(srt_path)
-    # Force libass' script-pixel space to match the target frame
-    # exactly. Without this libass picks a default PlayResY (typically
-    # 288 for SRT auto-convert), scaling all ASS values by an unknown
-    # factor — the source of the long-standing preview/render font-size
-    # divergence. With original_size=target, ASS Fontsize / Outline /
-    # MarginV are direct video pixels.
+    ass_ff = escape_ffmpeg_path(ass_path)
     out_label = ctx.next_label()
-    return ([f"{prev_label}subtitles=filename='{srt_ff}':"
-             f"force_style='{force_style}':"
-             f"original_size={ctx.target_w}x{ctx.target_h}{out_label}"],
+    return ([f"{prev_label}subtitles=filename='{ass_ff}'{out_label}"],
             out_label)
 
 
