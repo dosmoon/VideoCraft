@@ -87,5 +87,6 @@ class ComponentDictAdapter:
 # Same convention as news_desk: explicit imports, deterministic order,
 # import-time registration via register(spec).
 
-from . import subtitle    # noqa: E402, F401
-from . import watermark   # noqa: E402, F401
+from . import subtitle      # noqa: E402, F401
+from . import watermark     # noqa: E402, F401
+from . import hook_outro    # noqa: E402, F401

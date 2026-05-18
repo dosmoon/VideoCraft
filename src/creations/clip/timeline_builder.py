@@ -18,7 +18,8 @@ from __future__ import annotations
 
 from core.composition.compile import ClipRange, CompileContext, compile_timeline
 from core.composition.style import CompositionStyle
-from core.composition.timeline import CompositionTimeline, Element, Track
+from core.composition.timeline import CompositionTimeline, Track
+from creations.clip.components.hook_outro import hookoutro_adapters_from_style
 from creations.clip.components.subtitle import subtitle_adapters_from_style
 from creations.clip.components.watermark import watermark_adapters_from_style
 
@@ -88,63 +89,31 @@ def build_clip_timeline(
                 z_base=z, enabled=True, elements=t.elements))
             z += 10
 
-    ho = style.hook_outro
-    hook_outro_style_dict = _hook_outro_style_dict(ho)
-
-    if hook_text and ho.hook_duration_sec > 0:
-        end = min(clip_range.duration_sec, float(ho.hook_duration_sec))
-        if end > 0:
+    # Hook + outro tracks (Step 5.3) — at most two adapters; the seeder
+    # fills per-candidate text into each instance dict so spec.compile
+    # stays purely (instance, range, ctx) → Elements.
+    ho_adapters = hookoutro_adapters_from_style(
+        style, hook_text=hook_text, outro_text=outro_text)
+    if ho_adapters:
+        ctx = CompileContext(
+            project=None, material_model=None,
+            instance_dir="", duration=clip_range.duration_sec)
+        ho_timeline = compile_timeline(ho_adapters, clip_range, ctx)
+        for t in ho_timeline.tracks:
+            if not t.elements:
+                continue
+            # Keep the pre-5.3 component_kind label ("hook_text" /
+            # "outro_text") for audit/debug stability, not the spec
+            # kind ("clip_hook_card" / "clip_outro_card").
+            label = "hook_text" if t.id == "hook" else "outro_text"
             tracks.append(Track(
-                id="hook", component_kind="hook_text",
-                z_base=z, enabled=True,
-                elements=[Element(
-                    kind="hook_text",
-                    start_sec=0.0, end_sec=end,
-                    data={"text": hook_text,
-                           "style": hook_outro_style_dict},
-                )],
-            ))
-            z += 10
-
-    if outro_text and ho.outro_duration_sec > 0:
-        start_sec = max(0.0,
-            clip_range.duration_sec - float(ho.outro_duration_sec))
-        if clip_range.duration_sec > start_sec:
-            tracks.append(Track(
-                id="outro", component_kind="outro_text",
-                z_base=z, enabled=True,
-                elements=[Element(
-                    kind="outro_text",
-                    start_sec=start_sec,
-                    end_sec=clip_range.duration_sec,
-                    data={"text": outro_text,
-                           "style": hook_outro_style_dict},
-                )],
-            ))
+                id=t.id, component_kind=label,
+                z_base=z, enabled=True, elements=t.elements))
             z += 10
 
     return CompositionTimeline(
         duration_sec=clip_range.duration_sec,
         tracks=tracks,
     )
-
-
-def _hook_outro_style_dict(ho) -> dict:
-    """Translate clip's HookOutroStyle dataclass into a flat dict the
-    drawtext_helpers.drawtext_filter renderer reads from element.style."""
-    return {
-        "font": ho.font,
-        "size": ho.size,
-        "color": ho.color,
-        "bg_color": ho.bg_color,
-        "bg_opacity": ho.bg_opacity,
-        "stroke_color": ho.stroke_color,
-        "stroke_width": ho.stroke_width,
-        "box_padding": ho.box_padding,
-        "hook_position": ho.hook_position,
-        "outro_position": ho.outro_position,
-        "hook_duration_sec": ho.hook_duration_sec,
-        "outro_duration_sec": ho.outro_duration_sec,
-    }
 
 
