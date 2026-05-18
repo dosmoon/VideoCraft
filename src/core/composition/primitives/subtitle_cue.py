@@ -170,8 +170,17 @@ def _renderer(job, prev_label, ctx):
             and os.path.getsize(ass_path) > 0):
         return [], prev_label
     ass_ff = escape_ffmpeg_path(ass_path)
+    # Point libass at the Windows system fonts dir. ffmpeg's bundled
+    # fontconfig doesn't scan it by default, so a `Fontname=Microsoft
+    # YaHei` Style line silently falls back to libass' internal default
+    # font — visually shorter/thinner glyphs than the matching drawtext
+    # path (which loads msyh.ttc by absolute fontfile). With fontsdir
+    # set, libass finds the named TTF and subtitle metrics line up
+    # with hook/outro at the same configured size.
+    fonts_dir = escape_ffmpeg_path("C:/Windows/Fonts")
     out_label = ctx.next_label()
-    return ([f"{prev_label}subtitles=filename='{ass_ff}'{out_label}"],
+    return ([f"{prev_label}subtitles=filename='{ass_ff}':"
+             f"fontsdir='{fonts_dir}'{out_label}"],
             out_label)
 
 
