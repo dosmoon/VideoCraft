@@ -19,6 +19,7 @@ def test_load_missing_returns_empty(tmp_path):
     assert cfg.source_subtitle == ""
     assert cfg.selected_clip_indices == []
     assert cfg.style is None
+    assert cfg.components == []
     assert cfg.clips_overrides == {}
     assert cfg.rendered == []
 
@@ -41,6 +42,10 @@ def test_load_full_roundtrip(tmp_path):
         selected_clip_indices=[0, 2, 5],
         preset_name="MyPreset",
         style={"output": {"aspect": "9:16"}},
+        components=[
+            {"kind": "subtitle", "name": "main", "enabled": True},
+            {"kind": "hook_text_card", "name": "hook", "enabled": False},
+        ],
         clips_overrides={3: {"hook": "boom"}},
         rendered=[{"file": "clip01.mp4", "src_idx": 0}],
     )
@@ -52,6 +57,10 @@ def test_load_full_roundtrip(tmp_path):
     assert loaded.selected_clip_indices == [0, 2, 5]
     assert loaded.preset_name == "MyPreset"
     assert loaded.style == {"output": {"aspect": "9:16"}}
+    assert loaded.components == [
+        {"kind": "subtitle", "name": "main", "enabled": True},
+        {"kind": "hook_text_card", "name": "hook", "enabled": False},
+    ]
     assert loaded.clips_overrides == {3: {"hook": "boom"}}
     assert loaded.rendered == [{"file": "clip01.mp4", "src_idx": 0}]
 

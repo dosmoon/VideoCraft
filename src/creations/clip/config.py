@@ -52,6 +52,10 @@ class ClipInstanceConfig:
     selected_clip_indices: list[int] = field(default_factory=list)
     preset_name: str = ""
     style: Optional[dict] = None          # raw CompositionStyle dict
+    # Step 5 (clip-component-migration): ordered list of component
+    # instance dicts (each carries kind/name/enabled/... per spec).
+    # Empty during 5.0 scaffold; specs land in 5.1+. List order is z-order.
+    components: list[dict] = field(default_factory=list)
     clips_overrides: dict[int, dict] = field(default_factory=dict)
     rendered: list[dict] = field(default_factory=list)
 
@@ -82,6 +86,11 @@ class ClipInstanceConfig:
         style = raw.get("style")
         style = style if isinstance(style, dict) else None
 
+        comps_raw = raw.get("components")
+        components: list[dict] = []
+        if isinstance(comps_raw, list):
+            components = [c for c in comps_raw if isinstance(c, dict)]
+
         ovs_raw = raw.get("clips_overrides")
         overrides: dict[int, dict] = {}
         if isinstance(ovs_raw, dict):
@@ -103,6 +112,7 @@ class ClipInstanceConfig:
             selected_clip_indices=selected,
             preset_name=str(raw.get("preset_name", "")),
             style=style,
+            components=components,
             clips_overrides=overrides,
             rendered=rendered,
         )
@@ -115,6 +125,7 @@ class ClipInstanceConfig:
             "source_subtitle": self.source_subtitle,
             "selected_clip_indices": list(self.selected_clip_indices),
             "preset_name": self.preset_name,
+            "components": list(self.components),
             "clips_overrides": {str(k): v for k, v in self.clips_overrides.items()},
             "rendered": list(self.rendered),
         }
