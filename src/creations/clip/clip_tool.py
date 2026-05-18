@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import shutil
 import subprocess
 import threading
 import tkinter as tk
@@ -36,6 +35,7 @@ from core.composition import (
 )
 from core.composition import presets as comp_presets
 from core.composition.preview import CompositionPreview
+from creations.clip.candidates import HotclipsRepo
 from creations.clip.config import (
     BoundMaterial, ClipInstanceConfig, now_iso,
 )
@@ -109,6 +109,9 @@ class ClipToolApp(ToolBase):
         self.material_type = self.config.bound_material.type_name
         self.material_instance_id = self.config.bound_material.instance_name
         self.material_model = NewsVideoModel(project, self.material_instance_id)
+        self._hotclips = HotclipsRepo(
+            project.creation_instance_dir("clip", instance_name),
+            self.material_model)
 
         # ── Data state ────────────────────────────────────────────────────
         self._lang_var = tk.StringVar()
@@ -1050,74 +1053,10 @@ class ClipToolApp(ToolBase):
     # video remain shared upstream (regeneration of those is rare and
     # currently produces near-identical output).
 
-    _SNAPSHOT_RE = re.compile(r"^source-hotclips\.([^.]+)\.json$")
-
-    def _hotclips_snapshot_path(self, lang: str) -> str:
-        return os.path.join(self._instance_dir(),
-                              f"source-hotclips.{lang}.json")
-
-    def _srt_snapshot_path(self, lang: str) -> str:
-        return os.path.join(self._instance_dir(),
-                              f"source-subtitles.{lang}.srt")
-
-    def _ensure_snapshot(self, lang: str) -> Optional[str]:
-        """Snapshot upstream hotclips + SRT into the instance dir if not yet
-        present. Returns the hotclips snapshot path (the only one callers
-        currently switch on), or None if hotclips upstream is missing AND
-        no prior snapshot exists. SRT snapshot is best-effort: missing
-        upstream SRT is fine (subtitles are optional for burn)."""
-        os.makedirs(self._instance_dir(), exist_ok=True)
-        # Hotclips — required
-        hot_snap = self._hotclips_snapshot_path(lang)
-        if not os.path.isfile(hot_snap):
-            upstream = os.path.join(self.material_model.subtitles_dir,
-                                      f"{lang}.hotclips.json")
-            if not os.path.isfile(upstream):
-                return None
-            try:
-                shutil.copy2(upstream, hot_snap)
-            except OSError:
-                return None
-        # SRT — optional; copy on best-effort basis. Once snapshotted,
-        # _resolve_source_srt() returns this path so upstream regeneration
-        # cannot affect this instance's renders.
-        srt_snap = self._srt_snapshot_path(lang)
-        if not os.path.isfile(srt_snap):
-            upstream_srt = os.path.join(self.material_model.subtitles_dir,
-                                          f"{lang}.srt")
-            if os.path.isfile(upstream_srt):
-                try:
-                    shutil.copy2(upstream_srt, srt_snap)
-                except OSError:
-                    pass
-        return hot_snap
-
-    def _list_available_langs(self) -> list[str]:
-        """Languages with hotclips available — union of instance snapshots
-        and upstream subtitles. Snapshotted langs are always listed even if
-        upstream was deleted; not-yet-snapshotted langs from upstream are
-        listed and will be snapshotted on first selection."""
-        langs: set[str] = set()
-        inst_dir = self._instance_dir()
-        try:
-            for name in os.listdir(inst_dir):
-                m = self._SNAPSHOT_RE.match(name)
-                if m:
-                    langs.add(m.group(1))
-        except OSError:
-            pass
-        try:
-            for name in os.listdir(self.material_model.subtitles_dir):
-                if name.endswith(".hotclips.json"):
-                    langs.add(name[:-len(".hotclips.json")])
-        except OSError:
-            pass
-        return sorted(langs)
-
     # ── Language / candidate loading ─────────────────────────────────────
 
     def _reload_languages(self) -> None:
-        langs = self._list_available_langs()
+        langs = self._hotclips.list_available_langs()
         self._lang_combo["values"] = langs
         if not langs:
             self._status_var.set(tr("clip_tool.status_no_hotclips"))
@@ -1141,16 +1080,10 @@ class ClipToolApp(ToolBase):
         lang = self._lang_var.get()
         if not lang:
             return
-        path = self._ensure_snapshot(lang)
-        if path is None:
+        data = self._hotclips.load_hotclips(lang)
+        if data is None:
             self._status_var.set(tr("clip_tool.status_load_failed",
                                      error="hotclips source not found"))
-            return
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, json.JSONDecodeError) as e:
-            self._status_var.set(tr("clip_tool.status_load_failed", error=str(e)))
             return
         self._hotclips_data = data
         clips = data.get("clips") or []
@@ -1309,18 +1242,7 @@ class ClipToolApp(ToolBase):
             short_edge=self._current_style.output.short_edge)
 
     def _resolve_source_srt(self) -> Optional[str]:
-        """Return the instance's SRT snapshot. Falls back to upstream only
-        when the snapshot hasn't been taken (e.g. very old instances from
-        before the snapshot principle was introduced) — that case should
-        be rare, since _ensure_snapshot is called on every language load."""
-        lang = self._lang_var.get()
-        if not lang:
-            return None
-        snap = self._srt_snapshot_path(lang)
-        if os.path.isfile(snap):
-            return snap
-        upstream = os.path.join(self.material_model.subtitles_dir, f"{lang}.srt")
-        return upstream if os.path.isfile(upstream) else None
+        return self._hotclips.resolve_source_srt(self._lang_var.get())
 
     # ── Detail field handlers ────────────────────────────────────────────
 

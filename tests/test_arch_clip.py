@@ -117,6 +117,23 @@ def test_composition_preview_has_no_legacy_cue_meta_methods():
             f"CompositionPreview still exposes retired method: {name}")
 
 
+def test_clip_tool_uses_hotclips_repo():
+    """Snapshot + lang listing live in candidates.HotclipsRepo. The
+    workbench must delegate, not inline the filesystem logic."""
+    with open(CLIP_TOOL_PATH, "r", encoding="utf-8") as f:
+        src = f.read()
+    assert "HotclipsRepo(" in src, "clip_tool must construct HotclipsRepo"
+    forbidden_helpers = (
+        "def _hotclips_snapshot_path",
+        "def _srt_snapshot_path",
+        "def _ensure_snapshot",
+        "def _list_available_langs",
+    )
+    bad = [h for h in forbidden_helpers if h in src]
+    assert not bad, (
+        f"clip_tool still defines repo helpers (move to candidates.py): {bad}")
+
+
 def test_clip_subtree_does_not_call_nv_paths():
     """No module under creations/clip/ may reach into _nv_paths."""
     violations: list[str] = []
