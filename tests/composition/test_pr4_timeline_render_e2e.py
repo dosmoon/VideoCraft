@@ -328,6 +328,56 @@ def test_preview_and_render_share_same_subtitle_wrap():
     assert len(render_texts) > 1, "fixture too short to exercise wrap"
 
 
+def test_preview_and_render_share_same_hook_outro_wrap():
+    """Preview and render must run the SAME wrap pass on hook/outro
+    overlays. drawtext_filter wraps via wrap_hook_outro at render time;
+    set_timeline must produce the same lines for the JS overlay. Without
+    parity the WebView wraps differently than libass burns — a silent
+    preview ≠ render divergence (ADR-0006 invariant #6).
+    """
+    from core.composition.preview import CompositionPreview
+    from core.composition.text_layout import wrap_hook_outro
+    from core.composition.fonts import hook_outro_font_path
+    from core.composition.timeline import (
+        CompositionTimeline, Element, Track,
+    )
+
+    long_hook = "Three reasons this changes everything about the way we think about modern video production"
+    style_dict = {"font": "default", "size": 56, "color": "#FFFFFF"}
+
+    timeline = CompositionTimeline(
+        duration_sec=12.0,
+        tracks=[Track(
+            id="hook", component_kind="hook_text", z_base=10,
+            enabled=True,
+            elements=[Element(
+                kind="hook_text", start_sec=0.0, end_sec=3.0,
+                data={"text": long_hook, "style": style_dict},
+            )],
+        )],
+    )
+
+    preview = CompositionPreview.__new__(CompositionPreview)
+    calls: list[str] = []
+    preview._call_js = lambda code: calls.append(code)
+    preview.set_timeline(timeline, aspect="9:16", short_edge=1080)
+
+    font_path = hook_outro_font_path(style_dict["font"])
+    render_lines = wrap_hook_outro(
+        long_hook, (9, 16), font_path, style_dict["size"], short_edge=1080)
+
+    import json
+    meta_call = next(c for c in calls
+                       if c.startswith("window.vc.setClipMeta"))
+    payload = json.loads(meta_call[len("window.vc.setClipMeta("):-1])
+    preview_lines = payload.get("hookLines")
+    assert preview_lines == render_lines, (
+        f"hook wrap diverged between preview and render:\n"
+        f"  preview: {preview_lines}\n"
+        f"  render:  {render_lines}")
+    assert len(render_lines) > 1, "fixture too short to exercise wrap"
+
+
 def test_preview_set_timeline_translates_without_jsbridge(monkeypatch):
     """CompositionPreview is a Tk/WebView widget but its set_timeline
     method does pure data translation before any _call_js. Stub out

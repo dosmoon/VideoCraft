@@ -93,6 +93,30 @@ def test_clip_subtree_has_single_config_writer():
         f"{violations}")
 
 
+def test_clip_tool_uses_single_timeline_bridge():
+    """Clip preview push must funnel through CompositionPreview.set_timeline.
+    Legacy bridges (.set_cues / .set_cues_secondary / .set_clip_meta /
+    .set_style) are retired — calling them is a regression."""
+    with open(CLIP_TOOL_PATH, "r", encoding="utf-8") as f:
+        src = f.read()
+    forbidden = (".set_cues(", ".set_cues_secondary(",
+                  ".set_clip_meta(")
+    bad = [pat for pat in forbidden if pat in src]
+    assert not bad, (
+        f"clip_tool must not call retired preview bridges: {bad}")
+
+
+def test_composition_preview_has_no_legacy_cue_meta_methods():
+    """CompositionPreview must not expose set_cues / set_cues_secondary /
+    set_clip_meta — set_timeline is the single Python entry for these.
+    (set_style is intentionally kept; chapter_editor consumes it for the
+    style-only preview surface.)"""
+    from core.composition.preview import CompositionPreview
+    for name in ("set_cues", "set_cues_secondary", "set_clip_meta"):
+        assert not hasattr(CompositionPreview, name), (
+            f"CompositionPreview still exposes retired method: {name}")
+
+
 def test_clip_subtree_does_not_call_nv_paths():
     """No module under creations/clip/ may reach into _nv_paths."""
     violations: list[str] = []

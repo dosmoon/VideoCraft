@@ -33,10 +33,8 @@ from materials.news_video.model import NewsVideoModel
 from tools.base import ToolBase
 from core.composition import (
     CompositionRequest, CompositionStyle, render_composition,
-    wrap_hook_outro,
 )
 from core.composition import presets as comp_presets
-from core.composition.fonts import hook_outro_font_path
 from core.composition.preview import CompositionPreview
 from creations.clip.config import (
     BoundMaterial, ClipInstanceConfig, now_iso,
@@ -877,16 +875,91 @@ class ClipToolApp(ToolBase):
             return str(ov["title"])
         return (hot.get("suggested_title") or "").strip()
 
-    def _wrap_for_overlay(self, text: str) -> list[str]:
-        """Pre-wrap hook/outro text using the same algorithm the ffmpeg
-        render uses. Both previews consume this to guarantee preview ≡
-        rendered output (no JS-side wrap divergence)."""
-        if not text:
-            return []
-        font_path = hook_outro_font_path(self._current_style.hook_outro.font)
-        return wrap_hook_outro(
-            text, self._current_style.aspect_ratio(),
-            font_path, self._current_style.hook_outro.size)
+    def _full_video_duration(self) -> float:
+        """Source video duration in seconds, 0.0 when unknown. Used by the
+        Style-tab preview to bound the synthetic timeline range; clip-tab
+        preview already has explicit per-clip windows."""
+        try:
+            meta = self.material_model.get_source_meta()
+            return float(meta.duration_sec or 0.0)
+        except Exception:
+            return 0.0
+
+    def _preview_aspect_short_edge(self) -> tuple[str, int]:
+        out = self._current_style.output
+        return out.aspect, int(out.short_edge)
+
+    def _build_preview_timeline(self, start: float, end: float, *,
+                                  hook: str = "", outro: str = ""):
+        """Compose a CompositionTimeline for [start, end] using the current
+        style + the instance's source SRT. Single-source for both render
+        and preview — set_timeline pushes the same IR ffmpeg renders."""
+        from creations.clip.timeline_builder import build_clip_timeline
+        from core.composition.compile import ClipRange
+        srt_path = self._resolve_source_srt() or ""
+        return build_clip_timeline(
+            self._current_style,
+            ClipRange(start_sec=start, end_sec=end),
+            hook_text=hook, outro_text=outro,
+            source_srt=srt_path,
+        )
+
+    def _push_clip_preview(self, idx: int) -> None:
+        """Push the unified state (source, geometry, crop, timeline) for the
+        given candidate's window into the Clips-tab preview. Single
+        bridge — set_timeline carries subtitle / watermark / hook /
+        outro under one entry."""
+        if self._clip_preview is None:
+            return
+        if not (0 <= idx < len(self._candidate_meta)):
+            return
+        video_path = self.material_model.source_video_path
+        if not os.path.isfile(video_path):
+            return
+        start, end = self._effective_start_end(idx)
+        self._clip_preview.set_source(video_path, start, end)
+        self._clip_preview.set_geometry(self._current_style.output)
+        self._clip_preview.set_crop(self._effective_crop(idx))
+        self._clip_preview.enable_crop_drag(True)
+        aspect, short = self._preview_aspect_short_edge()
+        tl = self._build_preview_timeline(
+            start, end,
+            hook=self._effective_hook(idx),
+            outro=self._effective_outro(idx))
+        self._clip_preview.set_timeline(
+            tl, aspect=aspect, short_edge=short)
+
+    def _push_style_preview(self) -> None:
+        """Push unified state to the Style-tab preview using sample hook /
+        outro from candidate 0 and the full SRT range."""
+        if self._style_preview is None:
+            return
+        video_path = self.material_model.source_video_path
+        if not os.path.isfile(video_path):
+            return
+        duration = self._full_video_duration()
+        if duration <= 0:
+            cues = self._full_srt_cues()
+            duration = (cues[-1]["end"] + 60.0) if cues else 600.0
+        if self._candidate_meta:
+            first = self._candidate_meta[0]
+            sample_hook = (first.get("hook")
+                            or first.get("suggested_title")
+                            or tr("clip_tool.sample_hook_placeholder"))
+            sample_outro = first.get("outro") or ""
+        else:
+            sample_hook = tr("clip_tool.sample_hook_placeholder")
+            sample_outro = ""
+        self._style_preview.set_source(video_path, 0.0, 0.0)
+        self._style_preview.set_geometry(self._current_style.output)
+        if self._global_crop_rect is not None:
+            self._style_preview.set_crop(self._global_crop_rect)
+        self._style_preview.enable_crop_drag(True)
+        aspect, short = self._preview_aspect_short_edge()
+        tl = self._build_preview_timeline(
+            0.0, duration, hook=sample_hook, outro=sample_outro)
+        self._style_preview.set_timeline(
+            tl, aspect=aspect, short_edge=short)
 
     def _effective_outro(self, idx: int) -> str:
         if not (0 <= idx < len(self._candidate_meta)):
@@ -1188,23 +1261,8 @@ class ClipToolApp(ToolBase):
         # Swap empty placeholder for the real container on first load
         self._detail_empty_label.pack_forget()
         self._detail_container.pack(fill="both", expand=True)
-        # Push preview source
-        if self._clip_preview is not None:
-            start, end = self._effective_start_end(idx)
-            video_path = self.material_model.source_video_path
-            if os.path.isfile(video_path):
-                self._clip_preview.set_source(video_path, start, end)
-                hook = self._effective_hook(idx)
-                outro = self._effective_outro(idx)
-                self._clip_preview.set_clip_meta(
-                    hook=hook, outro=outro,
-                    hook_lines=self._wrap_for_overlay(hook),
-                    outro_lines=self._wrap_for_overlay(outro))
-                self._clip_preview.set_cues(
-                    self._cues_for_window(start, end))
-                self._clip_preview.set_crop(self._effective_crop(idx))
-                self._clip_preview.enable_crop_drag(True)
-                self._clip_preview.set_style(self._current_style)
+        # Push the unified state through the single timeline bridge
+        self._push_clip_preview(idx)
         # Populate fields
         start, end = self._effective_start_end(idx)
         self._detail_vars["start"].set(_format_ts(start))
@@ -1302,14 +1360,9 @@ class ClipToolApp(ToolBase):
                 ov.pop(field, None)
         self._refresh_render_tv()
         self._save_all()
-        # Push to preview (hook/outro overlay updates) with canonical lines
-        if self._clip_preview is not None and self._detail_idx is not None:
-            hook = self._effective_hook(self._detail_idx)
-            outro = self._effective_outro(self._detail_idx)
-            self._clip_preview.set_clip_meta(
-                hook=hook, outro=outro,
-                hook_lines=self._wrap_for_overlay(hook),
-                outro_lines=self._wrap_for_overlay(outro))
+        # Re-push timeline so hook/outro overlay reflects edited text
+        if self._detail_idx is not None:
+            self._push_clip_preview(self._detail_idx)
 
     def _on_nudge_start(self, delta: float) -> None:
         if self._detail_idx is None:
@@ -1358,8 +1411,9 @@ class ClipToolApp(ToolBase):
             cues_widget.insert("end",
                                  f"[{_format_ts(c['start'])}]  {c['text']}\n")
         cues_widget.configure(state="disabled")
-        if self._clip_preview is not None:
-            self._clip_preview.set_cues(cues)
+        # Subtitle window changed → re-push timeline with the new range
+        if self._detail_idx is not None:
+            self._push_clip_preview(self._detail_idx)
 
     def _on_clip_crop_changed(self, rect: dict) -> None:
         """Called from JS when user drags the crop rect in the clip preview."""
@@ -1436,43 +1490,13 @@ class ClipToolApp(ToolBase):
 
     def _do_style_preview_refresh(self) -> None:
         self._preview_job = None
-        if self._style_preview is None:
-            return
-        self._style_preview.set_style(self._current_style)
-        self._style_preview.enable_crop_drag(True)
-        if self._global_crop_rect is not None:
-            self._style_preview.set_crop(self._global_crop_rect)
-        # Load source video (whole file) as preview backdrop
-        video_path = self.material_model.source_video_path
-        if os.path.isfile(video_path):
-            self._style_preview.set_source(video_path, 0.0, 0.0)
-            # Push the full SRT so the subtitle layer shows real text as
-            # playback advances, not a static placeholder.
-            self._style_preview.set_cues(self._full_srt_cues())
-            # Sample hook from first candidate so the user sees what real
-            # hooks look like with their style.
-            if self._candidate_meta:
-                first = self._candidate_meta[0]
-                sample_hook = (first.get("hook")
-                                or first.get("suggested_title")
-                                or tr("clip_tool.sample_hook_placeholder"))
-                sample_outro = first.get("outro") or ""
-            else:
-                sample_hook = tr("clip_tool.sample_hook_placeholder")
-                sample_outro = ""
-            self._style_preview.set_clip_meta(
-                hook=sample_hook, outro=sample_outro,
-                hook_lines=self._wrap_for_overlay(sample_hook),
-                outro_lines=self._wrap_for_overlay(sample_outro))
+        self._push_style_preview()
 
     def _push_clip_preview_style(self) -> None:
-        """Re-push style + re-split cues to the clip detail preview. Called
-        whenever the user changes anything that affects subtitle layout."""
-        if self._clip_preview is None or self._detail_idx is None:
-            return
-        self._clip_preview.set_style(self._current_style)
-        start, end = self._effective_start_end(self._detail_idx)
-        self._clip_preview.set_cues(self._cues_for_window(start, end))
+        """Re-push to the clip detail preview. Called whenever the user
+        changes anything that affects subtitle / hook / outro layout."""
+        if self._detail_idx is not None:
+            self._push_clip_preview(self._detail_idx)
 
     # ── Form → style sync ────────────────────────────────────────────────
 

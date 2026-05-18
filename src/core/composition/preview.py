@@ -192,42 +192,6 @@ class CompositionPreview:
         on the JS side (see `setSource` / `setClipRange`)."""
         self._call_js(f"window.vc.seek({float(sec)})")
 
-    def set_clip_meta(self, hook: str = "", outro: str = "",
-                       hook_lines: Optional[list[str]] = None,
-                       outro_lines: Optional[list[str]] = None) -> None:
-        """Push hook/outro overlay state.
-
-        Callers SHOULD pass `hook_lines` / `outro_lines` pre-computed via
-        core.composition.text_layout.wrap_hook_outro — these are the exact
-        lines the ffmpeg render will use, guaranteeing preview ≡ output
-        layout. The raw `hook` / `outro` strings are still accepted as a
-        fallback (JS will wrap them on its own; layout may diverge).
-        """
-        meta: dict = {"hook": hook, "outro": outro}
-        if hook_lines is not None:
-            meta["hookLines"] = hook_lines
-        if outro_lines is not None:
-            meta["outroLines"] = outro_lines
-        self._call_js(f"window.vc.setClipMeta({json.dumps(meta, ensure_ascii=False)})")
-
-    def set_cues(self, cues: list[dict]) -> None:
-        """Push the primary (sub1) cue list for the current clip window.
-        Each cue: {start: float, end: float, text: str}. Pass [] to
-        clear and fall back to the placeholder text from style.subtitle.sub1.
-
-        Callers should obtain `cues` from core.composition.prepare_subtitle_cues
-        so the cue list reflects the same slice + max_chars wrap the
-        ffmpeg burn will produce — preview ≡ render."""
-        self._call_js(f"window.vc.setCues({json.dumps(cues, ensure_ascii=False)})")
-
-    def set_cues_secondary(self, cues: list[dict]) -> None:
-        """Push the secondary (sub2) cue list. Same shape and same source
-        (prepare_subtitle_cues) as set_cues; drives the sub2 overlay.
-        Without this call sub2 falls back to placeholder text — useful for
-        clip-style previews, wrong for bilingual burn where both tracks
-        carry real cues."""
-        self._call_js(f"window.vc.setCuesSecondary({json.dumps(cues, ensure_ascii=False)})")
-
     def set_crop(self, rect: Optional[dict]) -> None:
         """Set the crop rect explicitly. None = recenter at current aspect."""
         payload = "null" if rect is None else json.dumps(rect)
@@ -265,6 +229,8 @@ class CompositionPreview:
         wm_payload: list[dict] = []
         hook_text = ""
         outro_text = ""
+        hook_style: Optional[dict] = None
+        outro_style: Optional[dict] = None
 
         for track in timeline.tracks:
             if not track.enabled:
@@ -354,10 +320,20 @@ class CompositionPreview:
                         })
                 elif kind == "hook_text":
                     for e in elements:
-                        hook_text = str(e.data.get("text", "") or hook_text)
+                        t = str(e.data.get("text", ""))
+                        if t:
+                            hook_text = t
+                            s = e.data.get("style")
+                            if isinstance(s, dict):
+                                hook_style = s
                 elif kind == "outro_text":
                     for e in elements:
-                        outro_text = str(e.data.get("text", "") or outro_text)
+                        t = str(e.data.get("text", ""))
+                        if t:
+                            outro_text = t
+                            s = e.data.get("style")
+                            if isinstance(s, dict):
+                                outro_style = s
 
         # Drive the existing bridges with the translated payloads. Legacy
         # sub1/sub2 stack stays empty — timeline tracks ride the N-track
@@ -371,7 +347,29 @@ class CompositionPreview:
         self._call_js(
             f"window.vc.setExtraWatermarks({json.dumps(wm_payload, ensure_ascii=False)})")
         if hook_text or outro_text:
-            meta = {"hook": hook_text, "outro": outro_text}
+            # Pre-wrap with the SAME helper render's drawtext_filter uses, so
+            # the WebView preview shows the exact line breaks libass burns
+            # (ADR-0006 invariant #6 — preview ≡ render single-source).
+            from .text_layout import wrap_hook_outro
+            from .fonts import hook_outro_font_path
+            try:
+                aw, ah = (int(p) for p in str(aspect).split(":", 1))
+                aspect_tuple = (aw, ah)
+            except (TypeError, ValueError):
+                aspect_tuple = (16, 9)
+            meta: dict = {"hook": hook_text, "outro": outro_text}
+            if hook_text and hook_style is not None:
+                font_path = hook_outro_font_path(hook_style.get("font"))
+                size = int(hook_style.get("size") or 40)
+                meta["hookLines"] = wrap_hook_outro(
+                    hook_text, aspect_tuple, font_path, size,
+                    short_edge=short_edge)
+            if outro_text and outro_style is not None:
+                font_path = hook_outro_font_path(outro_style.get("font"))
+                size = int(outro_style.get("size") or 40)
+                meta["outroLines"] = wrap_hook_outro(
+                    outro_text, aspect_tuple, font_path, size,
+                    short_edge=short_edge)
             self._call_js(
                 f"window.vc.setClipMeta({json.dumps(meta, ensure_ascii=False)})")
 
