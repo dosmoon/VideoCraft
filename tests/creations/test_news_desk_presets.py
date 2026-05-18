@@ -148,3 +148,77 @@ def test_fresh_components_deepcopy_independence():
     a[0].setdefault("schedule", []).append({"x": 1})
     assert b[0].get("enabled") is not False
     assert preset.components[0].get("enabled") is not False
+
+
+def test_fresh_components_strips_chapter_project_content():
+    """A preset baked with imported analysis.json (schedule + titles)
+    must not leak that content when applied to a new project."""
+    preset = nd_presets.NewsDeskPreset(
+        name="dirty",
+        components=[{
+            "kind": "chapter", "name": "章节", "enabled": True,
+            "modes": {"start_card": True},
+            "schedule": [
+                {"start_sec": 0, "end_sec": 60, "title": "项目A的章节",
+                 "refined": "项目A的描述", "key_points": ["a", "b"]},
+            ],
+            "titles": ["项目A候选标题1", "项目A候选标题2"],
+            "style": {"start_card": {"title_color": "#FF0000"}},
+        }],
+    )
+    fresh = nd_presets.fresh_components_for(preset)
+    ch = fresh[0]
+    assert ch["schedule"] == [], "chapter schedule leaked across projects"
+    assert ch["titles"] == [], "chapter titles leaked across projects"
+    # Style + modes survive (those are preset-worthy)
+    assert ch["modes"]["start_card"] is True
+    assert ch["style"]["start_card"]["title_color"] == "#FF0000"
+
+
+def test_fresh_components_strips_image_watermark_path():
+    """image_path is an absolute disk path — preset must not carry it."""
+    preset = nd_presets.NewsDeskPreset(
+        name="dirty",
+        components=[{
+            "kind": "image_watermark", "name": "台标", "enabled": True,
+            "image_path": r"D:\projects\old\logo.png",
+            "scale": 0.12, "position": "top-right",
+        }],
+    )
+    fresh = nd_presets.fresh_components_for(preset)
+    wm = fresh[0]
+    assert wm["image_path"] == "", "image_path leaked across projects"
+    assert wm["scale"] == 0.12          # style survives
+    assert wm["position"] == "top-right"
+
+
+# ── save_user_preset strip ──────────────────────────────────────────────────
+
+def test_save_user_preset_strips_project_content(tmp_path):
+    """Save-side defence: even if the workbench passes in a polluted
+    components list, the preset on disk must be clean — so re-loading
+    it later cannot resurrect prior project content."""
+    dirty = nd_presets.NewsDeskPreset(
+        name="user_preset",
+        components=[
+            {"kind": "chapter", "name": "章节", "enabled": True,
+             "schedule": [{"title": "stale chapter"}],
+             "titles": ["stale title"]},
+            {"kind": "image_watermark", "name": "logo",
+             "image_path": r"D:\old\logo.png"},
+            {"kind": "subtitle", "name": "字幕",
+             "id": "fixed-id", "srt_path": r"D:\old\zh.srt"},
+        ],
+    )
+    with mock.patch.object(nd_presets, "PRESETS_PATH",
+                             str(tmp_path / "news_desk.json")):
+        nd_presets.save_user_preset(dirty)
+        raw = json.load(open(nd_presets.PRESETS_PATH, encoding="utf-8"))
+    saved = raw["user_presets"]["user_preset"]["components"]
+    by_kind = {c["kind"]: c for c in saved}
+    assert by_kind["chapter"]["schedule"] == []
+    assert by_kind["chapter"]["titles"] == []
+    assert by_kind["image_watermark"]["image_path"] == ""
+    assert by_kind["subtitle"]["srt_path"] == ""
+    # Subtitle id must be regenerated, not preserved
+    assert by_kind["subtitle"]["id"] != "fixed-id"

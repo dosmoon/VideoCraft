@@ -229,15 +229,25 @@ def load_presets() -> dict[str, NewsDeskPreset]:
 def save_user_preset(preset: NewsDeskPreset) -> None:
     """Persist a user-authored preset. Overwrites any existing user
     preset with the same name; builtins are not touched (they live in
-    code, not on disk)."""
+    code, not on disk).
+
+    Per-project content (chapter schedule / titles, image_watermark
+    image_path, subtitle id+srt_path) is stripped before writing — the
+    preset captures the visual decisions, not the current project's
+    imported data."""
     if is_builtin(preset.name):
         raise ValueError(
             f"cannot overwrite builtin preset '{preset.name}'")
+    clean = NewsDeskPreset(
+        name=preset.name,
+        description=preset.description,
+        components=_strip_project_content(preset.components),
+    )
     raw = _read_store()
     user_dict = raw.get("user_presets")
     if not isinstance(user_dict, dict):
         user_dict = {}
-    user_dict[preset.name] = preset.to_dict()
+    user_dict[clean.name] = clean.to_dict()
     raw["user_presets"] = user_dict
     _write_store(raw)
 
@@ -278,13 +288,38 @@ def get_preset(name: str) -> Optional[NewsDeskPreset]:
 
 # ── Apply helpers ───────────────────────────────────────────────────────────
 
-def fresh_components_for(preset: NewsDeskPreset) -> list[dict]:
-    """Deep-copy preset.components and reset per-instance ephemeral
-    fields (subtitle ids, snapshot srt_path). Use this when applying
-    a preset so two instances that share a preset don't share ids."""
-    out = copy.deepcopy(preset.components)
+def _strip_project_content(components: list[dict]) -> list[dict]:
+    """Reset per-PROJECT content while keeping per-component layout +
+    style. Runs at BOTH ends:
+
+      - apply: protect against legacy disk presets saved before this
+        guard (and before [[project_creation_config_owner]] forbade
+        cross-project leaks)
+      - save:  keep new presets clean so they describe only the visual
+        decisions worth carrying between projects
+
+    Per-kind strip:
+      subtitle        regenerate id, clear srt_path (snapshot path)
+      chapter         clear schedule (imported analysis.json rows) +
+                      titles (candidate titles)
+      image_watermark clear image_path (absolute path on prior machine)
+      text_watermark  keep everything (text + style are preset-worthy)
+    """
+    out = copy.deepcopy(components)
     for c in out:
-        if c.get("kind") == "subtitle":
+        kind = c.get("kind")
+        if kind == "subtitle":
             c["id"] = uuid.uuid4().hex[:8]
-            c["srt_path"] = ""             # never carry SRT path forward
+            c["srt_path"] = ""
+        elif kind == "chapter":
+            c["schedule"] = []
+            c["titles"] = []
+        elif kind == "image_watermark":
+            c["image_path"] = ""
     return out
+
+
+def fresh_components_for(preset: NewsDeskPreset) -> list[dict]:
+    """Apply-side: deep-copy preset.components and reset per-PROJECT
+    content. See _strip_project_content for the strip rules."""
+    return _strip_project_content(preset.components)
