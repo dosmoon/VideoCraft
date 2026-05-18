@@ -35,6 +35,7 @@ from core.composition import (
 from core.composition import presets as comp_presets
 from core.composition.preview import CompositionPreview
 from creations.clip.candidates import HotclipsRepo
+from creations.clip.clip_editor import ClipDetailPanel
 from creations.clip.config import (
     BoundMaterial, ClipInstanceConfig, now_iso,
 )
@@ -135,12 +136,8 @@ class ClipToolApp(ToolBase):
 
         # ── UI handles, filled in build phase ─────────────────────────────
         self._style_preview: Optional[CompositionPreview] = None
-        self._clip_preview: Optional[CompositionPreview] = None
+        self._detail: Optional[ClipDetailPanel] = None
         self._preview_job: Optional[str] = None
-        self._detail_idx: Optional[int] = None
-        # tab2 detail var holders
-        self._detail_vars: dict = {}    # filled by _build_tab_clips
-        self._detail_widgets: dict = {}
 
         # ── Render state ──────────────────────────────────────────────────
         self._render_queue: Optional[RenderQueue] = None
@@ -157,9 +154,8 @@ class ClipToolApp(ToolBase):
         if self._style_preview is not None:
             self._style_preview.destroy()
             self._style_preview = None
-        if self._clip_preview is not None:
-            self._clip_preview.destroy()
-            self._clip_preview = None
+        if self._detail is not None:
+            self._detail.destroy_preview()
 
     # ── UI build ─────────────────────────────────────────────────────────
 
@@ -602,99 +598,7 @@ class ClipToolApp(ToolBase):
         canvas.bind_all("<MouseWheel>", _on_mousewheel, add="+")
 
         # Detail panel
-        self._build_clip_detail_panel(detail)
-
-    def _build_clip_detail_panel(self, parent: ttk.Frame) -> None:
-        # Empty-state label (visible when no detail loaded)
-        self._detail_empty_var = tk.StringVar(
-            value=tr("clip_tool.detail_no_selection"))
-        self._detail_empty_label = tk.Label(
-            parent, textvariable=self._detail_empty_var,
-            bg="white", fg="#888", justify="center")
-        self._detail_empty_label.pack(fill="both", expand=True)
-
-        # Container (hidden until first detail load)
-        self._detail_container = ttk.Frame(parent)
-
-        # Preview
-        self._clip_preview = CompositionPreview(
-            self._detail_container,
-            on_crop_changed=self._on_clip_crop_changed,
-            width=420, height=360)
-        self._clip_preview.widget.pack(fill="both", expand=True,
-                                         padx=4, pady=4)
-
-        # Time row
-        time_row = ttk.LabelFrame(self._detail_container,
-                                    text=tr("clip_tool.detail_time"))
-        time_row.pack(fill="x", padx=6, pady=4)
-
-        self._detail_vars["start"] = tk.StringVar()
-        self._detail_vars["end"] = tk.StringVar()
-        for label_key, var_key, nudge_fn in (
-                ("clip_tool.detail_start", "start", self._on_nudge_start),
-                ("clip_tool.detail_end",   "end",   self._on_nudge_end)):
-            row = ttk.Frame(time_row); row.pack(fill="x", padx=4, pady=2)
-            ttk.Label(row, text=tr(label_key), width=8
-                      ).pack(side="left")
-            ent = ttk.Entry(row, textvariable=self._detail_vars[var_key],
-                            width=14)
-            ent.pack(side="left", padx=(4, 4))
-            ent.bind("<FocusOut>",
-                     lambda _e, k=var_key: self._on_time_entry_blur(k))
-            ent.bind("<Return>",
-                     lambda _e, k=var_key: self._on_time_entry_blur(k))
-            ttk.Button(row, text=tr("clip_tool.nudge_minus"),
-                       command=lambda fn=nudge_fn: fn(-0.5),
-                       width=6).pack(side="left", padx=(2, 0))
-            ttk.Button(row, text=tr("clip_tool.nudge_plus"),
-                       command=lambda fn=nudge_fn: fn(0.5),
-                       width=6).pack(side="left", padx=(2, 0))
-
-        self._detail_vars["duration_score"] = tk.StringVar()
-        tk.Label(time_row, textvariable=self._detail_vars["duration_score"],
-                 fg="#666", anchor="w").pack(fill="x", padx=4, pady=(2, 4))
-
-        # Text row
-        text_row = ttk.LabelFrame(self._detail_container,
-                                    text=tr("clip_tool.detail_text"))
-        text_row.pack(fill="x", padx=6, pady=4)
-
-        self._detail_vars["hook"] = tk.StringVar()
-        self._detail_vars["outro"] = tk.StringVar()
-        self._detail_vars["title"] = tk.StringVar()
-        self._detail_vars["tags"] = tk.StringVar()
-        for label_key, var_key in (
-                ("clip_tool.detail_hook",  "hook"),
-                ("clip_tool.detail_outro", "outro"),
-                ("clip_tool.detail_title", "title"),
-                ("clip_tool.detail_tags",  "tags")):
-            row = ttk.Frame(text_row); row.pack(fill="x", padx=4, pady=2)
-            ttk.Label(row, text=tr(label_key), width=8
-                      ).pack(side="left")
-            ent = ttk.Entry(row, textvariable=self._detail_vars[var_key])
-            ent.pack(side="left", padx=(4, 0), fill="x", expand=True)
-            ent.bind("<FocusOut>",
-                     lambda _e, k=var_key: self._on_text_entry_blur(k))
-            ent.bind("<Return>",
-                     lambda _e, k=var_key: self._on_text_entry_blur(k))
-
-        # SRT cues readonly
-        cues_row = ttk.LabelFrame(self._detail_container,
-                                    text=tr("clip_tool.detail_srt_cues"))
-        cues_row.pack(fill="both", expand=False, padx=6, pady=4)
-        self._detail_widgets["cues_text"] = tk.Text(
-            cues_row, height=6, state="disabled", wrap="word",
-            font=("Consolas", 9), bg="#f6f6f6")
-        self._detail_widgets["cues_text"].pack(fill="x", padx=4, pady=4)
-
-        # Buttons
-        btn_row = ttk.Frame(self._detail_container)
-        btn_row.pack(fill="x", padx=6, pady=(0, 6))
-        ttk.Button(btn_row, text=tr("clip_tool.btn_reset_clip_crop"),
-                   command=self._on_reset_clip_crop).pack(side="left")
-        ttk.Button(btn_row, text=tr("clip_tool.btn_restore_ai_text"),
-                   command=self._on_restore_ai_text).pack(side="left", padx=(6, 0))
+        self._detail = ClipDetailPanel(detail, self)
 
     # ── Tab 3: Export ────────────────────────────────────────────────────
 
@@ -906,31 +810,6 @@ class ClipToolApp(ToolBase):
             source_srt=srt_path,
         )
 
-    def _push_clip_preview(self, idx: int) -> None:
-        """Push the unified state (source, geometry, crop, timeline) for the
-        given candidate's window into the Clips-tab preview. Single
-        bridge — set_timeline carries subtitle / watermark / hook /
-        outro under one entry."""
-        if self._clip_preview is None:
-            return
-        if not (0 <= idx < len(self._candidate_meta)):
-            return
-        video_path = self.material_model.source_video_path
-        if not os.path.isfile(video_path):
-            return
-        start, end = self._effective_start_end(idx)
-        self._clip_preview.set_source(video_path, start, end)
-        self._clip_preview.set_geometry(self._current_style.output)
-        self._clip_preview.set_crop(self._effective_crop(idx))
-        self._clip_preview.enable_crop_drag(True)
-        aspect, short = self._preview_aspect_short_edge()
-        tl = self._build_preview_timeline(
-            start, end,
-            hook=self._effective_hook(idx),
-            outro=self._effective_outro(idx))
-        self._clip_preview.set_timeline(
-            tl, aspect=aspect, short_edge=short)
-
     def _push_style_preview(self) -> None:
         """Push unified state to the Style-tab preview using sample hook /
         outro from candidate 0 and the full SRT range."""
@@ -1111,7 +990,7 @@ class ClipToolApp(ToolBase):
         if first_sel is None and self._candidate_vars:
             first_sel = 0
         if first_sel is not None:
-            self._show_detail(first_sel)
+            self._detail.show(first_sel)
 
     def _render_candidate_row(self, idx: int, clip: dict,
                                 var: tk.BooleanVar) -> None:
@@ -1150,11 +1029,11 @@ class ClipToolApp(ToolBase):
                      ).pack(fill="x")
         # Mode B: clicking the text area (not the checkbox) switches detail.
         for w in (col, head):
-            w.bind("<Button-1>", lambda _e, i=idx: self._show_detail(i))
+            w.bind("<Button-1>", lambda _e, i=idx: self._detail.show(i))
             for child in w.winfo_children():
                 if isinstance(child, tk.Label):
                     child.bind("<Button-1>",
-                               lambda _e, i=idx: self._show_detail(i))
+                               lambda _e, i=idx: self._detail.show(i))
         self._candidate_rows.append({"row": row})
 
     # ── Selection / header ───────────────────────────────────────────────
@@ -1186,37 +1065,6 @@ class ClipToolApp(ToolBase):
 
     # ── Detail panel ─────────────────────────────────────────────────────
 
-    def _show_detail(self, idx: int) -> None:
-        if not (0 <= idx < len(self._candidate_meta)):
-            return
-        self._detail_idx = idx
-        # Swap empty placeholder for the real container on first load
-        self._detail_empty_label.pack_forget()
-        self._detail_container.pack(fill="both", expand=True)
-        # Push the unified state through the single timeline bridge
-        self._push_clip_preview(idx)
-        # Populate fields
-        start, end = self._effective_start_end(idx)
-        self._detail_vars["start"].set(_format_ts(start))
-        self._detail_vars["end"].set(_format_ts(end))
-        self._detail_vars["duration_score"].set(
-            tr("clip_tool.detail_duration_score_fmt",
-               duration=f"{end - start:.1f}",
-               score=str(self._candidate_meta[idx].get("score", "-"))))
-        self._detail_vars["hook"].set(self._effective_hook(idx))
-        self._detail_vars["outro"].set(self._effective_outro(idx))
-        self._detail_vars["title"].set(self._effective_title(idx))
-        self._detail_vars["tags"].set(" ".join(self._effective_tags(idx)))
-        # SRT cues
-        cues = self._cues_for_window(start, end)
-        cues_widget = self._detail_widgets["cues_text"]
-        cues_widget.configure(state="normal")
-        cues_widget.delete("1.0", "end")
-        for c in cues:
-            cues_widget.insert("end",
-                                 f"[{_format_ts(c['start'])}]  {c['text']}\n")
-        cues_widget.configure(state="disabled")
-
     def _cues_for_window(self, start_sec: float,
                           end_sec: float) -> list[dict]:
         """Return SRT cues overlapping [start_sec, end_sec] in *source-video*
@@ -1243,135 +1091,6 @@ class ClipToolApp(ToolBase):
     def _resolve_source_srt(self) -> Optional[str]:
         return self._hotclips.resolve_source_srt(self._lang_var.get())
 
-    # ── Detail field handlers ────────────────────────────────────────────
-
-    def _on_time_entry_blur(self, key: str) -> None:
-        if self._detail_idx is None:
-            return
-        raw = self._detail_vars[key].get()
-        secs = _parse_ts(raw)
-        ov = self._override(self._detail_idx)
-        ov[f"{key}_sec"] = secs
-        # Reformat in case user typed "1:23"
-        self._detail_vars[key].set(_format_ts(secs))
-        self._refresh_detail_dependents()
-        self._refresh_render_tv()
-        self._save_all()
-
-    def _on_text_entry_blur(self, key: str) -> None:
-        if self._detail_idx is None:
-            return
-        raw = self._detail_vars[key].get()
-        ov = self._override(self._detail_idx)
-        if key == "tags":
-            tags = [t.strip() for t in raw.split() if t.strip()]
-            if tags:
-                ov["hashtags"] = tags
-            else:
-                ov.pop("hashtags", None)
-        else:
-            field = {
-                "hook":  "hook_text",
-                "outro": "outro_text",
-                "title": "title",
-            }[key]
-            if raw.strip():
-                ov[field] = raw
-            else:
-                ov.pop(field, None)
-        self._refresh_render_tv()
-        self._save_all()
-        # Re-push timeline so hook/outro overlay reflects edited text
-        if self._detail_idx is not None:
-            self._push_clip_preview(self._detail_idx)
-
-    def _on_nudge_start(self, delta: float) -> None:
-        if self._detail_idx is None:
-            return
-        start, end = self._effective_start_end(self._detail_idx)
-        new_start = max(0.0, min(end - 0.1, start + delta))
-        ov = self._override(self._detail_idx)
-        ov["start_sec"] = new_start
-        self._detail_vars["start"].set(_format_ts(new_start))
-        self._refresh_detail_dependents()
-        self._refresh_render_tv()
-        self._save_all()
-        # Re-push preview window
-        if self._clip_preview is not None:
-            self._clip_preview.set_clip_range(new_start, end)
-
-    def _on_nudge_end(self, delta: float) -> None:
-        if self._detail_idx is None:
-            return
-        start, end = self._effective_start_end(self._detail_idx)
-        new_end = max(start + 0.1, end + delta)
-        ov = self._override(self._detail_idx)
-        ov["end_sec"] = new_end
-        self._detail_vars["end"].set(_format_ts(new_end))
-        self._refresh_detail_dependents()
-        self._refresh_render_tv()
-        self._save_all()
-        if self._clip_preview is not None:
-            self._clip_preview.set_clip_range(start, new_end)
-
-    def _refresh_detail_dependents(self) -> None:
-        if self._detail_idx is None:
-            return
-        start, end = self._effective_start_end(self._detail_idx)
-        self._detail_vars["duration_score"].set(
-            tr("clip_tool.detail_duration_score_fmt",
-               duration=f"{end - start:.1f}",
-               score=str(self._candidate_meta[self._detail_idx]
-                          .get("score", "-"))))
-        # Refresh SRT cues for new window
-        cues = self._cues_for_window(start, end)
-        cues_widget = self._detail_widgets["cues_text"]
-        cues_widget.configure(state="normal")
-        cues_widget.delete("1.0", "end")
-        for c in cues:
-            cues_widget.insert("end",
-                                 f"[{_format_ts(c['start'])}]  {c['text']}\n")
-        cues_widget.configure(state="disabled")
-        # Subtitle window changed → re-push timeline with the new range
-        if self._detail_idx is not None:
-            self._push_clip_preview(self._detail_idx)
-
-    def _on_clip_crop_changed(self, rect: dict) -> None:
-        """Called from JS when user drags the crop rect in the clip preview."""
-        if self._detail_idx is None:
-            return
-        if not rect or "x" not in rect:
-            return
-        self._override(self._detail_idx)["crop_rect"] = rect
-        self._save_all()
-
-    def _on_reset_clip_crop(self) -> None:
-        if self._detail_idx is None:
-            return
-        ov = self._clips_overrides.get(self._detail_idx)
-        if ov and "crop_rect" in ov:
-            ov.pop("crop_rect", None)
-        # Apply effective (= global or default center) to preview
-        if self._clip_preview is not None:
-            self._clip_preview.set_crop(self._effective_crop(self._detail_idx))
-        self._save_all()
-
-    def _on_restore_ai_text(self) -> None:
-        if self._detail_idx is None:
-            return
-        if not messagebox.askyesno(
-                "VideoCraft",
-                tr("clip_tool.confirm_restore_ai_text"),
-                parent=self.master):
-            return
-        ov = self._clips_overrides.get(self._detail_idx)
-        if ov:
-            for k in ("hook_text", "outro_text", "title", "hashtags"):
-                ov.pop(k, None)
-        self._show_detail(self._detail_idx)
-        self._refresh_render_tv()
-        self._save_all()
-
     # ── Tab 1: global crop handler + apply-to-all ────────────────────────
 
     def _on_style_crop_changed(self, rect: dict) -> None:
@@ -1392,8 +1111,8 @@ class ClipToolApp(ToolBase):
             if not ov:
                 self._clips_overrides.pop(idx, None)
         # Refresh clip detail preview if showing
-        if self._detail_idx is not None and self._clip_preview is not None:
-            self._clip_preview.set_crop(self._effective_crop(self._detail_idx))
+        if self._detail is not None:
+            self._detail.refresh_crop()
         self._save_all()
 
     # ── Style preview refresh ────────────────────────────────────────────
@@ -1414,10 +1133,9 @@ class ClipToolApp(ToolBase):
         self._push_style_preview()
 
     def _push_clip_preview_style(self) -> None:
-        """Re-push to the clip detail preview. Called whenever the user
-        changes anything that affects subtitle / hook / outro layout."""
-        if self._detail_idx is not None:
-            self._push_clip_preview(self._detail_idx)
+        """Re-push to the clip detail preview after a style-side change."""
+        if self._detail is not None:
+            self._detail.push_preview()
 
     # ── Form → style sync ────────────────────────────────────────────────
 

@@ -153,6 +153,31 @@ def test_clip_tool_uses_render_queue():
         f"render_queue.py): {bad}")
 
 
+def test_clip_tool_uses_detail_panel():
+    """Per-clip detail UI lives in ClipDetailPanel. The workbench must
+    construct it and must not redefine the migrated handlers."""
+    with open(CLIP_TOOL_PATH, "r", encoding="utf-8") as f:
+        src = f.read()
+    assert "ClipDetailPanel(" in src, (
+        "clip_tool must construct ClipDetailPanel")
+    forbidden = (
+        "def _build_clip_detail_panel",
+        "def _show_detail",
+        "def _on_time_entry_blur",
+        "def _on_text_entry_blur",
+        "def _on_nudge_start",
+        "def _on_nudge_end",
+        "def _on_clip_crop_changed",
+        "def _on_reset_clip_crop",
+        "def _on_restore_ai_text",
+        "def _refresh_detail_dependents",
+    )
+    bad = [pat for pat in forbidden if pat in src]
+    assert not bad, (
+        f"clip_tool still defines detail-panel methods (move to "
+        f"clip_editor.py): {bad}")
+
+
 def test_clip_subtree_does_not_call_nv_paths():
     """No module under creations/clip/ may reach into _nv_paths."""
     violations: list[str] = []
