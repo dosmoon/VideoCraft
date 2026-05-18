@@ -178,6 +178,47 @@ def test_clip_tool_uses_detail_panel():
         f"clip_editor.py): {bad}")
 
 
+def test_clip_tool_uses_style_panel():
+    """Style tab UI + form vars + preset menus live in StylePanel. The
+    workbench must construct it and must not redefine the migrated
+    methods."""
+    with open(CLIP_TOOL_PATH, "r", encoding="utf-8") as f:
+        src = f.read()
+    assert "StylePanel(" in src, "clip_tool must construct StylePanel"
+    forbidden = (
+        "def _build_tab_style",
+        "def _build_style_form",
+        "def _color_picker",
+        "def _wire_traces",
+        "def _populate_form_from_style",
+        "def _read_form_into_style",
+        "def _on_form_changed",
+        "def _on_preset_applied",
+        "def _on_preset_save_as",
+        "def _on_preset_overwrite",
+        "def _on_preset_delete",
+        "def _on_ho_preset_applied",
+        "def _refresh_preset_combos",
+        "def _browse_watermark",
+        "def _on_style_crop_changed",
+        "def _on_apply_crop_to_all",
+        "def _schedule_style_preview_refresh",
+        "def _push_style_preview",
+    )
+    bad = [pat for pat in forbidden if pat in src]
+    assert not bad, (
+        f"clip_tool still defines style-panel methods (move to "
+        f"style_panel.py): {bad}")
+    # Form Tk vars must not be re-introduced on the workbench
+    var_leaks = ("self._aspect_var", "self._sub1_enabled",
+                  "self._wm_enabled", "self._ho_font",
+                  "self._suspend_traces", "self._style_preview")
+    leaked = [v for v in var_leaks if v in src]
+    assert not leaked, (
+        f"clip_tool still holds style-form state (move to "
+        f"style_panel.py): {leaked}")
+
+
 def test_clip_subtree_does_not_call_nv_paths():
     """No module under creations/clip/ may reach into _nv_paths."""
     violations: list[str] = []
