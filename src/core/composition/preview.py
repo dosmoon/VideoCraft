@@ -397,6 +397,7 @@ class CompositionPreview:
             # convention). target_h is derived from aspect_tuple +
             # short_edge so preview and render compute it identically.
             from .layout import font_size_px
+            from .text_layout import font_line_height_px
             aw, ah = aspect_tuple
             target_h = (short_edge if aw >= ah
                           else int(round(short_edge * ah / aw)))
@@ -407,6 +408,13 @@ class CompositionPreview:
                 meta["hookLines"] = wrap_hook_outro(
                     hook_text, aspect_tuple, font_path, size,
                     short_edge=short_edge)
+                # Forward the font-measured line height as a fraction of
+                # frame height. Canvas multiplies by its own ch (same
+                # convention as fontsize_pct) so per-line stacking
+                # matches drawtext byte-for-byte without a hardcoded
+                # multiplier.
+                meta["hookLineHeightPct"] = (
+                    font_line_height_px(font_path, size) / float(target_h))
             if outro_text and outro_style is not None:
                 font_path = hook_outro_font_path(outro_style.get("font"))
                 size = font_size_px(
@@ -414,6 +422,8 @@ class CompositionPreview:
                 meta["outroLines"] = wrap_hook_outro(
                     outro_text, aspect_tuple, font_path, size,
                     short_edge=short_edge)
+                meta["outroLineHeightPct"] = (
+                    font_line_height_px(font_path, size) / float(target_h))
             self._call_js(
                 f"window.vc.setClipMeta({json.dumps(meta, ensure_ascii=False)})")
 

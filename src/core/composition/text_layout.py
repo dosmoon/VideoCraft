@@ -111,6 +111,30 @@ def target_width_for_aspect(aspect_ratio: tuple[int, int],
     return round(short_edge * aw / ah)
 
 
+def font_line_height_px(font_path: Optional[str], font_size_px: int) -> int:
+    """Per-line vertical advance for stacking drawtext lines without
+    overlap. Reads the font's own `ascender + descender` via PIL
+    (PIL.ImageFont.getmetrics shares its source with FreeType, which
+    is what ffmpeg drawtext uses to size each line's text box).
+
+    Different fonts report different totals — Microsoft YaHei reserves
+    ~1.37·EM for CJK win-metrics headroom, Arial sits near 1.15·EM.
+    Returning the font's actual metric value makes drawtext lines and
+    preview canvas lines stack with the same gap, no per-font tuning.
+
+    Falls back to `round(font_size_px * 1.4)` only when PIL can't load
+    the font (CJK win-metric worst case)."""
+    try:
+        from PIL import ImageFont
+        if font_path:
+            f = ImageFont.truetype(font_path, size=font_size_px)
+            ascent, descent = f.getmetrics()
+            return max(font_size_px, ascent + descent)
+    except Exception:
+        pass
+    return int(round(font_size_px * 1.4))
+
+
 def wrap_hook_outro(text: str, aspect_ratio: tuple[int, int],
                      font_path: Optional[str], font_size_px: int,
                      *, short_edge: int = 1080) -> list[str]:

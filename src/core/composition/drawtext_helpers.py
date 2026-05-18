@@ -46,17 +46,11 @@ def hex_to_drawtext_rgba(hex_color: str, alpha: float) -> str:
     return f"white@{a:.2f}"
 
 
-# Per-line vertical advance as a multiple of fontsize. Must clear the
-# drawtext per-line `text_h` so consecutive lines never overlap.
-# ffmpeg drawtext sizes each line's bounding box from the font's OS/2
-# winAscent + winDescent metric, which for Microsoft YaHei is ~1.37 of
-# the EM (the CJK win-metrics are tall to accommodate diacritics that
-# never appear in CJK glyphs). Anything below 1.37 collides line N+1
-# top into line N's box; 1.4 leaves a small visible gap.
-# Preview canvas uses the SAME constant for parity (its baseline-
-# anchored text wouldn't strictly need this much headroom, but matched
-# spacing is the preview≡render contract).
-_LINE_HEIGHT_PCT = 1.4
+# Line height for stacked drawtext lines is read from the font itself
+# (PIL ImageFont.getmetrics → ascender + descender), not hardcoded as
+# a fraction of fontsize. See text_layout.font_line_height_px.
+# Magic 1.x constants here would only paper over per-font metric
+# differences (Microsoft YaHei: ~1.37·EM, Arial: ~1.15·EM).
 
 
 def drawtext_filter(text: str, *, role: str, style: dict,
@@ -114,7 +108,8 @@ def drawtext_filter(text: str, *, role: str, style: dict,
         enable = f"between(t,{start},{duration})"
 
     fontfile_ff = font_path.replace(":", "\\:")
-    line_h = int(round(size * _LINE_HEIGHT_PCT))
+    from .text_layout import font_line_height_px
+    line_h = font_line_height_px(font_path, size)
     total_h = line_h * len(lines)
     # Vertical anchor of the multi-line block top (matches the y= expr
     # the canvas uses via _hoYForPosition). We replace text_h with a
