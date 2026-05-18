@@ -151,7 +151,7 @@ def test_element_to_watermark_style_roundtrip_text():
     elements = twm_mod._compile(inst, _range(), _ctx())
     # short_edge=1080 → fontsize_pct=40/1080 should yield 40px on the
     # dataclass field (engine-internal int-px representation).
-    wm = _element_to_watermark_style(elements[0], short_edge=1080)
+    wm = _element_to_watermark_style(elements[0], target_h=1080)
     assert isinstance(wm, WatermarkStyle)
     assert wm.type == "text"
     assert wm.enabled is True
@@ -173,7 +173,7 @@ def test_element_to_watermark_style_roundtrip_image(tmp_path):
              "margin_x_pct": 2, "margin_y_pct": 2}
     from creations.news_desk.components import image_watermark as iwm
     elements = iwm._compile(inst, _range(), _ctx())
-    wm = _element_to_watermark_style(elements[0], short_edge=1080)
+    wm = _element_to_watermark_style(elements[0], target_h=1080)
     assert wm.type == "image"
     assert wm.image_path == str(img)
     assert wm.image_scale == 0.25
@@ -373,7 +373,9 @@ def test_preview_and_render_share_same_hook_outro_wrap():
 
     from core.composition.layout import font_size_px
     font_path = hook_outro_font_path(style_dict["font"])
-    size_px = font_size_px(style_dict["size_pct"], 1080)
+    # font_size_px uses target_h (vertical extent). For 9:16 short=1080,
+    # target_h = 1920. Preview computes the same internally.
+    size_px = font_size_px(style_dict["size_pct"], 1920)
     render_lines = wrap_hook_outro(
         long_hook, (9, 16), font_path, size_px, short_edge=1080)
 

@@ -6,17 +6,19 @@ expressed as fractions of the frame:
   - position offsets / paddings: fraction of frame height (target_h),
     e.g. `block_margin_pct = 0.09` = 9% of frame height from the
     anchored edge.
-  - font sizes / stroke widths: fraction of the SHORT edge (smaller of
-    target_w / target_h), e.g. `fontsize_pct = 0.04` = 4% of short
-    edge → ~43 px at 1080p short edge. Short-edge baseline makes text
-    look the same visual size across 9:16, 16:9, etc.
+  - font sizes / stroke widths: ALSO fraction of frame height
+    (target_h), e.g. `fontsize_pct = 0.04` = 4% of frame height
+    → 77 px on a 1920-tall vertical 9:16, 43 px on a 1080-tall 16:9.
+    Same pct = same proportion of the frame's vertical, so text feels
+    "the same size relative to the video" across aspects.
 
 Two rendering engines consume these:
 
-  - ffmpeg + libass on burn (renders subtitles via `subtitles=` filter
-    with `original_size=target_w x target_h` → ASS Fontsize / Outline /
-    MarginV in script units map 1:1 to video pixels).
-  - HTML5 Canvas in preview (`fontPx = pct * canvas_short_edge`).
+  - ffmpeg + libass on burn (subtitle Style has `Fontsize = pct *
+    target_h`; we write an ASS file with explicit PlayResY=target_h
+    so script units map 1:1 to video pixels).
+  - HTML5 Canvas in preview (`fontPx = pct * canvas_ch`, where ch is
+    the canvas height of the cropped region).
 
 Both engines compute pixel quantities by multiplying pct fields by the
 appropriate frame dimension. No empirically-calibrated scale constants
@@ -41,12 +43,13 @@ def libass_margin_v(margin_pct: float, target_h: int) -> int:
     return max(0, int(margin_pct * target_h))
 
 
-def font_size_px(pct: float, short_edge: int) -> int:
-    """Convert "fraction of short edge" → pixel font size on a frame of
-    the given short edge. Used uniformly for libass Fontsize, drawtext
-    fontsize, and canvas-side font px. Short edge keeps text visually
-    consistent across 9:16 and 16:9 aspects."""
-    return max(1, int(round(pct * short_edge)))
+def font_size_px(pct: float, target_h: int) -> int:
+    """Convert "fraction of frame height" → pixel font size on a frame
+    of the given vertical extent. Used uniformly for libass Fontsize,
+    drawtext fontsize, and canvas-side font px. Frame-height baseline
+    means text scales with the video's vertical resolution — bigger
+    absolute pixels on tall vertical clips, smaller on horizontal."""
+    return max(1, int(round(pct * target_h)))
 
 
 def pixel_offset(margin_pct: float, frame_dim_px: int,

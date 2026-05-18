@@ -20,7 +20,8 @@ def _renderer(job, prev_label, ctx):
     snippet = drawtext_filter(
         text, role="hook", style=style_dict,
         duration=ctx.duration, aspect_ratio=ctx.aspect,
-        tmp_files=ctx.tmp_files, short_edge=ctx.short_edge)
+        tmp_files=ctx.tmp_files,
+        short_edge=ctx.short_edge, target_h=ctx.target_h)
     if not snippet:
         return [], prev_label
     out_label = ctx.next_label()

@@ -35,11 +35,9 @@ def build_force_style(*, fontsize_pct: float, color: str, bold: bool,
                        stroke_color: str, stroke_pct: float,
                        position: str,
                        margin_v: int,
-                       short_edge: int,
                        target_h: int) -> str:
     """ASS force_style string for one subtitle track. Pure: converts pct
-    fields to libass pixel values using short_edge / target_h, no dataclass
-    indirection.
+    fields (fractions of target frame height) to libass pixel values.
 
     When `bg_opacity > 0` the track switches to libass opaque-box mode
     (BorderStyle=3) — a translucent rectangle behind each cue, sized to
@@ -47,7 +45,7 @@ def build_force_style(*, fontsize_pct: float, color: str, bold: bool,
     font_name = "Microsoft YaHei" if is_chinese else "Arial"
     parts = [
         f"Fontname={font_name}",
-        f"Fontsize={font_size_px(fontsize_pct, short_edge)}",
+        f"Fontsize={font_size_px(fontsize_pct, target_h)}",
         f"PrimaryColour={hex_color_to_ass(color)}",
     ]
     if bg_opacity > 0:
@@ -66,7 +64,7 @@ def build_force_style(*, fontsize_pct: float, color: str, bold: bool,
         parts += [
             f"OutlineColour={hex_color_to_ass(stroke_color)}",
             "BorderStyle=1",
-            f"Outline={max(0, font_size_px(stroke_pct, short_edge))}",
+            f"Outline={max(0, font_size_px(stroke_pct, target_h))}",
             "Shadow=0",
         ]
     parts += [

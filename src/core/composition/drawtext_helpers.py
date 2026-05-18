@@ -55,8 +55,9 @@ _LINE_HEIGHT_PCT = 1.15
 
 def drawtext_filter(text: str, *, role: str, style: dict,
                       duration: float, aspect_ratio: tuple[int, int],
-                      tmp_files: list[str], short_edge: int = 1080,
-                      target_h: int | None = None) -> str:
+                      tmp_files: list[str],
+                      short_edge: int = 1080,
+                      target_h: int = 1080) -> str:
     """Build a drawtext snippet for hook (first hook_duration_sec) or outro
     (last outro_duration_sec). role ∈ {'hook', 'outro'}.
 
@@ -85,9 +86,10 @@ def drawtext_filter(text: str, *, role: str, style: dict,
         return v
 
     font = _g("font")
-    # Resolve px from short-edge pct (single engine-wide convention).
+    # Resolve px from frame-height pct (engine-wide font sizing
+    # convention — see core/composition/layout.py).
     from .layout import font_size_px
-    size = font_size_px(float(_g("size_pct")), short_edge)
+    size = font_size_px(float(_g("size_pct")), target_h)
     color = _g("color")
     font_path = hook_outro_font_path(font)
     lines = wrap_hook_outro(text, aspect_ratio, font_path, size,
@@ -113,11 +115,11 @@ def drawtext_filter(text: str, *, role: str, style: dict,
     # known total_h so the position formula evaluates server-side.
     top_y_expr = _block_top_y(position, total_h)
 
-    stroke_width = font_size_px(float(_g("stroke_pct")), short_edge)
+    stroke_width = font_size_px(float(_g("stroke_pct")), target_h)
     stroke_color = _g("stroke_color")
     bg_opacity = int(_g("bg_opacity"))
     bg_color = _g("bg_color")
-    box_padding = font_size_px(float(_g("box_padding_pct")), short_edge)
+    box_padding = font_size_px(float(_g("box_padding_pct")), target_h)
 
     snippets: list[str] = []
     for i, line in enumerate(lines):

@@ -393,21 +393,24 @@ class CompositionPreview:
                 meta["hookStyle"] = hook_style
             if outro_style is not None:
                 meta["outroStyle"] = outro_style
-            # font_size_px = pct * short_edge — single engine-wide
-            # convention. wrap_hook_outro takes the px value because
-            # PIL needs concrete pixels for measurement.
+            # Font px = pct * target_h (engine-wide font sizing
+            # convention). target_h is derived from aspect_tuple +
+            # short_edge so preview and render compute it identically.
             from .layout import font_size_px
+            aw, ah = aspect_tuple
+            target_h = (short_edge if aw >= ah
+                          else int(round(short_edge * ah / aw)))
             if hook_text and hook_style is not None:
                 font_path = hook_outro_font_path(hook_style.get("font"))
                 size = font_size_px(
-                    float(hook_style.get("size_pct", 0.05)), short_edge)
+                    float(hook_style.get("size_pct", 0.05)), target_h)
                 meta["hookLines"] = wrap_hook_outro(
                     hook_text, aspect_tuple, font_path, size,
                     short_edge=short_edge)
             if outro_text and outro_style is not None:
                 font_path = hook_outro_font_path(outro_style.get("font"))
                 size = font_size_px(
-                    float(outro_style.get("size_pct", 0.05)), short_edge)
+                    float(outro_style.get("size_pct", 0.05)), target_h)
                 meta["outroLines"] = wrap_hook_outro(
                     outro_text, aspect_tuple, font_path, size,
                     short_edge=short_edge)

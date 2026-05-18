@@ -522,7 +522,6 @@ def _timeline_to_overlay_jobs(
                     stroke_pct=float(style_dict.get("stroke_pct", 0.002)),
                     position=position,
                     margin_v=margin_v,
-                    short_edge=short_edge,
                     target_h=target_h)
                 # Write a complete ASS file with explicit PlayRes so
                 # libass renders font/stroke at the pixel sizes the pct
@@ -548,7 +547,7 @@ def _timeline_to_overlay_jobs(
 
             elif kind in ("text_watermark", "image_watermark"):
                 for e in elements:
-                    wm = _element_to_watermark_style(e, short_edge=short_edge)
+                    wm = _element_to_watermark_style(e, target_h=target_h)
                     jobs.append(_OverlayJob(
                         kind=kind, z_order=z_base + e.z_offset,
                         data={"watermark": wm}))
@@ -658,10 +657,10 @@ def wrap_subtitle_elements(
             pass
 
 
-def _element_to_watermark_style(e, *, short_edge: int) -> "WatermarkStyle":
+def _element_to_watermark_style(e, *, target_h: int) -> "WatermarkStyle":
     """Reconstruct a unified WatermarkStyle dataclass from a text_watermark
     or image_watermark Element. Component schema carries text_fontsize as
-    pct of short edge; we materialize the int-pixel field on the
+    pct of frame height; we materialize the int-pixel field on the
     dataclass here so the text_watermark renderer keeps its old API."""
     from .layout import font_size_px
     style_dict = e.style
@@ -673,7 +672,7 @@ def _element_to_watermark_style(e, *, short_edge: int) -> "WatermarkStyle":
         text=data.get("text", "") if not is_image else "",
         text_fontsize=font_size_px(
             float(style_dict.get("text_fontsize_pct", 0.033)),
-            short_edge),
+            target_h),
         text_color=style_dict.get("text_color", "#FFFFFF"),
         text_opacity=int(style_dict.get("text_opacity", 70)),
         image_path=data.get("image_path", "") if is_image else "",

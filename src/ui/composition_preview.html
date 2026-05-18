@@ -117,13 +117,13 @@ let overlays = [];
 let overlayStyles = {};   // populated from styleState.overlay_styles via setStyle
 
 const SHORT_EDGE = 1080;
-// Pixel conversion for "fraction of short edge" sized fields
-// (fontsize_pct, stroke_pct, box_padding_pct, text_fontsize_pct):
-// canvas_px = pct * canvas_short_edge. Mirrors core/composition/
-// layout.font_size_px on the Python side — keep changes in lockstep.
+// Pixel conversion for size-like fields stored as fractions of frame
+// HEIGHT (fontsize_pct, stroke_pct, box_padding_pct, text_fontsize_pct).
+// canvas_px = pct * canvas_ch. Mirrors core/composition/layout.font_size_px
+// (pct * target_h) — keep these in lockstep.
 function pctToCanvasPx(pct) {
-  const { cw, ch } = cropBox();
-  return Math.max(1, pct * Math.min(cw, ch));
+  const { ch } = cropBox();
+  return Math.max(1, pct * ch);
 }
 
 function targetDims() {

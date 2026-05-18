@@ -177,8 +177,8 @@ def _default_subtitle_style() -> SubtitleStyle:
 
 def _force_style_from_sub_line(line, sub, *, margin_v: int):
     """Helper bridging the legacy SubtitleStyle dataclass to the new
-    flat-pct build_force_style API. Translates int-px fields to short-
-    edge pct using the canonical 1080 baseline."""
+    flat-pct build_force_style API. Translates int-px fields to
+    frame-height pct using the canonical 1080 baseline."""
     return _build_subtitle_force_style(
         fontsize_pct=int(line.fontsize) / 1080.0,
         color=line.color, bold=line.bold,
@@ -189,7 +189,7 @@ def _force_style_from_sub_line(line, sub, *, margin_v: int):
         stroke_pct=int(sub.stroke_width) / 1080.0,
         position=sub.position,
         margin_v=margin_v,
-        short_edge=1080, target_h=H)
+        target_h=H)
 
 
 def test_golden_subtitle_sub1_force_style():
