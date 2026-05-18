@@ -16,14 +16,10 @@ component-based (post-PR-5 follow-up), this file goes away.
 
 from __future__ import annotations
 
-import os
-
-import srt as _srt
-
-from core.composition.compile import ClipRange
-from core.composition.primitives.subtitle_cue import track_margins
-from core.composition.style import CompositionStyle, SubtitleLineStyle, SubtitleStyle
+from core.composition.compile import ClipRange, CompileContext, compile_timeline
+from core.composition.style import CompositionStyle
 from core.composition.timeline import CompositionTimeline, Element, Track
+from creations.clip.components.subtitle import subtitle_adapters_from_style
 
 
 def build_clip_timeline(
@@ -52,27 +48,26 @@ def build_clip_timeline(
     tracks: list[Track] = []
     z = 10
 
-    sub = style.subtitle
-    margin_v1, margin_v2 = track_margins(sub)
-
-    if sub.sub1.enabled and source_srt:
-        elements = _srt_to_subtitle_elements(
-            source_srt, sub.sub1, sub,
-            margin_v=margin_v1, clip_range=clip_range)
-        if elements:
+    # Subtitle tracks (Step 5.1) — translate legacy CompositionStyle into
+    # transient ClipSubtitleSpec adapters and let compile_timeline()
+    # produce them. Re-stamps z_base from the seeder's index-based
+    # assignment so the appended watermark/hook/outro tracks below
+    # keep contiguous z. Drops the wrapping CompositionTimeline,
+    # only need its tracks here.
+    sub_adapters = subtitle_adapters_from_style(
+        style, source_srt=source_srt,
+        source_srt_secondary=source_srt_secondary)
+    if sub_adapters:
+        ctx = CompileContext(
+            project=None, material_model=None,
+            instance_dir="", duration=clip_range.duration_sec)
+        sub_timeline = compile_timeline(sub_adapters, clip_range, ctx)
+        for t in sub_timeline.tracks:
+            if not t.elements:
+                continue
             tracks.append(Track(
-                id="sub1", component_kind="subtitle",
-                z_base=z, enabled=True, elements=elements))
-            z += 10
-
-    if sub.sub2.enabled and source_srt_secondary:
-        elements = _srt_to_subtitle_elements(
-            source_srt_secondary, sub.sub2, sub,
-            margin_v=margin_v2, clip_range=clip_range)
-        if elements:
-            tracks.append(Track(
-                id="sub2", component_kind="subtitle",
-                z_base=z, enabled=True, elements=elements))
+                id=t.id, component_kind="subtitle",
+                z_base=z, enabled=True, elements=t.elements))
             z += 10
 
     if style.watermark.enabled:
@@ -162,56 +157,3 @@ def _hook_outro_style_dict(ho) -> dict:
     }
 
 
-def _srt_to_subtitle_elements(
-    srt_path: str,
-    line: SubtitleLineStyle,
-    subtitle_style: SubtitleStyle,
-    *,
-    margin_v: int,
-    clip_range: ClipRange,
-) -> list[Element]:
-    """Read SRT, slice to [clip_range.start, end], rebase to 0, emit one
-    subtitle_cue Element per surviving cue. All elements share one
-    style dict carrying everything force_style needs at render time
-    (incl. pre-computed margin_v for dual-track layouts)."""
-    if not srt_path or not os.path.isfile(srt_path):
-        return []
-    try:
-        with open(srt_path, "r", encoding="utf-8", errors="replace") as f:
-            cues = list(_srt.parse(f.read()))
-    except (OSError, ValueError):
-        return []
-
-    base = float(clip_range.start_sec)
-    eff_end = float(clip_range.end_sec)
-    style_dict = {
-        "fontsize": line.fontsize,
-        "color": line.color,
-        "bold": line.bold,
-        "is_chinese": line.is_chinese,
-        "bg_color": line.bg_color,
-        "bg_opacity": line.bg_opacity,
-        "bg_padding_x_pct": line.bg_padding_x_pct,
-        "stroke_color": subtitle_style.stroke_color,
-        "stroke_width": subtitle_style.stroke_width,
-        "position": subtitle_style.position,
-        "block_margin_pct": subtitle_style.block_margin_pct,
-        "margin_v": margin_v,
-    }
-    elements: list[Element] = []
-    for cue in cues:
-        cs = cue.start.total_seconds()
-        ce = cue.end.total_seconds()
-        if ce <= base or cs >= eff_end:
-            continue
-        new_start = max(base, cs) - base
-        new_end = min(eff_end, ce) - base
-        if new_end <= new_start:
-            continue
-        elements.append(Element(
-            kind="subtitle_cue",
-            start_sec=new_start, end_sec=new_end,
-            style=style_dict,
-            data={"text": cue.content},
-        ))
-    return elements

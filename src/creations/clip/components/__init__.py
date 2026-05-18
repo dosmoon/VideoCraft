@@ -102,3 +102,10 @@ class ClipProjectContext(CompileContext):
     CompileContext at test time.
     """
     clip_overrides: dict = field(default_factory=dict)
+
+
+# ── Side-effect imports — each module calls register() on import ────────────
+# Same convention as news_desk: explicit imports, deterministic order,
+# import-time registration via register(spec).
+
+from . import subtitle  # noqa: E402, F401

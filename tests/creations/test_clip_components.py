@@ -17,9 +17,11 @@ from creations.news_desk import components as nd
 
 # ── Registry isolation ─────────────────────────────────────────────────────
 
-def test_clip_registry_starts_empty():
-    """No specs land in 5.0; population begins in 5.1."""
-    assert cc.REGISTRY == {}
+def test_clip_subtitle_registered():
+    """Step 5.1 — clip_subtitle is the first spec to land."""
+    assert "clip_subtitle" in cc.REGISTRY
+    spec = cc.REGISTRY["clip_subtitle"]
+    assert spec.compile is not None
 
 
 def test_clip_registry_is_separate_from_news_desk():
