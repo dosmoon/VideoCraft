@@ -535,13 +535,15 @@ class ClipToolApp(ToolBase):
 
     def _reload_languages(self) -> None:
         langs = self._hotclips.list_available_langs()
-        self._lang_combo["values"] = langs
+        lang_combo = self._style.lang_combo
+        status_var = self._style.status_var
+        lang_combo["values"] = langs
         if not langs:
-            self._status_var.set(tr("clip_tool.status_no_hotclips"))
-            self._lang_combo.configure(state="disabled")
+            status_var.set(tr("clip_tool.status_no_hotclips"))
+            lang_combo.configure(state="disabled")
             self._render_btn.configure(state="disabled")
             return
-        self._lang_combo.configure(state="readonly")
+        lang_combo.configure(state="readonly")
         self._render_btn.configure(state="normal")
         if self._lang_var.get() not in langs:
             self._lang_var.set(langs[0])
@@ -560,12 +562,12 @@ class ClipToolApp(ToolBase):
             return
         data = self._hotclips.load_hotclips(lang)
         if data is None:
-            self._status_var.set(tr("clip_tool.status_load_failed",
+            self._style.status_var.set(tr("clip_tool.status_load_failed",
                                      error="hotclips source not found"))
             return
         self._hotclips_data = data
         clips = data.get("clips") or []
-        self._status_var.set(tr("clip_tool.status_loaded", n=len(clips)))
+        self._style.status_var.set(tr("clip_tool.status_loaded", n=len(clips)))
 
         # Apply restored selection
         restore = getattr(self, "_pending_selection", None) or set()

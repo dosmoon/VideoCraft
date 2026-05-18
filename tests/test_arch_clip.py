@@ -213,7 +213,8 @@ def test_clip_tool_uses_style_panel():
     # Form Tk vars must not be re-introduced on the workbench
     var_leaks = ("self._aspect_var", "self._sub1_enabled",
                   "self._wm_enabled", "self._ho_font",
-                  "self._suspend_traces", "self._style_preview")
+                  "self._suspend_traces", "self._style_preview",
+                  "self._lang_combo", "self._status_var")
     leaked = [v for v in var_leaks if v in src]
     assert not leaked, (
         f"clip_tool still holds style-form state (move to "
