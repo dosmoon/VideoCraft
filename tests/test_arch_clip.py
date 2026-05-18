@@ -107,12 +107,13 @@ def test_clip_tool_uses_single_timeline_bridge():
 
 
 def test_composition_preview_has_no_legacy_cue_meta_methods():
-    """CompositionPreview must not expose set_cues / set_cues_secondary /
-    set_clip_meta — set_timeline is the single Python entry for these.
-    (set_style is intentionally kept; chapter_editor consumes it for the
-    style-only preview surface.)"""
+    """The two methods that drove clip's old 5-bridge subtitle/clip-meta
+    path are retired — set_timeline is now the single Python entry for
+    those. (set_cues and set_style remain on the class: chapter_editor
+    consumes them for its boundary-reference preview, where preview ≡
+    render parity is not a concern.)"""
     from core.composition.preview import CompositionPreview
-    for name in ("set_cues", "set_cues_secondary", "set_clip_meta"):
+    for name in ("set_cues_secondary", "set_clip_meta"):
         assert not hasattr(CompositionPreview, name), (
             f"CompositionPreview still exposes retired method: {name}")
 

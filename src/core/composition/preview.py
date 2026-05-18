@@ -192,6 +192,20 @@ class CompositionPreview:
         on the JS side (see `setSource` / `setClipRange`)."""
         self._call_js(f"window.vc.seek({float(sec)})")
 
+    def set_cues(self, cues: list[dict]) -> None:
+        """Push the primary subtitle cue list directly to the JS overlay.
+
+        Cue shape: `{start: float, end: float, text: str}`. Used by
+        preview surfaces (e.g. chapter_editor) that show subtitles as a
+        navigation aid rather than as part of a render-parity pipeline.
+
+        For timeline-driven previews (clip / news_desk) prefer
+        `set_timeline(...)` — it carries the same wrap pass libass uses
+        at render time so preview ≡ render holds (ADR-0006 #6).
+        """
+        self._call_js(
+            f"window.vc.setCues({json.dumps(cues, ensure_ascii=False)})")
+
     def set_crop(self, rect: Optional[dict]) -> None:
         """Set the crop rect explicitly. None = recenter at current aspect."""
         payload = "null" if rect is None else json.dumps(rect)
