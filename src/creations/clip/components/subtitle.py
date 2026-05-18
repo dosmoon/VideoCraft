@@ -21,6 +21,8 @@ ClipInstanceConfig.components and this seeder retires.
 from __future__ import annotations
 
 import os
+import tkinter as tk
+from tkinter import ttk
 
 import srt as _srt
 
@@ -28,9 +30,9 @@ from core.composition.compile import ClipRange, CompileContext
 from core.composition.primitives.subtitle_cue import track_margins
 from core.composition.style import CompositionStyle, SubtitleLineStyle, SubtitleStyle
 from core.composition.timeline import Element
-from creations.news_desk.components import ComponentSpec
+from creations.news_desk.components import ComponentSpec, ProjectContext
 
-from . import ComponentDictAdapter, register
+from . import ComponentDictAdapter, add_color_picker, register
 
 
 KIND = "clip_subtitle"
@@ -39,14 +41,18 @@ KIND = "clip_subtitle"
 # ── default_instance ───────────────────────────────────────────────────────
 
 def _default_instance(_duration: float) -> dict:
-    """Used when [+ Add Subtitle] lands in 5.5. Sane mid-range defaults."""
+    """Used by [+ Add Subtitle]. Sane mid-range defaults; first add
+    gets the primary track, subsequent adds slot in as secondary."""
     return {
         "kind": KIND,
         "id": "sub1",
         "name": "subtitle",
         "enabled": True,
-        # Source SRT — host writes this at compile time (Step 5.1) or
-        # the future UI provides a picker (Step 5.5+).
+        # Which language stream the composer wires this track to.
+        # "primary" → resolve_source_srt(lang_var); "secondary" → the
+        # bilingual second track. Default first-add = primary.
+        "track": "primary",
+        # Source SRT — composer fills at compile time based on `track`.
         "srt_path": "",
         # Per-line style
         "fontsize": 24,
@@ -158,6 +164,7 @@ def _line_to_instance(line: SubtitleLineStyle, subtitle_style: SubtitleStyle,
         "id": track_id,
         "name": track_id,
         "enabled": True,
+        "track": "primary" if track_id == "sub1" else "secondary",
         "srt_path": srt_path,
         "fontsize": int(line.fontsize),
         "color": line.color,
@@ -174,6 +181,120 @@ def _line_to_instance(line: SubtitleLineStyle, subtitle_style: SubtitleStyle,
     }
 
 
+# ── property panel ─────────────────────────────────────────────────────────
+
+def _build_property_panel(parent: ttk.Frame, instance: dict,
+                           _ctx: ProjectContext, on_change) -> None:
+    name_v = tk.StringVar(value=instance.get("name", ""))
+    enabled_v = tk.BooleanVar(value=bool(instance.get("enabled", True)))
+    track_v = tk.StringVar(value=instance.get("track", "primary"))
+
+    # Identity row
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="名称", width=10).pack(side="left")
+    ttk.Entry(row, textvariable=name_v).pack(
+        side="left", fill="x", expand=True)
+
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Checkbutton(row, text="启用", variable=enabled_v).pack(side="left")
+    ttk.Label(row, text="轨道").pack(side="left", padx=(12, 4))
+    for label, val in (("主语言", "primary"), ("副语言", "secondary")):
+        ttk.Radiobutton(row, text=label, variable=track_v, value=val
+                        ).pack(side="left", padx=(2, 0))
+
+    # Position
+    ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=6)
+    ttk.Label(parent, text="位置",
+              font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
+
+    pos_v = tk.StringVar(value=instance.get("position", "bottom"))
+    bm_v = tk.IntVar(value=int(
+        float(instance.get("block_margin_pct", 0.09)) * 100))
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="对齐", width=10).pack(side="left")
+    for label, val in (("⬆ 顶部", "top"), ("⬇ 底部", "bottom")):
+        ttk.Radiobutton(row, text=label, variable=pos_v, value=val
+                        ).pack(side="left", padx=(2, 0))
+    ttk.Label(row, text="边距").pack(side="left", padx=(8, 2))
+    ttk.Spinbox(row, from_=0, to=40, width=4, textvariable=bm_v
+                 ).pack(side="left")
+    ttk.Label(row, text="%").pack(side="left")
+
+    # Font
+    ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=6)
+    ttk.Label(parent, text="字体",
+              font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
+
+    fs_v = tk.IntVar(value=int(instance.get("fontsize", 24)))
+    color_v = tk.StringVar(value=instance.get("color", "#FFFFFF"))
+    bold_v = tk.BooleanVar(value=bool(instance.get("bold", False)))
+    cn_v = tk.BooleanVar(value=bool(instance.get("is_chinese", False)))
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="字号", width=10).pack(side="left")
+    ttk.Spinbox(row, from_=10, to=96, width=4, textvariable=fs_v
+                 ).pack(side="left")
+    ttk.Label(row, text="颜色").pack(side="left", padx=(8, 2))
+    add_color_picker(row, color_v)
+    ttk.Checkbutton(row, text="粗体", variable=bold_v
+                     ).pack(side="left", padx=(8, 0))
+    ttk.Checkbutton(row, text="中文字体", variable=cn_v
+                     ).pack(side="left", padx=(8, 0))
+
+    # Stroke
+    sc_v = tk.StringVar(value=instance.get("stroke_color", "#000000"))
+    sw_v = tk.IntVar(value=int(instance.get("stroke_width", 2)))
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="描边", width=10).pack(side="left")
+    add_color_picker(row, sc_v)
+    ttk.Label(row, text="宽度").pack(side="left", padx=(8, 2))
+    ttk.Spinbox(row, from_=0, to=8, width=4, textvariable=sw_v
+                 ).pack(side="left")
+
+    # Backdrop
+    ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=6)
+    ttk.Label(parent, text="背景框",
+              font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
+
+    bg_color_v = tk.StringVar(value=instance.get("bg_color", "#000000"))
+    bg_op_v = tk.IntVar(value=int(instance.get("bg_opacity", 0)))
+    bg_pad_v = tk.IntVar(value=int(
+        float(instance.get("bg_padding_x_pct", 0.0)) * 100))
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="颜色", width=10).pack(side="left")
+    add_color_picker(row, bg_color_v)
+    ttk.Label(row, text="不透明度").pack(side="left", padx=(8, 2))
+    ttk.Spinbox(row, from_=0, to=100, width=4, textvariable=bg_op_v
+                 ).pack(side="left")
+    ttk.Label(row, text="% 横向 padding").pack(side="left", padx=(8, 2))
+    ttk.Spinbox(row, from_=0, to=20, width=4, textvariable=bg_pad_v
+                 ).pack(side="left")
+    ttk.Label(row, text="%").pack(side="left")
+
+    def _commit(*_):
+        instance["name"] = name_v.get()
+        instance["enabled"] = bool(enabled_v.get())
+        instance["track"] = track_v.get() or "primary"
+        instance["position"] = pos_v.get() or "bottom"
+        try:
+            instance["block_margin_pct"] = float(bm_v.get()) / 100.0
+            instance["fontsize"] = int(fs_v.get())
+            instance["stroke_width"] = int(sw_v.get())
+            instance["bg_opacity"] = int(bg_op_v.get())
+            instance["bg_padding_x_pct"] = float(bg_pad_v.get()) / 100.0
+        except (tk.TclError, ValueError):
+            return
+        instance["color"] = color_v.get() or "#FFFFFF"
+        instance["bold"] = bool(bold_v.get())
+        instance["is_chinese"] = bool(cn_v.get())
+        instance["stroke_color"] = sc_v.get() or "#000000"
+        instance["bg_color"] = bg_color_v.get() or "#000000"
+        on_change()
+
+    for v in (name_v, enabled_v, track_v, pos_v, bm_v, fs_v, color_v,
+               bold_v, cn_v, sc_v, sw_v, bg_color_v, bg_op_v, bg_pad_v):
+        v.trace_add("write", _commit)
+
+
 # ── register ───────────────────────────────────────────────────────────────
 
 register(ComponentSpec(
@@ -183,7 +304,6 @@ register(ComponentSpec(
     multi_instance=True,
     default_z=10,
     default_instance=_default_instance,
-    # build_property_panel lands in Step 5.5 with the UI rewrite
-    build_property_panel=None,
+    build_property_panel=_build_property_panel,
     compile=_compile,
 ))

@@ -15,12 +15,18 @@ Step 5.2 — render path only. UI rewrite ships with Step 5.5.
 
 from __future__ import annotations
 
+import tkinter as tk
+from tkinter import filedialog, ttk
+
 from core.composition.compile import ClipRange, CompileContext
 from core.composition.style import CompositionStyle
 from core.composition.timeline import Element
-from creations.news_desk.components import ComponentSpec
+from creations.news_desk.components import ComponentSpec, ProjectContext
 
-from . import ComponentDictAdapter, register
+from . import ComponentDictAdapter, add_color_picker, register
+
+
+_POSITIONS = ["top-left", "top-right", "bottom-left", "bottom-right"]
 
 
 KIND_TEXT = "clip_text_watermark"
@@ -164,6 +170,170 @@ def watermark_adapters_from_style(
     return [ComponentDictAdapter(instance)]
 
 
+# ── property panels ────────────────────────────────────────────────────────
+
+def _build_text_panel(parent: ttk.Frame, instance: dict,
+                       _ctx: ProjectContext, on_change) -> None:
+    name_v = tk.StringVar(value=instance.get("name", ""))
+    enabled_v = tk.BooleanVar(value=bool(instance.get("enabled", True)))
+    text_v = tk.StringVar(value=instance.get("text", ""))
+    fs_v = tk.IntVar(value=int(instance.get("text_fontsize", 36)))
+    color_v = tk.StringVar(value=instance.get("text_color", "#FFFFFF"))
+    op_v = tk.IntVar(value=int(instance.get("text_opacity", 70)))
+    pos_v = tk.StringVar(value=instance.get("position", "top-right"))
+    mx_v = tk.IntVar(value=int(
+        float(instance.get("margin_x_pct", 0.025)) * 100))
+    my_v = tk.IntVar(value=int(
+        float(instance.get("margin_y_pct", 0.025)) * 100))
+
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="名称", width=10).pack(side="left")
+    ttk.Entry(row, textvariable=name_v).pack(
+        side="left", fill="x", expand=True)
+
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Checkbutton(row, text="启用", variable=enabled_v).pack(side="left")
+
+    ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=6)
+    ttk.Label(parent, text="内容",
+              font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
+
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="文本", width=10).pack(side="left")
+    ttk.Entry(row, textvariable=text_v).pack(
+        side="left", fill="x", expand=True)
+
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="字号", width=10).pack(side="left")
+    ttk.Spinbox(row, from_=8, to=96, width=4, textvariable=fs_v
+                 ).pack(side="left")
+    ttk.Label(row, text="颜色").pack(side="left", padx=(8, 2))
+    add_color_picker(row, color_v)
+    ttk.Label(row, text="不透明").pack(side="left", padx=(8, 2))
+    ttk.Spinbox(row, from_=0, to=100, width=4, textvariable=op_v
+                 ).pack(side="left")
+    ttk.Label(row, text="%").pack(side="left")
+
+    ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=6)
+    ttk.Label(parent, text="位置",
+              font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="锚点", width=10).pack(side="left")
+    ttk.Combobox(row, textvariable=pos_v, values=_POSITIONS,
+                  state="readonly", width=14).pack(side="left")
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="X 边距", width=10).pack(side="left")
+    ttk.Spinbox(row, from_=0, to=20, width=4, textvariable=mx_v
+                 ).pack(side="left")
+    ttk.Label(row, text="%  Y 边距").pack(side="left", padx=(2, 2))
+    ttk.Spinbox(row, from_=0, to=20, width=4, textvariable=my_v
+                 ).pack(side="left")
+    ttk.Label(row, text="%").pack(side="left")
+
+    def _commit(*_):
+        instance["name"] = name_v.get()
+        instance["enabled"] = bool(enabled_v.get())
+        instance["text"] = text_v.get()
+        try:
+            instance["text_fontsize"] = int(fs_v.get())
+            instance["text_opacity"] = int(op_v.get())
+            instance["margin_x_pct"] = float(mx_v.get()) / 100.0
+            instance["margin_y_pct"] = float(my_v.get()) / 100.0
+        except (tk.TclError, ValueError):
+            return
+        instance["text_color"] = color_v.get() or "#FFFFFF"
+        instance["position"] = pos_v.get() or "top-right"
+        on_change()
+
+    for v in (name_v, enabled_v, text_v, fs_v, color_v, op_v,
+               pos_v, mx_v, my_v):
+        v.trace_add("write", _commit)
+
+
+def _build_image_panel(parent: ttk.Frame, instance: dict,
+                        _ctx: ProjectContext, on_change) -> None:
+    name_v = tk.StringVar(value=instance.get("name", ""))
+    enabled_v = tk.BooleanVar(value=bool(instance.get("enabled", True)))
+    path_v = tk.StringVar(value=instance.get("image_path", ""))
+    scale_v = tk.IntVar(value=int(
+        float(instance.get("image_scale", 0.15)) * 100))
+    op_v = tk.IntVar(value=int(instance.get("image_opacity", 100)))
+    pos_v = tk.StringVar(value=instance.get("position", "top-right"))
+    mx_v = tk.IntVar(value=int(
+        float(instance.get("margin_x_pct", 0.025)) * 100))
+    my_v = tk.IntVar(value=int(
+        float(instance.get("margin_y_pct", 0.025)) * 100))
+
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="名称", width=10).pack(side="left")
+    ttk.Entry(row, textvariable=name_v).pack(
+        side="left", fill="x", expand=True)
+
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Checkbutton(row, text="启用", variable=enabled_v).pack(side="left")
+
+    ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=6)
+    ttk.Label(parent, text="图片",
+              font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
+
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Entry(row, textvariable=path_v).pack(
+        side="left", fill="x", expand=True)
+
+    def _browse() -> None:
+        p = filedialog.askopenfilename(
+            parent=parent.winfo_toplevel(),
+            filetypes=[("Image", "*.png *.jpg *.jpeg *.bmp"),
+                        ("All", "*.*")])
+        if p:
+            path_v.set(p)
+    ttk.Button(row, text="...", command=_browse, width=3
+                ).pack(side="left", padx=(4, 0))
+
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="缩放", width=10).pack(side="left")
+    ttk.Spinbox(row, from_=1, to=80, width=4, textvariable=scale_v
+                 ).pack(side="left")
+    ttk.Label(row, text="% 不透明").pack(side="left", padx=(8, 2))
+    ttk.Spinbox(row, from_=0, to=100, width=4, textvariable=op_v
+                 ).pack(side="left")
+    ttk.Label(row, text="%").pack(side="left")
+
+    ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=6)
+    ttk.Label(parent, text="位置",
+              font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="锚点", width=10).pack(side="left")
+    ttk.Combobox(row, textvariable=pos_v, values=_POSITIONS,
+                  state="readonly", width=14).pack(side="left")
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="X 边距", width=10).pack(side="left")
+    ttk.Spinbox(row, from_=0, to=20, width=4, textvariable=mx_v
+                 ).pack(side="left")
+    ttk.Label(row, text="%  Y 边距").pack(side="left", padx=(2, 2))
+    ttk.Spinbox(row, from_=0, to=20, width=4, textvariable=my_v
+                 ).pack(side="left")
+    ttk.Label(row, text="%").pack(side="left")
+
+    def _commit(*_):
+        instance["name"] = name_v.get()
+        instance["enabled"] = bool(enabled_v.get())
+        instance["image_path"] = path_v.get()
+        try:
+            instance["image_scale"] = float(scale_v.get()) / 100.0
+            instance["image_opacity"] = int(op_v.get())
+            instance["margin_x_pct"] = float(mx_v.get()) / 100.0
+            instance["margin_y_pct"] = float(my_v.get()) / 100.0
+        except (tk.TclError, ValueError):
+            return
+        instance["position"] = pos_v.get() or "top-right"
+        on_change()
+
+    for v in (name_v, enabled_v, path_v, scale_v, op_v,
+               pos_v, mx_v, my_v):
+        v.trace_add("write", _commit)
+
+
 # ── register ───────────────────────────────────────────────────────────────
 
 register(ComponentSpec(
@@ -173,7 +343,7 @@ register(ComponentSpec(
     multi_instance=True,
     default_z=75,
     default_instance=_default_text_instance,
-    build_property_panel=None,    # lands with 5.5
+    build_property_panel=_build_text_panel,
     compile=_compile_text,
 ))
 
@@ -184,6 +354,6 @@ register(ComponentSpec(
     multi_instance=True,
     default_z=75,
     default_instance=_default_image_instance,
-    build_property_panel=None,    # lands with 5.5
+    build_property_panel=_build_image_panel,
     compile=_compile_image,
 ))

@@ -83,6 +83,31 @@ class ComponentDictAdapter:
         return self._spec.compile(self.instance, clip_range, ctx)
 
 
+# ── Shared property-panel widget helpers ────────────────────────────────────
+# Each spec's build_property_panel uses these to keep the look consistent
+# across components. Re-implementing here (rather than importing from
+# news_desk) keeps clip's components physically independent.
+
+import tkinter as tk
+from tkinter import ttk
+
+
+def add_color_picker(parent, var: tk.StringVar) -> None:
+    """Inline color swatch + entry. Click swatch → tk colorchooser."""
+    from tkinter import colorchooser
+    ttk.Entry(parent, textvariable=var, width=10).pack(side="left")
+    swatch = tk.Label(parent, text="🎨", width=2)
+    swatch.pack(side="left", padx=(2, 0))
+
+    def _pick(_evt=None):
+        _rgb, hexv = colorchooser.askcolor(
+            color=var.get() or "#FFFFFF",
+            parent=parent.winfo_toplevel())
+        if hexv:
+            var.set(hexv.upper())
+    swatch.bind("<Button-1>", _pick)
+
+
 # ── Side-effect imports — each module calls register() on import ────────────
 # Same convention as news_desk: explicit imports, deterministic order,
 # import-time registration via register(spec).

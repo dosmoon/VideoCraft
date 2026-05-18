@@ -18,12 +18,19 @@ time-window math differs ([0, duration] vs [end-duration, end]).
 
 from __future__ import annotations
 
+import tkinter as tk
+from tkinter import ttk
+
 from core.composition.compile import ClipRange, CompileContext
 from core.composition.style import CompositionStyle
 from core.composition.timeline import Element
-from creations.news_desk.components import ComponentSpec
+from creations.news_desk.components import ComponentSpec, ProjectContext
 
-from . import ComponentDictAdapter, register
+from . import ComponentDictAdapter, add_color_picker, register
+
+
+_HOOK_POSITIONS = ["upper-third", "center", "lower-third"]
+_OUTRO_POSITIONS = ["upper-third", "center", "lower-third"]
 
 
 KIND_HOOK = "clip_hook_card"
@@ -204,6 +211,115 @@ def hookoutro_adapters_from_style(
     return adapters
 
 
+# ── property panels (hook + outro share the same shape) ───────────────────
+
+def _build_card_panel(parent: ttk.Frame, instance: dict,
+                       _ctx: ProjectContext, on_change,
+                       *, positions: list[str]) -> None:
+    name_v = tk.StringVar(value=instance.get("name", ""))
+    enabled_v = tk.BooleanVar(value=bool(instance.get("enabled", True)))
+    dur_v = tk.IntVar(value=int(float(instance.get("duration_sec", 5.0))))
+    font_v = tk.StringVar(value=instance.get("font", "Microsoft YaHei"))
+    size_v = tk.IntVar(value=int(instance.get("size", 48)))
+    color_v = tk.StringVar(value=instance.get("color", "#FFFFFF"))
+    bg_color_v = tk.StringVar(value=instance.get("bg_color", "#000000"))
+    bg_op_v = tk.IntVar(value=int(instance.get("bg_opacity", 70)))
+    sc_v = tk.StringVar(value=instance.get("stroke_color", "#000000"))
+    sw_v = tk.IntVar(value=int(instance.get("stroke_width", 3)))
+    pad_v = tk.IntVar(value=int(instance.get("box_padding", 10)))
+    pos_v = tk.StringVar(value=instance.get(
+        "position",
+        "upper-third" if "upper-third" in positions else positions[0]))
+
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="名称", width=10).pack(side="left")
+    ttk.Entry(row, textvariable=name_v).pack(
+        side="left", fill="x", expand=True)
+
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Checkbutton(row, text="启用", variable=enabled_v).pack(side="left")
+    ttk.Label(row, text="时长").pack(side="left", padx=(12, 4))
+    ttk.Spinbox(row, from_=1, to=30, width=4, textvariable=dur_v
+                 ).pack(side="left")
+    ttk.Label(row, text="秒").pack(side="left")
+
+    ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=6)
+    ttk.Label(parent, text="字体",
+              font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
+
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="字体", width=10).pack(side="left")
+    ttk.Entry(row, textvariable=font_v, width=22).pack(side="left")
+    ttk.Label(row, text="字号").pack(side="left", padx=(8, 2))
+    ttk.Spinbox(row, from_=12, to=120, width=4, textvariable=size_v
+                 ).pack(side="left")
+
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="颜色", width=10).pack(side="left")
+    add_color_picker(row, color_v)
+
+    ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=6)
+    ttk.Label(parent, text="描边 / 背景",
+              font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
+
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="描边", width=10).pack(side="left")
+    add_color_picker(row, sc_v)
+    ttk.Label(row, text="宽度").pack(side="left", padx=(8, 2))
+    ttk.Spinbox(row, from_=0, to=8, width=4, textvariable=sw_v
+                 ).pack(side="left")
+
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="背景色", width=10).pack(side="left")
+    add_color_picker(row, bg_color_v)
+    ttk.Label(row, text="不透明").pack(side="left", padx=(8, 2))
+    ttk.Spinbox(row, from_=0, to=100, width=4, textvariable=bg_op_v
+                 ).pack(side="left")
+    ttk.Label(row, text="%  padding").pack(side="left", padx=(8, 2))
+    ttk.Spinbox(row, from_=0, to=30, width=4, textvariable=pad_v
+                 ).pack(side="left")
+
+    ttk.Separator(parent, orient="horizontal").pack(fill="x", pady=6)
+    ttk.Label(parent, text="位置",
+              font=("TkDefaultFont", 9, "bold")).pack(anchor="w")
+    row = ttk.Frame(parent); row.pack(fill="x", pady=2)
+    ttk.Label(row, text="位置", width=10).pack(side="left")
+    ttk.Combobox(row, textvariable=pos_v, values=positions,
+                  state="readonly", width=14).pack(side="left")
+
+    def _commit(*_):
+        instance["name"] = name_v.get()
+        instance["enabled"] = bool(enabled_v.get())
+        try:
+            instance["duration_sec"] = float(dur_v.get())
+            instance["size"] = int(size_v.get())
+            instance["bg_opacity"] = int(bg_op_v.get())
+            instance["stroke_width"] = int(sw_v.get())
+            instance["box_padding"] = int(pad_v.get())
+        except (tk.TclError, ValueError):
+            return
+        instance["font"] = font_v.get() or "Microsoft YaHei"
+        instance["color"] = color_v.get() or "#FFFFFF"
+        instance["bg_color"] = bg_color_v.get() or "#000000"
+        instance["stroke_color"] = sc_v.get() or "#000000"
+        instance["position"] = pos_v.get() or positions[0]
+        on_change()
+
+    for v in (name_v, enabled_v, dur_v, font_v, size_v, color_v,
+               bg_color_v, bg_op_v, sc_v, sw_v, pad_v, pos_v):
+        v.trace_add("write", _commit)
+
+
+def _build_hook_panel(parent, instance, ctx, on_change):
+    _build_card_panel(parent, instance, ctx, on_change,
+                       positions=_HOOK_POSITIONS)
+
+
+def _build_outro_panel(parent, instance, ctx, on_change):
+    _build_card_panel(parent, instance, ctx, on_change,
+                       positions=_OUTRO_POSITIONS)
+
+
 # ── register ───────────────────────────────────────────────────────────────
 
 register(ComponentSpec(
@@ -213,7 +329,7 @@ register(ComponentSpec(
     multi_instance=False,
     default_z=90,
     default_instance=_default_hook_instance,
-    build_property_panel=None,    # lands with 5.5
+    build_property_panel=_build_hook_panel,
     compile=_compile_hook,
 ))
 
@@ -224,6 +340,6 @@ register(ComponentSpec(
     multi_instance=False,
     default_z=90,
     default_instance=_default_outro_instance,
-    build_property_panel=None,    # lands with 5.5
+    build_property_panel=_build_outro_panel,
     compile=_compile_outro,
 ))
