@@ -38,6 +38,9 @@ from core.composition import (
 from core.composition import presets as comp_presets
 from core.composition.fonts import hook_outro_font_path
 from core.composition.preview import CompositionPreview
+from creations.clip.config import (
+    BoundMaterial, ClipInstanceConfig, now_iso,
+)
 from i18n import tr
 
 
@@ -69,24 +72,9 @@ def _format_ts(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:06.3f}"
 
 
-def _load_instance_config(instance_dir: str) -> dict:
-    path = os.path.join(instance_dir, "config.json")
-    if not os.path.isfile(path):
-        return {}
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f) or {}
-    except (OSError, json.JSONDecodeError):
-        return {}
-
-
-def _save_instance_config(instance_dir: str, config: dict) -> None:
-    os.makedirs(instance_dir, exist_ok=True)
-    path = os.path.join(instance_dir, "config.json")
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+def _config_path_for(project, instance_name: str) -> str:
+    return os.path.join(
+        project.creation_instance_dir("clip", instance_name), "config.json")
 
 
 # ── Workbench ──────────────────────────────────────────────────────────────
@@ -107,26 +95,21 @@ class ClipToolApp(ToolBase):
         self._tool_title = tr("clip_tool.tab_title", instance=instance_name)
 
         # Slice Q (ADR-0005): pick or recall the bound material instance.
-        # Persistence lives in this instance's config.json; the picker UI
-        # is invoked only when the field is missing or stale. Step-2 of
-        # the clip refactor will fold these reads/writes into
-        # ClipInstanceConfig — the single owner.
-        from creations import material_binding
-        instance_dir = project.creation_instance_dir("clip", instance_name)
-        cfg = _load_instance_config(instance_dir)
-        bound = cfg.get("bound_material") if isinstance(cfg, dict) else None
-        if (not isinstance(bound, dict)
-                or not bound.get("type") or not bound.get("instance")):
+        # config.json is owned end-to-end by self.config; the picker UI
+        # fires only when bound_material is missing.
+        self._config_path = _config_path_for(project, instance_name)
+        self.config = ClipInstanceConfig.load(self._config_path)
+        if self.config.bound_material is None:
+            from creations import material_binding
             picked = material_binding.show_material_picker(master, project)
             if picked is None:
                 raise RuntimeError("Clip: material binding cancelled.")
             mt, mi = picked
-            cfg["bound_material"] = {"type": mt, "instance": mi}
-            _save_instance_config(instance_dir, cfg)
-            self.material_type, self.material_instance_id = mt, mi
-        else:
-            self.material_type = bound["type"]
-            self.material_instance_id = bound["instance"]
+            self.config.bound_material = BoundMaterial(
+                type_name=mt, instance_name=mi, bound_at=now_iso())
+            self.config.save(self._config_path)
+        self.material_type = self.config.bound_material.type_name
+        self.material_instance_id = self.config.bound_material.instance_name
         self.material_model = NewsVideoModel(project, self.material_instance_id)
 
         # ── Data state ────────────────────────────────────────────────────
@@ -944,57 +927,45 @@ class ClipToolApp(ToolBase):
     # ── Persistence ──────────────────────────────────────────────────────
 
     def _restore_persisted_state(self) -> None:
-        cfg = _load_instance_config(self._instance_dir())
-        if not cfg:
-            return
-        lang = cfg.get("source_subtitle")
-        if lang:
-            self._lang_var.set(lang)
-        name = cfg.get("preset_name")
-        if name:
-            style = comp_presets.get_project_preset(self._project_store, name)
+        cfg = self.config
+        if cfg.source_subtitle:
+            self._lang_var.set(cfg.source_subtitle)
+        if cfg.preset_name:
+            style = comp_presets.get_project_preset(
+                self._project_store, cfg.preset_name)
             if style is not None:
                 self._current_style = style
-                self._preset_name_var.set(name)
-        raw_style = cfg.get("style")
-        if raw_style and isinstance(raw_style, dict):
+                self._preset_name_var.set(cfg.preset_name)
+        if cfg.style is not None:
             try:
-                self._current_style = comp_presets.composition_style_from_dict(raw_style)
+                self._current_style = comp_presets.composition_style_from_dict(
+                    cfg.style)
             except (comp_presets.PresetSchemaError, TypeError, ValueError):
                 pass
-        crop = cfg.get("global_crop_rect")
-        if isinstance(crop, dict):
-            self._global_crop_rect = crop
-        ovs = cfg.get("clips_overrides") or {}
-        if isinstance(ovs, dict):
-            self._clips_overrides = {int(k): v for k, v in ovs.items()
-                                       if isinstance(v, dict)}
-        # Restore rendered list (drop entries whose mp4 no longer exists on disk)
-        rendered = cfg.get("rendered") or []
-        if isinstance(rendered, list):
-            inst = self._instance_dir()
-            self._rendered = [
-                r for r in rendered
-                if isinstance(r, dict) and os.path.isfile(
-                    os.path.join(inst, r.get("file", "")))
-            ]
-        sel = cfg.get("selected_clip_indices") or []
+        if cfg.global_crop_rect is not None:
+            self._global_crop_rect = cfg.global_crop_rect
+        self._clips_overrides = dict(cfg.clips_overrides)
+        # Drop rendered entries whose mp4 no longer exists on disk
+        inst = self._instance_dir()
+        self._rendered = [
+            r for r in cfg.rendered
+            if isinstance(r, dict) and os.path.isfile(
+                os.path.join(inst, r.get("file", "")))
+        ]
         # Selected indices applied after candidates load (deferred to _reload_candidates)
-        self._pending_selection = set(int(i) for i in sel if isinstance(i, int))
+        self._pending_selection = set(cfg.selected_clip_indices)
 
     def _save_all(self) -> None:
-        """Write full config.json from current in-memory state."""
-        sel = [i for i, v in enumerate(self._candidate_vars) if v.get()]
-        cfg = {
-            "source_subtitle": self._lang_var.get(),
-            "selected_clip_indices": sel,
-            "preset_name": self._preset_name_var.get(),
-            "style": asdict(self._current_style),
-            "global_crop_rect": self._global_crop_rect,
-            "clips_overrides": {str(k): v for k, v in self._clips_overrides.items()},
-            "rendered": self._rendered,
-        }
-        _save_instance_config(self._instance_dir(), cfg)
+        """Push live UI state into self.config and persist via the single writer."""
+        self.config.source_subtitle = self._lang_var.get()
+        self.config.selected_clip_indices = [
+            i for i, v in enumerate(self._candidate_vars) if v.get()]
+        self.config.preset_name = self._preset_name_var.get()
+        self.config.style = asdict(self._current_style)
+        self.config.global_crop_rect = self._global_crop_rect
+        self.config.clips_overrides = dict(self._clips_overrides)
+        self.config.rendered = list(self._rendered)
+        self.config.save(self._config_path)
 
     # ── Hotclips snapshot (per-instance immutable source) ────────────────
 

@@ -47,6 +47,52 @@ def test_clip_tool_constructs_material_model():
         "ClipToolApp must construct self.material_model")
 
 
+def test_clip_tool_loads_instance_config():
+    """ClipToolApp.__init__ must wire self.config = ClipInstanceConfig.load(...).
+    All config.json access funnels through this owner."""
+    with open(CLIP_TOOL_PATH, "r", encoding="utf-8") as f:
+        src = f.read()
+    assert "self.config = ClipInstanceConfig.load(" in src, (
+        "ClipToolApp must construct self.config via ClipInstanceConfig.load")
+
+
+def test_clip_tool_has_no_other_config_json_writers():
+    """The only legitimate writer of config.json is self.config.save(...).
+    No raw json.dump targeting 'config.json' may live in clip_tool."""
+    with open(CLIP_TOOL_PATH, "r", encoding="utf-8") as f:
+        src = f.read()
+    # Catch the ad-hoc pattern: a json.dump in the same function that
+    # opens/writes a path ending in config.json.
+    bad_patterns = [
+        r"json\.dump\([^)]*config\.json",     # direct dump path
+        r"def _save_instance_config\b",        # ad-hoc helper resurrected
+        r"def _load_instance_config\b",
+    ]
+    for pat in bad_patterns:
+        assert not re.search(pat, src), (
+            f"clip_tool.py has forbidden config.json writer pattern: {pat}")
+
+
+def test_clip_subtree_has_single_config_writer():
+    """Across creations/clip/, only config.py owns config.json IO.
+    Other modules must not contain `json.dump(...config.json...)`
+    patterns or define _save/_load_instance_config helpers."""
+    violations: list[str] = []
+    for fn in os.listdir(CLIP_DIR):
+        if not fn.endswith(".py") or fn == "config.py" or fn.startswith("__"):
+            continue
+        p = os.path.join(CLIP_DIR, fn)
+        with open(p, "r", encoding="utf-8") as f:
+            src = f.read()
+        if re.search(r"json\.dump\([^)]*config\.json", src):
+            violations.append(f"{fn}: ad-hoc json.dump of config.json")
+        if re.search(r"def _save_instance_config\b|def _load_instance_config\b", src):
+            violations.append(f"{fn}: defines forbidden config IO helper")
+    assert not violations, (
+        f"clip modules must route config.json IO through config.py only: "
+        f"{violations}")
+
+
 def test_clip_subtree_does_not_call_nv_paths():
     """No module under creations/clip/ may reach into _nv_paths."""
     violations: list[str] = []
