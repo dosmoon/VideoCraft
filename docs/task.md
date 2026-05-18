@@ -5,121 +5,65 @@
 
 ---
 
-## ▶ 下次会话主题：clip 重构 Step 5 + 6（组件化 + Style 物理迁移）
+## ▶ 下次会话主题：clip Step 5 dogfood + 修问题
 
-**先读** [[project_clip_refactor_debt]] —— 该记忆是 clip 跟 news_desk 现行标准的偏差清单 + 推荐重构顺序 + 验收标准。Step 1-4 已完成，Step 5-6 还在欠债。
+clip 组件化重构（Step 5）**全 5 步已完成并 push**（`f464d71`..`15a3f5b`）。
+下次启动跑实际 clip 项目，发现问题就修。
 
 ### 一句话
 
-clip 现在已经走 NewsVideoModel + ClipInstanceConfig 单 writer + set_timeline 单桥 + god 模块切成 5 个子模块，**但 hook/outro/subtitle/watermark 还不是 ComponentSpec**——没和 news_desk 的 component 抽象对齐。
+`build_clip_timeline` 已退役 → `composer.compile_for_candidate(config.components, ...)`；
+StylePanel 三栏改造完成（preview + 组件列表 + property panel）；
+`_current_style` 已删，output 字段平铺到 `ClipInstanceConfig`。
 
-### 已完成（本轮会话，2026-05-18）
+### Dogfood 重点观察
 
-7 个 commit，clip_tool 2208 → 1135 行（-49%），新增 5 个子模块：
+1. **新建 clip 项目** → 加 subtitle/hook/outro/watermark → 改属性 → 预览实时反映 → 渲染产出对
+2. **打开老 clip 项目**（config 里有 `style` 字段）→ 自动迁移成 components + output 字段 → 渲染跟迁移前一致
+3. **预设**：save/apply/overwrite/delete 各按一遍 → output 字段能 roundtrip（subtitle/watermark/hook_outro 在预设里只是占位，不参与）
+4. **dual 字幕**：加 2 个 subtitle component（一 primary 一 secondary） → margin_v 自动 stack
+5. **crop 全局**：预览拖框 → 「应用到所有 clip」→ 每个 candidate crop 同步
+6. **跨 tab 切换**：Tab 1 改完去 Tab 2 → 候选编辑器不显示陈旧状态
 
-| Commit | Step | 主题 | clip_tool 行数 |
-|---|---|---|---|
-| `ba76a86` | 1 | 素材访问全走 NewsVideoModel；删 `_nv_paths` 8 处 callsite | 2208 → 2208 |
-| `4f39650` | 2 | `ClipInstanceConfig` dataclass 单 writer（mirror news_desk） | 2208 → 2137 |
-| `6eee4fa` | 3 | preview 走 `set_timeline` 单桥；删 set_cues/set_cues_secondary/set_clip_meta；hook/outro wrap parity 测试 | 2137 → 2117 |
-| `4ed2676` | 4.1 | 拆 `candidates.py` —— `HotclipsRepo` 纯 IO 层 | 2117 → 2137（清完是 2137 但拆后实际 -71） |
-| `5252826` | 4.2 | 拆 `render_queue.py` —— `RenderQueue` 线程封装 | 2137 → 2117 |
-| `148d710` | 4.3 | 拆 `clip_editor.py` —— `ClipDetailPanel` 详情面板 | 2117 → 1835 |
-| `fada901` | 4.4 | 拆 `style_panel.py` —— Tab 1 完整 UI + form vars + preset 菜单 | 1835 → 1135 |
+### 已知欠债（dogfood 后处理）
 
-最终模块布局：
-```
-clip_tool.py      1135  入口 + tabs orchestration + render pipeline + 候选/导出
-style_panel.py     799  Tab 1 全部（StylePanel）
-clip_editor.py     387  Tab 2 详情面板（ClipDetailPanel）
-render_queue.py    139  threading worker（RenderQueue）
-candidates.py      138  hotclips data layer（HotclipsRepo）
-config.py          136  config.json single owner（ClipInstanceConfig）
-```
-
-### Step 5 — Component 化（最大一步）
-
-把 hook/outro/subtitle/watermark 各拆成 `ComponentSpec`，clip UI 改成 component list（参考 news_desk）。
-
-**目标**：clip 跟 news_desk 共享同一个 `ComponentSpec` 注册表机制 + `ProjectContext` 协议，未来 subtitle / text_watermark / image_watermark 可以双方复用。
-
-**重点考量（detail discussions 见 task.md 老主题 1）**：
-- clip 是「一对多」（长视频→N 短视频），news_desk 是「一对一」。组件抽象能否承载？
-- hook/outro 是 1 个组件还是 2 个？hotclips 列表是组件吗？
-- 哪些 news_desk 组件可直接复用？（subtitle / text_watermark / image_watermark 几乎肯定可以）
-
-**预期改动**：
-- `build_clip_timeline` 删——改成 `ComponentDictAdapter` 喂 `compile_timeline()`（同 news_desk）
-- `StylePanel` 改造或拆出 component-aware UI（clip 的 form 跟 news_desk 的 component list 差距大，可能需要保留 form 同时新加 component sidecar）
-- `ClipInstanceConfig` 加 `components: list[dict]` 字段（mirror NewsDeskInstanceConfig）
-
-**最大风险点**：clip 当前用单个 `CompositionStyle` dataclass 驱动 hook/outro/subtitle/watermark；改成 N 个 component dict 后样式系统重排。需要逐组件渐进迁移（subtitle 先迁，watermark 次之，hook+outro 最后）。
-
-### Step 6 — Style 物理迁移（纯关系性整理）
-
-`core/composition/style.py` 的 `CompositionStyle/SubtitleStyle/WatermarkStyle/HookOutroStyle` 搬到 `creations/clip/style.py`。`core/composition/style.py` 只剩 `OutputGeometry`。
-
-clip 是 `CompositionStyle` 的唯一消费者；最近 Step 3 已经让引擎 API 不再依赖它（`drawtext_filter` 吃 dict）。这步是纯文件移动，不改行为。
-
-如果 Step 5 走得动，这步可能在过程中自然完成（组件化后样式 dataclass 也可拆到对应 component 里）。
-
-### 验收（每步重构后）
-
-- 270+ 测试全绿
-- 9 goldens byte-equal
-- 该步对应的架构 grep guard 加上（tests/test_arch_clip.py）
-- preview ≡ render 不变量（ADR-0006 #6）通过 wrap-parity 测试
+- ComponentSpec / ComponentDictAdapter 物理搬到 `core/composition/component_spec.py`（现在 clip 从 news_desk 包 import）
+- `creations/clip/components/{subtitle,watermark,hook_outro}.py` 里 `template_from_style` 是 5.5.c 迁移用的死代码——确认所有老 config 迁移完成后可删
+- 预设 schema 改成 components-based（现在只 roundtrip output 字段；component 模板不进预设）
 
 ### 起点 HEAD
 
-`fada901` —— "clip: extract StylePanel to style_panel.py (refactor step 4.4)"，已 push origin/main。270 测试全绿；9 goldens byte-equal。
-
-### 不在 Step 5/6 范围内
-
-- AI clip 切片逻辑（hotclip 候选生成）
-- 拆 WatermarkStyle / HookOutroStyle 成窄 primitive Style（PR 5 deferred 第 3 项）
-- bilingual_video 阶段二（已规划但跟 clip 平行）
+`15a3f5b` "clip: retire _current_style + flatten output settings (Step 5.5.c)"，已 push origin/main。
+**340 测试全绿；9 goldens byte-equal**。
 
 ---
 
-## 已完成（迁移整轮 + 后续补完，2026-05-17）
+## 已完成（本轮会话，2026-05-18）
 
-### Timeline 迁移（5 PR 全 land）
+### Step 5 全 5 步 + 5.5 三 sub-step（10 个 commit）
 
-- PR 1：timeline IR 脚手架（`c555449`）
-- ADR-0006 立项（`39c4fda`）
-- PR 2：news_desk_overlays.py 解构 + 7 primitive 落地（`66cd2c0`）
-- PR 3：`compile_timeline()` 真实现 + news_desk 4 component compile()（`37b4e71`）
-- PR 4：news_desk → timeline 端到端（`04c11f1`）
-- PR 5：clip → timeline + 老 5 通道删 + 架构 guard（`4dd932b`）
+| Commit | Step | 主题 |
+|---|---|---|
+| `f464d71` | 5.0 | 脚手架：REGISTRY / ComponentSpec / ComponentDictAdapter / config.components |
+| `6007d58` | 5.1 | subtitle 迁 ClipSubtitleSpec（render-first） |
+| `2af7632` | 5.2 | watermark 迁（text + image 两个 spec） |
+| `f30ab9d` | (cleanup) | 删 ClipProjectContext 子类（5.0 多余的脚手架，0 caller） |
+| `70e9c99` | 5.3 | hook + outro 迁（per-candidate text 走模板填充器） |
+| `38dde98` | 5.4 | `timeline_builder.py` 退役 → `composer.compile_for_candidate` |
+| `df5d4a1` | 5.5.a | 5 个 spec 各加 `build_property_panel` |
+| `24b90d1` | 5.5.b | StylePanel 三栏重写 + components 接管 render path |
+| `15a3f5b` | 5.5.c | `_current_style` 退役 + output 字段扁平到 config |
 
-### 迁移后补完（同会话）
+### 5.5 重大设计转折
 
-- 引擎 API 跟 CompositionStyle 解耦（`84ad0b2`）
-- preview≡render 字幕 wrap 分裂修复（`ba9d584`）
-- ADR-0006 加不变量 #6（`949faf3`）
+5.0 给 `ClipProjectContext` 加 `clip_overrides` 字段，5.1/5.2 用 seeder。
+**用户后来质疑**："不就是 N 个 news_desk，用模板生成 N 个数据结构再渲染？"
+→ 完全正确。`clip_overrides` 是过度设计，删了。`spec.compile` 现在严格 `(instance, range, ctx) → Elements`，per-candidate 数据通过 `composer.expand_for_candidate()` 一次性填进 instance dict——纯函数式模板展开。
+→ **引擎层 `src/core/` 全程零修改**，news_desk 零修改，统一性保持。
 
----
+### Crop bug 修复（Step 5 前）
 
-## 老主题（已被 timeline 设计取代，仅留作上下文）
-
-下面这些是 2026-05-17 上半段的待办，**已经在 timeline 设计 + 本轮 clip 重构中被消解或部分覆盖**：
-
-### 主线 1 — 验证 news_desk 抽象组件逻辑在 clip 模块的可用度
-
-**部分进入 Step 5**。已知 clip 是非组件化对照组，需要做 component 化判定。
-
-调研要点（保留供 Step 5 参考）：
-- clip 的核心语义是"长视频 → N 段短视频"，跟 news_desk 的"一对一带 overlay"不同。组件抽象能否承载"多输出"形态？
-- clip 现有元素（hook / outro / subtitle 主副 / watermark / hotclip 候选列表）拆成组件后是什么形状？
-  - hook_outro 应该是一个组件（一对开/收文案）还是两个（hook 组件 + outro 组件）？
-  - hotclips 候选列表是组件吗？还是更高一层的"切片任务集合"？
-- ProjectContext 在 clip 场景下需要哪些字段？多输出场景下"instance_dir"语义如何变？
-- 哪些 news_desk 组件可以直接复用到 clip？（subtitle / text_watermark / image_watermark 几乎肯定可以）
-
-### 主线 2/3 — composition 引擎边界 / 组件归属
-
-**仍未处理**。`core/composition/news_desk_overlays.py` + Chapter/LowerThird/TopicStrip 类还挂在 core 里，是已知 wart。Step 5 之后或独立 ADR 处理。
+- `03eba1f` — `_global_crop_rect` fallback 语义拍扁；Tab 1 staging 不入 config；loadedmetadata race 修
 
 ---
 
@@ -133,3 +77,4 @@ clip 是 `CompositionStyle` 的唯一消费者；最近 Step 3 已经让引擎 A
 - 创作插件访问素材数据**必须**经 Material Model（[[feedback_material_via_model_only]]）
 - 每个创作的 config.json **必须**有单一内存所有者（[[project_creation_config_owner]]）
 - pre-alpha 阶段，命名/迁移不要套"用户习惯/保守方案"（[[feedback_pre_alpha_no_legacy]]）
+- **per-candidate 数据走模板展开，不走 ctx 隐藏通道**（5.5 教训：spec.compile 永远 `(instance, range, ctx) → Elements`，clip-specific orchestration 在 composer 层）
