@@ -357,6 +357,13 @@ class NewsDeskApp(ToolBase):
                                self._run_import(s, src)
                            ).pack(fill="x", padx=8, pady=2)
 
+        # Install the WebView2 focus-grab shim on every editable widget
+        # in the spec-built panel. Without this, clicking an Entry/Text
+        # after the preview's WebView2 child has had focus leaves Win32
+        # keyboard focus stuck in the WebView and keystrokes go nowhere.
+        from ui.web_preview import attach_focus_grab_fix
+        attach_focus_grab_fix(self._props_inner)
+
     def _on_panel_changed(self) -> None:
         """Live-edit notification from a property panel. Sync the list
         row + preview + persist. Avoid full list rebuild so user keeps

@@ -40,6 +40,46 @@ user32.AttachThreadInput.argtypes = [wt.DWORD, wt.DWORD, ctypes.c_bool]
 user32.AttachThreadInput.restype = ctypes.c_bool
 kernel32.GetCurrentThreadId.restype = wt.DWORD
 
+# ── Focus-grab workaround helper ───────────────────────────────────────────
+
+# Any Tk Entry / Text / Spinbox sharing a top-level with the embedded
+# WebView2 child needs its <Button-1> shimmed to focus_force() — without
+# it, Win32 keyboard focus stays in the WebView's input thread even
+# after a click into a Tk widget, and keystrokes go nowhere. The
+# AttachThreadInput merge done in _embed() routes input correctly once
+# focus is on the right widget; it cannot itself force the focus shift.
+# Returning None (not "break") preserves Tk's normal click handling for
+# cursor placement / selection.
+
+_FOCUSABLE_CLASS_NAMES = ("Entry", "TEntry", "Text", "Spinbox", "TSpinbox",
+                          "Combobox", "TCombobox")
+
+
+def _force_focus_on_click(event) -> None:
+    try:
+        event.widget.focus_force()
+    except Exception:
+        pass
+
+
+def attach_focus_grab_fix(container: tk.Widget) -> None:
+    """Walk `container`'s widget subtree and install the WebView2 focus
+    shim on every Entry / Text / Spinbox / Combobox descendant.
+
+    Call this after the container's UI has been built. Idempotent on
+    individual widgets — `bind(..., add="+")` chains rather than
+    replaces. New widgets added later are NOT covered; call again or
+    bind manually for those.
+    """
+    def _walk(w: tk.Widget) -> None:
+        cls = w.winfo_class()
+        if cls in _FOCUSABLE_CLASS_NAMES:
+            w.bind("<Button-1>", _force_focus_on_click, add="+")
+        for child in w.winfo_children():
+            _walk(child)
+    _walk(container)
+
+
 GWL_STYLE     = -16
 WS_CAPTION    = 0x00C00000
 WS_THICKFRAME = 0x00040000

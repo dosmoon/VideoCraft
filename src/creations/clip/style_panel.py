@@ -311,6 +311,12 @@ class StylePanel:
             wraplength=420)
         note.pack(fill="x", padx=4, pady=(0, 4))
 
+        # Without this, clicking any Entry/Spinbox after the WebView2
+        # preview has had focus leaves keystrokes stranded in the
+        # WebView's input thread (see ui/web_preview attach_focus_grab_fix).
+        from ui.web_preview import attach_focus_grab_fix
+        attach_focus_grab_fix(parent)
+
         self.schedule_preview_refresh()
 
     def _build_form(self, parent: ttk.Frame) -> None:

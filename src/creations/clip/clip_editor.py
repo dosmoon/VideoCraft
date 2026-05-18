@@ -258,6 +258,12 @@ class ClipDetailPanel:
                    command=self._on_restore_ai_text).pack(
                        side="left", padx=(6, 0))
 
+        # Without this, clicking any Entry/Text after the WebView2
+        # preview has had focus leaves keystrokes stranded in the
+        # WebView's input thread (see ui/web_preview attach_focus_grab_fix).
+        from ui.web_preview import attach_focus_grab_fix
+        attach_focus_grab_fix(parent)
+
     # ── handlers ──────────────────────────────────────────────────────────
 
     def _on_time_entry_blur(self, key: str) -> None:
