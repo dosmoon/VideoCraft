@@ -111,10 +111,14 @@ def drawtext_filter(text: str, *, role: str, style: dict,
     from .text_layout import font_line_height_px, measure_max_line_width_px
     line_h = font_line_height_px(font_path, size)
     total_h = line_h * len(lines)
-    # Vertical anchor of the multi-line block top (matches the y= expr
-    # the canvas uses via _hoYForPosition). We replace text_h with a
-    # known total_h so the position formula evaluates server-side.
-    top_y_expr = _block_top_y(position, total_h)
+    # Two block-top expressions. drawtext exposes the video height as
+    # `h`; drawbox redefines `h` as the drawn-box height and exposes
+    # the video height as `ih` instead. Same goes for width (w / iw).
+    # Mixing them up makes drawbox's centering math evaluate against
+    # the box's own dimensions — `(w - box_w)/2` collapses to zero and
+    # the rectangle anchors at (0, 0).
+    top_y_expr_drawtext = _block_top_y(position, total_h, h_var="h")
+    top_y_expr_drawbox = _block_top_y(position, total_h, h_var="ih")
 
     stroke_width = font_size_px(float(_g("stroke_pct")), target_h)
     stroke_color = _g("stroke_color")
@@ -139,8 +143,8 @@ def drawtext_filter(text: str, *, role: str, style: dict,
         box_y_offset = int(round(0.4 * box_padding))
         box_h = total_h + int(round(1.2 * box_padding))
         snippets.append(
-            f"drawbox=x=(w-{box_w})/2"
-            f":y=({top_y_expr})-{box_y_offset}"
+            f"drawbox=x=(iw-{box_w})/2"
+            f":y=({top_y_expr_drawbox})-{box_y_offset}"
             f":w={box_w}:h={box_h}"
             f":color={bg_color}@{opacity:.2f}:t=fill"
             f":enable='{enable}'")
@@ -163,7 +167,7 @@ def drawtext_filter(text: str, *, role: str, style: dict,
             f"fontcolor={color}",
             f"fontsize={size}",
             "x=(w-text_w)/2",
-            f"y=({top_y_expr})+{i * line_h}",
+            f"y=({top_y_expr_drawtext})+{i * line_h}",
         ]
         if stroke_width > 0:
             parts.append(f"borderw={stroke_width}")
@@ -174,14 +178,16 @@ def drawtext_filter(text: str, *, role: str, style: dict,
     return ",".join(snippets)
 
 
-def _block_top_y(position: str, total_h: int) -> str:
-    """ffmpeg-expression for the top Y of a multi-line drawtext block,
-    given the total wrapped block height in pixels. Mirrors
-    canvas-side _hoYForPosition exactly."""
+def _block_top_y(position: str, total_h: int, *, h_var: str = "h") -> str:
+    """ffmpeg-expression for the top Y of a multi-line text block, given
+    the total wrapped block height in pixels. Mirrors canvas-side
+    _hoYForPosition exactly. `h_var` is the filter-specific identifier
+    for video height — `h` for drawtext, `ih` for drawbox (where `h`
+    means the drawn box's height instead)."""
     return {
-        "top":          "h*0.08",
-        "upper-third":  "h*0.25",
-        "center":       f"(h-{total_h})/2",
-        "lower-third":  f"h*0.65 - {total_h}/2",
-        "bottom":       f"h*0.85 - {total_h}",
-    }.get(position, "h*0.25")
+        "top":          f"{h_var}*0.08",
+        "upper-third":  f"{h_var}*0.25",
+        "center":       f"({h_var}-{total_h})/2",
+        "lower-third":  f"{h_var}*0.65 - {total_h}/2",
+        "bottom":       f"{h_var}*0.85 - {total_h}",
+    }.get(position, f"{h_var}*0.25")
