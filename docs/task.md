@@ -5,65 +5,66 @@
 
 ---
 
-## ▶ 下次会话主题：clip Step 5 dogfood + 修问题
+## ▶ 下次会话主题：composition 引擎自动化测试覆盖
 
-clip 组件化重构（Step 5）**全 5 步已完成并 push**（`f464d71`..`15a3f5b`）。
-下次启动跑实际 clip 项目，发现问题就修。
+clip 第一轮 dogfood 跑完（2026-05-19，8 commit 已 push 至 `b0123be`）。引擎层暴露了一连串契约模糊 + 魔数校准问题，已逐个修掉，但**留下来真正该补的是引擎自身的测试薄弱**——所以下一轮专门做这件事。
 
-### 一句话
+### 三个目标（同等重要）
 
-`build_clip_timeline` 已退役 → `composer.compile_for_candidate(config.components, ...)`；
-StylePanel 三栏改造完成（preview + 组件列表 + property panel）；
-`_current_style` 已删，output 字段平铺到 `ClipInstanceConfig`。
+1. **持续正确性**：当前 332 测试主要覆盖 timeline IR / wrap 单源 / golden 字符串。引擎核心的"pct → px 换算 / drawbox vs drawtext 坐标常量 / 字体度量驱动行高 / cue 时间基准 / Element.style/data 契约"几乎没有单元测试。dogfood 暴露的每一类 bug 都该补对应的 test，回归屏障建起来。
 
-### Dogfood 重点观察
+2. **测试即文档**：写测试的过程强制 **把现在散落在注释/约定里的引擎契约凝固成可执行的断言**。包括：
+   - Element.style = 视觉，Element.data = 内容（约束 hook_outro 不要再把 style 塞 data 里）
+   - pct 字段的分母语义（fontsize_pct / stroke_pct / box_padding_pct → target_h；block_margin_pct → target_h；margin_x/y_pct → target_w/target_h）
+   - drawbox 的 `iw/ih` vs drawtext 的 `w/h` 坐标常量（封一层 wrapper 让 caller 不用记）
+   - cue 时间基准：timeline IR 是 clip-relative，preview JS 需要 -clipStart 后再比较
 
-1. **新建 clip 项目** → 加 subtitle/hook/outro/watermark → 改属性 → 预览实时反映 → 渲染产出对
-2. **打开老 clip 项目**（config 里有 `style` 字段）→ 自动迁移成 components + output 字段 → 渲染跟迁移前一致
-3. **预设**：save/apply/overwrite/delete 各按一遍 → output 字段能 roundtrip（subtitle/watermark/hook_outro 在预设里只是占位，不参与）
-4. **dual 字幕**：加 2 个 subtitle component（一 primary 一 secondary） → margin_v 自动 stack
-5. **crop 全局**：预览拖框 → 「应用到所有 clip」→ 每个 candidate crop 同步
-6. **跨 tab 切换**：Tab 1 改完去 Tab 2 → 候选编辑器不显示陈旧状态
+3. **测试即设计控制**：把"应该有的不变量"用测试钉死（preview 和 render 在同一参数下产生的可对比量必须 byte-equal 或 px-equal），任何回退被自动捕获。
 
-### 已知欠债（dogfood 后处理）
+### 入手顺序建议
 
-- ComponentSpec / ComponentDictAdapter 物理搬到 `core/composition/component_spec.py`（现在 clip 从 news_desk 包 import）
-- `creations/clip/components/{subtitle,watermark,hook_outro}.py` 里 `template_from_style` 是 5.5.c 迁移用的死代码——确认所有老 config 迁移完成后可删
-- 预设 schema 改成 components-based（现在只 roundtrip output 字段；component 模板不进预设）
+1. 把 dogfood 这轮发现的 12 个 bug 各回填一个 reproduction 测试（best regression coverage）
+2. 给 Element 加 `__post_init__` 契约校验 + 对应单元测试
+3. 抽出 `PositionedRect.to_drawtext()` / `to_drawbox()` 两个方法封装坐标常量差异 + 测试
+4. 给 `core/composition/layout.font_size_px` / `font_line_height_px` 写明确的单元测试（多字体多 size 覆盖）
+
+### 引擎契约扫雷清单（dogfood 出的）
+
+详见 [[project_composition_core]] 更新后的"契约总览"段落。
 
 ### 起点 HEAD
 
-`15a3f5b` "clip: retire _current_style + flatten output settings (Step 5.5.c)"，已 push origin/main。
-**340 测试全绿；9 goldens byte-equal**。
+`b0123be` "composition: drawbox uses iw/ih (not w/h) for video dims"，已 push origin/main。
+**332 测试全绿；7 个 goldens（含 hook/outro/subtitle/watermark/news_desk_ass 4 类）**。
 
 ---
 
-## 已完成（本轮会话，2026-05-18）
+## 已完成（本轮会话，2026-05-19）
 
-### Step 5 全 5 步 + 5.5 三 sub-step（10 个 commit）
+### clip dogfood 第一轮 → 8 commit pushed
 
-| Commit | Step | 主题 |
+| Commit | 主题 | 类型 |
 |---|---|---|
-| `f464d71` | 5.0 | 脚手架：REGISTRY / ComponentSpec / ComponentDictAdapter / config.components |
-| `6007d58` | 5.1 | subtitle 迁 ClipSubtitleSpec（render-first） |
-| `2af7632` | 5.2 | watermark 迁（text + image 两个 spec） |
-| `f30ab9d` | (cleanup) | 删 ClipProjectContext 子类（5.0 多余的脚手架，0 caller） |
-| `70e9c99` | 5.3 | hook + outro 迁（per-candidate text 走模板填充器） |
-| `38dde98` | 5.4 | `timeline_builder.py` 退役 → `composer.compile_for_candidate` |
-| `df5d4a1` | 5.5.a | 5 个 spec 各加 `build_property_panel` |
-| `24b90d1` | 5.5.b | StylePanel 三栏重写 + components 接管 render path |
-| `15a3f5b` | 5.5.c | `_current_style` 退役 + output 字段扁平到 config |
+| `5de49e5` | short-edge pct 归一化（首版） + clip dogfood fixes（_current_style / subtitle "language" / hook bg / dual sub stack） | engine + clip |
+| `07e0ffa` | 显式 ASS PlayRes + clip-relative cue offset in preview | engine bug |
+| `9dce838` | libass 指 `C:/Windows/Fonts` 找系统字体 | engine 漏配 |
+| `c8ebbc0` | 字号 pct 分母从 short_edge 改回 target_h（垂直量） | engine 设计错 |
+| `eed2c10` | 行间距 1.15 → 1.4 通过 CJK win-metrics（中间步） | 临时凑合 |
+| `0a9b03e` | 行间距改用 PIL 测的字体 ascender+descender，无魔数 | engine 治本 |
+| `86469f2` | hook/outro 统一 drawbox 背景（PIL 测最宽行），不再各画各 box | engine 封装补 |
+| `b0123be` | drawbox 用 `iw/ih`、drawtext 用 `w/h`（filter 常量约定不同） | engine API 使用错 |
 
-### 5.5 重大设计转折
+### dogfood 出的 12 个 bug 三类归属
 
-5.0 给 `ClipProjectContext` 加 `clip_overrides` 字段，5.1/5.2 用 seeder。
-**用户后来质疑**："不就是 N 个 news_desk，用模板生成 N 个数据结构再渲染？"
-→ 完全正确。`clip_overrides` 是过度设计，删了。`spec.compile` 现在严格 `(instance, range, ctx) → Elements`，per-candidate 数据通过 `composer.expand_for_candidate()` 一次性填进 instance dict——纯函数式模板展开。
-→ **引擎层 `src/core/` 全程零修改**，news_desk 零修改，统一性保持。
+- **纯 clip 责任（2）**：`_current_style` 遗留、subtitle `track:primary/secondary` 过度设计
+- **引擎封装/契约缺失（6）**：Element 约定未强校验、cue 时间基准未文档化、stacking 共享未指定、drawtext 多行能力暴露不对称、bg 抽象缺失、字体解析双轨
+- **引擎自身有错（4）**：`ASS_RENDER_SCALE=4.7` 魔数、PlayResY 默认假设、字号分母选错、行高魔数
 
-### Crop bug 修复（Step 5 前）
+### Step 5 重构欠债（继续挂着）
 
-- `03eba1f` — `_global_crop_rect` fallback 语义拍扁；Tab 1 staging 不入 config；loadedmetadata race 修
+- ComponentSpec / ComponentDictAdapter 物理搬到 `core/composition/component_spec.py`
+- `template_from_style` 三处 legacy migration 等老 config 全清空后删
+- 预设 schema 改成 components-based（现在只 roundtrip output 字段）
 
 ---
 
@@ -77,4 +78,6 @@ StylePanel 三栏改造完成（preview + 组件列表 + property panel）；
 - 创作插件访问素材数据**必须**经 Material Model（[[feedback_material_via_model_only]]）
 - 每个创作的 config.json **必须**有单一内存所有者（[[project_creation_config_owner]]）
 - pre-alpha 阶段，命名/迁移不要套"用户习惯/保守方案"（[[feedback_pre_alpha_no_legacy]]）
-- **per-candidate 数据走模板展开，不走 ctx 隐藏通道**（5.5 教训：spec.compile 永远 `(instance, range, ctx) → Elements`，clip-specific orchestration 在 composer 层）
+- **per-candidate 数据走模板展开，不走 ctx 隐藏通道**（5.5 教训）
+- **所有视觉尺寸量归一化为 `pct of target_h`**（dogfood 教训：fontsize_pct / stroke_pct / box_padding_pct，详见 [[project_composition_core]]）
+- **drawbox/drawtext 的 ffmpeg 坐标常量约定不同**（dogfood 教训：drawbox 用 `iw/ih`、drawtext 用 `w/h`；未来用 wrapper 封掉）
