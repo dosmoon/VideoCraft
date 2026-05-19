@@ -108,7 +108,7 @@ def drawtext_filter(text: str, *, role: str, style: dict,
         enable = f"between(t,{start},{duration})"
 
     fontfile_ff = font_path.replace(":", "\\:")
-    from .text_layout import font_line_height_px
+    from .text_layout import font_line_height_px, measure_max_line_width_px
     line_h = font_line_height_px(font_path, size)
     total_h = line_h * len(lines)
     # Vertical anchor of the multi-line block top (matches the y= expr
@@ -123,6 +123,28 @@ def drawtext_filter(text: str, *, role: str, style: dict,
     box_padding = font_size_px(float(_g("box_padding_pct")), target_h)
 
     snippets: list[str] = []
+
+    # Background: one unified drawbox spanning the widest line + padding,
+    # so all lines share a single uniform rectangle (matching the canvas
+    # `widestLine + 2*padding` block). Per-line `box=1` on drawtext
+    # would draw N independent boxes sized to each line's text_w —
+    # short lines get narrow boxes, the preview ≢ render divergence
+    # the user hit.
+    if bg_opacity > 0:
+        widest_px = measure_max_line_width_px(lines, font_path, size)
+        opacity = max(0.0, min(1.0, bg_opacity / 100.0))
+        box_w = widest_px + 2 * box_padding
+        # Match canvas's vertical extents (boxY = topY - 0.4*padding,
+        # boxH = totalTextHeight + 1.2*padding).
+        box_y_offset = int(round(0.4 * box_padding))
+        box_h = total_h + int(round(1.2 * box_padding))
+        snippets.append(
+            f"drawbox=x=(w-{box_w})/2"
+            f":y=({top_y_expr})-{box_y_offset}"
+            f":w={box_w}:h={box_h}"
+            f":color={bg_color}@{opacity:.2f}:t=fill"
+            f":enable='{enable}'")
+
     for i, line in enumerate(lines):
         tmp_path = os.path.join(
             tempfile.gettempdir(),
@@ -146,11 +168,6 @@ def drawtext_filter(text: str, *, role: str, style: dict,
         if stroke_width > 0:
             parts.append(f"borderw={stroke_width}")
             parts.append(f"bordercolor={stroke_color}")
-        if bg_opacity > 0:
-            parts.append("box=1")
-            opacity = max(0.0, min(1.0, bg_opacity / 100.0))
-            parts.append(f"boxcolor={bg_color}@{opacity:.2f}")
-            parts.append(f"boxborderw={box_padding}")
         parts.append(f"enable='{enable}'")
         snippets.append(":".join(parts))
 

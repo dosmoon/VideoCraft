@@ -111,6 +111,29 @@ def target_width_for_aspect(aspect_ratio: tuple[int, int],
     return round(short_edge * aw / ah)
 
 
+def measure_max_line_width_px(lines: list[str],
+                                 font_path: Optional[str],
+                                 font_size_px: int) -> int:
+    """Widest of the rendered line widths in pixels, measured with PIL
+    on the same TTF ffmpeg drawtext loads. Used to size a single
+    background drawbox that spans all wrapped lines uniformly — same
+    semantics as canvas `widestLine = max(measureText(l)...)`."""
+    if not lines:
+        return 0
+    try:
+        from PIL import ImageFont
+        if font_path:
+            f = ImageFont.truetype(font_path, size=font_size_px)
+            widths = [f.getlength(line) for line in lines]
+            return int(round(max(widths))) if widths else 0
+    except Exception:
+        pass
+    # Heuristic fallback (CJK ≈ 1·EM/char, Latin ≈ 0.55·EM/char).
+    def _cost(s: str) -> float:
+        return sum(1.0 if ord(c) > 0x2E80 else 0.55 for c in s)
+    return int(round(max(_cost(l) for l in lines) * font_size_px))
+
+
 def font_line_height_px(font_path: Optional[str], font_size_px: int) -> int:
     """Per-line vertical advance for stacking drawtext lines without
     overlap. Reads the font's own `ascender + descender` via PIL
