@@ -198,3 +198,39 @@ def test_wrap_subtitle_elements_keeps_cues_within_frame_width():
             f"{len(c.content)} chars × {cn_glyph_px:.0f}px ≈ "
             f"{line_px:.0f}px > frame {safe_frame_width:.0f}px "
             f"(text={c.content!r})")
+
+
+def test_wrap_autodetects_cjk_even_when_is_chinese_flag_unchecked():
+    """Real-user dogfood: 9:16 portrait, Chinese SRT, but the user
+    forgot to tick the `is_chinese` checkbox in the property panel.
+
+    Pre-fix: max_chars was budgeted against half-width Latin glyphs,
+    so a 20-char Chinese cue fit the (wrong) budget, never got split,
+    and libass burned it at full Chinese width — overflowing both
+    sides of the frame in the candidate preview and the exported mp4.
+
+    Post-fix: wrap auto-detects CJK from the actual cue content. The
+    `is_chinese` style flag remains for libass font selection only.
+    """
+    from core.composition.render import wrap_subtitle_elements
+    from core.composition.timeline import Element
+
+    real_cue = "伊朗的水问题已进入最后阶段。我们拭目以待"
+    elements = [
+        Element(
+            kind="subtitle_cue", start_sec=0.0, end_sec=5.0,
+            style={
+                "fontsize_pct": 0.05,
+                "is_chinese": False,    # ← user forgot to check
+                "color": "#FFFFFF", "position": "bottom",
+                "block_margin_pct": 0.09,
+            },
+            data={"text": real_cue},
+        ),
+    ]
+    wrapped = wrap_subtitle_elements(
+        elements, aspect_str="9:16", short_edge=1080)
+    assert len(wrapped) >= 2, (
+        f"CJK cue must be auto-detected and wrapped even when "
+        f"is_chinese=False; got {len(wrapped)} cue(s): "
+        f"{[c.content for c in wrapped]}")

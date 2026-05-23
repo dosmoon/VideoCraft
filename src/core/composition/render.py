@@ -634,12 +634,6 @@ def wrap_subtitle_elements(
     from .layout import font_size_px
     fontsize_px = font_size_px(
         float(style_dict.get("fontsize_pct", 0.05)), target_h)
-    max_chars = compute_subtitle_max_chars(
-        aspect_str,
-        fontsize_px,
-        bool(style_dict.get("is_chinese", False)),
-        short_edge=short_edge,
-    )
     raw_cues = [
         _srt.Subtitle(
             index=i + 1,
@@ -652,6 +646,20 @@ def wrap_subtitle_elements(
     ]
     if not raw_cues:
         return []
+    # Auto-detect CJK from actual cue content for wrap budget. The
+    # is_chinese flag on style_dict drives libass font selection only —
+    # using it for wrap budgets means a user forgetting to tick the
+    # checkbox silently doubles the per-char width and leaves long lines
+    # unwrapped (the cue text overflows the frame even though libass
+    # has WrapStyle:2 = no auto-wrap, so it must be pre-split here).
+    sample_text = "\n".join(c.content for c in raw_cues)
+    has_cjk = any("一" <= ch <= "鿿" for ch in sample_text)
+    max_chars = compute_subtitle_max_chars(
+        aspect_str,
+        fontsize_px,
+        has_cjk,
+        short_edge=short_edge,
+    )
     # process_srt_split takes a path (legacy signature) — pipe through
     # a transient tmp file. The wrap output is what we return.
     raw_tmp = os.path.join(
@@ -661,8 +669,7 @@ def wrap_subtitle_elements(
         with open(raw_tmp, "w", encoding="utf-8") as f:
             f.write(_srt.compose(raw_cues))
         return list(process_srt_split(
-            raw_tmp, max_chars,
-            is_chinese=bool(style_dict.get("is_chinese", False))))
+            raw_tmp, max_chars, is_chinese=has_cjk))
     except Exception:
         return []
     finally:
