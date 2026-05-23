@@ -140,3 +140,61 @@ def test_template_propagates_line_and_shared_style():
     assert out[0]["color"] == "#00FF00"
     assert out[0]["position"] == "top"
     assert out[0]["stroke_color"] == "#123456"
+
+
+# ── Wrap-budget regression (clip dogfood round 2) ─────────────────────────
+
+def test_wrap_subtitle_elements_keeps_cues_within_frame_width():
+    """Clip dogfood round 2 (2026-05-23): subtitles overflowed both
+    sides of the burned mp4.
+
+    Two compounding engine bugs caused it:
+      (a) wrap_subtitle_elements read `style["fontsize"]` (default 24)
+          but clip's component schema writes `fontsize_pct`, so the
+          budget was computed against a phantom small font;
+      (b) compute_subtitle_max_chars still applied the legacy
+          ass_render_scale=4.7 magic, stale since the engine started
+          writing explicit ASS PlayResX/Y matching the target frame.
+
+    Pre-fix: wrap split happened but cues were sized for a wrong fontsize
+    assumption — each cue still rendered wider than the frame.
+    Post-fix: cue width at real libass render size < frame width.
+    """
+    from core.composition.render import wrap_subtitle_elements
+    from core.composition.timeline import Element
+
+    long_cn = "这是一行非常非常长的中文字幕用来触发自动换行测试看看是否能被正确切分成多个 cue"
+    fontsize_pct = 0.08
+    aspect_str = "9:16"
+    short_edge = 1080
+    # 9:16 portrait: target_h = 1920, target_w (frame width) = 1080.
+    target_h = 1920
+    frame_width = short_edge
+
+    elements = [
+        Element(
+            kind="subtitle_cue", start_sec=0.0, end_sec=5.0,
+            style={"fontsize_pct": fontsize_pct, "is_chinese": True,
+                    "color": "#FFFFFF", "position": "bottom",
+                    "block_margin_pct": 0.09},
+            data={"text": long_cn},
+        ),
+    ]
+    wrapped = wrap_subtitle_elements(
+        elements, aspect_str=aspect_str, short_edge=short_edge)
+    assert wrapped, "wrap must keep at least one cue"
+
+    # Real libass render size — what the burned mp4 actually paints.
+    # CN glyph is roughly 0.85x fontsize after typical font metrics
+    # (matches PIL.ImageFont measurement on msyh.ttc).
+    real_fontsize_px = int(fontsize_pct * target_h)
+    cn_glyph_px = real_fontsize_px * 0.85
+    safe_frame_width = frame_width * 0.95
+
+    for c in wrapped:
+        line_px = len(c.content) * cn_glyph_px
+        assert line_px < safe_frame_width, (
+            f"cue {c.index} would overflow at real render size: "
+            f"{len(c.content)} chars × {cn_glyph_px:.0f}px ≈ "
+            f"{line_px:.0f}px > frame {safe_frame_width:.0f}px "
+            f"(text={c.content!r})")

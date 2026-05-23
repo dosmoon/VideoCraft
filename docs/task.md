@@ -9,6 +9,16 @@
 
 clip 第一轮 dogfood 跑完（2026-05-19，8 commit 已 push 至 `b0123be`）。引擎层暴露了一连串契约模糊 + 魔数校准问题，已逐个修掉，但**留下来真正该补的是引擎自身的测试薄弱**——所以下一轮专门做这件事。
 
+### 2026-05-23 dogfood 第二轮 patch（已修但未 commit）
+
+用户报"字幕两边超出导出 mp4"。复合 3 个引擎 bug：
+
+1. `render.wrap_subtitle_elements` 取 `style["fontsize"]`（默认 24），但 component schema 写 `fontsize_pct` → 字号假命中默认。
+2. `style.compute_subtitle_max_chars` 仍带 `ass_render_scale = 4.7` 魔数（commit `07e0ffa` 已显式 PlayRes 后该魔数失效）。
+3. `compute_subtitle_max_chars` 末尾 `max(8, …)` 硬下限——old 4.7 路径下保护性的下限，新路径下反而把真正想要 6 chars/line 的 case 抬到 8，仍溢出。
+
+修法：`render.py` 读 `fontsize_pct` 并按 target_h 转 px；`style.py` 删 4.7，下限改 2。回归测试见 `tests/creations/test_clip_subtitle.py::test_wrap_subtitle_elements_keeps_cues_within_frame_width`（318 → 333 测）。这条正好就是 engine_test_initiative 第 1 项"12 bug 各回填一个测试"开了第一个口。
+
 ### 三个目标（同等重要）
 
 1. **持续正确性**：当前 332 测试主要覆盖 timeline IR / wrap 单源 / golden 字符串。引擎核心的"pct → px 换算 / drawbox vs drawtext 坐标常量 / 字体度量驱动行高 / cue 时间基准 / Element.style/data 契约"几乎没有单元测试。dogfood 暴露的每一类 bug 都该补对应的 test，回归屏障建起来。

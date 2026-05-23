@@ -619,9 +619,24 @@ def wrap_subtitle_elements(
     if not elements:
         return []
     style_dict = elements[0].style
+    # Derive target_h from aspect + short_edge (matches the symmetric
+    # video_width calc inside compute_subtitle_max_chars).
+    try:
+        w_str, h_str = aspect_str.split(":", 1)
+        wr, hr = max(1, int(w_str)), max(1, int(h_str))
+    except (ValueError, AttributeError):
+        wr, hr = 9, 16
+    target_h = int(short_edge * hr / wr) if wr < hr else short_edge
+    # Component schema carries fontsize as a fraction of target frame
+    # height (pct-of-target_h convention, see core/composition/layout.py).
+    # Convert to pixels for compute_subtitle_max_chars, which needs the
+    # real libass render size to budget glyphs against frame width.
+    from .layout import font_size_px
+    fontsize_px = font_size_px(
+        float(style_dict.get("fontsize_pct", 0.05)), target_h)
     max_chars = compute_subtitle_max_chars(
         aspect_str,
-        int(style_dict.get("fontsize", 24)),
+        fontsize_px,
         bool(style_dict.get("is_chinese", False)),
         short_edge=short_edge,
     )

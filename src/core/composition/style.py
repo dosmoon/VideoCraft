@@ -231,15 +231,15 @@ def compute_subtitle_max_chars(aspect: str, fontsize: int, is_chinese: bool,
     """How many chars per line before the subtitle visually overflows when
     burned via ffmpeg's `subtitles=` (libass) filter.
 
-    libass renders an SRT against a default PlayResX/Y of ~384 while the
-    video is 1080-class, so a `Fontsize=24` style is actually rendered at
-    roughly 24×(1080/384)≈4.7x its nominal pixel size. The empirical scale
-    factor was reverse-engineered from the legacy LAYOUT_DEFAULTS table.
+    `fontsize` is the real pixel size libass will render at. Since the
+    engine now writes an ASS file with explicit PlayResX/Y matching the
+    target frame (see primitives/subtitle_cue.py), libass script units
+    equal video pixels — no hidden scale factor. Glyph width is measured
+    once via PIL at that size and compared to the available frame width.
 
-    `short_edge` defaults to 1080 (clip / standard reframe output). For
-    passthrough renders preserving source resolution (e.g. 4K bilingual
-    burn) the caller passes the actual source short edge so wrap budgets
-    scale with the real frame width.
+    `short_edge` defaults to 1080. For passthrough renders preserving
+    source resolution (e.g. 4K bilingual burn) the caller passes the
+    actual source short edge so wrap budgets scale with the real frame.
     """
     try:
         w_str, h_str = aspect.split(":", 1)
@@ -253,12 +253,16 @@ def compute_subtitle_max_chars(aspect: str, fontsize: int, is_chinese: bool,
     safe_margin = 0.92
     available_px = video_width * safe_margin
 
-    ass_render_scale = 4.7
-    glyph_w_nominal = _measure_glyph_width(fontsize, is_chinese, font_path)
-    if glyph_w_nominal <= 0:
-        glyph_w_nominal = fontsize * (1.0 if is_chinese else 0.55)
-    glyph_w = glyph_w_nominal * ass_render_scale
-    return max(8, int(available_px / glyph_w * density))
+    glyph_w = _measure_glyph_width(fontsize, is_chinese, font_path)
+    if glyph_w <= 0:
+        glyph_w = fontsize * (1.0 if is_chinese else 0.55)
+    # Hard floor of 2 chars/line — anything lower means the font is so
+    # huge that even single chars overflow, and there's nothing wrap can
+    # do about that. Historical floor of 8 was tuned for the legacy
+    # ass_render_scale=4.7 path that inflated glyph_w artificially; with
+    # PlayRes now explicit, the raw math is trustworthy and the floor
+    # only kicks in for pathological huge fonts.
+    return max(2, int(available_px / glyph_w * density))
 
 
 def _measure_glyph_width(fontsize: int, is_chinese: bool,
