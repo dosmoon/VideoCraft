@@ -29,7 +29,7 @@ from tools.base import ToolBase
 from core.composition import (
     CompositionRequest, render_composition,
 )
-from core.composition import presets as comp_presets
+from creations.clip import presets as clip_presets
 from core.composition.preview import CompositionPreview
 from creations.clip.candidates import HotclipsRepo
 from creations.clip.clip_editor import ClipDetailPanel
@@ -120,12 +120,11 @@ class ClipToolApp(ToolBase):
         self._hotclips_data: dict = {}
 
         # ── Composition state ─────────────────────────────────────────────
-        # Preset stores stay (preset apply / save still use them); the
-        # legacy _current_style dataclass is gone — output settings,
-        # encode_preset, and component templates live on self.config now.
-        self._project_store = comp_presets.load_project_store()
-        self._hook_outro_store = comp_presets.load_hook_outro_store()
-        last = comp_presets.get_last_used_project(self._project_store)
+        # Preset store (components-based). Apply replaces config.components
+        # wholesale — output settings, encode_preset, and component
+        # templates all live on self.config.
+        self._project_store = clip_presets.load_store()
+        last = clip_presets.get_last_used(self._project_store)
         self._preset_name_var = tk.StringVar(value=last)
         # Tab 1 staging rect: pure in-memory UI scratchpad, NOT persisted
         # and NOT a fallback for clips without overrides. Users push it

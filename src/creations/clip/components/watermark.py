@@ -19,7 +19,6 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 
 from core.composition.compile import ClipRange, CompileContext
-from core.composition.style import CompositionStyle
 from core.composition.timeline import Element
 from creations.news_desk.components import ComponentSpec, ProjectContext
 
@@ -118,34 +117,6 @@ def _compile_image(instance: dict, clip_range: ClipRange,
     )]
 
 
-# ── Migration — extract template dict from legacy WatermarkStyle ──────────
-
-def template_from_style(style: CompositionStyle) -> list[dict]:
-    """One-time bootstrap: turn a legacy CompositionStyle.watermark into
-    the matching component instance dict (text or image based on
-    `wm.type`). Disabled or empty content → []. Pure template; used
-    only by clip_tool startup migration.
-    """
-    wm = style.watermark
-    if not wm.enabled:
-        return []
-    common = {
-        "id": "wm",
-        "name": "watermark",
-        "enabled": True,
-        "position": wm.position,
-        "margin_x_pct": float(wm.margin_x_pct),
-        "margin_y_pct": float(wm.margin_y_pct),
-        "text_fontsize_pct": int(wm.text_fontsize) / 1080.0,
-        "text_color": wm.text_color,
-        "text_opacity": int(wm.text_opacity),
-        "image_scale": float(wm.image_scale),
-        "image_opacity": int(wm.image_opacity),
-    }
-    if wm.type == "image":
-        return [{**common, "kind": KIND_IMAGE,
-                  "image_path": wm.image_path or ""}]
-    return [{**common, "kind": KIND_TEXT, "text": wm.text or ""}]
 
 
 # ── property panels ────────────────────────────────────────────────────────

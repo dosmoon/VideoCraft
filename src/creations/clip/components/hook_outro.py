@@ -22,7 +22,6 @@ import tkinter as tk
 from tkinter import ttk
 
 from core.composition.compile import ClipRange, CompileContext
-from core.composition.style import CompositionStyle
 from core.composition.timeline import Element
 from creations.news_desk.components import ComponentSpec, ProjectContext
 
@@ -159,42 +158,6 @@ def _compile_outro(instance: dict, clip_range: ClipRange,
         style=_card_style_dict(instance, "outro"),
         data={"text": instance.get("text", "")},
     )]
-
-
-# ── Migration — extract template dicts from legacy HookOutroStyle ─────────
-
-def template_from_style(style: CompositionStyle) -> list[dict]:
-    """One-time bootstrap: turn HookOutroStyle into hook + outro
-    component templates. text="" — composer.expand_for_candidate fills
-    it per candidate. Both components enabled by default if their
-    duration is positive.
-    """
-    # Legacy HookOutroStyle stored sizes as integer pixels. Pre-alpha
-    # lossy convert: pct = px / 1080 (1080 is the canonical short-edge
-    # baseline). User can re-tune in the property panel.
-    ho = style.hook_outro
-    common = {
-        "font": ho.font,
-        "size_pct": int(ho.size) / 1080.0,
-        "color": ho.color,
-        "bg_color": ho.bg_color,
-        "bg_opacity": int(ho.bg_opacity),
-        "stroke_color": ho.stroke_color,
-        "stroke_pct": int(ho.stroke_width) / 1080.0,
-        "box_padding_pct": int(ho.box_padding) / 1080.0,
-        "text": "",
-    }
-    out: list[dict] = []
-    if ho.hook_duration_sec > 0:
-        out.append({**common, "kind": KIND_HOOK, "id": "hook", "name": "hook",
-                     "enabled": True, "position": ho.hook_position,
-                     "duration_sec": float(ho.hook_duration_sec)})
-    if ho.outro_duration_sec > 0:
-        out.append({**common, "kind": KIND_OUTRO, "id": "outro",
-                     "name": "outro", "enabled": True,
-                     "position": ho.outro_position,
-                     "duration_sec": float(ho.outro_duration_sec)})
-    return out
 
 
 # ── property panels (hook + outro share the same shape) ───────────────────

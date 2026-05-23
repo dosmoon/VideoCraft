@@ -21,14 +21,14 @@ the property panel via the spec's `build_property_panel` callback.
 
 All authoritative state is on host.config (a ClipInstanceConfig).
 Output settings (aspect / short_edge / mode / encode_preset) are flat
-fields on the config dataclass; preset apply/save uses a thin
-CompositionStyle wrapper (presets carry output only, since component
-templates are project-level not preset-level).
+fields on the config dataclass. Presets are components-based: apply
+replaces config.components wholesale (deep-copied) plus the output
+fields; save snapshots cfg.components into the named preset entry.
 
 Host contract — methods/attrs the panel touches:
     Attributes:
       master                 Tk widget root for dialogs
-      _project_store         comp_presets project preset store
+      _project_store         clip_presets store dict
       _global_crop_rect      Optional[dict]
       _candidate_meta        list[dict]
       config                 ClipInstanceConfig (everything lives here)
@@ -47,13 +47,13 @@ Host contract — methods/attrs the panel touches:
 
 from __future__ import annotations
 
+import copy
 import os
 import tkinter as tk
-from dataclasses import asdict
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import Optional
 
-from core.composition import presets as comp_presets
+from creations.clip import presets as clip_presets
 from core.composition.preview import CompositionPreview
 from i18n import tr
 
@@ -132,7 +132,7 @@ class StylePanel:
             self._PREVIEW_DEBOUNCE_MS, self._do_preview_refresh)
 
     def refresh_preset_combos(self) -> None:
-        names = comp_presets.list_project_presets(self._host._project_store)
+        names = clip_presets.list_presets(self._host._project_store)
         if self._preset_combo is not None:
             self._preset_combo["values"] = names
 
@@ -549,29 +549,32 @@ class StylePanel:
 
     # ── preset operations ─────────────────────────────────────────────────
     #
-    # Presets in 5.5.c only carry output settings (aspect / short_edge /
-    # mode / encode_preset). Component templates stay per-project — they
-    # don't roundtrip through the preset store. Persisting via the
-    # legacy comp_presets module needs a CompositionStyle wrapper, so
-    # we build one with default subtitle/watermark/hook_outro values
-    # and only the output fields the user cares about.
+    # Presets carry the full project state: components list + output
+    # geometry + encoder preset. Apply replaces config.components
+    # wholesale (deep-copied so future edits don't leak into the store);
+    # save snapshots the current cfg.components into the preset.
 
     def _on_preset_applied(self) -> None:
         name = self._preset_name_var.get()
         if not name:
             return
-        style = comp_presets.get_project_preset(
-            self._host._project_store, name)
-        if style is None:
+        preset = clip_presets.get_preset(self._host._project_store, name)
+        if preset is None:
             return
         cfg = self._host.config
-        cfg.output_aspect = style.output.aspect
-        cfg.output_short_edge = int(style.output.short_edge)
-        cfg.output_mode = style.output.mode
-        cfg.encode_preset = style.encode_preset
-        comp_presets.set_last_used_project(
-            self._host._project_store, name)
-        comp_presets.save_project_store(self._host._project_store)
+        out = preset.get("output") or {}
+        cfg.output_aspect = str(out.get("aspect", cfg.output_aspect))
+        cfg.output_short_edge = int(out.get(
+            "short_edge", cfg.output_short_edge))
+        cfg.output_mode = str(out.get("mode", cfg.output_mode))
+        cfg.encode_preset = str(preset.get(
+            "encode_preset", cfg.encode_preset))
+        # Components: deep copy so subsequent UI edits stay scoped to
+        # the project, not echoed back into the preset store.
+        cfg.components = copy.deepcopy(preset.get("components") or [])
+        cfg.preset_name = name
+        clip_presets.set_last_used(self._host._project_store, name)
+        clip_presets.save_store(self._host._project_store)
         self.populate_form_from_style()
         self._host._save_all()
 
@@ -590,11 +593,9 @@ class StylePanel:
                 parent=self._host.master)
             return
         self.read_form_into_style()
-        comp_presets.upsert_project_preset(
-            self._host._project_store, name, self._build_style_for_preset())
-        comp_presets.set_last_used_project(
-            self._host._project_store, name)
-        comp_presets.save_project_store(self._host._project_store)
+        self._upsert_current_as(name)
+        clip_presets.set_last_used(self._host._project_store, name)
+        clip_presets.save_store(self._host._project_store)
         self._preset_name_var.set(name)
         self.refresh_preset_combos()
         self._host._save_all()
@@ -603,47 +604,52 @@ class StylePanel:
         name = self._preset_name_var.get()
         if not name:
             return
+        if clip_presets.is_builtin(name):
+            messagebox.showwarning(
+                "VideoCraft",
+                tr("clip_tool.info_builtin_protected"),
+                parent=self._host.master)
+            return
         if not messagebox.askyesno(
                 "VideoCraft",
                 tr("clip_tool.confirm_preset_overwrite", name=name),
                 parent=self._host.master):
             return
         self.read_form_into_style()
-        comp_presets.upsert_project_preset(
-            self._host._project_store, name, self._build_style_for_preset())
-        comp_presets.save_project_store(self._host._project_store)
+        self._upsert_current_as(name)
+        clip_presets.save_store(self._host._project_store)
         self._host._save_all()
 
     def _on_preset_delete(self) -> None:
         name = self._preset_name_var.get()
         if not name:
             return
+        if clip_presets.is_builtin(name):
+            messagebox.showwarning(
+                "VideoCraft",
+                tr("clip_tool.info_builtin_protected"),
+                parent=self._host.master)
+            return
         if not messagebox.askyesno(
                 "VideoCraft",
                 tr("clip_tool.confirm_preset_delete", name=name),
                 parent=self._host.master):
             return
-        comp_presets.delete_project_preset(
-            self._host._project_store, name)
-        comp_presets.save_project_store(self._host._project_store)
+        clip_presets.delete_preset(self._host._project_store, name)
+        clip_presets.save_store(self._host._project_store)
         self._preset_name_var.set("")
         self.refresh_preset_combos()
         self._host._save_all()
 
-    def _build_style_for_preset(self):
-        """Wrap config's output fields into a CompositionStyle so the
-        legacy preset store can persist them. subtitle / watermark /
-        hook_outro use dataclass defaults — they're not meaningful in
-        a preset under the new component model."""
-        from core.composition.style import CompositionStyle, OutputGeometry
+    def _upsert_current_as(self, name: str) -> None:
         cfg = self._host.config
-        style = CompositionStyle()
-        style.output = OutputGeometry(
-            aspect=cfg.output_aspect,
-            short_edge=int(cfg.output_short_edge),
-            mode=cfg.output_mode)
-        style.encode_preset = cfg.encode_preset
-        return style
+        clip_presets.upsert_preset(
+            self._host._project_store, name,
+            components=cfg.components,
+            output_aspect=cfg.output_aspect,
+            output_short_edge=int(cfg.output_short_edge),
+            output_mode=cfg.output_mode,
+            encode_preset=cfg.encode_preset)
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────

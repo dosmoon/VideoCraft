@@ -5,11 +5,8 @@ from __future__ import annotations
 import pytest
 
 from core.composition.compile import ClipRange, CompileContext
-from core.composition.style import CompositionStyle
 from creations.clip.components import spec_for_kind
-from creations.clip.components.watermark import (
-    KIND_IMAGE, KIND_TEXT, template_from_style,
-)
+from creations.clip.components.watermark import KIND_IMAGE, KIND_TEXT
 
 
 def _empty_ctx(duration: float = 10.0) -> CompileContext:
@@ -89,50 +86,3 @@ def test_image_compile_emits_one_element_spanning_full_range():
     assert e.style["image_opacity"] == 80
 
 
-# ── template_from_style migration ──────────────────────────────────────────
-
-def test_template_empty_when_disabled():
-    style = CompositionStyle()
-    style.watermark.enabled = False
-    assert template_from_style(style) == []
-
-
-def test_template_picks_text_kind():
-    style = CompositionStyle()
-    style.watermark.enabled = True
-    style.watermark.type = "text"
-    style.watermark.text = "hello"
-    out = template_from_style(style)
-    assert len(out) == 1
-    assert out[0]["kind"] == KIND_TEXT
-
-
-def test_template_picks_image_kind():
-    style = CompositionStyle()
-    style.watermark.enabled = True
-    style.watermark.type = "image"
-    style.watermark.image_path = "C:/wm/logo.png"
-    out = template_from_style(style)
-    assert len(out) == 1
-    assert out[0]["kind"] == KIND_IMAGE
-
-
-def test_template_propagates_all_fields():
-    style = CompositionStyle()
-    style.watermark.enabled = True
-    style.watermark.type = "text"
-    style.watermark.text = "@chan"
-    style.watermark.text_fontsize = 48
-    style.watermark.text_color = "#FF0000"
-    style.watermark.text_opacity = 90
-    style.watermark.position = "bottom-left"
-    style.watermark.margin_x_pct = 0.04
-    style.watermark.margin_y_pct = 0.05
-    inst = template_from_style(style)[0]
-    assert inst["text"] == "@chan"
-    assert inst["text_fontsize_pct"] == pytest.approx(48 / 1080.0)
-    assert inst["text_color"] == "#FF0000"
-    assert inst["text_opacity"] == 90
-    assert inst["position"] == "bottom-left"
-    assert inst["margin_x_pct"] == pytest.approx(0.04)
-    assert inst["margin_y_pct"] == pytest.approx(0.05)

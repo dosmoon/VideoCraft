@@ -7,8 +7,7 @@ import os
 import pytest
 
 from core.composition.compile import ClipRange, CompileContext
-from core.composition.style import CompositionStyle
-from creations.clip.components.subtitle import KIND, template_from_style
+from creations.clip.components.subtitle import KIND
 from creations.clip.components import spec_for_kind
 
 
@@ -106,40 +105,6 @@ def test_compile_style_dict_carries_all_required_fields(srt_file):
     # one (multi-track stacking). When absent, render falls back to
     # block_margin_pct.
     assert s["effective_block_margin_pct"] == pytest.approx(0.15)
-
-
-# ── template_from_style legacy migration ───────────────────────────────────
-
-def test_template_disabled_sub1_returns_empty():
-    style = CompositionStyle()
-    style.subtitle.sub1.enabled = False
-    style.subtitle.sub2.enabled = True    # ignored — dual-track dropped
-    assert template_from_style(style) == []
-
-
-def test_template_one_dict_for_enabled_sub1():
-    style = CompositionStyle()
-    style.subtitle.sub1.enabled = True
-    style.subtitle.sub2.enabled = True    # ignored — only sub1 migrates
-    out = template_from_style(style)
-    assert len(out) == 1
-    assert out[0]["kind"] == KIND
-    assert out[0]["language"] == ""    # host fills on first open
-
-
-def test_template_propagates_line_and_shared_style():
-    style = CompositionStyle()
-    style.subtitle.sub1.enabled = True
-    style.subtitle.sub1.fontsize = 28
-    style.subtitle.sub1.color = "#00FF00"
-    style.subtitle.position = "top"
-    style.subtitle.stroke_color = "#123456"
-    out = template_from_style(style)
-    # Legacy int-px fields convert to pct via /1080 (canonical baseline).
-    assert out[0]["fontsize_pct"] == pytest.approx(28 / 1080.0)
-    assert out[0]["color"] == "#00FF00"
-    assert out[0]["position"] == "top"
-    assert out[0]["stroke_color"] == "#123456"
 
 
 # ── Wrap-budget regression (clip dogfood round 2) ─────────────────────────

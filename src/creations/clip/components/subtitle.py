@@ -20,7 +20,6 @@ from tkinter import ttk
 import srt as _srt
 
 from core.composition.compile import ClipRange, CompileContext
-from core.composition.style import CompositionStyle
 from core.composition.timeline import Element
 from creations.news_desk.components import ComponentSpec, ProjectContext
 
@@ -126,42 +125,6 @@ def _compile(instance: dict, clip_range: ClipRange,
             data={"text": cue.content},
         ))
     return out
-
-
-# ── Migration — extract template dicts from legacy CompositionStyle ────────
-
-def template_from_style(style: CompositionStyle) -> list[dict]:
-    """One-shot bootstrap from legacy CompositionStyle.subtitle (pre-5.5
-    config shape). Only sub1's visual style is preserved; dual-track
-    (sub2) is dropped — users who had bilingual clips re-add a second
-    subtitle component via the new language picker. `language` is left
-    empty for the host to fill on first open."""
-    sub = style.subtitle
-    if not sub.sub1.enabled:
-        return []
-    # Legacy CompositionStyle.subtitle stores fontsize / stroke_width
-    # as integers. Pre-alpha: lossy convert to pct by dividing by the
-    # canonical 1080 short-edge baseline — user can re-tune in the
-    # property panel if the visual size is off.
-    line = sub.sub1
-    return [{
-        "kind": KIND,
-        "id": "sub1",
-        "name": "sub1",
-        "enabled": True,
-        "language": "",
-        "fontsize_pct": int(line.fontsize) / 1080.0,
-        "color": line.color,
-        "bold": bool(line.bold),
-        "is_chinese": bool(line.is_chinese),
-        "bg_color": line.bg_color,
-        "bg_opacity": int(line.bg_opacity),
-        "bg_padding_x_pct": float(line.bg_padding_x_pct),
-        "stroke_color": sub.stroke_color,
-        "stroke_pct": int(sub.stroke_width) / 1080.0,
-        "position": sub.position,
-        "block_margin_pct": float(sub.block_margin_pct),
-    }]
 
 
 # ── property panel ─────────────────────────────────────────────────────────

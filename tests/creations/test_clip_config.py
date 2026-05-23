@@ -74,42 +74,6 @@ def test_load_full_roundtrip(tmp_path):
     assert loaded.rendered == [{"file": "clip01.mp4", "src_idx": 0}]
 
 
-def test_load_migrates_legacy_style_to_output_fields(tmp_path):
-    """Old configs persist `style` (CompositionStyle dict). Load should
-    extract output settings + encode_preset into the new flat fields."""
-    p = str(tmp_path / "config.json")
-    legacy_style = {
-        "output": {"aspect": "1:1", "short_edge": 540, "mode": "reframe"},
-        "encode_preset": "slow",
-        "subtitle": {"sub1": {"enabled": False}, "sub2": {"enabled": False}},
-        "watermark": {"enabled": False},
-    }
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump({"style": legacy_style}, f)
-    cfg = ClipInstanceConfig.load(p)
-    assert cfg.output_aspect == "1:1"
-    assert cfg.output_short_edge == 540
-    assert cfg.encode_preset == "slow"
-
-
-def test_load_seeds_components_from_legacy_style(tmp_path):
-    """If components is empty but legacy style has enabled subtitle /
-    watermark / hook_outro, seed components from those templates."""
-    p = str(tmp_path / "config.json")
-    legacy_style = {
-        "output": {"aspect": "9:16", "short_edge": 1080, "mode": "reframe"},
-        "encode_preset": "medium",
-        "subtitle": {"sub1": {"enabled": True}, "sub2": {"enabled": False}},
-        "watermark": {"enabled": True, "type": "text", "text": "@chan"},
-    }
-    with open(p, "w", encoding="utf-8") as f:
-        json.dump({"style": legacy_style}, f)
-    cfg = ClipInstanceConfig.load(p)
-    kinds = [c["kind"] for c in cfg.components]
-    assert "clip_subtitle" in kinds
-    assert "clip_text_watermark" in kinds
-
-
 def test_load_partial_bound_material_treated_as_none(tmp_path):
     p = str(tmp_path / "config.json")
     with open(p, "w", encoding="utf-8") as f:

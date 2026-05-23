@@ -5,11 +5,8 @@ from __future__ import annotations
 import pytest
 
 from core.composition.compile import ClipRange, CompileContext
-from core.composition.style import CompositionStyle
 from creations.clip.components import spec_for_kind
-from creations.clip.components.hook_outro import (
-    KIND_HOOK, KIND_OUTRO, template_from_style,
-)
+from creations.clip.components.hook_outro import KIND_HOOK, KIND_OUTRO
 
 
 def _ctx(duration: float = 30.0) -> CompileContext:
@@ -130,38 +127,3 @@ def test_outro_role_stamps_outro_position():
     assert s["outro_duration_sec"] == 5.0
 
 
-# ── template_from_style migration ──────────────────────────────────────────
-
-def test_template_default_emits_both():
-    """Default CompositionStyle has hook/outro durations > 0 → both cards
-    seeded with text="" (composer fills per candidate)."""
-    style = CompositionStyle()
-    out = template_from_style(style)
-    assert [c["kind"] for c in out] == [KIND_HOOK, KIND_OUTRO]
-    assert all(c["text"] == "" for c in out)
-
-
-def test_template_zero_duration_drops_role():
-    style = CompositionStyle()
-    style.hook_outro.hook_duration_sec = 0.0
-    out = template_from_style(style)
-    assert [c["kind"] for c in out] == [KIND_OUTRO]
-
-
-def test_template_propagates_style_fields():
-    style = CompositionStyle()
-    style.hook_outro.font = "Custom"
-    style.hook_outro.size = 60
-    style.hook_outro.color = "#00FF00"
-    style.hook_outro.hook_position = "lower-third"
-    style.hook_outro.outro_position = "upper-third"
-    style.hook_outro.hook_duration_sec = 7.0
-    out = template_from_style(style)
-    h, o = out[0], out[1]
-    assert h["font"] == "Custom"
-    # Legacy int-px size migrates to pct via /1080.
-    assert h["size_pct"] == pytest.approx(60 / 1080.0)
-    assert h["color"] == "#00FF00"
-    assert h["position"] == "lower-third"
-    assert h["duration_sec"] == 7.0
-    assert o["position"] == "upper-third"
