@@ -347,6 +347,15 @@ class VideoCraftHub:
         except Exception as e:
             from hub_logger import logger
             logger.error(f"保存布局失败: {e}")
+        # Cancel the pending auto-refresh tick before destroying root,
+        # else its bound-method Tcl handle is freed before the callback
+        # fires → `invalid command name "<id>_schedule_auto_refresh"`.
+        after_id = getattr(self, "_auto_refresh_after_id", None)
+        if after_id is not None:
+            try:
+                self.root.after_cancel(after_id)
+            except tk.TclError:
+                pass
         self.root.destroy()
 
     def _set_app_icon(self):
@@ -1130,7 +1139,12 @@ class VideoCraftHub:
             # land 1-2 levels below project root — out of reach of the
             # top-level folder snapshot above.
             self._refresh_project_tab()
-        self.root.after(2000, self._schedule_auto_refresh)
+        # Track the after id so _on_close can cancel it. Otherwise the
+        # pending callback fires after root.destroy() has freed the
+        # bound-method's Tcl handle and crashes with
+        # `invalid command name "<id>_schedule_auto_refresh"`.
+        self._auto_refresh_after_id = self.root.after(
+            2000, self._schedule_auto_refresh)
 
     def _folder_snapshot(self, folder: str) -> set:
         """返回文件夹内所有条目的 (名称, 大小, 修改时间) 集合。"""
