@@ -56,9 +56,9 @@ from core.subtitle_ops import srt_end_seconds
 from i18n import tr
 
 
-_SUBTITLE_FONTSIZE_DEFAULT = 14
+_SUBTITLE_FONTSIZE_DEFAULT = 48
 _SUBTITLE_FONTSIZE_MIN = 10
-_SUBTITLE_FONTSIZE_MAX = 32
+_SUBTITLE_FONTSIZE_MAX = 60
 
 
 def _is_valid_ts(text: str) -> bool:
