@@ -23,7 +23,7 @@ from tkinter import ttk
 
 from core.composition.compile import ClipRange, CompileContext
 from core.composition.timeline import Element
-from creations.news_desk.components import ComponentSpec, ProjectContext
+from creations.component_spec import ComponentSpec, ProjectContext
 
 from . import add_color_picker, register
 

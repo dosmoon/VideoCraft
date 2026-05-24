@@ -10,7 +10,8 @@ from tkinter import ttk
 
 from i18n import tr
 
-from . import ComponentSpec, ImportSource, ProjectContext, register
+from creations.component_spec import ComponentSpec, ImportSource, ProjectContext
+from . import register
 
 
 _POSITIONS = ["top-left", "top-right", "bottom-left", "bottom-right"]

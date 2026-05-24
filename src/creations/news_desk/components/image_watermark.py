@@ -8,7 +8,8 @@ from tkinter import filedialog, ttk
 
 from i18n import tr
 
-from . import ComponentSpec, ProjectContext, register
+from creations.component_spec import ComponentSpec, ProjectContext
+from . import register
 
 
 _POSITIONS = ["top-left", "top-right", "bottom-left", "bottom-right"]

@@ -19,7 +19,8 @@ from tkinter import filedialog, ttk
 
 from i18n import tr
 
-from . import ComponentSpec, ProjectContext, register
+from creations.component_spec import ComponentSpec, ProjectContext
+from . import register
 
 
 def _new_comp_id() -> str:

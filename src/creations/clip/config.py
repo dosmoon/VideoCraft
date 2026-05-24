@@ -153,4 +153,12 @@ class ClipInstanceConfig:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8", newline="\n") as f:
             json.dump(out, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
+        import time
+        for i in range(10):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if i == 9:
+                    raise
+                time.sleep(0.05)

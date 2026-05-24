@@ -64,7 +64,8 @@ from core.composition.overlays import (
 )
 from ui.dialog_utils import center_dialog_on_parent
 
-from . import ComponentSpec, ProjectContext, register
+from creations.component_spec import ComponentSpec, ProjectContext
+from . import register
 
 
 # Visual modes — pure render filters on the same chapter data. Each mode
