@@ -34,6 +34,26 @@ class Element:
     style: dict = field(default_factory=dict)
     data: dict = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, str) or not self.kind:
+            raise TypeError(f"Element.kind must be a non-empty string; got {type(self.kind).__name__}")
+        if not isinstance(self.start_sec, (int, float)):
+            raise TypeError(f"Element.start_sec must be a float or int; got {type(self.start_sec).__name__}")
+        if not isinstance(self.end_sec, (int, float)):
+            raise TypeError(f"Element.end_sec must be a float or int; got {type(self.end_sec).__name__}")
+        if self.start_sec > self.end_sec:
+            raise ValueError(f"Element.start_sec ({self.start_sec}) cannot be greater than end_sec ({self.end_sec})")
+        if not isinstance(self.style, dict):
+            raise TypeError(f"Element.style must be a dictionary; got {type(self.style).__name__}")
+        if not isinstance(self.data, dict):
+            raise TypeError(f"Element.data must be a dictionary; got {type(self.data).__name__}")
+        if "style" in self.data:
+            raise ValueError("Element contract violation: data dict cannot contain nested 'style' key (styles must be flat in style dict)")
+        if "style" in self.style:
+            raise ValueError("Element contract violation: style dict cannot contain nested 'style' key (styles must be flat in style dict)")
+
+
+
 
 @dataclass
 class Track:

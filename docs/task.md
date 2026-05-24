@@ -5,42 +5,28 @@
 
 ---
 
-## ▶ 下次会话主题：引擎 + 各模块单元测试补全
+## ▶ 下次会话主题：ComponentSpec 搬 core 欠债清理 + 项目工作台 UX 优化
 
-clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"——产品形态收敛，回到把测试补厚的工作。
+根据 backlog 与已完成的测试加固，下一步我们将：
+1. **重构欠债清理**: 将 `ComponentSpec` / `ImportSource` 从 `creations/news_desk/components` 搬移到 `core/composition/component_spec.py`，使 creations 和 news_desk 都从 core 统一导入，解除 creations 之间的循环依赖。
+2. **项目工作台 UX + 健壮性深度优化 (🔴 P1)**: 优化 Workbench 卡片信息层级，统一 resolver 错误恢复路径，补充 i18n validator 错误提示。
 
 ### 起点 HEAD
+`PositionedRect` coordinates abstraction + 350 tests passing green.
 
-`e886382` "clip: components-based preset store"，已 push origin/main。
-**337 测试全绿；7 个 goldens。**
+---
 
-### 这轮要做什么
+## 已完成（2026-05-24）
 
-1. **复盘 12 个 dogfood bug，每个回填一个 reproduction 测试**
-   - 已经开了头（subtitle wrap 那条 + CJK 自动检测那条，共 2 个）。
-   - 还差 10 条，按 [[project_composition_core]] "契约总览" 清单走。
+### 引擎契约凝固与各模块测试加固 🚀
+- **Element 契约校验**: 在 `timeline.py` 为 `Element` 增加了 `__post_init__` 校验，在运行时彻底防范样式字段（style）嵌套泄露至 `data` 的 bug。
+- **PositionedRect 坐标解耦**: 新增 `PositionedRect` dataclass 统一 drawtext/drawbox 滤镜高度坐标表达式 (`y_expr`)，安全删除了遗留的 `_block_top_y` 过程式 helper。
+- **Layout 矩阵矩阵测试**: 新增 `test_layout_metrics_matrix` 锁死 YaHei / Arial 多字号下的 `font_line_height_px` 与 `measure_max_line_width_px` 计算公式。
+- **组件与分析 Envelope 测试**: 新增 `test_components_shape.py` 对 clip/news_desk 所有注册组件的 `default_instance` 进行契约测试，并对 `chapters_io` normalizer Invariants（首章节合成、 degenerate 剔除、duplicate 覆盖）与 `analysis.json` 进行了 Envelope 序列化往返测试。
+- **全量测试**: 测试用例从 337 个扩充至 **350 个全绿通过**（耗时 1.03s）。
 
-2. **引擎契约用测试钉死**（测试即文档）
-   - `Element.__post_init__` 校验 kind/style/data 形状
-   - pct 字段分母语义：`fontsize_pct / stroke_pct / box_padding_pct → target_h`，`margin_x_pct → target_w`，`margin_y_pct → target_h`
-   - `PositionedRect.to_drawtext()` / `to_drawbox()` wrapper 封 `iw/ih` vs `w/h` 常量差
-   - cue 时间基准：timeline IR clip-relative；preview JS 需要 `-clipStart` 后比
+---
 
-3. **各模块单元测试补全**（不仅是引擎）
-   - `creations/clip/composer.py` `expand_for_candidate` 模板展开 corner case
-   - `creations/clip/presets.py` 已补 14 测，但缺端到端 apply 后 cfg.components 形状 assert
-   - `creations/news_desk/` 各 component 的 default_instance + compile 形状
-   - `materials/news_video/` chapters_io / context.json envelope round-trip
-   - `core/composition/layout.font_size_px` / `font_line_height_px` 多字体多 size 矩阵
-
-4. **preview ≡ render 不变量**：把"应该有的不变量"用测试钉死。preview 和 render 在同一参数下产生的可对比量必须 byte-equal 或 px-equal。
-
-### 入手顺序建议
-
-1. 12 个 bug 各回填一个 reproduction（最高 ROI）
-2. Element + `PositionedRect` 契约校验类
-3. layout 计算函数的矩阵测试
-4. 各 creation 模块往下挖
 
 ---
 
