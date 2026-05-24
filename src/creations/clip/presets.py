@@ -41,6 +41,8 @@ import json
 import os
 from typing import Optional
 
+from core.io_utils import atomic_write_json
+
 from core import user_data
 
 from creations.clip.components import spec_for_kind
@@ -177,9 +179,7 @@ def _read_json(path: str) -> Optional[dict]:
 
 
 def _write_json(path: str, data: dict) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    atomic_write_json(path, data)
 
 
 def _seed_store() -> dict:

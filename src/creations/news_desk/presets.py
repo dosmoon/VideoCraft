@@ -17,6 +17,7 @@ import os
 import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Optional
+from core.io_utils import atomic_write_json
 
 from core import user_data
 
@@ -195,11 +196,7 @@ def _read_store() -> dict:
 
 
 def _write_store(data: dict) -> None:
-    os.makedirs(os.path.dirname(PRESETS_PATH), exist_ok=True)
-    tmp = PRESETS_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, PRESETS_PATH)
+    atomic_write_json(PRESETS_PATH, data)
 
 
 def load_presets() -> dict[str, NewsDeskPreset]:
