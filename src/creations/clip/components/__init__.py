@@ -25,7 +25,7 @@ package, each calling register() at import time.
 
 from __future__ import annotations
 
-from creations.component_spec import ComponentSpec, ImportSource
+from creations.news_desk.components import ComponentSpec, ImportSource
 
 
 # ── Clip-local registry ─────────────────────────────────────────────────────
