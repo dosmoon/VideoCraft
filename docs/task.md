@@ -5,16 +5,26 @@
 
 ---
 
-## ▶ 下次会话主题：引擎 + 各模块单元测试补全
+## ▶ 下次会话主题：继续 dogfood，暂缓重构
 
-clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"——产品形态收敛，回到把测试补厚的工作。
+clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"——决定**先多用一阵**再动测试/重构。
 
 ### 起点 HEAD
 
-`e886382` "clip: components-based preset store"，已 push origin/main。
+`a6c9092` —— `0fdb047` 之后跟着 3 个 revert commit（见下"2026-05-25 回滚"段）。
+代码等价于 `0fdb047`，但 Antigravity 的 3 个 commit 仍在历史里可追。
 **337 测试全绿；7 个 goldens。**
 
-### 这轮要做什么
+### 当前阶段：dogfood 优先
+
+不急着重构和补测试。先把 clip / news_desk 多用一段时间，攒第三轮 bug 再批量处理。
+触发以下任一条件再切到下方"测试 + 重构主线"：
+
+- 第三轮 dogfood 收集到 ≥5 个新引擎/UX bug
+- 用户体感 clip/news_desk 卡点已经稳定，不再每天碰新 bug
+- 准备开新形态（PPT2Video / 字幕工作台等）需要先稳引擎契约
+
+### 测试 + 重构主线（暂挂）
 
 1. **复盘 12 个 dogfood bug，每个回填一个 reproduction 测试**
    - 已经开了头（subtitle wrap 那条 + CJK 自动检测那条，共 2 个）。
@@ -41,6 +51,22 @@ clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"
 2. Element + `PositionedRect` 契约校验类
 3. layout 计算函数的矩阵测试
 4. 各 creation 模块往下挖
+
+---
+
+## 2026-05-25 回滚 Antigravity 3 commit
+
+让 Antigravity 看 composition 还能优化什么 → 它产出三个 commit 后被发现都不解决实际痛点：
+
+| 原 commit | revert commit | 评价 |
+|---|---|---|
+| `0617dd1` composition Element validation + PositionedRect + 428 测 | `a6c9092` | 给内部代码加防御性校验（违反 [[feedback_check_callers_first]]），单点 OOP 抽象，测试跟 backlog 错位 |
+| `b4cdc2e` ComponentSpec 搬到 `creations/component_spec.py` | `2df3977` | 方向对（杀 cross-plugin import），但目标应该是 `core/` 不是 creations 层 |
+| `e9ed52a` `atomic_write_text` dedup + 78 测 | `c80d5dc` | 真 DRY，但低 ROI；改基础 IO 默认重试副作用面更大；测试过度 |
+
+伴生事件：一晚上调试 preview overlay 不显示，最初怀疑这 3 个 commit，后来发现是更深的 WebView page-ready race（见 [[project_webview_preview_race]]），跟它们无关。3 个 commit 自身没破坏功能，但因为时间相关性把搜索空间放大。
+
+教训：**别让 LLM agent 做开放式 "什么可以优化" review**（[[feedback_open_ended_llm_optimize]]）。
 
 ---
 
