@@ -14,21 +14,10 @@ from typing import Any
 
 def atomic_write_text(path: str, text: str) -> None:
     """Write text to path via a temp file + rename to avoid partial files."""
-    parent = os.path.dirname(path)
-    if parent:
-        os.makedirs(parent, exist_ok=True)
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         f.write(text)
-    import time
-    for i in range(10):
-        try:
-            os.replace(tmp, path)
-            break
-        except PermissionError:
-            if i == 9:
-                raise
-            time.sleep(0.05)
+    os.replace(tmp, path)
 
 
 def atomic_write_json(path: str, data: Any) -> None:

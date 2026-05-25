@@ -17,7 +17,6 @@ import os
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
-from core.io_utils import atomic_write_json
 
 
 def now_iso() -> str:
@@ -93,4 +92,16 @@ class NewsDeskInstanceConfig:
         }
         if self.bound_material is not None:
             out["bound_material"] = self.bound_material.to_dict()
-        atomic_write_json(path, out)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+            json.dump(out, f, ensure_ascii=False, indent=2)
+        import time
+        for i in range(10):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if i == 9:
+                    raise
+                time.sleep(0.05)
