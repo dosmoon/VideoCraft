@@ -18,7 +18,6 @@ import tempfile
 
 from .fonts import hook_outro_font_path, y_expr_for_position
 from .text_layout import wrap_hook_outro
-from .layout import PositionedRect
 
 
 # Default field values for drawtext_filter when an element.style omits
@@ -118,9 +117,8 @@ def drawtext_filter(text: str, *, role: str, style: dict,
     # Mixing them up makes drawbox's centering math evaluate against
     # the box's own dimensions — `(w - box_w)/2` collapses to zero and
     # the rectangle anchors at (0, 0).
-    rect = PositionedRect(position, total_h)
-    top_y_expr_drawtext = rect.y_expr(h_var="h")
-    top_y_expr_drawbox = rect.y_expr(h_var="ih")
+    top_y_expr_drawtext = _block_top_y(position, total_h, h_var="h")
+    top_y_expr_drawbox = _block_top_y(position, total_h, h_var="ih")
 
     stroke_width = font_size_px(float(_g("stroke_pct")), target_h)
     stroke_color = _g("stroke_color")
@@ -180,4 +178,16 @@ def drawtext_filter(text: str, *, role: str, style: dict,
     return ",".join(snippets)
 
 
-
+def _block_top_y(position: str, total_h: int, *, h_var: str = "h") -> str:
+    """ffmpeg-expression for the top Y of a multi-line text block, given
+    the total wrapped block height in pixels. Mirrors canvas-side
+    _hoYForPosition exactly. `h_var` is the filter-specific identifier
+    for video height — `h` for drawtext, `ih` for drawbox (where `h`
+    means the drawn box's height instead)."""
+    return {
+        "top":          f"{h_var}*0.08",
+        "upper-third":  f"{h_var}*0.25",
+        "center":       f"({h_var}-{total_h})/2",
+        "lower-third":  f"{h_var}*0.65 - {total_h}/2",
+        "bottom":       f"{h_var}*0.85 - {total_h}",
+    }.get(position, f"{h_var}*0.25")

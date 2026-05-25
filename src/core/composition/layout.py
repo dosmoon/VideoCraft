@@ -86,25 +86,3 @@ def subtitle_baseline_y_from_canvas_top(
         return canvas_h * pct_from_edge
     # default = bottom anchor
     return canvas_h * (1.0 - pct_from_edge)
-
-
-from dataclasses import dataclass
-
-@dataclass
-class PositionedRect:
-    """Standardized coordinate translation helper for positioned video rectangles/blocks.
-    Encapsulates position mapping formulas for drawbox, drawtext, and canvas-side preview."""
-    position: str      # 'top', 'upper-third', 'center', 'lower-third', 'bottom'
-    total_h: int       # absolute vertical block height in pixels
-
-    def y_expr(self, h_var: str = "h") -> str:
-        """Get the ffmpeg filter coordinate expression for this block's top Y coordinate.
-        h_var is 'h' for drawtext and 'ih' for drawbox."""
-        return {
-            "top":          f"{h_var}*0.08",
-            "upper-third":  f"{h_var}*0.25",
-            "center":       f"({h_var}-{self.total_h})/2",
-            "lower-third":  f"{h_var}*0.65 - {self.total_h}/2",
-            "bottom":       f"{h_var}*0.85 - {self.total_h}",
-        }.get(self.position, f"{h_var}*0.25")
-
