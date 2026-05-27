@@ -29,7 +29,14 @@ from src import __version__
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-PYTHON_VERSION = os.environ.get("VIDEOCRAFT_PYTHON_VERSION", "3.14.3")
+# Default to the donor Python's version so the tkinter .pyd we copy in
+# step 3b is ABI-compatible with the embed Python.  Override only if you
+# know the donor and embed share an ABI (same major.minor).
+_donor = sys.version_info
+PYTHON_VERSION = os.environ.get(
+    "VIDEOCRAFT_PYTHON_VERSION",
+    f"{_donor.major}.{_donor.minor}.{_donor.micro}",
+)
 PYTHON_EMBED_URL = (
     f"https://www.python.org/ftp/python/{PYTHON_VERSION}/"
     f"python-{PYTHON_VERSION}-embed-amd64.zip"
@@ -269,12 +276,16 @@ def main():
 def create_launchers(dist_dir):
     """Create .bat launcher scripts."""
 
-    # Main launcher — VideoCraftHub is the primary entry point
+    # Main launcher — VideoCraftHub is the primary entry point.
+    # PYTHONNOUSERSITE=1 isolates the portable Python from any pre-existing
+    # %APPDATA%\Python\PythonXY\site-packages on the user's machine
+    # (which would otherwise shadow our pinned deps via `import site`).
     bat = os.path.join(dist_dir, "VideoCraft.bat")
     with open(bat, 'w') as f:
         f.write('@echo off\r\n')
         f.write('title VideoCraft\r\n')
         f.write('cd /d "%~dp0"\r\n')
+        f.write('set PYTHONNOUSERSITE=1\r\n')
         f.write('python\\python.exe src\\VideoCraftHub.py %*\r\n')
     print(f"  Created VideoCraft.bat  (-> VideoCraftHub.py)")
 
@@ -290,6 +301,7 @@ def create_launchers(dist_dir):
             f.write('@echo off\r\n')
             f.write(f'title {name}\r\n')
             f.write('cd /d "%~dp0"\r\n')
+            f.write('set PYTHONNOUSERSITE=1\r\n')
             f.write(f'python\\python.exe src\\{script} %*\r\n')
         print(f"  Created {name}.bat")
 
