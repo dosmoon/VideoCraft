@@ -6,6 +6,10 @@
 # requirements.lock.  To upgrade a dependency, bump the version in
 # requirements.lock or run `uv pip compile --upgrade-package <name>`.
 
+# llama-cpp-python ships pre-built wheels on abetlen's index;
+# PyPI only has the sdist (which needs a C++ compiler).
+--extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+
 # Core
 yt-dlp
 requests
