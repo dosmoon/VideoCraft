@@ -21,6 +21,11 @@ import sys
 import urllib.request
 import zipfile
 
+# Import version from the package.
+# This script is run from the project root, so src/ is importable.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from src import __version__
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -31,7 +36,7 @@ PYTHON_EMBED_URL = (
 )
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-DIST_DIR = os.path.join(PROJECT_ROOT, "dist", "VideoCraft-portable")
+DIST_DIR = os.path.join(PROJECT_ROOT, "dist", f"VideoCraft-{__version__}-portable")
 PYTHON_DIR = os.path.join(DIST_DIR, "python")
 GET_PIP_URL = "https://bootstrap.pypa.io/get-pip.py"
 
@@ -154,9 +159,9 @@ def main():
         print(f"  Added Lib to {pth_files[0]}")
 
     # ------------------------------------------------------------------
-    # 4. Install pip via get-pip.py
+    # 4/6  Install pip + ensure uv availability
     # ------------------------------------------------------------------
-    step("4/6  Installing pip")
+    step("4/6  Installing pip (via get-pip.py)")
     python_exe = os.path.join(PYTHON_DIR, "python.exe")
     get_pip = os.path.join(DIST_DIR, "get-pip.py")
     download(GET_PIP_URL, get_pip)
@@ -171,16 +176,42 @@ def main():
     print("  pip + setuptools + wheel installed")
 
     # ------------------------------------------------------------------
-    # 5. Install dependencies
+    # 5/6  Install dependencies (prefer uv, fallback to pip)
     # ------------------------------------------------------------------
-    step("5/6  Installing dependencies from requirements.txt")
+    step("5/6  Installing dependencies")
+
+    # Try uv first (much faster). Fall back to pip if not available outside the build.
+    uv_available = False
+    try:
+        subprocess.check_call(
+            ["uv", "--version"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        uv_available = True
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
+
+    lock_file = os.path.join(PROJECT_ROOT, "requirements.lock")
     req_file = os.path.join(PROJECT_ROOT, "requirements.txt")
-    subprocess.check_call([
-        python_exe, "-m", "pip", "install",
-        "-r", req_file,
-        "--no-warn-script-location",
-        "--disable-pip-version-check",
-    ])
+
+    if uv_available and os.path.exists(lock_file):
+        print("  Using uv + requirements.lock")
+        subprocess.check_call([
+            "uv", "pip", "install",
+            "--python", python_exe,
+            "-r", lock_file,
+        ])
+    else:
+        if not uv_available:
+            print("  uv not found — falling back to pip + requirements.txt")
+        else:
+            print("  requirements.lock not found — falling back to pip + requirements.txt")
+        subprocess.check_call([
+            python_exe, "-m", "pip", "install",
+            "-r", req_file,
+            "--no-warn-script-location",
+            "--disable-pip-version-check",
+        ])
     print("  All dependencies installed")
 
     # ------------------------------------------------------------------
@@ -231,7 +262,7 @@ def main():
     step("Build complete!")
     print(f"  Output:  {DIST_DIR}")
     print(f"  Size:    {total_size / 1024 / 1024:.0f} MB")
-    print(f"\n  To distribute: zip the VideoCraft-portable folder.")
+    print(f"\n  To distribute: zip the VideoCraft-{__version__}-portable folder.")
     print(f"  Users just unzip and double-click VideoCraft.bat")
 
 

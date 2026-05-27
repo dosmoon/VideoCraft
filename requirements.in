@@ -1,0 +1,42 @@
+# VideoCraft runtime dependencies — top-level deps only.
+# Run:  uv pip compile requirements.in -o requirements.lock
+# For GPU install, see the GPU profile notes in requirements.txt.
+#
+# Version pins are deliberately omitted here; they are frozen in
+# requirements.lock.  To upgrade a dependency, bump the version in
+# requirements.lock or run `uv pip compile --upgrade-package <name>`.
+
+# Core
+yt-dlp
+requests
+srt
+
+# AI providers (LLM)
+google-genai
+fish-audio-sdk
+openai
+json-repair    # forgive LLM JSON quirks
+
+# Edge TTS — Microsoft Edge Read-Aloud endpoint, free + no key
+edge-tts
+
+# Embedded AI (in-process)
+llama-cpp-python
+faster-whisper
+
+# Media
+Pillow
+
+# Windows-only
+pywin32; sys_platform == 'win32'
+
+# ── Notes ─────────────────────────────────────────────────────────────────
+# llama-cpp-python wheels are published outside PyPI.
+# CPU:  --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
+# CUDA: --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124
+# Install with --only-binary=:all: to avoid building from source on Windows.
+#
+# DO NOT install torch into this venv (cudnn DLL conflict).
+#
+# faster-whisper works on both CPU and CUDA without a separate wheel;
+# CTranslate2 picks up CUDA at runtime if nvidia-* DLLs are on PATH.

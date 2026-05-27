@@ -1,3 +1,14 @@
+[project]
+name = "VideoCraft"
+version = "0.3.5"
+description = "AI-powered video creation and processing tool"
+authors = [
+    { name = "dosmoon" },
+]
+license = { file = "LICENSE" }
+readme = "README.markdown"
+requires-python = ">=3.10"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
