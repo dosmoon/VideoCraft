@@ -145,9 +145,15 @@ class ModelManagerApp(ToolBase):
                   command=self._refresh_metadata).pack(side="left", padx=2)
         tk.Button(btns, text=tr("tool.models.btn_refresh"),
                   command=self._refresh_catalog).pack(side="left", padx=2)
+        tk.Button(btns, text=tr("tool.models.btn_gpu_runtime"),
+                  command=self._open_gpu_dialog).pack(side="left", padx=2)
 
         frm.columnconfigure(1, weight=1)
         self._update_disk_readout()
+
+    def _open_gpu_dialog(self):
+        from tools.models.gpu_dialog import GpuRuntimeDialog
+        GpuRuntimeDialog(self.master).open()
 
     def _on_change_dir(self):
         new = filedialog.askdirectory(
