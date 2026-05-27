@@ -255,10 +255,13 @@ def transcribe(
 
             if word_timestamps and getattr(seg, "words", None):
                 for w in seg.words:
+                    # Whisper tokenization emits a leading space on each
+                    # word (" hello") — sentence_regroup.regroup_words uses
+                    # "".join(...) and relies on that prefix. Don't strip.
                     all_words.append({
                         "start": float(w.start),
                         "end":   float(w.end),
-                        "word":  (w.word or "").strip(),
+                        "word":  w.word or "",
                     })
 
             emit("state_processing",
