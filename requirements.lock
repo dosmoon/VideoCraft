@@ -23,6 +23,8 @@ attrs==26.1.0
     # via aiohttp
 av==17.0.1
     # via faster-whisper
+bottle==0.13.4
+    # via pywebview
 certifi==2026.5.20
     # via
     #   edge-tts
@@ -30,13 +32,17 @@ certifi==2026.5.20
     #   httpx
     #   requests
 cffi==2.0.0
-    # via cryptography
+    # via
+    #   clr-loader
+    #   cryptography
 charset-normalizer==3.4.7
     # via requests
 click==8.4.1
     # via
     #   huggingface-hub
     #   typer
+clr-loader==0.3.1
+    # via pythonnet
 colorama==0.4.6
     # via
     #   click
@@ -141,6 +147,8 @@ propcache==0.5.2
     #   yarl
 protobuf==7.35.0
     # via onnxruntime
+proxy-tools==0.1.0
+    # via pywebview
 pyasn1==0.6.3
     # via pyasn1-modules
 pyasn1-modules==0.4.2
@@ -156,6 +164,10 @@ pydantic-core==2.46.4
     # via pydantic
 pygments==2.20.0
     # via rich
+pythonnet==3.1.0
+    # via pywebview
+pywebview==6.2.1
+    # via -r requirements.in
 pywin32==311
     # via -r requirements.in
 pyyaml==6.0.3
@@ -202,6 +214,7 @@ typing-extensions==4.15.0
     #   openai
     #   pydantic
     #   pydantic-core
+    #   pywebview
     #   typing-inspection
 typing-inspection==0.4.2
     # via pydantic

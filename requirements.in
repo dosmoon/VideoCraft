@@ -31,6 +31,9 @@ faster-whisper
 # Media
 Pillow
 
+# WebView2-backed video preview (Tk + pywebview subprocess; see ADR/web_preview_arch)
+pywebview
+
 # Windows-only
 pywin32; sys_platform == 'win32'
 
