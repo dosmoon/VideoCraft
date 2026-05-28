@@ -483,15 +483,25 @@ def _invoke_asr(hub, model: NewsVideoModel, *, preset_lang_iso="ASK") -> None:
     modal = SubtitlesProgressModal(
         hub.root, worker, title=tr("hub.dialog.subtitles_progress.title_asr"))
     try:
-        modal.run()
+        result = modal.run()
     except AIError as e:
         if e.kind == Kind.CANCELLED:
             return
         messagebox.showerror(tr("hub.error.asr_failed"), str(e), parent=hub.root)
+        return
     except FileNotFoundError as e:
         messagebox.showerror(tr("hub.error.source_missing"), str(e), parent=hub.root)
+        return
     except Exception as e:
         messagebox.showerror(tr("hub.error.asr_failed"), repr(e), parent=hub.root)
+        return
+
+    # Sidebar refreshes itself via model.subscribe, but the preview pane is
+    # hub-owned and won't re-read the file on its own. If the user is
+    # staring at the very SRT we just rewrote, push the new content in.
+    srt_path = (result or {}).get("srt_path") if isinstance(result, dict) else None
+    if srt_path:
+        hub._refresh_preview_if_match(srt_path)
 
 
 def _invoke_translate(hub, model, *, preset_target_iso=None) -> None:
@@ -521,15 +531,24 @@ def _invoke_translate(hub, model, *, preset_target_iso=None) -> None:
     modal = SubtitlesProgressModal(
         hub.root, worker, title=tr("hub.dialog.subtitles_progress.title_translate"))
     try:
-        modal.run()
+        result = modal.run()
     except AIError as e:
         if e.kind == Kind.CANCELLED:
             return
         messagebox.showerror(tr("hub.error.translate_failed"), str(e), parent=hub.root)
+        return
     except (ValueError, FileNotFoundError) as e:
         messagebox.showerror(tr("hub.error.translate_failed"), str(e), parent=hub.root)
+        return
     except Exception as e:
         messagebox.showerror(tr("hub.error.translate_failed"), repr(e), parent=hub.root)
+        return
+
+    # Same preview-refresh follow-up as _invoke_asr: re-push the new SRT
+    # into the preview pane if it's the one the user is looking at.
+    srt_path = (result or {}).get("srt_path") if isinstance(result, dict) else None
+    if srt_path:
+        hub._refresh_preview_if_match(srt_path)
 
 
 def _invoke_analysis(hub, model, lang: str, kind: str) -> None:
