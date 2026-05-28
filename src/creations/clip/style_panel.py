@@ -453,14 +453,6 @@ class StylePanel:
         ctx = self._build_project_context()
         spec.build_property_panel(
             self._property_frame, instance, ctx, self._on_property_changed)
-        # The property controls (Entry / Spinbox) are built fresh here,
-        # after the one-time attach_focus_grab_fix in _build_panel. Without
-        # re-applying the shim, clicking them after the WebView2 preview has
-        # held focus leaves keystrokes stranded in the WebView input thread
-        # — the user can only use the spin arrows, not type. Re-walk the
-        # newly built subtree.
-        from ui.web_preview import attach_focus_grab_fix
-        attach_focus_grab_fix(self._property_frame)
 
     def _build_project_context(self) -> ProjectContext:
         duration = self._host._full_video_duration() or 0.0
@@ -478,31 +470,9 @@ class StylePanel:
             subtitle_languages=langs)
 
     def _on_property_changed(self) -> None:
-        # Live-edit from a property panel. Update ONLY the selected list
-        # row in place — a full _reload_component_list() calls
-        # selection_set, which re-fires the tree-select handler and
-        # rebuilds the whole property panel, destroying the very
-        # Spinbox/Entry the user is typing into (focus + partial input
-        # lost, so only the spin arrows appeared to work). Mirrors
-        # news_desk._on_panel_changed.
         self._host._save_all()
-        self._update_selected_comp_row()
+        self._reload_component_list()
         self.schedule_preview_refresh()
-
-    def _update_selected_comp_row(self) -> None:
-        if self._comp_tree is None or self._selected_idx is None:
-            return
-        iid = str(self._selected_idx)
-        if not self._comp_tree.exists(iid):
-            return
-        comps = self._host.config.components
-        if not (0 <= self._selected_idx < len(comps)):
-            return
-        c = comps[self._selected_idx]
-        kind_label = _KIND_LABELS.get(c.get("kind", ""), c.get("kind", ""))
-        checkbox = "☑" if c.get("enabled", True) else "☐"
-        self._comp_tree.item(
-            iid, values=(checkbox, kind_label, c.get("name", "")))
 
     # ── preview ───────────────────────────────────────────────────────────
 
