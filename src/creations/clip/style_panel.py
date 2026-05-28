@@ -453,6 +453,14 @@ class StylePanel:
         ctx = self._build_project_context()
         spec.build_property_panel(
             self._property_frame, instance, ctx, self._on_property_changed)
+        # The property controls (Entry / Spinbox) are built fresh here,
+        # after the one-time attach_focus_grab_fix in _build_panel. Without
+        # re-applying the shim, clicking them after the WebView2 preview has
+        # held focus leaves keystrokes stranded in the WebView input thread
+        # — the user can only use the spin arrows, not type. Re-walk the
+        # newly built subtree.
+        from ui.web_preview import attach_focus_grab_fix
+        attach_focus_grab_fix(self._property_frame)
 
     def _build_project_context(self) -> ProjectContext:
         duration = self._host._full_video_duration() or 0.0

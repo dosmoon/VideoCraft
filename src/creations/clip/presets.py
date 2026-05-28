@@ -83,14 +83,32 @@ def _builtin_presets() -> dict[str, dict]:
                         "mode": "reframe"},
             "encode_preset": "veryfast",
         },
-        "TikTok / Reels / Shorts (9:16 中文)": {
+        "TikTok / Reels / Shorts (9:16 双语)": {
             "components": [
+                # Bilingual stack: Chinese in orange-red on top of English
+                # in white. Two components because one subtitle = one
+                # language (see components/subtitle.py). If the material
+                # lacks one language, that component compiles to nothing.
                 _default_component(
                     "clip_subtitle",
-                    fontsize_pct=28 / 1080.0,
-                    color="#FFFF00",
+                    id="sub_zh",
+                    name="字幕(中文)",
+                    language="zh",
+                    fontsize_pct=60 / 1080.0,
+                    color="#FF4500",
                     bold=True,
-                    is_chinese=True),
+                    is_chinese=True,
+                    position="bottom"),
+                _default_component(
+                    "clip_subtitle",
+                    id="sub_en",
+                    name="subtitle(en)",
+                    language="en",
+                    fontsize_pct=48 / 1080.0,
+                    color="#FFFFFF",
+                    bold=True,
+                    is_chinese=False,
+                    position="bottom"),
                 _default_component("clip_hook_card", position="upper-third"),
                 _default_component("clip_outro_card", position="lower-third"),
             ],
@@ -102,8 +120,9 @@ def _builtin_presets() -> dict[str, dict]:
             "components": [
                 _default_component(
                     "clip_subtitle",
-                    fontsize_pct=30 / 1080.0,
-                    color="#FFFF00",
+                    language="zh",
+                    fontsize_pct=54 / 1080.0,
+                    color="#FF4500",
                     bold=True,
                     is_chinese=True),
                 _default_component("clip_hook_card", position="upper-third"),
@@ -117,8 +136,9 @@ def _builtin_presets() -> dict[str, dict]:
             "components": [
                 _default_component(
                     "clip_subtitle",
-                    fontsize_pct=26 / 1080.0,
-                    color="#FFFF00",
+                    language="zh",
+                    fontsize_pct=54 / 1080.0,
+                    color="#FF4500",
                     bold=True,
                     is_chinese=True),
                 _default_component("clip_hook_card", position="upper-third"),
@@ -199,9 +219,13 @@ def load_store() -> dict:
         return _seed_store()
     kept, _dropped = _validate_presets(raw.get("presets") or {})
     builtins = _builtin_presets()
+    # Built-ins are code-owned and user-protected (no overwrite / delete in
+    # the UI), so the on-disk copy can only ever be a stale snapshot from an
+    # earlier seed. Always refresh them to the current definition so preset
+    # improvements ship to users who already seeded a store. User presets
+    # (any name not in builtins) are left untouched.
     for name, entry in builtins.items():
-        if name not in kept:
-            kept[name] = copy.deepcopy(entry)
+        kept[name] = copy.deepcopy(entry)
     last_used = raw.get("last_used", BUILTIN_DEFAULT)
     if last_used not in kept:
         last_used = BUILTIN_DEFAULT
