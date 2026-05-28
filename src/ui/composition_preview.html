@@ -42,6 +42,10 @@ const empty  = document.getElementById('emptyMsg');
 let rect = { x: 0, y: 0, w: 1, h: 1 };
 let aspectRatio = 9 / 16;
 let clipStart = 0, clipEnd = 0;
+// Last URL handed to setSource. Compared against the raw arg (NOT
+// vid.src, which the browser percent-encodes — CJK paths would never
+// match and every refresh would look like a source change).
+let lastSrcUrl = null;
 let vSrcW = 0, vSrcH = 0;
 
 // Defaults are intentionally MINIMAL — "just play the video, no
@@ -138,10 +142,19 @@ function targetDims() {
 
 window.vc = {
   setSource(url, startSec, endSec) {
-    if (vid.src !== url) vid.src = url;
+    // Only reload / re-seek when the source or clip window actually
+    // changes. A style-only refresh re-calls setSource with identical
+    // args; reloading or re-seeking there restarts playback from the
+    // clip start on every edit (the clip style-panel pushes the whole
+    // file repeatedly). Re-seek on a real source or range change so the
+    // detail tab still jumps to each candidate's window.
+    const urlChanged = url !== lastSrcUrl;
+    const rangeChanged = (clipStart !== (startSec || 0))
+                       || (clipEnd !== (endSec || 0));
+    if (urlChanged) { vid.src = url; lastSrcUrl = url; }
     clipStart = startSec || 0;
     clipEnd   = endSec   || 0;
-    vid.currentTime = clipStart;
+    if (urlChanged || rangeChanged) vid.currentTime = clipStart;
   },
   setClipRange(startSec, endSec) {
     clipStart = startSec || 0;
