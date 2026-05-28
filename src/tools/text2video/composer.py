@@ -120,8 +120,25 @@ class MediaSegmentComposerApp(ToolBase):
                          lambda e: self._canvas.configure(scrollregion=self._canvas.bbox("all")))
         self._canvas.bind("<Configure>",
                           lambda e: self._canvas.itemconfigure(self._canvas_window, width=e.width))
-        self._canvas.bind_all("<MouseWheel>",
-                              lambda e: self._canvas.yview_scroll(int(-e.delta / 120), "units"))
+
+        def _on_wheel(e):
+            if not self._canvas.winfo_exists():
+                return
+            self._canvas.yview_scroll(int(-e.delta / 120), "units")
+
+        # Scope the global wheel binding to pointer-over + tear down on
+        # Leave / Destroy; a bare bind_all leaks onto a dead canvas after
+        # this view is replaced and crashes the next wheel event.
+        def _bind_wheel(_e):
+            self._canvas.bind_all("<MouseWheel>", _on_wheel)
+
+        def _unbind_wheel(_e):
+            self._canvas.unbind_all("<MouseWheel>")
+
+        for w in (self._canvas, self._inner):
+            w.bind("<Enter>", _bind_wheel)
+            w.bind("<Leave>", _unbind_wheel)
+        self._canvas.bind("<Destroy>", _unbind_wheel, add="+")
 
         self._refresh_cards()
 

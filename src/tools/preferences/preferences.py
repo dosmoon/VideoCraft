@@ -47,7 +47,25 @@ class PreferencesApp(ToolBase):
 
         root.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
         canvas.bind("<Configure>", lambda e: canvas.itemconfig(_win, width=e.width))
-        canvas.bind_all("<MouseWheel>", lambda e: canvas.yview_scroll(int(-1 * (e.delta / 120)), "units"))
+
+        def _on_wheel(e):
+            if not canvas.winfo_exists():
+                return
+            canvas.yview_scroll(int(-1 * (e.delta / 120)), "units")
+
+        # Scope the global wheel binding to pointer-over + tear down on
+        # Leave / Destroy; a bare bind_all leaks onto a dead canvas once
+        # this window closes and crashes the next wheel event.
+        def _bind_wheel(_e):
+            canvas.bind_all("<MouseWheel>", _on_wheel)
+
+        def _unbind_wheel(_e):
+            canvas.unbind_all("<MouseWheel>")
+
+        for w in (canvas, root):
+            w.bind("<Enter>", _bind_wheel)
+            w.bind("<Leave>", _unbind_wheel)
+        canvas.bind("<Destroy>", _unbind_wheel, add="+")
 
         # Per-component widgets keyed by component id, set up in _build_env_section
         self._row_widgets: dict[str, dict] = {}

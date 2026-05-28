@@ -314,8 +314,25 @@ def _scrollable(parent: tk.Frame) -> tuple[tk.Canvas, tk.Frame]:
     canvas.bind("<Configure>", _on_canvas_resize)
 
     def _on_mousewheel(e):
+        if not canvas.winfo_exists():
+            return
         canvas.yview_scroll(int(-e.delta / 120), "units")
-    canvas.bind_all("<MouseWheel>", _on_mousewheel, add="+")
+
+    # Scope the global wheel binding to when the pointer is actually over
+    # the preview, and tear it down on Leave / Destroy. A bare bind_all
+    # leaks a handler bound to a dead canvas once this widget is replaced
+    # (tab switch / re-render), which then raises "invalid command name"
+    # on the next wheel event anywhere in the app.
+    def _bind_wheel(_e):
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+    def _unbind_wheel(_e):
+        canvas.unbind_all("<MouseWheel>")
+
+    for w in (canvas, inner):
+        w.bind("<Enter>", _bind_wheel)
+        w.bind("<Leave>", _unbind_wheel)
+    canvas.bind("<Destroy>", _unbind_wheel, add="+")
 
     return canvas, inner
 

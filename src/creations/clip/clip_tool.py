@@ -226,8 +226,23 @@ class ClipToolApp(ToolBase):
         canvas.bind("<Configure>", _on_canvas_resize)
 
         def _on_mousewheel(e):
+            if not canvas.winfo_exists():
+                return
             canvas.yview_scroll(int(-e.delta / 120), "units")
-        canvas.bind_all("<MouseWheel>", _on_mousewheel, add="+")
+
+        # Scope the global wheel binding to pointer-over and tear it down
+        # on Leave / Destroy — a bare bind_all leaks a handler bound to a
+        # dead canvas after a tab switch / re-render.
+        def _bind_wheel(_e):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+        def _unbind_wheel(_e):
+            canvas.unbind_all("<MouseWheel>")
+
+        for w in (canvas, self._candidate_box):
+            w.bind("<Enter>", _bind_wheel)
+            w.bind("<Leave>", _unbind_wheel)
+        canvas.bind("<Destroy>", _unbind_wheel, add="+")
 
         # Detail panel
         self._detail = ClipDetailPanel(detail, self)
