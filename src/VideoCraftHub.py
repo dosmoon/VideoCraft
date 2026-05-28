@@ -270,6 +270,7 @@ class VideoCraftHub:
         # Tab 系统
         self._tab_registry: dict[str, str] = {}      # tool_key → tool_key
         self._tab_frames: dict[str, ToolFrame] = {}  # tool_key → ToolFrame
+        self._opening_tabs: set[str] = set()         # keys mid-construction (re-entrancy guard)
         self._tab_bar: TabBar | None = None
         self._content_area: tk.Frame | None = None   # Tab 内容切换区
         self._preview_tab: tk.Frame | None = None   # permanent tab-0 content host
@@ -1465,6 +1466,16 @@ class VideoCraftHub:
         if registry_key in self._tab_registry:
             self._select_tab(registry_key)
             return
+        # Re-entrancy guard: a tool's __init__ may run a nested event loop
+        # (e.g. a modal material picker via wait_window). During that loop
+        # queued <<TreeviewSelect>> events and the auto-refresh tick can
+        # call back into open_tool for the SAME key before construction
+        # finishes and the tab is registered below — which would build the
+        # tool (and re-show its modal) again. Mark the key as in-flight so
+        # those re-entrant calls bail out.
+        if registry_key in self._opening_tabs:
+            return
+        self._opening_tabs.add(registry_key)
         try:
             mod_name = os.path.splitext(os.path.basename(file_path))[0]
             spec = importlib.util.spec_from_file_location(mod_name, file_path)
@@ -1500,6 +1511,8 @@ class VideoCraftHub:
             self._select_tab(registry_key)
         except Exception as e:
             messagebox.showerror(tr("hub.error.launch_failed"), str(e))
+        finally:
+            self._opening_tabs.discard(registry_key)
 
     def _open_subprocess(self, file_path: str, initial_file: str | None = None):
         venv_python = os.path.join(_SRC, "..", "myenv", "Scripts", "python.exe")
