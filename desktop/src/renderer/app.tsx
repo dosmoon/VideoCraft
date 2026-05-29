@@ -44,6 +44,9 @@ function expectedSourceFrame(timeline: Timeline, t: number): number | null {
 export function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
+  // Backend (WebGPU device) + overlay scratch persist across media loads.
+  const backendRef = useRef<Backend | null>(null);
+  const overlayRef = useRef<{ canvas: OffscreenCanvas; ctx: OffscreenCanvasRenderingContext2D } | null>(null);
 
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState("");
@@ -64,49 +67,70 @@ export function App() {
   const playBase = useRef(0);
   const playT0 = useRef(0);
   const inFlight = useRef(false);
+  const seekSettleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // (Re)build reader + timelines for a media URL, reusing the persistent backend.
+  async function loadMedia(mediaUrl: string): Promise<void> {
+    const backend = backendRef.current;
+    const overlay = overlayRef.current;
+    if (!backend || !overlay) return;
+    stopPlayback();
+    setStatus("loading");
+    try {
+      const ms = await MediaSource.open(mediaUrl);
+      const reader = new ClipReader(ms);
+      engineRef.current?.reader.dispose();
+
+      const fullDur = ms.durationUs / 1_000_000;
+      const sources = new Map<string, VideoSource>([[DEMO_MEDIA_REF, reader]]);
+      const infoStr = `${ms.codec} ${ms.width}×${ms.height} · ${fullDur.toFixed(2)}s · ${ms.samples.length} samples · ${ms.index.keyframeCount} keyframes`;
+      engineRef.current = {
+        backend,
+        reader,
+        info: infoStr,
+        timelines: {
+          demo: buildDemoTimeline(fullDur),
+          seek: buildMultiSegmentTimeline(),
+          subtitle: buildSubtitleTimeline(fullDur),
+        },
+        drawDeps: { backend, sources, fit: "contain", overlayCanvas: overlay.canvas, overlayCtx: overlay.ctx },
+      };
+      setInfo(infoStr);
+      timeSec_.current = 0;
+      setTimeSec(0);
+      setDurationSec(engineRef.current.timelines[mode_.current].durationSec);
+      setStatus("ready");
+      await renderAt(0);
+    } catch (err) {
+      setStatus("error");
+      setError(err instanceof Error ? `${err.name}: ${err.message}` : String(err));
+    }
+  }
+
+  async function onOpenVideo(): Promise<void> {
+    const path = await window.vc.pickVideo();
+    if (path) await loadMedia(window.vc.mediaUrl(path));
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
     let disposed = false;
-
     void (async () => {
       try {
         const backend = new Backend();
         await backend.init(canvas);
         backend.resize(CANVAS_W, CANVAS_H);
-
-        const ms = await MediaSource.open(window.vc.spikeMediaUrl("test_clip.mp4"));
-        const reader = new ClipReader(ms);
-        if (disposed) {
-          reader.dispose();
-          backend.dispose();
-          return;
-        }
-
         const overlayCanvas = new OffscreenCanvas(CANVAS_W, CANVAS_H);
         const overlayCtx = overlayCanvas.getContext("2d");
         if (!overlayCtx) throw new Error("failed to get 2d context for overlays");
-
-        const fullDur = ms.durationUs / 1_000_000;
-        const sources = new Map<string, VideoSource>([[DEMO_MEDIA_REF, reader]]);
-        const infoStr = `${ms.codec} ${ms.width}×${ms.height} · ${fullDur.toFixed(2)}s · ${ms.samples.length} samples · ${ms.index.keyframeCount} keyframes`;
-
-        engineRef.current = {
-          backend,
-          reader,
-          info: infoStr,
-          timelines: {
-            demo: buildDemoTimeline(fullDur),
-            seek: buildMultiSegmentTimeline(),
-            subtitle: buildSubtitleTimeline(fullDur),
-          },
-          drawDeps: { backend, sources, fit: "contain", overlayCanvas, overlayCtx },
-        };
-        setInfo(infoStr);
-        setDurationSec(engineRef.current.timelines.demo.durationSec);
-        setStatus("ready");
-        await renderAt(0);
+        if (disposed) {
+          backend.dispose();
+          return;
+        }
+        backendRef.current = backend;
+        overlayRef.current = { canvas: overlayCanvas, ctx: overlayCtx };
+        await loadMedia(window.vc.spikeMediaUrl("test_clip.mp4"));
       } catch (err) {
         if (!disposed) {
           setStatus("error");
@@ -118,21 +142,26 @@ export function App() {
     return () => {
       disposed = true;
       engineRef.current?.reader.dispose();
-      engineRef.current?.backend.dispose();
+      backendRef.current?.dispose();
       engineRef.current = null;
+      backendRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  async function renderAt(sec: number): Promise<void> {
+  async function renderAt(sec: number, exact = false): Promise<void> {
     const eng = engineRef.current;
     if (!eng || inFlight.current) return;
     inFlight.current = true;
     try {
       const timeline = eng.timelines[mode_.current];
-      const t = Math.max(0, sec);
+      // Clamp to just inside the timeline: at exactly durationSec the half-open
+      // [start, end) clip windows cover nothing → a black frame. Show the last
+      // frame instead (end-of-track / slider-at-max).
+      const lastT = Math.max(0, timeline.durationSec - 1 / FPS);
+      const t = Math.min(Math.max(0, sec), lastT);
       const slice = resolveFrameAt(timeline, t);
-      const stats = await drawFrameSlice(slice, eng.drawDeps);
+      const stats = await drawFrameSlice(slice, eng.drawDeps, exact);
       setDrawInfo(`v:${stats.video} ov:${stats.overlay} skip:${stats.skipped}`);
       setExpectedFrame(expectedSourceFrame(timeline, t));
       setActualFrame(
@@ -161,8 +190,11 @@ export function App() {
         }
         timeSec_.current = t;
         setTimeSec(t);
+        void renderAt(timeSec_.current);
       }
-      void renderAt(timeSec_.current);
+      // When paused we do NOT render every frame — that 60fps re-render storm
+      // fought the controlled slider during drag (jitter) and flashed frames as
+      // a seek settled. Paused renders happen on seek (below) instead.
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
@@ -189,7 +221,15 @@ export function App() {
     stopPlayback();
     timeSec_.current = sec;
     setTimeSec(sec);
+    // Fast best-available frame while dragging; then once, ~120ms after the
+    // drag stops, a single exact-frame render settles the paused frame (no
+    // per-frame re-render storm, so the slider doesn't jitter).
     void renderAt(sec);
+    if (seekSettleTimer.current !== null) clearTimeout(seekSettleTimer.current);
+    seekSettleTimer.current = setTimeout(() => {
+      seekSettleTimer.current = null;
+      void renderAt(timeSec_.current, /* exact */ true);
+    }, 120);
   }
 
   async function onExport(): Promise<void> {
@@ -258,6 +298,13 @@ export function App() {
                 : "Subtitle (canvas2D)"}
           </button>
         ))}
+        <button
+          onClick={() => void onOpenVideo()}
+          disabled={exporting}
+          style={{ padding: "4px 12px", marginLeft: "auto", background: "#3a3a40", color: "#fff", border: "none", borderRadius: 4 }}
+        >
+          Open video…
+        </button>
       </div>
 
       {status === "error" && <p style={{ color: "#ff6b6b" }}>Error — {error}</p>}
@@ -293,21 +340,24 @@ export function App() {
           onChange={(e) => onSeek(Number(e.target.value))}
           style={{ flex: 1 }}
         />
-        <span style={{ fontVariantNumeric: "tabular-nums", minWidth: 320, color: "#ddd", flexShrink: 0 }}>
-          {timeSec.toFixed(2)}s · out {frameNo}
-          {expectedFrame != null && (
-            <>
-              {" · "}
-              <strong style={{ color: "#7fd17f" }}>exp src {expectedFrame}</strong>
-            </>
-          )}
-          {actualFrame != null && (
-            <>
-              {" · "}
-              <strong style={{ color: "#d1a17f" }}>decoded {actualFrame}</strong>
-            </>
-          )}
-        </span>
+      </div>
+
+      {/* Readout on its own line — keeping it out of the slider's flex row so
+          its varying width can't resize the slider (caused jitter on seek). */}
+      <div style={{ fontVariantNumeric: "tabular-nums", color: "#ddd", marginTop: 8, maxWidth: 960 }}>
+        {timeSec.toFixed(2)}s · out {frameNo}
+        {expectedFrame != null && (
+          <>
+            {" · "}
+            <strong style={{ color: "#7fd17f" }}>exp src {expectedFrame}</strong>
+          </>
+        )}
+        {actualFrame != null && (
+          <>
+            {" · "}
+            <strong style={{ color: "#d1a17f" }}>decoded {actualFrame}</strong>
+          </>
+        )}
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 12, maxWidth: 960 }}>

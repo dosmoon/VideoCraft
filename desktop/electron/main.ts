@@ -12,7 +12,7 @@
  *     mp4box + WebCodecs pipeline can pull a source clip incrementally
  */
 
-import { app, BrowserWindow, ipcMain, net, protocol, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from "electron";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -104,6 +104,15 @@ function registerMediaProtocol(): void {
     }
   });
 }
+
+// Real-video smoke test: pick an arbitrary local video to load via vc-media://.
+ipcMain.handle("vc:pickVideo", async () => {
+  const r = await dialog.showOpenDialog({
+    properties: ["openFile"],
+    filters: [{ name: "Video", extensions: ["mp4", "mov", "m4v", "webm", "mkv"] }],
+  });
+  return r.canceled ? null : (r.filePaths[0] ?? null);
+});
 
 // Spike C export sink: the renderer can't write files; it hands muxed mp4
 // bytes here for the main process to persist under user_data/exports.

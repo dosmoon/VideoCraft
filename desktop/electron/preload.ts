@@ -20,6 +20,10 @@ const api = {
   writeExport(name: string, bytes: Uint8Array): Promise<string> {
     return ipcRenderer.invoke("vc:writeExport", name, bytes);
   },
+  /** Open a file dialog to pick a local video; returns its absolute path or null. */
+  pickVideo(): Promise<string | null> {
+    return ipcRenderer.invoke("vc:pickVideo");
+  },
   platform: process.platform,
 };
 

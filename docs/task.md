@@ -95,6 +95,13 @@
 
 > **环境坑(记忆已存 [[reference_electron_run_as_node]])**:agent shell 带 `ELECTRON_RUN_AS_NODE=1`,启 Electron 必 `env -u ELECTRON_RUN_AS_NODE pnpm dev`;且本环境 Vite HMR 频繁送陈旧 bundle,改 renderer 后要全重启 + 清 `node_modules/.vite`,别信 HMR;GPU 进程偶发崩 → main 已加 `--disable-gpu-sandbox` + repo-local userData。
 
+**▶ 续 6(2026-05-29 晚,真实视频验证 + harness bug — 这批改动 ⚠️ 未提交,在工作树里;已提交基线 = commit `0f49364`)**:
+- 加了 **"Open video…" 文件选择器**(`vc:pickVideo` IPC + `vc-media://local/`)真实片源验证。**结论:真实视频播放基本流畅**(性能 de-risk 基本达成)。
+- **Bug 1(已修+已验证)**:暂停拖动进度条 → 抖动/进度条长度跳/闪烁。真因 = rAF 循环**每帧无条件重渲染**(暂停时也是),60fps setState storm 跟受控 slider 拖拽打架 + 读数挤在 slider flex 行里随位数变宽挤压 slider。修:暂停不每帧渲染(只播放时渲);读数移到单独一行;`onSeek` 拖动时渲一次 + 停手 120ms debounce 一次 exact 帧定格。用户确认"不闪烁了"。
+- **Bug 2(已修,⚠️ 未验证 — 明天先验这个)**:拖到**最右端/播到结尾**黑屏。真因 = clip 时间窗半开 `[start,end)`,`t=durationSec` 无 clip 覆盖 → 露清屏底色。修:`renderAt` 把 t 夹到 `durationSec - 1/FPS`(显示最后一帧)。**改完用户就收工了,没验**。
+- **明天新对话第一步**:① Ctrl+R 重载验证 Bug 2(末端不再黑屏);② 把续 6 这批 harness 改动(file picker + 抖动修 + 末端夹取)作为跟进 commit 提上(基线 `0f49364` 之后);③ 再回到下轮主线"substrate → 产品化"(见上"下一步")。
+- 改动文件(工作树未提交):`electron/main.ts`(pickVideo IPC)、`electron/preload.ts`、`src/renderer/global.d.ts`、`src/renderer/app.tsx`(loadMedia 重构 + Open 按钮 + 抖动修 + 末端夹取)、`src/renderer/engine/compositor/draw.ts`(drawFrameSlice 加 exact 透传)、`src/renderer/engine/source/ClipReader.ts`(已在基线内的 frameAtExact)。
+
 > 注:本会话(更早)完成了 uv 迁移 + portable 构建 + 一批 WebView 预览 bug 修复(canvas 合成 / range 重载 / 管道死锁),都已 commit+push 到 main。clip 原始的两个小诉求(属性框打字、预设默认)在排查 canvas 问题时回退了,待重做(真因已知)。
 
 ---

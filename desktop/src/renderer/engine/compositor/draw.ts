@@ -133,8 +133,12 @@ export function disposePrepared(prepared: PreparedFrame): void {
 }
 
 /** Preview path: prepare → swapchain pass → paint → dispose. */
-export async function drawFrameSlice(slice: FrameSlice, deps: DrawDeps): Promise<DrawStats> {
-  const prepared = await prepareFrame(slice, deps);
+export async function drawFrameSlice(
+  slice: FrameSlice,
+  deps: DrawDeps,
+  exact = false,
+): Promise<DrawStats> {
+  const prepared = await prepareFrame(slice, deps, exact);
   const rp = deps.backend.beginPass();
   if (rp) {
     paintPreparedFrame(deps.backend, rp, prepared);
