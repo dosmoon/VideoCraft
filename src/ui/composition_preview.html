@@ -1094,12 +1094,16 @@ vid.addEventListener('loadedmetadata', () => {
 
 let lastNotifiedSec = -1;
 vid.addEventListener('timeupdate', () => {
-  if (clipEnd > 0 && vid.currentTime >= clipEnd) {
-    // Loop the clip window so users get a continuous preview without
-    // having to scrub manually.
-    vid.currentTime = clipStart;
-  } else if (clipStart > 0 && vid.currentTime < clipStart) {
-    vid.currentTime = clipStart;
+  // Only loop the clip window when it's a valid (non-inverted, non-empty)
+  // range. A degenerate clipStart >= clipEnd would otherwise seek every
+  // frame — a storm that, with the WebView input thread merged into Tk's,
+  // freezes the whole UI.
+  if (clipEnd > clipStart) {
+    if (vid.currentTime >= clipEnd) {
+      vid.currentTime = clipStart;
+    } else if (clipStart > 0 && vid.currentTime < clipStart) {
+      vid.currentTime = clipStart;
+    }
   }
   drawOverlay();
   // Throttle: only emit once per integer second.

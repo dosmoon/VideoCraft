@@ -271,6 +271,16 @@ class ClipDetailPanel:
             return
         raw = self._detail_vars[key].get()
         secs = _parse_ts(raw)
+        # Clamp to keep start < end (and both >= 0). Manual entry must
+        # honour the same invariant the nudge buttons enforce — an
+        # inverted range (start >= end) makes the preview's clip-loop
+        # seek every frame, and with the WebView input thread merged into
+        # Tk's (AttachThreadInput) that spin freezes the whole UI.
+        start, end = self._host._effective_start_end(self._detail_idx)
+        if key == "start":
+            secs = max(0.0, min(end - 0.1, secs))
+        else:  # "end"
+            secs = max(start + 0.1, secs)
         ov = self._host._override(self._detail_idx)
         ov[f"{key}_sec"] = secs
         self._detail_vars[key].set(_format_ts(secs))
