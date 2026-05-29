@@ -42,6 +42,11 @@ const empty  = document.getElementById('emptyMsg');
 let rect = { x: 0, y: 0, w: 1, h: 1 };
 let aspectRatio = 9 / 16;
 let clipStart = 0, clipEnd = 0;
+// Last URL handed to setSource. Compared against the raw arg (NOT
+// vid.src, which the browser percent-encodes — a CJK path would never
+// match, so every setSource would look like a new source and reload the
+// whole video).
+let lastSrcUrl = null;
 let vSrcW = 0, vSrcH = 0;
 
 // Defaults are intentionally MINIMAL — "just play the video, no
@@ -138,10 +143,19 @@ function targetDims() {
 
 window.vc = {
   setSource(url, startSec, endSec) {
-    if (vid.src !== url) vid.src = url;
+    // Reload the <video> ONLY on a real source change. A style/range
+    // refresh re-calls setSource with the same url; reassigning vid.src
+    // there reloads the entire (possibly 75-min) file — heavy, and while
+    // playing it can saturate the WebView thread which, merged into Tk's
+    // input via AttachThreadInput, freezes the UI. Re-seek only when the
+    // url or the clip window actually changed.
+    const urlChanged = url !== lastSrcUrl;
+    const rangeChanged = (clipStart !== (startSec || 0))
+                       || (clipEnd !== (endSec || 0));
+    if (urlChanged) { vid.src = url; lastSrcUrl = url; }
     clipStart = startSec || 0;
     clipEnd   = endSec   || 0;
-    vid.currentTime = clipStart;
+    if (urlChanged || rangeChanged) vid.currentTime = clipStart;
   },
   setClipRange(startSec, endSec) {
     clipStart = startSec || 0;
@@ -281,6 +295,7 @@ window.vc = {
   clear() {
     vid.removeAttribute('src');
     vid.load();
+    lastSrcUrl = null;
     empty.style.display = '';
   },
 };
