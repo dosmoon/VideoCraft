@@ -5,7 +5,16 @@
 
 ---
 
-## ▶ 下次会话主题：继续 dogfood，暂缓重构
+## ▶ 下次会话主题：Electron 迁移规划（新方向，2026-05-29 定）
+
+架构讨论结论:UI 外壳迁 Electron(留 Python core 当 IPC 后端、双 client 增量迁移)。
+**启动稿在 [`docs/draft/electron-migration-plan.md`](draft/electron-migration-plan.md)** —— 新对话直接读它接手,产出正式迁移方案。
+
+> 注:本会话同时完成了 uv 迁移 + portable 构建 + 一批 WebView 预览 bug 修复(canvas 合成 / range 重载 / 管道死锁),都已 commit+push 到 main。clip 原始的两个小诉求(属性框打字、预设默认)在排查 canvas 问题时回退了,待重做(真因已知)。
+
+---
+
+## (旧) 继续 dogfood，暂缓重构
 
 clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"——决定**先多用一阵**再动测试/重构。
 
