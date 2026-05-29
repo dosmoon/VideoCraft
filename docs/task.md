@@ -51,7 +51,19 @@
 
 **归一化决议(pre-alpha no legacy,移植即清理)**:① 所有 `*_pct` 统一 float 分数(砍 news_desk int%);② 字段名统一(`textFontsizePct`/`textOpacity`/`imageScale`,砍 news_desk 的 `fontsize_pct`/`opacity`/`scale_pct`);③ text watermark 不再 emit 冗余 image_* style key;④ hook/outro 各只 emit 自己 role 的 style key(legacy 两 role 都盖);⑤ **chapter 样式内联到 Clip.style**(奠基稿 §2.5「style inlined at compile」),弃 overlay_styles registry + style_class 间接层。⑥ subtitle `bg_enabled` 折进 `bgOpacity=0`。
 
-**下一步**:§10 step 2 下半 = **GPU compositor + 三关 spike**(libass-wasm 字幕 / 多段拼接 seek 精度 / WebCodecs 导出),此时才引 React/Electron/WebGPU。或先做 step 3 的「per-plugin 映射层」(把 clip/news_desk 的 config/分析结构映射成上述 canonical instance)——纯逻辑可继续单测,不必先上 substrate。两条都行,按需挑。
+**✅ 已落地(2026-05-29 续 2,step 3 per-plugin 映射层:clip 垂直切片)**:`desktop/src/creations/clip/` 新增——把 **clip 完整链条** `hotclip candidate + config → canonical instance → 共享组件 → OTIO Timeline` 打通并验证。
+- `types.ts` — clip wire 形状(**镜像真实 Python**:`config.components` 的 5 种 dict + `<lang>.hotclips.json` candidate{start/end 时间戳串, hook, outro, suggested_title} + `clips_overrides`)。
+- `mapping.ts` — config dict→canonical instance 适配器(snake→camel)+ `parseTimestamp`(镜像 clip_tool `_TS_RE`)+ candidate 窗口/hook/outro 解析(override 逐字段胜)+ `stackSubtitleMargins`(移植 composer.py `_stamp_subtitle_margin_v`;同位字幕按列序堆叠 +0.04;**折掉 legacy `effective_block_margin_pct` 双字段**)。
+- `assemble.ts` — `buildClipTimeline`:candidate 切源成单 media clip(`sourceStart=start`)→ `buildTimeMap` → 按 config 序驱动各共享组件 → 列序即 z 序(顶部=最高 z)→ 全多轨 Timeline。**取代 composer.py `compile_for_candidate`**(产出从 overlay-only 旧 IR 变全多轨 OTIO)。
+- `clip.test.ts` — **10 测**(parse/resolve/adapter/stacking/全装配验证:timeline validate 干净、SRT cue 经 timemap ripple 进 [start,end] 窗口、hook 文本从 candidate 回填、z 序)。**54 测全绿**,typecheck 干净。
+
+**验证到的契约**:SRT 源 cue 不预过滤——`buildTimeMap` 的段 [sourceStart=start, sourceEnd=end] 自动 drop 窗外 cue 并 rebase(等价旧 clip per-cue clamp)。subtitle 经 `ctx.cues` 喂入(host 解析 SRT,组件保持纯)。
+
+**下一步两条岔路**:
+- **A**(纯逻辑续):**news_desk 映射层**——证明 dedup(同一套 canonical 组件,news_desk 用另一套适配器,含 int%→float 大改造 + chapter schedule 映射 + `identityTimeMap` 不剪辑路径)。这能正面验证「公共组件库一次覆盖多插件」。
+- **B**(上 substrate):§10 step 2 下半 **GPU compositor + 三关 spike**(libass-wasm / 多段拼接 seek / WebCodecs 导出),此时引 React/Electron/WebGPU。
+
+倾向 **A** 收口纯逻辑层(两插件都映射完=组件库设计口径真正验证),再整体上 compositor。
 
 > 注:本会话(更早)完成了 uv 迁移 + portable 构建 + 一批 WebView 预览 bug 修复(canvas 合成 / range 重载 / 管道死锁),都已 commit+push 到 main。clip 原始的两个小诉求(属性框打字、预设默认)在排查 canvas 问题时回退了,待重做(真因已知)。
 
