@@ -279,8 +279,15 @@ class ClipDetailPanel:
         start, end = self._host._effective_start_end(self._detail_idx)
         if key == "start":
             secs = max(0.0, min(end - 0.1, secs))
+            current = start
         else:  # "end"
             secs = max(start + 0.1, secs)
+            current = end
+        # <FocusOut> can fire twice for one edit (e.g. Return then focus
+        # leaving). Skip the redundant full re-push when nothing changed.
+        if abs(secs - current) < 1e-3:
+            self._detail_vars[key].set(_format_ts(secs))
+            return
         ov = self._host._override(self._detail_idx)
         ov[f"{key}_sec"] = secs
         self._detail_vars[key].set(_format_ts(secs))

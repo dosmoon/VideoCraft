@@ -24,6 +24,7 @@ import ctypes
 import ctypes.wintypes as wt
 import json
 import os
+import queue
 import subprocess
 import sys
 import threading
@@ -156,6 +157,13 @@ class WebPreviewFrame(tk.Frame):
         self._stdout_thread: threading.Thread | None = None
         self._destroyed = False
         self._attached_thread: int | None = None  # see _embed()
+        # Commands are written to the child's stdin from a dedicated writer
+        # thread, never the Tk main thread. A busy/slow child (GUI thread
+        # tied up playing video) stops draining stdin; a blocking write on
+        # the Tk thread would then fill the pipe buffer and freeze the
+        # whole UI (made fatal by the AttachThreadInput input-queue merge).
+        self._send_q: "queue.Queue[str | None]" = queue.Queue()
+        self._writer_thread: threading.Thread | None = None
         # SetParent must happen AFTER the page's first paint, else
         # Chromium reparents a blank surface (random blank previews under
         # load, esp. with several webviews spawning at once). Gate _embed
@@ -181,7 +189,6 @@ class WebPreviewFrame(tk.Frame):
         self._send({"cmd": "eval", "code": code})
 
     def destroy(self) -> None:
-        self._destroyed = True
         # Detach BEFORE asking the child to quit so a still-living thread
         # is on the other end of AttachThreadInput. Detaching against a
         # gone thread is a no-op but logs noise on some Windows builds.
@@ -195,7 +202,14 @@ class WebPreviewFrame(tk.Frame):
             except Exception:
                 pass
             self._attached_thread = None
+        # Enqueue the graceful quit while _send still accepts it, then
+        # mark destroyed and wake the writer with a sentinel.
         self._send({"cmd": "quit"})
+        self._destroyed = True
+        try:
+            self._send_q.put_nowait(None)
+        except Exception:
+            pass
         if self._child is not None:
             try:
                 self._child.wait(timeout=1.0)
@@ -246,8 +260,27 @@ class WebPreviewFrame(tk.Frame):
         self._stdout_thread = threading.Thread(
             target=self._read_stdout, daemon=True)
         self._stdout_thread.start()
+        self._writer_thread = threading.Thread(
+            target=self._write_loop, daemon=True)
+        self._writer_thread.start()
         # Poll for the HWND on the Tk thread
         self.after(100, self._poll_for_hwnd, time.time() + 15.0)
+
+    def _write_loop(self) -> None:
+        """Drain the send queue to the child's stdin. Runs off the Tk
+        thread so a slow child can never block the UI on a full pipe."""
+        stdin = self._child.stdin if self._child else None
+        if stdin is None:
+            return
+        while True:
+            line = self._send_q.get()
+            if line is None or self._destroyed:   # sentinel = shut down
+                return
+            try:
+                stdin.write(line)
+                stdin.flush()
+            except (BrokenPipeError, OSError, ValueError):
+                return
 
     def _poll_for_hwnd(self, deadline: float) -> None:
         if self._destroyed:
@@ -335,12 +368,13 @@ class WebPreviewFrame(tk.Frame):
         self._reposition()
 
     def _send(self, msg: dict) -> None:
-        if self._child is None or self._child.stdin is None:
+        # Enqueue only — the writer thread does the (potentially blocking)
+        # pipe write. Never block the Tk main thread here.
+        if self._child is None or self._destroyed:
             return
         try:
-            self._child.stdin.write(json.dumps(msg, ensure_ascii=False) + "\n")
-            self._child.stdin.flush()
-        except (BrokenPipeError, OSError):
+            self._send_q.put_nowait(json.dumps(msg, ensure_ascii=False) + "\n")
+        except Exception:
             pass
 
     def _read_stdout(self) -> None:
