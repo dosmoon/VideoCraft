@@ -4,14 +4,37 @@
   "private": true,
   "description": "VideoCraft Electron renderer — home of the OTIO composition core, video component library, and GPU compositor. See docs/draft/composition-otio-foundation.md.",
   "type": "module",
+  "main": "out/main/index.cjs",
   "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json"
+  },
+  "dependencies": {
+    "mp4-muxer": "^5.2.2",
+    "mp4box": "^2.3.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@webgpu/types": "^0.1.69",
+    "electron": "^33.3.1",
+    "electron-vite": "^2.3.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "typescript": "^5.7.0",
+    "vite": "^6.0.7",
     "vitest": "^3.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
   }
 }

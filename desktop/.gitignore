@@ -1,3 +1,9 @@
 node_modules/
 dist/
+out/
+user_data/
 *.tsbuildinfo
+
+# Spike media: keep the ffmpeg generation script, not the generated clips.
+spike-assets/*.mp4
+spike-assets/*.mov

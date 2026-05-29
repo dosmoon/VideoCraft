@@ -3,8 +3,7 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "Bundler",
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "jsx": "react-jsx",
+    "lib": ["ES2022"],
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
@@ -15,11 +14,7 @@
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
     "skipLibCheck": true,
-    "types": ["node", "vitest/globals", "@webgpu/types"],
-    "paths": {
-      "@composition/*": ["./src/composition/*"],
-      "@creations/*": ["./src/creations/*"]
-    }
+    "types": ["node"]
   },
-  "include": ["src"]
+  "include": ["electron", "electron.vite.config.ts", "vitest.config.ts"]
 }

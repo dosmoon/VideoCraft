@@ -80,7 +80,20 @@
 
 **纯逻辑层全部收口(step 1~3 + compositor 脊椎,69 测)**:IR + 公共组件库 + clip/news_desk 双映射 + 帧解析器。`分析+config → OTIO → 逐帧解析` 全链路可单测验证完毕。**Python 一行未动。**
 
-**下一步 = 真·上 substrate(风险集中点,需浏览器/Electron 跑 + 用户肉眼验)**:§10 step 0 脚手架(Electron+React+WebGPU)+ step 2 下半 GPU draw 层 + 三关 spike(libass-wasm 字幕 / 多段拼接 seek 精度 / WebCodecs 导出)。GPU draw 消费 `FrameSlice`,按 `clip.kind` 派发画。**注:这层 headless 单测覆盖不到,必须在真 renderer 里验**——与前面纯逻辑车道性质不同,需单独规划 + 用户参与验证。
+**✅ 已落地(2026-05-29 续 5,substrate 一轮全过 — 自建 GPU 合成器最小闭环立住)**:在真 Electron renderer 里跑通 + 用户肉眼验。完整发现录:**[`docs/draft/substrate-spike-findings.md`](draft/substrate-spike-findings.md)**。
+- **P0 脚手架**:`desktop/` 加 electron-vite + electron 33 + React 19 + @webgpu/types;**main/preload 出 CJS**(ESM main 撞 Node `cjsPreparse` 崩);renderer 经 `@composition`/`@creations` alias(tsconfig paths + vite alias)引纯逻辑层,Vite 自动 `.js`→`.ts`。WebGPU 硬件可用(nvidia/lovelace)。
+- **P1 decode→draw**:从 Phase 移植 Demuxer/SampleIndex/FrameRingBuffer/MediaSource/ClipReader(mp4box + 长生命 VideoDecoder + ring buffer)+ WebGPU `Backend`(`importExternalTexture` 画视频帧)。合成测试片(`testsrc2`,烧录帧号+timecode)解码播放。
+- **P2 画面层**:`drawFrameSlice(resolveFrameAt(t))` 按 `Clip.kind` 派发——视频外部纹理 + overlay canvas2D→纹理,z 序 alpha 合成。喂**真组件 compile 出的 OTIO**(hook/outro card)。
+- **Spike A 多段 seek** ✅:非单调 sourceStart 跨切点 seek 落对 GOP;播放型 reader at-or-before ±几帧容差(逐帧精确留导出层)。
+- **Spike B 字幕** ✅:**走 canvas2D→纹理进单一 compositor**(与 Phase 设计殊途同归;jassub 是 display-only + 在本栈跑不起来被否);CJK 正常;3 个 headless 单测钉死。
+- **Spike C 导出** ✅:逐帧 `resolveFrameAt → prepare/paint`(**预览同源**)→ **离屏纹理** copyTextureToBuffer 读回(swapchain 不可读=绿屏坑)→ VideoFrame → VideoEncoder → mp4-muxer → 主进程 fs 写。抽帧确认视频+字幕都烧进去,**preview≡render 成立**。
+- **测试**:纯逻辑 + 引擎 dispatch 共 **72 测**;引擎渲染层靠真 renderer 肉眼验(headless 覆盖不到,已知)。
+
+**代码定性**:保留=`desktop/src/renderer/engine/`(gpu/source/compositor/overlay/export — 生产引擎)+ `electron/`(壳)。探索性=`src/renderer/app.tsx`(spike harness)/`harness/*`/`spike-assets/`,接真 UI 时整理。**Python 一行未动。**
+
+**下一步(下轮)= substrate → 产品化**:① 接 Python sidecar + 业务 IPC(migration doc M0/M1:project/material/analysis/AI 走 RPC);② 真 UI 壳(Hub + sidebar + 工作台)替换 harness;③ 引擎细化(导出逐帧精确 decode、音轨 mux、剩余 overlay kind、转场);④ libass-RGBA 仅当将来要完整 ASS 特效。foundation doc 可升 ADR(数据模型 + 渲染引擎)。
+
+> **环境坑(记忆已存 [[reference_electron_run_as_node]])**:agent shell 带 `ELECTRON_RUN_AS_NODE=1`,启 Electron 必 `env -u ELECTRON_RUN_AS_NODE pnpm dev`;且本环境 Vite HMR 频繁送陈旧 bundle,改 renderer 后要全重启 + 清 `node_modules/.vite`,别信 HMR;GPU 进程偶发崩 → main 已加 `--disable-gpu-sandbox` + repo-local userData。
 
 > 注:本会话(更早)完成了 uv 迁移 + portable 构建 + 一批 WebView 预览 bug 修复(canvas 合成 / range 重载 / 管道死锁),都已 commit+push 到 main。clip 原始的两个小诉求(属性框打字、预设默认)在排查 canvas 问题时回退了,待重做(真因已知)。
 
