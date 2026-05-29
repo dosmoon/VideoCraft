@@ -156,6 +156,14 @@ class WebPreviewFrame(tk.Frame):
         self._stdout_thread: threading.Thread | None = None
         self._destroyed = False
         self._attached_thread: int | None = None  # see _embed()
+        # SetParent must happen AFTER the page's first paint, else
+        # Chromium reparents a blank surface (random blank previews under
+        # load, esp. with several webviews spawning at once). Gate _embed
+        # on BOTH the HWND being found AND the page "loaded" event, with a
+        # timeout fallback so a missing event can't strand the preview.
+        self._pending_hwnd: int | None = None
+        self._page_loaded = False
+        self._embedded = False
 
         self.bind("<Configure>", self._on_configure)
         # Defer spawn until the frame has a real HWND
@@ -228,16 +236,40 @@ class WebPreviewFrame(tk.Frame):
             return
         hwnd = _find_window_by_title(self._title)
         if hwnd:
-            # Give the page a moment to render before reparenting. SetParent
-            # mid-render can leave Chromium with a blank surface.
-            self.after(500, lambda: self._embed(hwnd))
+            self._pending_hwnd = hwnd
+            # Embed once the page has painted (loaded event). Fallback:
+            # if "loaded" never arrives, embed anyway after a grace period
+            # so the preview can't be stranded blank.
+            self._maybe_embed()
+            self.after(2500, self._embed_fallback)
             return
         if time.time() < deadline:
             self.after(100, self._poll_for_hwnd, deadline)
 
-    def _embed(self, wv_hwnd: int) -> None:
-        if self._destroyed:
+    def _mark_page_loaded(self) -> None:
+        self._page_loaded = True
+        self._maybe_embed()
+
+    def _maybe_embed(self) -> None:
+        if self._destroyed or self._embedded:
             return
+        if self._pending_hwnd is None or not self._page_loaded:
+            return
+        # One more frame for Chromium to actually paint after DOM-load,
+        # then reparent.
+        self.after(120, lambda: self._embed(self._pending_hwnd))
+
+    def _embed_fallback(self) -> None:
+        if self._destroyed or self._embedded or self._pending_hwnd is None:
+            return
+        # "loaded" never showed up — embed anyway rather than leave the
+        # preview permanently detached.
+        self._embed(self._pending_hwnd)
+
+    def _embed(self, wv_hwnd: int) -> None:
+        if self._destroyed or self._embedded:
+            return
+        self._embedded = True
         self._wv_hwnd = wv_hwnd
         style = user32.GetWindowLongW(wv_hwnd, GWL_STYLE)
         style &= ~(WS_CAPTION | WS_THICKFRAME | WS_POPUP | WS_BORDER
@@ -247,6 +279,10 @@ class WebPreviewFrame(tk.Frame):
         user32.SetParent(wv_hwnd, self.winfo_id())
         self._reposition()
         self._attach_input_queue(wv_hwnd)
+        # Belt-and-suspenders: nudge the size once more after a beat so
+        # Chromium repaints its surface even if the reparent caught a
+        # frame mid-flight.
+        self.after(60, self._reposition)
 
     def _attach_input_queue(self, wv_hwnd: int) -> None:
         """Merge the WebView's input queue into Tk's.
@@ -307,5 +343,9 @@ class WebPreviewFrame(tk.Frame):
             # Marshal back to Tk thread
             if event == "message" and self._on_message is not None:
                 self.after(0, self._on_message, msg.get("data"))
-            elif event == "loaded" and self._on_loaded is not None:
-                self.after(0, self._on_loaded)
+            elif event == "loaded":
+                # Drive embed gating regardless of whether an external
+                # on_loaded callback is registered.
+                self.after(0, self._mark_page_loaded)
+                if self._on_loaded is not None:
+                    self.after(0, self._on_loaded)
