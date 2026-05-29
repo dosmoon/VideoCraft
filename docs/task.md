@@ -65,6 +65,16 @@
 
 倾向 **A** 收口纯逻辑层(两插件都映射完=组件库设计口径真正验证),再整体上 compositor。
 
+**✅ 已落地(2026-05-29 续 3,step 3 news_desk 映射层:dedup 正面验证)**:`desktop/src/creations/news_desk/` 新增——同一套 canonical 组件,news_desk 用另一套适配器接入,**正面证明公共组件库覆盖多插件**。
+- `types.ts` — news_desk wire 形状(镜像真实 Python:subtitle/text_wm/image_wm/chapter config;**故意与 clip 不同**——int%、`bg_enabled` flag、无 language/bold)。
+- `mapping.ts` — 适配器,精确镜像 legacy compile 转换:`block_margin_pct`/`margin_*`/`scale_pct` **int→fraction**;margin clamp[0,0.20]、scale clamp[0.02,0.50];`bg_enabled` 折进 bgOpacity;canonical 独有字段(bold/bgPaddingXPct/language)取中性默认。chapter schedule + 嵌套 style 映射。
+- `assemble.ts` — `buildNewsDeskTimeline`:**全源视频轨**(无剪辑)+ `identityTimeMap`(源时间≡输出时间)。**subtitle 不堆叠**(clip 特有,此处每条独立 margin)。chapter 两 mode → **2 overlay 轨**(strip + hero card),验证「一组件多轨」路径。
+- `news_desk.test.ts` — **7 测**(int→fraction 转换 + clamp + chapter 映射 + 全装配验证 + identity 路径 cue 时间不变 + chapter 2 轨 + 显式 dedup 断言)。**61 测全绿**,typecheck 干净。
+
+**纯逻辑层(step 1~3)已收口**:IR 核心 + 公共组件库 + clip/news_desk 双映射,端到端 `分析+config → canonical → 共享组件 → 全多轨 OTIO` 全验证(61 测)。组件库设计口径经两插件正面背书。**Python 一行未动。**
+
+**下一步 = 上 substrate**:§10 step 2 下半 **GPU compositor + 三关 spike**(libass-wasm 字幕 / 多段拼接 seek 精度 / WebCodecs 导出)。此时引 React/Electron/WebGPU(脚手架 step 0)。这是风险集中点,值得单独一轮;前置的纯逻辑链已全绿,compositor 只需消费 OTIO Timeline。
+
 > 注:本会话(更早)完成了 uv 迁移 + portable 构建 + 一批 WebView 预览 bug 修复(canvas 合成 / range 重载 / 管道死锁),都已 commit+push 到 main。clip 原始的两个小诉求(属性框打字、预设默认)在排查 canvas 问题时回退了,待重做(真因已知)。
 
 ---
