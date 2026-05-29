@@ -73,7 +73,14 @@
 
 **纯逻辑层(step 1~3)已收口**:IR 核心 + 公共组件库 + clip/news_desk 双映射,端到端 `分析+config → canonical → 共享组件 → 全多轨 OTIO` 全验证(61 测)。组件库设计口径经两插件正面背书。**Python 一行未动。**
 
-**下一步 = 上 substrate**:§10 step 2 下半 **GPU compositor + 三关 spike**(libass-wasm 字幕 / 多段拼接 seek 精度 / WebCodecs 导出)。此时引 React/Electron/WebGPU(脚手架 step 0)。这是风险集中点,值得单独一轮;前置的纯逻辑链已全绿,compositor 只需消费 OTIO Timeline。
+**✅ 已落地(2026-05-29 续 4,compositor 纯逻辑脊椎)**:`desktop/src/composition/compositor/resolve.ts`——
+- `resolveFrameAt(timeline, t) → FrameSlice`:给定输出时间 t,walk OTIO,各 enabled 轨贡献的 active clip 按 z 升序(paint 序,背景在前)出层;gap 轨省略。**这是 preview≡render 的单一解析器**(同一函数喂预览 + 渲染,非两路对齐)。
+- `activeClipsAt(children, t)`:半开 [start,end) 容纳;媒体 clip 算 `sourceTimeSec = sourceStart + (t - clipStart)`(给解码/seek),generator clip 为 null;**transition 重叠区返两个 active clip**(outgoing 先,给 blend)。
+- `resolve.test.ts` — **8 测**(单 active / gap 省略 / 媒体源时间 / z paint 序 / disabled 跳过 / transition 双 active)。**69 测全绿**,typecheck 干净。纯逻辑、零 GPU(GPU 层消费 FrameSlice,不重算时序)。
+
+**纯逻辑层全部收口(step 1~3 + compositor 脊椎,69 测)**:IR + 公共组件库 + clip/news_desk 双映射 + 帧解析器。`分析+config → OTIO → 逐帧解析` 全链路可单测验证完毕。**Python 一行未动。**
+
+**下一步 = 真·上 substrate(风险集中点,需浏览器/Electron 跑 + 用户肉眼验)**:§10 step 0 脚手架(Electron+React+WebGPU)+ step 2 下半 GPU draw 层 + 三关 spike(libass-wasm 字幕 / 多段拼接 seek 精度 / WebCodecs 导出)。GPU draw 消费 `FrameSlice`,按 `clip.kind` 派发画。**注:这层 headless 单测覆盖不到,必须在真 renderer 里验**——与前面纯逻辑车道性质不同,需单独规划 + 用户参与验证。
 
 > 注:本会话(更早)完成了 uv 迁移 + portable 构建 + 一批 WebView 预览 bug 修复(canvas 合成 / range 重载 / 管道死锁),都已 commit+push 到 main。clip 原始的两个小诉求(属性框打字、预设默认)在排查 canvas 问题时回退了,待重做(真因已知)。
 
