@@ -41,7 +41,17 @@
 
 **⚠️ 一处对奠基稿 §2.5 schema 的工程偏离(已确认正确)**:给 Clip/Gap/Transition 加了 `type` 结构判别字段(schema 草图里没有)。理由:TS 判别联合需运行期 tag,且 invariant #3「transition 只在两 clip 间」要能运行期判。这是把 A2「三结构类型」显式化,**不是**塌成统一 Item;两轴(结构 `type` vs 渲染图元 `Clip.kind`)仍正交。下次成熟升 ADR 时同步进 schema。
 
-**下一步(§10 step 2)**:公共视频组件库骨架(`subtitle/watermark/chapter-card/hook/outro` 的 `compile()→OTIO` 接口,去重 news_desk/clip)+ GPU compositor;穿插三关 spike。届时再引 React/Electron/WebGPU。
+**✅ 已落地(2026-05-29 续,§10 step 2 上半:公共视频组件库骨架)**:`desktop/src/composition/` 新增——
+- `assemble.ts` — `OverlaySegment` + `packOverlaySegments`(绝对窗口 → 相对 overlay Track,gap 填充;**单轨禁重叠**,重叠 throw=「该分轨」信号)。
+- `components/contract.ts` — `VideoComponent<I>` 契约:`compile(instance, ctx) → Track[]`(纯函数)。关键结构发现:OTIO 相对单轨不能容重叠 clip,故 compile 返 **Track[]**(多数 1,chapter 返 2)。`CompileContext{durationSec, timeMap, cues?}`。
+- `components/{subtitle,watermark,card,chapter}.ts` — 6 个共享组件,**去重 + 归一化** news_desk/clip 双份实现(详见下「归一化决议」)。
+- `components/index.ts` — `COMPONENT_REGISTRY`。`components.test.ts` — **15 测**(各组件 compile 输出 + 全链路 timeline validate 通过)。**44 测全绿**,typecheck 干净。
+
+**契约洞察**:共享的不是 instance schema(那是 per-plugin 映射),是 **emit 的 OTIO Clip(primitive kind + style + data)**。源锚组件(subtitle/chapter)经 `ctx.timeMap` ripple(`identityTimeMap(dur)` 给不剪辑的 news_desk);输出锚组件(watermark/hook/outro)直接产输出时间窗。
+
+**归一化决议(pre-alpha no legacy,移植即清理)**:① 所有 `*_pct` 统一 float 分数(砍 news_desk int%);② 字段名统一(`textFontsizePct`/`textOpacity`/`imageScale`,砍 news_desk 的 `fontsize_pct`/`opacity`/`scale_pct`);③ text watermark 不再 emit 冗余 image_* style key;④ hook/outro 各只 emit 自己 role 的 style key(legacy 两 role 都盖);⑤ **chapter 样式内联到 Clip.style**(奠基稿 §2.5「style inlined at compile」),弃 overlay_styles registry + style_class 间接层。⑥ subtitle `bg_enabled` 折进 `bgOpacity=0`。
+
+**下一步**:§10 step 2 下半 = **GPU compositor + 三关 spike**(libass-wasm 字幕 / 多段拼接 seek 精度 / WebCodecs 导出),此时才引 React/Electron/WebGPU。或先做 step 3 的「per-plugin 映射层」(把 clip/news_desk 的 config/分析结构映射成上述 canonical instance)——纯逻辑可继续单测,不必先上 substrate。两条都行,按需挑。
 
 > 注:本会话(更早)完成了 uv 迁移 + portable 构建 + 一批 WebView 预览 bug 修复(canvas 合成 / range 重载 / 管道死锁),都已 commit+push 到 main。clip 原始的两个小诉求(属性框打字、预设默认)在排查 canvas 问题时回退了,待重做(真因已知)。
 

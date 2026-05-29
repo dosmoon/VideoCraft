@@ -12,7 +12,8 @@
  * gaps alternating).
  */
 
-import { placeTrackChildren, gap, clip, type Clip, type Gap, type Track } from "./ir.js";
+import { placeTrackChildren, clip, type Track } from "./ir.js";
+import { packOverlaySegments, type OverlaySegment } from "./assemble.js";
 import { isMediaKind } from "./catalog.js";
 
 /** One kept slice of source media, placed on the output timeline. */
@@ -38,27 +39,7 @@ export interface TimeMap {
   sourceToOut(sourceSec: number, mediaRef?: string): number | null;
 }
 
-/**
- * Build a TimeMap from a video track. Each media clip becomes a segment in
- * output order; gaps and non-media clips advance output time without mapping to
- * any source (so they read back as `null`). No-speed-change v0: source and
- * output windows are equal length.
- */
-export function buildTimeMap(videoTrack: Track): TimeMap {
-  const segments: TimeMapSegment[] = [];
-  for (const placed of placeTrackChildren(videoTrack.children)) {
-    const child = placed.child;
-    if (child.type !== "clip" || !isMediaKind(child.kind)) continue;
-    const sourceStart = child.sourceStart ?? 0;
-    segments.push({
-      outStart: placed.startSec,
-      outEnd: placed.endSec,
-      sourceStart,
-      sourceEnd: sourceStart + child.durationSec,
-      mediaRef: child.mediaRef,
-    });
-  }
-
+function makeTimeMap(segments: TimeMapSegment[]): TimeMap {
   const outToSource = (outSec: number): number | null => {
     for (const seg of segments) {
       if (outSec >= seg.outStart && outSec < seg.outEnd) {
@@ -79,6 +60,40 @@ export function buildTimeMap(videoTrack: Track): TimeMap {
   };
 
   return { segments, outToSource, sourceToOut };
+}
+
+/**
+ * Build a TimeMap from a video track. Each media clip becomes a segment in
+ * output order; gaps and non-media clips advance output time without mapping to
+ * any source (so they read back as `null`). No-speed-change v0: source and
+ * output windows are equal length.
+ */
+export function buildTimeMap(videoTrack: Track): TimeMap {
+  const segments: TimeMapSegment[] = [];
+  for (const placed of placeTrackChildren(videoTrack.children)) {
+    const child = placed.child;
+    if (child.type !== "clip" || !isMediaKind(child.kind)) continue;
+    const sourceStart = child.sourceStart ?? 0;
+    segments.push({
+      outStart: placed.startSec,
+      outEnd: placed.endSec,
+      sourceStart,
+      sourceEnd: sourceStart + child.durationSec,
+      mediaRef: child.mediaRef,
+    });
+  }
+  return makeTimeMap(segments);
+}
+
+/**
+ * Identity TimeMap: source time === output time over [0, durationSec). Used by
+ * creations that perform no cutting (e.g. news_desk over a full-length video),
+ * so source-anchored components ripple through a no-op and need no special case.
+ */
+export function identityTimeMap(durationSec: number, mediaRef?: string): TimeMap {
+  return makeTimeMap([
+    { outStart: 0, outEnd: durationSec, sourceStart: 0, sourceEnd: durationSec, mediaRef },
+  ]);
 }
 
 /** A source-anchored overlay item (e.g. an SRT cue) before assembly is applied. */
@@ -104,7 +119,7 @@ export function deriveOverlayTrack(
   timemap: TimeMap,
   options: { z?: number; enabled?: boolean } = {},
 ): Track {
-  const placedClips: { startSec: number; endSec: number; clip: Clip }[] = [];
+  const segments: OverlaySegment[] = [];
 
   for (const cue of cues) {
     for (const seg of timemap.segments) {
@@ -115,7 +130,7 @@ export function deriveOverlayTrack(
       if (hi <= lo) continue;
       const outStart = seg.outStart + (lo - seg.sourceStart);
       const outEnd = seg.outStart + (hi - seg.sourceStart);
-      placedClips.push({
+      segments.push({
         startSec: outStart,
         endSec: outEnd,
         clip: clip({
@@ -128,22 +143,5 @@ export function deriveOverlayTrack(
     }
   }
 
-  placedClips.sort((a, b) => a.startSec - b.startSec);
-
-  const children: (Clip | Gap)[] = [];
-  let cursor = 0;
-  for (const pc of placedClips) {
-    if (pc.startSec > cursor) {
-      children.push(gap(pc.startSec - cursor));
-    }
-    children.push(pc.clip);
-    cursor = pc.endSec;
-  }
-
-  return {
-    kind: "overlay",
-    z: options.z ?? 0,
-    enabled: options.enabled ?? true,
-    children,
-  };
+  return packOverlaySegments(segments, options);
 }
