@@ -33,6 +33,16 @@
 
 **下一步**:架构对齐已闭环(三颗钉 + A1/A2 全解,composition→TS)。第一块代码 = **在 Electron renderer(TS)里建 OTIO composition**——IR 数据结构(奠基稿 §2.5,Timeline/Track/Clip/Gap/Transition,相对定位)+ 不变量单测 + 公共视频组件库(去重 news_desk/clip 重复组件)+ GPU compositor,设计口径一次覆盖三插件(news_video 预览 + news_desk + clip)。自建合成器 spike 验三关(libass-wasm 字幕 / 多段拼接 seek 精度 / WebCodecs 导出)穿插其中。**注:composition 重构 ≡ 建 Electron renderer,不再是独立 Python 任务。**
 
+**✅ 已落地(2026-05-29,§10 step 0+1)**:`desktop/` TS 工程脚手架(pnpm + TypeScript strict + Vitest,**暂不引 React/Electron/WebGPU**——保持 IR 层 substrate 无关、纯可单测)。`desktop/src/composition/` 已建:
+- `ir.ts` — OTIO IR 类型(Timeline/Track/Clip/Gap/Transition,相对定位)+ 构造器 + 放置/时长派生(`placeTrackChildren` 累积定位、transition pull 重叠模型、`computeTrackDuration`/`computeTimelineDuration`)+ `validateTimeline`(6 条不变量逐条收集 issue)/`assertValidTimeline`。
+- `catalog.ts` — clip-kind catalog,overlay 词汇 **1:1 移植** `src/core/composition/primitives/*.py`(subtitle_cue/hook_text/outro_text/chapter_hero_card/topic_strip/text/image_watermark)+ media(video/audio)。
+- `timemap.ts` — TimeMap 派生函数(`buildTimeMap` 从视频轨装配出 segments;`outToSource`/`sourceToOut` 剪掉区返 null)+ `deriveOverlayTrack`(源锚 cue → 合法 OTIO overlay 序列,跨切点拆分,invariant #6)。
+- `ir.test.ts` + `timemap.test.ts` — **29 测全绿**,逐条钉死 6 不变量 + TimeMap。`pnpm test` / `pnpm typecheck` 均通过。
+
+**⚠️ 一处对奠基稿 §2.5 schema 的工程偏离(已确认正确)**:给 Clip/Gap/Transition 加了 `type` 结构判别字段(schema 草图里没有)。理由:TS 判别联合需运行期 tag,且 invariant #3「transition 只在两 clip 间」要能运行期判。这是把 A2「三结构类型」显式化,**不是**塌成统一 Item;两轴(结构 `type` vs 渲染图元 `Clip.kind`)仍正交。下次成熟升 ADR 时同步进 schema。
+
+**下一步(§10 step 2)**:公共视频组件库骨架(`subtitle/watermark/chapter-card/hook/outro` 的 `compile()→OTIO` 接口,去重 news_desk/clip)+ GPU compositor;穿插三关 spike。届时再引 React/Electron/WebGPU。
+
 > 注:本会话(更早)完成了 uv 迁移 + portable 构建 + 一批 WebView 预览 bug 修复(canvas 合成 / range 重载 / 管道死锁),都已 commit+push 到 main。clip 原始的两个小诉求(属性框打字、预设默认)在排查 canvas 问题时回退了,待重做(真因已知)。
 
 ---

@@ -1,0 +1,17 @@
+{
+  "name": "videocraft-desktop",
+  "version": "0.0.0",
+  "private": true,
+  "description": "VideoCraft Electron renderer — home of the OTIO composition core, video component library, and GPU compositor. See docs/draft/composition-otio-foundation.md.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  }
+}
