@@ -5,12 +5,35 @@
 
 ---
 
-## ▶ 下次会话主题：Electron 迁移规划（新方向，2026-05-29 定）
+## ▶ 重构主线:OTIO 核心数据模型 + AI 生成管线(2026-05-29 深化)
 
-架构讨论结论:UI 外壳迁 Electron(留 Python core 当 IPC 后端、双 client 增量迁移)。
-**启动稿在 [`docs/draft/electron-migration-plan.md`](draft/electron-migration-plan.md)** —— 新对话直接读它接手,产出正式迁移方案。
+**架构经一轮深挖后收敛到比"Electron 迁移"更底层的地基决策**,奠基稿:
+**[`docs/draft/composition-otio-foundation.md`](draft/composition-otio-foundation.md)** ← 本会话核心产出。
 
-> 注:本会话同时完成了 uv 迁移 + portable 构建 + 一批 WebView 预览 bug 修复(canvas 合成 / range 重载 / 管道死锁),都已 commit+push 到 main。clip 原始的两个小诉求(属性框打字、预设默认)在排查 canvas 问题时回退了,待重做(真因已知)。
+> **新对话起手序**:① 本节(接力点)→ ② 奠基稿 `composition-otio-foundation.md`(**权威**:数据模型/渲染/进程拓扑)→ ③ 迁移稿 `electron-migration-design.md`(**只看** IPC/打包/菜单范围;数据模型/渲染/拓扑已被奠基稿取代,见其 §0.5)→ ④ 记忆 [[project_ir_nle_standard]]/[[reference_phase_repo]]/[[feedback_no_universal_standard]]/[[project_recorded_autoedit]]。**第一块代码** = 在 Electron renderer(TS)里建 OTIO composition(奠基稿 §10)。架构已闭环,新对话进实现层。
+
+**已锁定的方向(逐条有 memory 支撑)**:
+- **VideoCraft = 一台"剪辑师是 AI"的 NLE**:数据模型 = 不打折的 NLE 行业标准 **OTIO 式全多轨**(N 视频+N 音频+N 叠加轨,统一 Track/Clip/Transition;反 CapCut 自创轨型)。差异只在编辑面(语义段落,无 timeline UI)。见 [[project_ir_nle_standard]]。
+- **AI 写语义意图,不吐底层 OTIO**;确定性品类生成器展开成 OTIO;OTIO = 持久化核心编辑模型;一个 compositor → preview≡render(结构性保证)。
+- **渲染引擎 = 自建 GPU 合成器**(WebGPU/WebGL)走 OTIO + libass-wasm 字幕层 + WebCodecs 导出;ffmpeg 降为编解码 I/O;**Phase 当引擎参考实现**([[reference_phase_repo]])。否决 Remotion(react2video 阻抗+license)/ Revideo(Canvas-2D+停更)。
+- refine ADR-0006(timeline 从瞬态→持久化全多轨;AI 写意图原则存活);关联 ADR-0003 快照 / 0005。
+
+**Electron 迁移降为"UI 外壳"层**:[`electron-migration-design.md`](draft/electron-migration-design.md) 已收窄范围(§0.5:只建 框架 + 素材 + 创作,遗留 menubar 工具全砍含 Publish;§4 渲染后端"留 ffmpeg"作废→改自建 GPU 合成器;§2.3 dual-client 已删,磁盘即真相源)。引擎/UI 边界实测全零 tkinter,业务/引擎 0 行重写。Electron 进程边界是**数据级**(Python 不渲染),不重演现在的 UI 合成 bug。supersede `docs/design/01-architecture.md`(单进程无 IPC)。
+
+**本会话已决(2026-05-29,逐条有 memory/doc 支撑)**:
+- 钉1 ✅ **AI 写语义意图、确定性生成器展开成 OTIO**(沿用现成 `hotclips→clip` / `chapters→news_desk` 形状;chapter.py 实证"AI 出 per-point 时间戳→prompt 爆炸"被否)。
+- 钉2 ✅ **用户编辑 vs AI 重生成 = 快照 + 显式替换 + 手工调和,不自动合并**(AI/ASR 非确定,无可靠锚,自动 merge=建在沙子上)。
+- AI 分析层 vs 创作层 = **多对多**(分析=材料正交物件库;creation 经 get_artifact 组合;EDL 是 creation 级)。
+- **prompt hub 判定缺陷已弃** → prompt 回插件、调试每插件自带(AI console 去 Prompts tab)。
+- 钉3 ✅ **消解**:无"品类 profile"抽象,品类 = 创作插件本身;视频组件 = **公共全栈库**(UI+compile→OTIO,服务三插件视频预览/编辑/导出,纯数据面板除外),per-plugin 只剩 挑组件+映射+preset+workbench。见 [[feedback_no_universal_standard]]。
+- **架构总纲**:框架(运行时+库)+ 两种插件;**功能 = 创作插件**(不是规则引擎);共享只有框架契约(composition/OTIO + Material Model artifact API + host),其余 per-plugin。
+- **A1/A2 ✅**(奠基稿 §2.5):OTIO **相对定位**全轨(video/audio/overlay 统一序列 + Gap + Transition,反绝对定位——严格推演后服从标准);分 **Clip/Gap/Transition** 结构类型,kind 派发活在 Clip.kind;TimeMap 降为"源↔输出派生函数"非存储定位。
+- **composition 整块 → TS/renderer**:compositor(WebGPU/WebCodecs/libass-wasm)必须在 renderer,components+compile→OTIO co-locate;**Python 退出 composition/render 路径**(只剩 project/material/analysis/AI;ffmpeg→mux)。composition 重构 ≡ 建 Electron renderer。现有 Python composition 随 Tk 退役,词汇作 catalog 复用。
+- 菜单留/砍定案(迁移稿 §0.5);奠基稿 §2.5/§3/§4.5/§5/§9 已同步。
+
+**下一步**:架构对齐已闭环(三颗钉 + A1/A2 全解,composition→TS)。第一块代码 = **在 Electron renderer(TS)里建 OTIO composition**——IR 数据结构(奠基稿 §2.5,Timeline/Track/Clip/Gap/Transition,相对定位)+ 不变量单测 + 公共视频组件库(去重 news_desk/clip 重复组件)+ GPU compositor,设计口径一次覆盖三插件(news_video 预览 + news_desk + clip)。自建合成器 spike 验三关(libass-wasm 字幕 / 多段拼接 seek 精度 / WebCodecs 导出)穿插其中。**注:composition 重构 ≡ 建 Electron renderer,不再是独立 Python 任务。**
+
+> 注:本会话(更早)完成了 uv 迁移 + portable 构建 + 一批 WebView 预览 bug 修复(canvas 合成 / range 重载 / 管道死锁),都已 commit+push 到 main。clip 原始的两个小诉求(属性框打字、预设默认)在排查 canvas 问题时回退了,待重做(真因已知)。
 
 ---
 
