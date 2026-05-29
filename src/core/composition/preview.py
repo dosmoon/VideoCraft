@@ -209,6 +209,32 @@ class CompositionPreview:
         self._call_js(
             f"window.vc.setCues({json.dumps(cues, ensure_ascii=False)})")
 
+    # Max cues per appendExtraSubtitleCues batch. A 75-min track is ~1781
+    # cues / ~600 KB; sending that as one evaluate_js is a heavy single
+    # payload over the stdin->eval bridge. ~150 cues ≈ 50 KB per call
+    # keeps each eval modest.
+    _CUE_BATCH = 150
+
+    def _push_extra_subtitles_chunked(self, sub_payload: list[dict]) -> None:
+        """Stream subtitle tracks to the overlay in small batches so a
+        long video's full cue list never rides in one oversized eval."""
+        # Track shells first (style/position, empty cue arrays).
+        shells = []
+        for track in sub_payload:
+            shell = {k: v for k, v in track.items() if k != "cues"}
+            shells.append(shell)
+        self._call_js(
+            f"window.vc.beginExtraSubtitles("
+            f"{json.dumps(shells, ensure_ascii=False)})")
+        # Then stream each track's cues in batches.
+        for i, track in enumerate(sub_payload):
+            cues = track.get("cues") or []
+            for start in range(0, len(cues), self._CUE_BATCH):
+                batch = cues[start:start + self._CUE_BATCH]
+                self._call_js(
+                    f"window.vc.appendExtraSubtitleCues("
+                    f"{i}, {json.dumps(batch, ensure_ascii=False)})")
+
     def set_crop(self, rect: Optional[dict]) -> None:
         """Set the crop rect explicitly. None = recenter at current aspect."""
         payload = "null" if rect is None else json.dumps(rect)
@@ -369,8 +395,7 @@ class CompositionPreview:
             f"window.vc.setOverlays({json.dumps(overlay_dicts, ensure_ascii=False)})")
         self._call_js(f"window.vc.setCues([])")
         self._call_js(f"window.vc.setCuesSecondary([])")
-        self._call_js(
-            f"window.vc.setExtraSubtitles({json.dumps(sub_payload, ensure_ascii=False)})")
+        self._push_extra_subtitles_chunked(sub_payload)
         self._call_js(
             f"window.vc.setExtraWatermarks({json.dumps(wm_payload, ensure_ascii=False)})")
         if hook_text or outro_text:

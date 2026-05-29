@@ -215,6 +215,24 @@ class WebPreviewFrame(tk.Frame):
         py = sys.executable
         env = dict(os.environ)
         env["PYTHONUNBUFFERED"] = "1"
+        # After we cross-process SetParent the WebView2 window into a Tk
+        # frame, the overlay <canvas> draws correctly (JS runs, the crop
+        # box is even draggable — cursor changes, drag works) but its
+        # pixels don't show: the GPU-accelerated 2D-canvas compositing
+        # layer isn't presented to the reparented surface. Video (a
+        # separate video layer) and DOM/input are unaffected — hence the
+        # random "video shows, overlay gone". Forcing the canvas to render
+        # in software makes it paint into the normal (presented) document
+        # layer instead of its own GPU texture. Occlusion calc is also
+        # disabled as a cheap belt-and-suspenders. WebView2 reads this env
+        # var for extra Chromium args.
+        extra_args = (
+            "--disable-accelerated-2d-canvas"
+            " --disable-features=CalculateNativeWinOcclusion"
+        )
+        existing = env.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "").strip()
+        env["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (
+            f"{existing} {extra_args}".strip() if existing else extra_args)
         # The host script needs `import webview`, so its sys.path doesn't
         # need our src/ on it — it uses the venv's site-packages. Run it
         # directly by file path.
@@ -279,10 +297,6 @@ class WebPreviewFrame(tk.Frame):
         user32.SetParent(wv_hwnd, self.winfo_id())
         self._reposition()
         self._attach_input_queue(wv_hwnd)
-        # Belt-and-suspenders: nudge the size once more after a beat so
-        # Chromium repaints its surface even if the reparent caught a
-        # frame mid-flight.
-        self.after(60, self._reposition)
 
     def _attach_input_queue(self, wv_hwnd: int) -> None:
         """Merge the WebView's input queue into Tk's.

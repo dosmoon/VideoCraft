@@ -232,6 +232,35 @@ window.vc = {
     extraSubs = Array.isArray(arr) ? arr.filter(e => e && e.line) : [];
     drawOverlay();
   },
+  // Chunked variant of setExtraSubtitles. A long video's full cue list
+  // (1781 cues ≈ 600 KB) in one evaluate_js is a heavy single payload
+  // over the stdin->eval bridge; stream it instead — set the track
+  // shells first (styles, empty cue arrays), then append cues in small
+  // batches. Keeps each eval modest.
+  beginExtraSubtitles(tracks) {
+    extraSubs = Array.isArray(tracks)
+      ? tracks.filter(e => e && e.line).map(t => {
+          const copy = Object.assign({}, t);
+          copy.cues = [];
+          return copy;
+        })
+      : [];
+    drawOverlay();
+  },
+  appendExtraSubtitleCues(trackIndex, cuesBatch) {
+    if (trackIndex < 0 || trackIndex >= extraSubs.length) {
+      return;
+    }
+    if (!Array.isArray(cuesBatch)) return;
+    const dst = extraSubs[trackIndex].cues;
+    for (const c of cuesBatch) {
+      if (c && typeof c.text === 'string'
+          && typeof c.start === 'number' && typeof c.end === 'number') {
+        dst.push(c);
+      }
+    }
+    drawOverlay();
+  },
   setExtraWatermarks(arr) {
     extraWms = Array.isArray(arr) ? arr.filter(w => w && w.enabled) : [];
     drawOverlay();
