@@ -49,6 +49,13 @@ class CreationType:
     # index + snapshot SRT path. Optional; only creations with a workbench
     # preview implement it. core_rpc.creation.preview_data calls it generically.
     preview_provider: Optional[Callable] = None
+    # Render orchestration provider: an object exposing plan_render(project,
+    # instance) / commit_render(project, instance, src_idx, out_idx, dur) /
+    # delete_render(project, instance, out_idx). The GPU render runs in the
+    # renderer; this side owns output paths/naming, the sidecar JSON, stale
+    # cleanup, and the persisted rendered[] state. core_rpc.creation.* call it
+    # generically (ADR-0004). Optional; only creations with export implement it.
+    render_provider: Optional[object] = None
 
 
 # Module-private registry. Plugins call register() at import time.

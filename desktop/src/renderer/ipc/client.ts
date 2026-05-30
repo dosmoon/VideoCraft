@@ -57,6 +57,35 @@ export interface Component {
   [key: string]: unknown;
 }
 
+/** One clip in a render plan (creation.plan_render). */
+export interface RenderPlanClip {
+  srcIdx: number;
+  outIdx: number;
+  outputPath: string;
+  startSec: number;
+  endSec: number;
+  cropRect: { x: number; y: number; w: number; h: number } | null;
+}
+
+/** Render plan for the selected candidates (output paths + global geometry). */
+export interface RenderPlan {
+  lang: string;
+  mode: "reframe" | "passthrough";
+  aspect: string;
+  shortEdge: number;
+  instanceDir: string;
+  clips: RenderPlanClip[];
+}
+
+/** A persisted rendered output (config.rendered[]). */
+export interface RenderedClip {
+  file: string;
+  source_clip_idx: number;
+  output_index: number;
+  duration_sec: number;
+  rendered_at: string;
+}
+
 // ── Method stubs (the bound read-only surface; mutations land in later slices) ─
 
 export const rpc = {
@@ -119,6 +148,28 @@ export const rpc = {
       component_id: componentId,
       delta,
     }),
+
+  // Render orchestration. plan_render returns output paths + geometry for the
+  // selected candidates; the renderer encodes each to outputPath, writes it via
+  // window.vc.writeFile, then commit_render records it (sidecar JSON + rendered[]).
+  planRender: (type: string, instance: string) =>
+    rpcCall<RenderPlan>("creation.plan_render", { type, instance }),
+  commitRender: (
+    type: string,
+    instance: string,
+    srcIdx: number,
+    outIdx: number,
+    durationSec: number,
+  ) =>
+    rpcCall<RenderedClip[]>("creation.commit_render", {
+      type,
+      instance,
+      src_idx: srcIdx,
+      out_idx: outIdx,
+      duration_sec: durationSec,
+    }),
+  deleteRender: (type: string, instance: string, outIdx: number) =>
+    rpcCall<RenderedClip[]>("creation.delete_render", { type, instance, out_idx: outIdx }),
 
   /** Subscribe to server→client notifications; returns an unsubscribe fn. */
   onNotification: (cb: (method: string, params: unknown) => void): (() => void) =>

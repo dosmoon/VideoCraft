@@ -11,6 +11,9 @@ interface VcApi {
   mediaUrl(absPath: string): string;
   spikeMediaUrl(name: string): string;
   writeExport(name: string, bytes: Uint8Array): Promise<string>;
+  writeFile(absPath: string, bytes: Uint8Array): Promise<string>;
+  showInFolder(absPath: string): Promise<void>;
+  openPath(absPath: string): Promise<string>;
   pickVideo(): Promise<string | null>;
   pickFolder(): Promise<string | null>;
   rpc: VcRpcApi;

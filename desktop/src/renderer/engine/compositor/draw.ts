@@ -29,10 +29,12 @@ export interface DrawDeps {
   /** Reused scratch canvas for 2D overlays (sized to the GPU canvas). */
   overlayCanvas: OffscreenCanvas;
   overlayCtx: OffscreenCanvasRenderingContext2D;
+  /** Reframe export offset crop ({x,y,w,h} normalized source coords). */
+  cropRect?: { x: number; y: number; w: number; h: number };
 }
 
 type Layer =
-  | { kind: "video"; frame: VideoFrame; fit: FitMode }
+  | { kind: "video"; frame: VideoFrame; fit: FitMode; crop?: { x: number; y: number; w: number; h: number } }
   | { kind: "overlay"; texture: GPUTexture };
 
 /** Counts of what got drawn this frame — handy for the harness HUD. */
@@ -86,7 +88,7 @@ export async function prepareFrame(
         if (frame) {
           if (stats.videoTimestampUs == null) stats.videoTimestampUs = frame.timestamp;
           frames.push(frame);
-          layers.push({ kind: "video", frame, fit });
+          layers.push({ kind: "video", frame, fit, ...(deps.cropRect ? { crop: deps.cropRect } : {}) });
         } else {
           stats.skipped++;
         }
@@ -117,7 +119,7 @@ export async function prepareFrame(
 export function paintPreparedFrame(backend: Backend, rp: RenderPass, prepared: PreparedFrame): void {
   for (const layer of prepared.layers) {
     if (layer.kind === "video") {
-      backend.drawVideoFrame(rp, layer.frame, layer.fit);
+      backend.drawVideoFrame(rp, layer.frame, layer.fit, layer.crop);
       prepared.stats.video++;
     } else {
       backend.drawOverlayTexture(rp, layer.texture);

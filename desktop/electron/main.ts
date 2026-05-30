@@ -189,6 +189,22 @@ ipcMain.handle("vc:writeExport", async (_e, name: string, bytes: Uint8Array) => 
   return out;
 });
 
+// Write bytes to an absolute path (rendered clips → the creation instance dir;
+// the path is computed by the Python sidecar, which owns naming/locations).
+ipcMain.handle("vc:writeFile", async (_e, absPath: string, bytes: Uint8Array) => {
+  await mkdir(resolve(absPath, ".."), { recursive: true });
+  await writeFile(absPath, Buffer.from(bytes));
+  return absPath;
+});
+
+// OS integration for the Export tab's row actions.
+ipcMain.handle("vc:showInFolder", async (_e, absPath: string) => {
+  shell.showItemInFolder(absPath);
+});
+ipcMain.handle("vc:openPath", async (_e, absPath: string) => {
+  return shell.openPath(absPath); // "" on success, else an error string
+});
+
 // Business RPC bridge: renderer → Python sidecar. We return a tagged result
 // rather than throwing, because ipcMain.handle's error serialization drops the
 // JSON-RPC error code/data; the renderer client unwraps this back into a value

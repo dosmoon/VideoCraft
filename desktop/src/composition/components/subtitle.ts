@@ -14,6 +14,7 @@
 
 import type { Track } from "../ir.js";
 import { deriveOverlayTrack, type SourceAnchoredCue } from "../timemap.js";
+import { fitCues } from "../subtitleWrap.js";
 import type { CompileContext, VideoComponent } from "./contract.js";
 
 export interface SubtitleInstance {
@@ -74,7 +75,12 @@ export const subtitle: VideoComponent<SubtitleInstance> = {
   compile(instance: SubtitleInstance, ctx: CompileContext): Track[] {
     if (!instance.enabled || !ctx.cues || ctx.cues.length === 0) return [];
     const style = subtitleStyle(instance);
-    const cues: SourceAnchoredCue[] = ctx.cues.map((c) => ({
+    // Fit each cue to one line at the output aspect (split long cues across
+    // time) so they never overflow the frame — the one-line invariant. Only
+    // when the host supplies the frame aspect; otherwise pass cues through.
+    const sourceCues =
+      ctx.frameAspect != null ? fitCues(ctx.cues, instance.fontsizePct, ctx.frameAspect) : ctx.cues;
+    const cues: SourceAnchoredCue[] = sourceCues.map((c) => ({
       kind: "subtitle_cue",
       sourceStart: c.sourceStart,
       sourceEnd: c.sourceEnd,

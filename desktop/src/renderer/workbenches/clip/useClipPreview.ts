@@ -19,7 +19,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { SourceCue } from "@composition/components/index.js";
 import type { ClipOverride, HotclipCandidate } from "@creations/clip/types.js";
-import { rpc, RpcError } from "../../ipc/client";
+import { rpc, RpcError, type RenderedClip } from "../../ipc/client";
 import { parseSrt } from "./srt";
 import { parseAspect } from "./cropEditor";
 
@@ -39,6 +39,8 @@ export interface ClipPreviewData {
   overrides: Record<number, ClipOverride>;
   /** Indices checked into the batch (selected_clip_indices). */
   selectedIndices: number[];
+  /** Previously rendered outputs (config.rendered[]). */
+  rendered: RenderedClip[];
 }
 
 /** Shape returned by the clip preview_provider (Python). */
@@ -94,6 +96,7 @@ export function useClipPreview(type: string, instance: string) {
                 selectedIndices: Array.isArray(cfg["selected_clip_indices"])
                   ? (cfg["selected_clip_indices"] as number[])
                   : [],
+                rendered: Array.isArray(cfg["rendered"]) ? (cfg["rendered"] as RenderedClip[]) : [],
               }
             : prev,
         );
@@ -154,6 +157,7 @@ export function useClipPreview(type: string, instance: string) {
           selectedIndices: Array.isArray(cfg["selected_clip_indices"])
             ? (cfg["selected_clip_indices"] as number[])
             : [],
+          rendered: Array.isArray(cfg["rendered"]) ? (cfg["rendered"] as RenderedClip[]) : [],
         });
         setStatus("ready");
       } catch (err) {

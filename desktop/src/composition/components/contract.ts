@@ -41,6 +41,14 @@ export interface CompileContext {
   timeMap: TimeMap;
   /** Source-anchored caption cues, when a component consumes them (subtitle). */
   cues?: readonly SourceCue[];
+  /**
+   * Output frame aspect ratio (width / height). When set, the subtitle
+   * component fits each cue to one line at this aspect — long cues are split
+   * into time-sequential sub-cues (no visual wrap), faithful to the Python
+   * burn path (compute_subtitle_max_chars + process_srt_split). Resolution-
+   * independent: max-chars depends only on aspect + font fraction + script.
+   */
+  frameAspect?: number;
 }
 
 /**

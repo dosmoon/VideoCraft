@@ -337,12 +337,17 @@ export function CropPreview(props: CropPreviewProps) {
         ? { ...candidate, start: "00:00:00.000", end: secToTimestamp(eng.durationSec) }
         : candidate;
       const previewComps = showCards ? components : components.filter((c) => !CARD_KINDS.has(c.kind));
+      // Subtitle fitting uses the OUTPUT aspect so preview ≡ render: reframe →
+      // the crop's output aspect; passthrough → the source aspect.
+      const frameAspect =
+        mode === "passthrough" ? eng.srcW / eng.srcH : aspect.aw / aspect.ah;
       try {
         const tl = buildClipTimeline({
           components: previewComps as unknown as ClipComponentConfig[],
           candidate: effectiveCandidate,
           srtByLang,
           mediaRef: SOURCE_REF,
+          frameAspect,
           ...(fullSource ? {} : override ? { override } : {}),
         });
         timelineRef.current = tl;

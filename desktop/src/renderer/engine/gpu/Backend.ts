@@ -96,26 +96,36 @@ export class Backend {
   }
 
   /**
-   * Draw one WebCodecs VideoFrame into the open pass, aspect-fit. The frame is
+   * Draw one WebCodecs VideoFrame into the open pass. Without `crop`, aspect-fit
+   * (letterbox/cover). With `crop` ({x,y,w,h} normalized source coords), sample
+   * only that window and map it across the output — the reframe export's offset
+   * crop (the crop window is output-aspect, so it fills exactly). The frame is
    * read synchronously here (external texture is valid only within this task);
    * the caller closes the frame after endPass().
    */
-  drawVideoFrame(rp: RenderPass, frame: VideoFrame, fit: FitMode): void {
+  drawVideoFrame(
+    rp: RenderPass,
+    frame: VideoFrame,
+    fit: FitMode,
+    crop?: { x: number; y: number; w: number; h: number },
+  ): void {
     if (!this.device || !this.canvas || !this.videoPipeline) return;
 
-    const { scaleX, scaleY } = computeAspectScale({
-      srcWidth: frame.displayWidth,
-      srcHeight: frame.displayHeight,
-      dstWidth: this.canvas.width,
-      dstHeight: this.canvas.height,
-      mode: fit,
-    });
-
-    this.device.queue.writeBuffer(
-      this.videoPipeline.uniformBuffer,
-      0,
-      new Float32Array([scaleX, scaleY, 0, 0]),
-    );
+    let uniforms: Float32Array<ArrayBuffer>;
+    if (crop) {
+      // [scale(unused), cropOrigin, cropSize, mode=1, pad]
+      uniforms = new Float32Array([1, 1, crop.x, crop.y, crop.w, crop.h, 1, 0]);
+    } else {
+      const { scaleX, scaleY } = computeAspectScale({
+        srcWidth: frame.displayWidth,
+        srcHeight: frame.displayHeight,
+        dstWidth: this.canvas.width,
+        dstHeight: this.canvas.height,
+        mode: fit,
+      });
+      uniforms = new Float32Array([scaleX, scaleY, 0, 0, 0, 0, 0, 0]);
+    }
+    this.device.queue.writeBuffer(this.videoPipeline.uniformBuffer, 0, uniforms);
 
     const externalTexture = this.device.importExternalTexture({ source: frame });
     const bindGroup = this.device.createBindGroup({

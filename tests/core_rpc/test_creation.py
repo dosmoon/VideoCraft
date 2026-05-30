@@ -341,6 +341,69 @@ def test_preview_data_unbound_is_empty(ctx, project_with_clip):
     assert pd["candidates"] == []
 
 
+# ── render orchestration (plan_render / commit_render / delete_render) ─────────
+
+
+def test_plan_render_selected_paths(ctx, project_with_bound_clip):
+    """selected_clip_indices → output paths + geometry; out_idx ascends by src."""
+    _open(ctx, project_with_bound_clip)  # config selects candidate index [1] (hook H1)
+    plan = call(ctx, "creation.plan_render", {"type": "clip", "instance": "clip-1"})["result"]
+    assert plan["mode"] == "reframe"
+    assert plan["aspect"] == "9:16"
+    assert len(plan["clips"]) == 1
+    c = plan["clips"][0]
+    assert c["srcIdx"] == 1 and c["outIdx"] == 1
+    assert c["outputPath"].replace("\\", "/").endswith("clip_001_H1.mp4")  # hook in basename
+    assert c["startSec"] == 60.0 and c["endSec"] == 80.0
+    assert c["cropRect"] is None  # no per-candidate crop override
+
+
+def test_commit_render_writes_sidecar_and_records(ctx, project_with_bound_clip, emit):
+    _open(ctx, project_with_bound_clip)
+    rendered = call(
+        ctx,
+        "creation.commit_render",
+        {"type": "clip", "instance": "clip-1", "src_idx": 1, "out_idx": 1, "duration_sec": 20.0},
+    )["result"]
+    assert len(rendered) == 1
+    assert rendered[0]["output_index"] == 1
+    assert rendered[0]["file"] == "clip_001_H1.mp4"
+    assert ("event.creation.changed", {"type": "clip", "instance": "clip-1"}) in emit.events
+
+    inst_dir = project_with_bound_clip.creation_instance_dir("clip", "clip-1")
+    with open(os.path.join(inst_dir, "clip_001_H1.json"), encoding="utf-8") as f:
+        sidecar = json.load(f)
+    assert sidecar["hook"] == "H1"
+    assert sidecar["outro"] == "O1"
+    assert sidecar["start_sec"] == 60.0 and sidecar["end_sec"] == 80.0
+    assert sidecar["output_index"] == 1
+
+    # rendered[] persisted to config.json.
+    with open(os.path.join(inst_dir, "config.json"), encoding="utf-8") as f:
+        on_disk = json.load(f)
+    assert [r["output_index"] for r in on_disk["rendered"]] == [1]
+
+
+def test_delete_render_unlinks_and_drops(ctx, project_with_bound_clip):
+    _open(ctx, project_with_bound_clip)
+    inst_dir = project_with_bound_clip.creation_instance_dir("clip", "clip-1")
+    call(
+        ctx,
+        "creation.commit_render",
+        {"type": "clip", "instance": "clip-1", "src_idx": 1, "out_idx": 1, "duration_sec": 20.0},
+    )
+    # Simulate the rendered mp4 on disk (the renderer writes it via vc:writeFile).
+    with open(os.path.join(inst_dir, "clip_001_H1.mp4"), "wb") as f:
+        f.write(b"\x00")
+
+    rendered = call(
+        ctx, "creation.delete_render", {"type": "clip", "instance": "clip-1", "out_idx": 1}
+    )["result"]
+    assert rendered == []
+    assert not os.path.exists(os.path.join(inst_dir, "clip_001_H1.mp4"))
+    assert not os.path.exists(os.path.join(inst_dir, "clip_001_H1.json"))
+
+
 def test_preview_data_no_provider(ctx, project_with_clip):
     _open(ctx, project_with_clip)
     resp = call(ctx, "creation.preview_data", {"type": "news_video", "instance": "x"})

@@ -41,10 +41,12 @@ export interface BuildClipTimelineInput {
   srtByLang: Readonly<Record<string, readonly SourceCue[]>>;
   /** Source media id/path for the video track. */
   mediaRef: string;
+  /** Output frame aspect (W/H); enables subtitle one-line fitting when set. */
+  frameAspect?: number;
 }
 
 export function buildClipTimeline(input: BuildClipTimelineInput): Timeline {
-  const { components, candidate, override, srtByLang, mediaRef } = input;
+  const { components, candidate, override, srtByLang, mediaRef, frameAspect } = input;
 
   const [start, end] = resolveStartEnd(candidate, override);
   const durationSec = Math.max(0, end - start);
@@ -57,7 +59,11 @@ export function buildClipTimeline(input: BuildClipTimelineInput): Timeline {
     children: [clip({ kind: "video", durationSec, sourceStart: start, mediaRef, style: {}, data: {} })],
   };
   const timeMap = buildTimeMap(videoTrack);
-  const baseCtx: CompileContext = { durationSec, timeMap };
+  const baseCtx: CompileContext = {
+    durationSec,
+    timeMap,
+    ...(frameAspect != null ? { frameAspect } : {}),
+  };
 
   const hookText = resolveHookText(candidate, override);
   const outroText = resolveOutroText(candidate, override);

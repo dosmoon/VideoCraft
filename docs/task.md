@@ -296,6 +296,35 @@
 
 ---
 
+## ▶ 续 13(2026-05-30,clip 工作台彻底做完整 — Part A 导出落地)
+
+按计划稿 `~/.claude/plans/eager-conjuring-steele.md` 分两部分。**Part A(导出)已落地,全自动门绿,待肉眼验**;Part B(Style 工具栏/预设/语言)待 Part A 肉眼过后做。
+
+**架构分工**:渲染在 renderer(GPU/WebCodecs);Python 拥有路径/命名/sidecar JSON/stale 清理/rendered[]/config。mp4 二进制走 Electron IPC 写盘(非 RPC)。
+
+**已落地(typecheck + 94 TS 测 + build + 51 pytest 全绿)**:
+- **A1 GPU 偏移裁剪**:[videoFrame.ts] 视频 shader 加 mode 分支(0=fit 字节不变保预览/spike;1=crop `sampleUV=cropOrigin+uv*cropSize`),uniform 32B;[Backend.ts] `drawVideoFrame(...,crop?)`。**最高风险、headless 验不到,肉眼重点验**。
+- **A2** [encode.ts] `exportTimelineToMp4` 加 `cropRect`(经 DrawDeps→paintPreparedFrame→drawVideoFrame)+ `cancelCheck` + `ExportCancelled`;[draw.ts] DrawDeps/Layer 加 crop。
+- **A3** [electron/main.ts]+preload+global.d.ts:`vc:writeFile(absPath,bytes)`(写实例目录)/`vc:showInFolder`/`vc:openPath`。
+- **A4** 新 [src/creations/clip/export.py](src/creations/clip/export.py)(render_provider,headless):`plan_render`(selected→out_idx 升序+`clip_NNN[_hook]` 命名+crop 默认+路径)/`commit_render`(写 sidecar JSON 忠实字段+stale 清理+rendered[] insert head+save)/`delete_render`。`CreationType.render_provider` 新契约;clip `__init__` 注册;[core_rpc/methods/creation.py] 3 通用 RPC(getattr,base 层不知 clip)。
+- **A5** [client.ts] planRender/commitRender/deleteRender + RenderPlan/RenderedClip 类型。
+- **A6** [ExportTab.tsx] 状态表(#/源/时长/状态/hook)+ 批量渲染(plan→per-clip buildClipTimeline→encode(crop+目标尺寸)→writeFile→commit_render)+ 进度/取消 + 行操作(播放/打开文件夹/重渲/删除/错误详情;**右键菜单换成行内按钮 + 双击播放**——机制小偏离,动作齐全)。隐藏 canvas 给导出 Backend;引擎按需开/用完 dispose(避开 StrictMode)。
+- **A7** cropEditor.test +4(targetDimsForAspect 对齐 render.py);pytest +3(plan/commit/delete)。
+
+**⚠️ 待肉眼验(Part A,关键)**:选候选→导出→实例目录出 `clip_NNN[_hook].mp4` + sidecar JSON;**成片确实按裁剪框取景**(reframe 偏移裁剪对/passthrough 原样)、字幕/水印/hook/outro 烧进、目标尺寸对;状态表 排队→渲染%→完成;取消;行操作;关掉重开 rendered[] 还原。**全部未提交。**
+
+**Part A 肉眼验中发现并修(均已修+用户确认成片正确)**:
+- **编码档撞上限**:`exportTimelineToMp4` 硬编码 `avc1.42001f`(Baseline L3.1,≤1280×720),导出 1080×1920 时 configure 失败 → `encode on closed codec`。修:`pickAvcCodec` 用 `isConfigSupported` 从 High 5.2 往下挑支持该分辨率的档 + 码率随分辨率走。
+- **导出 tab 不显示已选**:tab 保活,选择在候选 tab 改后导出 tab 不重新 plan。修:`ExportTab` 加 `active` prop,每次被切到前台自动 `refresh()`(重 plan_render)。
+- **失败一闪而过**:渲染失败后 `reload()→rebuildRows` 把失败行刷回"排队"。修:rebuildRows 保留 failed/rendering 态;失败原因直接红字显示在行里。
+- **字幕溢出屏宽**(真实移植缺口):TS 链路没移植"按宽切 cue"。修:新 [composition/subtitleWrap.ts](desktop/src/composition/subtitleWrap.ts)(忠实 `compute_subtitle_max_chars`+`split_subtitle`:长 cue 时间轴切多条、每条 1 行、CJK/英文按**内容**自动判、maxChars=aspect·0.92/(fontsizePct·ratio) 分辨率无关);`CompileContext.frameAspect` 驱动 `subtitle.compile` 切分;`buildClipTimeline` 加 `frameAspect`,预览(输出比例)+导出(目标尺寸)都传 → **preview≡render**,两端字幕同时修好。+9 wrap 单测。
+
+**Part A 用户肉眼验通**:导出成片 9:16 取景/偏移裁剪正确、水印、字幕已适配宽度。**typecheck + 103 TS 测 + build + 51 pytest 全绿。**
+
+**下一步**:Part B(presets.py 改用 component_defs 去 tkinter 依赖 → preset list/apply/save/delete RPC + creation.list_langs + StyleTab 工具栏:语言/比例/编码/mode/short_edge/预设)。
+
+---
+
 ## (旧) 继续 dogfood，暂缓重构
 
 clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"——决定**先多用一阵**再动测试/重构。

@@ -51,6 +51,50 @@ def preview_data(ctx: Context, type: str, instance: str) -> dict[str, Any]:
     return ctype.preview_provider(ctx.session.project, instance)
 
 
+def _render_provider(type: str):
+    """Resolve a creation type's render provider or raise (ADR-0004: the base
+    layer never imports a creation by name)."""
+    import creations
+
+    ctype = creations.get(type)
+    if ctype is None:
+        raise RpcError(-32602, f"unknown creation type: {type!r}")
+    provider = ctype.render_provider
+    if provider is None:
+        raise RpcError(-32603, f"creation type {type!r} has no render_provider")
+    return provider
+
+
+@rpc_method("creation.plan_render")
+def plan_render(ctx: Context, type: str, instance: str) -> dict[str, Any]:
+    """Output paths + geometry for the selected candidates. The renderer builds
+    each clip's timeline and encodes to the returned outputPath; rendering runs
+    in the renderer (GPU), not here."""
+    return _render_provider(type).plan_render(ctx.session.project, instance)
+
+
+@rpc_method("creation.commit_render")
+def commit_render(
+    ctx: Context, type: str, instance: str, src_idx: int, out_idx: int, duration_sec: float
+) -> list[dict[str, Any]]:
+    """After the renderer writes a clip's mp4: write its sidecar JSON, clean
+    stale files, record it in rendered[]. Returns the updated rendered list."""
+    rendered = _render_provider(type).commit_render(
+        ctx.session.project, instance, int(src_idx), int(out_idx), float(duration_sec)
+    )
+    ctx.notify("event.creation.changed", {"type": type, "instance": instance})
+    return rendered
+
+
+@rpc_method("creation.delete_render")
+def delete_render(ctx: Context, type: str, instance: str, out_idx: int) -> list[dict[str, Any]]:
+    """Delete a rendered output's files and drop it from rendered[]. Returns the
+    updated rendered list."""
+    rendered = _render_provider(type).delete_render(ctx.session.project, instance, int(out_idx))
+    ctx.notify("event.creation.changed", {"type": type, "instance": instance})
+    return rendered
+
+
 @rpc_method("creation.update_config")
 def update_config(ctx: Context, type: str, instance: str, patch: dict[str, Any]) -> dict[str, Any]:
     """Patch top-level config fields (output geometry, selection, per-candidate

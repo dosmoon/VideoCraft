@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { centerCropRect, clampCropRect, parseAspect } from "./cropEditor";
+import { centerCropRect, clampCropRect, parseAspect, targetDimsForAspect } from "./cropEditor";
 
 describe("parseAspect", () => {
   it("parses w:h", () => {
@@ -34,6 +34,23 @@ describe("centerCropRect (≡ render.py::_center_crop_rect)", () => {
 
   it("degenerate source → full frame", () => {
     expect(centerCropRect(0, 0, 9, 16)).toEqual({ x: 0, y: 0, w: 1, h: 1 });
+  });
+});
+
+describe("targetDimsForAspect (≡ render.py::_target_dims_for_aspect — the export dims)", () => {
+  it("9:16 @ 1080 short edge → 1080×1920", () => {
+    expect(targetDimsForAspect("9:16", 1080)).toEqual({ width: 1080, height: 1920 });
+  });
+  it("16:9 @ 1080 short edge → 1920×1080", () => {
+    expect(targetDimsForAspect("16:9", 1080)).toEqual({ width: 1920, height: 1080 });
+  });
+  it("1:1 @ 1080 → 1080×1080", () => {
+    expect(targetDimsForAspect("1:1", 1080)).toEqual({ width: 1080, height: 1080 });
+  });
+  it("always returns even dimensions (encoder requirement)", () => {
+    const { width, height } = targetDimsForAspect("4:5", 1081);
+    expect(width % 2).toBe(0);
+    expect(height % 2).toBe(0);
   });
 });
 

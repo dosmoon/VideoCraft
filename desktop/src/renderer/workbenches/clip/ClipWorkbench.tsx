@@ -164,7 +164,7 @@ export function ClipWorkbench(props: { type: string; instance: string; onClose: 
         )}
         {visited.has("export") && (
           <div style={{ display: tab === "export" ? "contents" : "none" }}>
-            <ExportTab type={type} instance={instance} />
+            <ExportTab type={type} instance={instance} components={components} active={tab === "export"} />
           </div>
         )}
       </div>

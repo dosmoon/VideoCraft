@@ -20,6 +20,18 @@ const api = {
   writeExport(name: string, bytes: Uint8Array): Promise<string> {
     return ipcRenderer.invoke("vc:writeExport", name, bytes);
   },
+  /** Write bytes to an absolute path (Python-computed clip output path). */
+  writeFile(absPath: string, bytes: Uint8Array): Promise<string> {
+    return ipcRenderer.invoke("vc:writeFile", absPath, bytes);
+  },
+  /** Reveal a file in the OS file manager. */
+  showInFolder(absPath: string): Promise<void> {
+    return ipcRenderer.invoke("vc:showInFolder", absPath);
+  },
+  /** Open a file with the OS default app (play a rendered clip). Returns "" or an error. */
+  openPath(absPath: string): Promise<string> {
+    return ipcRenderer.invoke("vc:openPath", absPath);
+  },
   /** Open a file dialog to pick a local video; returns its absolute path or null. */
   pickVideo(): Promise<string | null> {
     return ipcRenderer.invoke("vc:pickVideo");
