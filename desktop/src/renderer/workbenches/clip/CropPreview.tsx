@@ -357,11 +357,8 @@ export function CropPreview(props: CropPreviewProps) {
         // decode → null, and the transport falls back to a wall-clock scrubber.
         let audio: Map<string, DecodedAudio> | null = null;
         if (ms.audio) {
-          try {
-            audio = new Map([[SOURCE_REF, await new AudioReader(ms.audio).decodeAll()]]);
-          } catch {
-            audio = null; // unplayable audio → silent preview, not a hard error
-          }
+          const decoded = await new AudioReader(window.vc.mediaUrl(srcPath)).decodeAll();
+          if (decoded) audio = new Map([[SOURCE_REF, decoded]]);
         }
         if (disposed) {
           reader.dispose();
@@ -446,22 +443,27 @@ export function CropPreview(props: CropPreviewProps) {
         });
         timelineRef.current = tl;
         setDuration(tl.durationSec);
-
-        // (Re)build audio playback for this timeline's audio segments. Playing
-        // is interrupted by the rebuild — pause so the clock doesn't run against
-        // a stale schedule.
-        pausePlayback();
-        audioRef.current?.dispose();
-        audioRef.current = null;
-        if (eng.audio) {
-          const pb = new AudioPlayback(tl.durationSec);
-          pb.build(resolveAudioSegments(tl), eng.audio);
-          if (pb.hasAudio) audioRef.current = pb;
-          else pb.dispose();
-        }
       } catch (err) {
         setMessage(err instanceof Error ? `compose: ${err.message}` : String(err));
         return;
+      }
+
+      // (Re)build audio playback for this timeline's audio segments. Isolated
+      // from the compose try/catch: an audio failure (e.g. AudioContext limit)
+      // must never blank the video preview. Playing is interrupted by the
+      // rebuild, so pause first to avoid the clock running on a stale schedule.
+      pausePlayback();
+      audioRef.current?.dispose();
+      audioRef.current = null;
+      if (eng.audio && timelineRef.current) {
+        try {
+          const pb = new AudioPlayback(timelineRef.current.durationSec);
+          pb.build(resolveAudioSegments(timelineRef.current), eng.audio);
+          if (pb.hasAudio) audioRef.current = pb;
+          else pb.dispose();
+        } catch {
+          /* audio unavailable → silent preview, video unaffected */
+        }
       }
       void renderAt(tRef.current);
     })();
@@ -572,6 +574,9 @@ export function CropPreview(props: CropPreviewProps) {
             max={duration || 0}
             step={1 / FPS}
             value={t}
+            // Grabbing the bar pauses playback so the rAF loop's per-frame setT
+            // stops fighting the drag (otherwise the thumb snaps back each frame).
+            onPointerDown={pausePlayback}
             onChange={(e) => {
               const v = Number(e.target.value);
               setT(v);

@@ -177,9 +177,11 @@ export function ExportTab(props: {
         // Decode the source audio once (shared across candidates); the export
         // mixes + muxes it per candidate window. Undefined when the source is
         // silent / has no audio track.
-        const audioDemux = ms.audio;
-        const audioSources = audioDemux
-          ? new Map([[SOURCE_REF, await new AudioReader(audioDemux).decodeAll()]])
+        const decodedAudio = ms.audio
+          ? await new AudioReader(window.vc.mediaUrl(data.srcPath)).decodeAll()
+          : null;
+        const audioSources = decodedAudio
+          ? new Map([[SOURCE_REF, decodedAudio]])
           : undefined;
 
         // Preload any image-watermark assets once.
