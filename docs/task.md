@@ -9,6 +9,8 @@
 
 **clip 创作工作台已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现完整、真机肉眼验过。**
 
+> **2026-05-30 续:音频端到端补齐 + compositing 复核完整(已提交 `e9f8e72`)。** 详见本文件末「续 15」+ 奠基稿 `composition-otio-foundation.md` 末新增「音频 + compositing 实现状态」节。要点:demux/decode/导出 AAC mux/预览音频主时钟全落地,118 测 + typecheck 全绿;转场按用户决定暂不做;**尚欠 live 肉眼验(预览有声 + 导出 mp4 抽帧验音轨)**。
+
 - **新会话先读**:[`docs/draft/electron-migration-design.md`](draft/electron-migration-design.md) 顶部「★ 实现进度」——那里有完整实现状态、代码位置、与设计文档不同的决策、已知坑、测试、下一步。**clip 工作台的细节都在那,不在本文件。**
 - 数据模型/渲染/进程拓扑权威 = [`composition-otio-foundation.md`](draft/composition-otio-foundation.md)。
 - **下一步**:clip dogfood 打磨 → news_desk 迁同套组件库 → Tk clip 退役(`component_defs` 合并 Tk specs)。详见上述文档「下一步」。
@@ -286,3 +288,25 @@ clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"
 - **所有视觉尺寸量归一化为 `pct of target_h`**（dogfood 教训）
 - **drawbox/drawtext 的 ffmpeg 坐标常量约定不同**（dogfood 教训）
 - **wrap 预算别从 user-set `is_chinese` flag 推断；从内容自动判**（第二轮 dogfood 教训）
+
+---
+
+## ▶ 续 15(2026-05-30,音频端到端 + compositing 复核 — 已提交 `e9f8e72`)
+
+用户指出新架构 GPU 引擎是**纯视频**的:OTIO IR 有 audio 轨/clip 类型(含 `gainDb`),但引擎从未解码/播放/混流音频,导出无声、预览无音画同步。本轮把音频做到端到端,并复核 compositing。**Python 一行未动**(纯 `desktop/` TS/renderer)。
+
+**已落地(代码位置 + 细节都在奠基稿末「音频 + compositing 实现状态」节,本文件只留指针)**:
+- 解码:`engine/source/{Demuxer,MediaSource,AudioReader}.ts` + `sample-types.ts` + 新 `webcodecs-audiodata.d.ts`(补 lib 缺的 `AudioData` ambient 类型)。
+- 装配:`creations/{clip,news_desk}/assemble.ts` 各产一条 audio Track;`engine/compositor/draw.ts` 显式跳过 audio 轨(非视觉)。
+- 纯逻辑:`composition/compositor/resolveAudio.ts`(+测 7)+ `engine/export/audioMix.ts`(+测 8)——预览/导出同一解析,preview≡render 延伸到音频。
+- 导出:`engine/export/encode.ts` 加 muxer AAC 轨 + `AudioEncoder`(48k/`mp4a.40.2`),`ExportTab.tsx` 解码源音频喂入。
+- 预览:`engine/playback/AudioPlayback.ts`(Web Audio,音频主时钟)+ `CropPreview.tsx` 播放/暂停按钮 + rAF 循环。
+- **118 测全绿 + typecheck 干净**(`cd desktop && env -u ELECTRON_RUN_AS_NODE pnpm test / pnpm typecheck`)。
+
+**承重决策**:① 预览音画同步=音频主时钟(NLE 标准);② 导出=decode→mix(PCM)→AAC re-encode,不做压缩域 passthrough(clip 任意点切 + gainDb + 未来多轨混音都需 PCM 域);③ 音频解析独立于 `resolveFrameAt`(视觉 FrameSlice)。
+
+**Compositing 复核结论**:多 overlay 轨 alpha 叠加 + `image_watermark`(`overlay/canvas2d.ts` 已实装,非 TODO)+ 视频 fit/crop 全在用 = **已完整**。唯一缺口=转场(crossfade/dip),**用户本轮决定暂不做**;地基已就位(IR `Transition` + resolver 重叠区返双 clip),真实需求来自未来录播自动剪辑(多段装配)。
+
+**下一步(下轮第一步)**:
+1. **live 肉眼验**(headless 覆盖不到):`cd desktop && env -u ELECTRON_RUN_AS_NODE pnpm dev` → ① clip 预览点播放有声、音画同步、seek 跟手;② 导出一条 clip,抽帧/播放确认 mp4 含音轨且与画面同步。
+2. 已知潜在打磨点(留 dogfood):AAC esds `description` 抽取在个别 mp4 box 结构上可能取不到(已加递归 fallback + 优雅降级为静音,非崩溃);多源/多音轨混音、音量 UI、转场 = 未来。
