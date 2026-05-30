@@ -417,8 +417,14 @@ export function CropPreview(props: CropPreviewProps) {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         style={{
-          height: 340,
+          // Constrain by BOTH max-dimensions with auto sizing so the canvas
+          // always scales to its intrinsic (source) aspect. A fixed height +
+          // maxWidth distorts the frame (and the crop box) whenever the
+          // container is narrower than height×aspect — which happens in the
+          // Candidates detail pane (flex:1) but not the shrink-to-content
+          // Style pane.
           maxWidth: "100%",
+          maxHeight: 340,
           background: "#000",
           borderRadius: 6,
           display: status === "error" ? "none" : "block",

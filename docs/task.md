@@ -286,7 +286,13 @@
 
 **🐛 续11 预览全黑修复(2026-05-30,用户报"预览看不到视频")**:症状=画布全黑、连绿裁剪框都没有。根因 = **React StrictMode(main.tsx 开着)dev 双挂载** + 我把 `CropPreview` 的 `MediaSource.open` 排在 `backend.init` **之前**(旧 WorkbenchPreview 是 init 在前)。canvas 的 WebGPU context 是单例;双挂载下两个 Backend 竞争 configure;被取消那次的 `backend.init` 可能**最后** configure(因 MediaSource 完成顺序不定),随后它 `dispose()`→`device.destroy()` 把 context 绑定的 device 销毁 → 存活那次渲染到死 context = 全黑。修:`CropPreview` open effect 在 `await MediaSource.open` 后、`new Backend()` **之前**加 `if (disposed) { reader.dispose(); return; }`——被取消的挂载绝不碰 GPU canvas,只有存活挂载 configure。typecheck + build 过。**待用户 Ctrl+R 重载验证视频回来。**
 
-**下一步**:肉眼验收续 11+12(先验预览视频回来)→ Inc5 导出 tab(crop 偏移裁剪 + 批量渲染)。
+**🐛 续11 再修两处(2026-05-30,用户报后,已验通)**:
+- **候选 tab 裁剪框比例错**:`CropPreview` canvas 用了 `height:340 + maxWidth:100%`,在候选详情右栏(`flex:1` 宽度受限)被截断宽度但高度固定 → 画面+框横向变形(样式 tab 左栏收缩到内容,不触发,故只候选错)。修=canvas 改 `maxWidth + maxHeight + 宽高 auto`,任何容器等比缩放。
+- **切 tab / 切候选都重载视频**:① `ClipsTab` 的 `<ClipDetailPanel key={detailIdx}>` 强制每次切候选重挂 → 引擎重开;去掉 key(局部态由 `[candidateIndex,candidate,override]` effect 重置)。② `ClipWorkbench` tab 条件渲染 → 切 tab 卸载/重挂;改"首次访问即挂载、之后只切 `display(contents/none)` 不卸载"(忠实 Tk notebook 常驻)。结果:每 tab 引擎只开一次,切 tab/切候选不再重载。代价=样式+候选都访问后两个引擎常驻(同 Tk 两预览控件常驻)。
+
+**已提交**:`4470cfa`(工作台主体)。续11 两处再修 = 其后一个 commit。
+
+**下一步**:Inc5 导出 tab(crop 偏移裁剪 + 批量渲染)。
 
 ---
 

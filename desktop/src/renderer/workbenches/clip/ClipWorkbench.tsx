@@ -39,6 +39,14 @@ export function ClipWorkbench(props: { type: string; instance: string; onClose: 
   const [savingId, setSavingId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("style");
+  // Tabs are mounted on first visit and kept alive (hidden via display) so
+  // switching tabs never re-opens the GPU preview engine — faithful to the Tk
+  // notebook, whose tab widgets persisted.
+  const [visited, setVisited] = useState<Set<Tab>>(() => new Set<Tab>(["style"]));
+  const showTab = useCallback((t: Tab) => {
+    setTab(t);
+    setVisited((v) => (v.has(t) ? v : new Set(v).add(t)));
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -111,7 +119,7 @@ export function ClipWorkbench(props: { type: string; instance: string; onClose: 
           return (
             <button
               key={t.id}
-              onClick={() => setTab(t.id)}
+              onClick={() => showTab(t.id)}
               style={{
                 padding: "6px 14px",
                 background: "transparent",
@@ -131,21 +139,34 @@ export function ClipWorkbench(props: { type: string; instance: string; onClose: 
 
       {error && <p style={{ color: "#ff6b6b", padding: "8px 16px 0" }}>✗ {error}</p>}
 
+      {/* Each tab is mounted on first visit and kept in the DOM afterwards
+          (display:contents when active, none when hidden) so its preview engine
+          isn't torn down and rebuilt on every tab switch. */}
       <div style={{ flex: 1, overflow: "auto" }}>
-        {tab === "style" && (
-          <StyleTab
-            type={type}
-            instance={instance}
-            components={components}
-            selectedId={selectedId}
-            savingId={savingId}
-            onSelect={setSelectedId}
-            onPatch={(c, f) => void patch(c, f)}
-            onComponentsReplaced={setComponents}
-          />
+        {visited.has("style") && (
+          <div style={{ display: tab === "style" ? "contents" : "none" }}>
+            <StyleTab
+              type={type}
+              instance={instance}
+              components={components}
+              selectedId={selectedId}
+              savingId={savingId}
+              onSelect={setSelectedId}
+              onPatch={(c, f) => void patch(c, f)}
+              onComponentsReplaced={setComponents}
+            />
+          </div>
         )}
-        {tab === "clips" && <ClipsTab type={type} instance={instance} components={components} />}
-        {tab === "export" && <ExportTab type={type} instance={instance} />}
+        {visited.has("clips") && (
+          <div style={{ display: tab === "clips" ? "contents" : "none" }}>
+            <ClipsTab type={type} instance={instance} components={components} />
+          </div>
+        )}
+        {visited.has("export") && (
+          <div style={{ display: tab === "export" ? "contents" : "none" }}>
+            <ExportTab type={type} instance={instance} />
+          </div>
+        )}
       </div>
     </div>
   );

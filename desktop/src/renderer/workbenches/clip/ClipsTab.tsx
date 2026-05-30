@@ -181,8 +181,11 @@ export function ClipsTab(props: { type: string; instance: string; components: Co
       {/* Right: detail editor */}
       <div style={{ flex: 1, overflow: "auto" }}>
         {detailCandidate && detailIdx !== null ? (
+          // No `key` per index — keep the panel (and its GPU preview engine)
+          // mounted across candidate switches; the panel resets its local field
+          // state from props on candidateIndex change, and CropPreview just
+          // rebuilds the timeline for the new window instead of re-opening.
           <ClipDetailPanel
-            key={detailIdx}
             type={type}
             instance={instance}
             candidateIndex={detailIdx}
