@@ -345,3 +345,18 @@ clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"
 
 - clip 测 10→12,news_desk 测 7→8;**全套 120 测全绿 + typecheck 干净**(`cd desktop && env -u ELECTRON_RUN_AS_NODE pnpm exec vitest run / tsc --noEmit`)。
 - **下一步**=续 16 剩余非阻塞项(清 spike 残留 / 音频打磨 / 回主线产品化)。
+
+---
+
+## ▶ 续 18(2026-05-31,清 spike harness 残留 — 纯死代码清除)
+
+续 16 退役了 spike harness(Shell 直渲 Hub),但脚手架还留着。本轮纯死代码清除(零行为变更):
+- `spike-assets/`(合成测试片生成器 + mp4)+ `main.ts` 的 `vc-media://spike/` 分支 + `spikeAssetsDir`。
+- `spikeMediaUrl()`(preload + global.d.ts,无调用方)。
+- `vc:writeExport` / `exportDir`(Spike C 导出 sink,已被走 `vc:writeFile` 的真导出路径取代,见 `ExportTab.tsx`)。
+- `harness/multiSegment.ts`(孤儿 Spike A 夹具,无导入方);**保留** `demoTimeline.ts` + `subtitle.test.ts`(活夹具)。
+- `.gitignore` 的 spike-media 段;顺手刷新 main.ts/preload.ts 两处已失真的 header(还写着"无 sidecar/IPC")。
+
+验证:**120 测全绿 + 两 typecheck rc=0 + `electron-vite build` 成功**(main/preload/73 renderer 模块)。
+
+**下一步**=续 16 剩余:音频打磨(音量 UI / 多音轨 / 转场,用户暂缓)/ 回主线"substrate → 产品化"(sidecar 写操作面 / 真 UI 壳,见续 7 末四轨)。
