@@ -9,7 +9,9 @@
 
 **clip 创作工作台已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现完整、真机肉眼验过。**
 
-> **2026-05-30 续:音频端到端补齐 + compositing 复核完整(已提交 `d0f8b00`)。** 详见本文件末「续 15」+ 奠基稿 `composition-otio-foundation.md` 末新增「音频 + compositing 实现状态」节。要点:demux/decode/导出 AAC mux/预览音频主时钟全落地,118 测 + typecheck 全绿;转场按用户决定暂不做;**尚欠 live 肉眼验(预览有声 + 导出 mp4 抽帧验音轨)**。
+> **2026-05-30/31 续:音频端到端补齐 + compositing 复核完整 — 真机肉眼验通过(预览有声 + 进度条可拖 + 导出 mp4 有声同步)。** 详见本文件末「续 15」+ 奠基稿 `composition-otio-foundation.md` 末「音频 + compositing 实现状态」节。要点:demux/decode/导出 AAC mux/预览音频主时钟全落地,118 测 + typecheck + build 全绿;转场按用户决定暂不做。
+>
+> **⚠️ 排查教训(见 [[feedback_restored_files_lost_edits]]):** 早先一次 git-checkout 清理后,音频编辑只重做回了一部分。**三处** land 漏掉、从未提交,逐个在 live 调试中才发现:① clip 装配器音轨(`0d09738`)② `encode.ts` 整个导出混流 + ③ `draw.ts` 音轨跳过(`936de6f`)。下次跨 sibling 文件重做编辑后,先 `grep` 全部 sibling 确认对齐,别靠 typecheck/测试(它们当时全绿)。
 
 - **新会话先读**:[`docs/draft/electron-migration-design.md`](draft/electron-migration-design.md) 顶部「★ 实现进度」——那里有完整实现状态、代码位置、与设计文档不同的决策、已知坑、测试、下一步。**clip 工作台的细节都在那,不在本文件。**
 - 数据模型/渲染/进程拓扑权威 = [`composition-otio-foundation.md`](draft/composition-otio-foundation.md)。
