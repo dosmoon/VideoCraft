@@ -174,6 +174,12 @@ ipcMain.handle("vc:pickVideo", async () => {
   return r.canceled ? null : (r.filePaths[0] ?? null);
 });
 
+// Hub launcher: pick a project folder to open (project.open takes a folder path).
+ipcMain.handle("vc:pickFolder", async () => {
+  const r = await dialog.showOpenDialog({ properties: ["openDirectory"] });
+  return r.canceled ? null : (r.filePaths[0] ?? null);
+});
+
 // Spike C export sink: the renderer can't write files; it hands muxed mp4
 // bytes here for the main process to persist under user_data/exports.
 ipcMain.handle("vc:writeExport", async (_e, name: string, bytes: Uint8Array) => {

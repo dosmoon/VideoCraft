@@ -144,6 +144,22 @@
   - ⏳ **欠**:三关 spike 在 Chromium ~140 的肉眼回归(Demo 画面 / Subtitle / Export)+ 顶部 sidecar 绿条——窗口在屏上,待用户确认。
   - 注:electron-vite 2.3 改 `main.ts` **不自动重启 electron**,得手动杀 `electron.exe` + 重跑 `pnpm dev`(memory 已记 HMR 不可信)。
 
+## ▶ 续 8(2026-05-30,productization 轨②首切片:真 Hub UI 壳 — read-only RPC 端到端 live 验通)
+
+续 7 sidecar 只读面建好后,选**轨②真 UI 壳**先行(而非轨①写操作面)——理由:写方法无 UI 消费者会"猜形状",先用真 UI 把已有只读面端到端跑通,反推 UI 真正需要的写方法。**首切片 = 项目 launcher + 素材 sidebar 树,纯只读,additive(不吞 harness)**。Python 一行未动。
+
+**已落地(desktop 侧,typecheck 干净 + 72 测)**:
+- `vc:pickFolder` IPC(`main.ts` + `preload.ts` + `global.d.ts`,镜像 `vc:pickVideo`)——launcher 选项目文件夹。
+- `src/renderer/hub/Hub.tsx` — **首个真产品 UI**,全由只读 RPC 驱动:① launcher(`project.recent_list` 拉真实最近项目 / `project.open` / `project.current` 复用 sidecar 已开项目 / `pickFolder→open`);② 项目视图 sidebar(`project.list_materials`+`list_creations` 出树,每个 material 实例 `material.slot_readiness` 出 3 slot=源视频/新闻背景/字幕,`✓`绿/`✗`红/`🔒`锁 + summary,**零前端硬编码**)。
+- `src/renderer/shell.tsx` — 顶部 **[Hub | Spike harness] 切换**,默认 Hub;harness 只在选中时 mount(WebGPU heavy init 不空跑)。**additive**([[feedback_flexibility_over_perfection]]:新 UI 不吞旧工具)。`main.tsx` 渲 `<Shell>`。
+- **作用域刻意收窄**(migration §0.5:Electron 壳 = 框架+素材+创作,legacy menubar 工具全砍)——`docs/design/03-ui-hub.md` 的 26-工具菜单 Hub 是旧 Tk 版,**对 Electron 壳已 superseded**;workbench + tab-0 预览模型留后续切片。
+
+**live 验通(这台 26200,用户肉眼)**:① Hub launcher 真实最近项目列表出来;② 点开项目 → 素材 sidebar 树 + slot 状态正确;③ 切 Spike harness WebGPU 画面还在(additive 没破坏);④ 无红字报错。**证明"瘦客户端 renderer + sidecar 单一所有者"架构在真实数据上成立。**
+
+**⚠️ 未提交**(在工作树,基线 `c941196` 之后):`desktop/electron/{main,preload}.ts`、`desktop/src/renderer/{global.d.ts,main.tsx}`、新 `desktop/src/renderer/hub/Hub.tsx` + `shell.tsx` + task.md。
+
+**下一步**:① 提交续 8(单 commit);② 继续轨②:把"创作实例单击 → 开工作台 tab"接上(clip 工作台首选,migration §4 试点)——这会**首次需要写操作面**(`creation.load_config`/`update_component` 等),轨①写方法**届时按 UI 真实需要补**(避免猜形状);③ 或先补 material 写长任务(`add_source_video`/`generate_subtitles`,job+事件+取消)。preview/render 域待 composition Python/TS 边界理顺。
+
 ---
 
 ## (旧) 继续 dogfood，暂缓重构

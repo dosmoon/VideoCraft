@@ -24,6 +24,10 @@ const api = {
   pickVideo(): Promise<string | null> {
     return ipcRenderer.invoke("vc:pickVideo");
   },
+  /** Open a folder dialog to pick a project directory; returns its path or null. */
+  pickFolder(): Promise<string | null> {
+    return ipcRenderer.invoke("vc:pickFolder");
+  },
   /** Business RPC to the Python sidecar. Returns the tagged reply from main;
    *  the renderer's ipc client (src/renderer/ipc/) unwraps it. */
   rpc: {
