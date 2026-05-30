@@ -1,0 +1,223 @@
+/**
+ * Candidates tab (候选) — faithful port of clip_tool.py::_build_tab_clips +
+ * clip_editor.py::ClipDetailPanel.
+ *
+ * Left: the candidate list. Each row is "#N · start→end · Ns · ⭐score" plus the
+ * hook line, with two distinct interactions (mirrors _render_candidate_row):
+ *   - the ☑ checkbox includes the candidate in the batch (→ selected_clip_indices)
+ *   - clicking the row body opens that candidate's detail panel
+ * Plus select-all / select-none and a "selected / total" header.
+ *
+ * Right: the selected candidate's detail editor (ClipDetailPanel) — its own
+ * preview + crop, start/end nudge, hook/outro/title/tags overrides, SRT cues.
+ *
+ * Selection writes selected_clip_indices via creation.update_config; detail
+ * edits write per-candidate overrides. Both go through the single config owner.
+ */
+
+import { useEffect, useMemo, useState } from "react";
+import { rpc, RpcError, type Component } from "../../ipc/client";
+import type { HotclipCandidate } from "@creations/clip/types.js";
+import { useClipPreview } from "./useClipPreview";
+import { ClipDetailPanel } from "./ClipDetailPanel";
+
+/** ⭐ colour by virality score — mirrors _render_candidate_row (≥8 / ≥6 / else). */
+function scoreColor(score: number): string {
+  if (score >= 8) return "#e0564f";
+  if (score >= 6) return "#d97706";
+  return "#888";
+}
+
+export function ClipsTab(props: { type: string; instance: string; components: Component[] | null }) {
+  const { type, instance, components } = props;
+  const { status, message, data, reload } = useClipPreview(type, instance);
+
+  // Batch selection (selected_clip_indices) — local truth, mirrored to the
+  // sidecar. Detail panel index — which candidate's editor is open.
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [detailIdx, setDetailIdx] = useState<number | null>(null);
+  const [selError, setSelError] = useState("");
+
+  // Sync selection from config whenever it loads/refreshes (our writes keep the
+  // server in step, so re-syncing to the same set is a no-op).
+  useEffect(() => {
+    if (data) setSelected(new Set(data.selectedIndices));
+  }, [data]);
+
+  // Auto-open the first selected (or first) candidate's detail — mirrors the
+  // tail of _reload_candidates.
+  useEffect(() => {
+    if (!data || detailIdx !== null || data.candidates.length === 0) return;
+    const firstSel = data.selectedIndices.find((i) => i >= 0 && i < data.candidates.length);
+    setDetailIdx(firstSel ?? 0);
+  }, [data, detailIdx]);
+
+  const candidates = data?.candidates ?? [];
+  const total = candidates.length;
+
+  const writeSelection = async (next: Set<number>) => {
+    setSelError("");
+    const indices = [...next].sort((a, b) => a - b);
+    try {
+      await rpc.updateConfig(type, instance, { selected_clip_indices: indices });
+    } catch (err) {
+      setSelError(err instanceof RpcError ? `[${err.code}] ${err.message}` : String(err));
+    }
+  };
+
+  const toggle = (i: number) => {
+    const next = new Set(selected);
+    if (next.has(i)) next.delete(i);
+    else next.add(i);
+    setSelected(next);
+    void writeSelection(next);
+  };
+  const selectAll = () => {
+    const next = new Set(candidates.map((_, i) => i));
+    setSelected(next);
+    void writeSelection(next);
+  };
+  const selectNone = () => {
+    const next = new Set<number>();
+    setSelected(next);
+    void writeSelection(next);
+  };
+
+  const detailCandidate: HotclipCandidate | null =
+    detailIdx !== null ? candidates[detailIdx] ?? null : null;
+
+  const headerLabel = useMemo(() => `已选 ${selected.size} / 总 ${total}`, [selected.size, total]);
+
+  if (status === "loading") return <Centered>加载候选…</Centered>;
+  if (status === "nobind") return <Centered>未绑定素材 — 无候选</Centered>;
+  if (status === "nosrc") return <Centered>绑定素材尚无源视频</Centered>;
+  if (status === "error") return <Centered>✗ {message}</Centered>;
+  if (!data) return <Centered>无数据</Centered>;
+
+  return (
+    <div style={{ display: "flex", height: "100%" }}>
+      {/* Left: candidate list */}
+      <div style={{ flex: "0 0 380px", borderRight: "1px solid #2a2a2e", display: "flex", flexDirection: "column" }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            padding: "10px 12px",
+            borderBottom: "1px solid #2a2a2e",
+          }}
+        >
+          <span style={{ fontSize: 12, color: "#bbb" }}>{headerLabel}</span>
+          <button onClick={selectAll} style={hdrBtn}>全选</button>
+          <button onClick={selectNone} style={hdrBtn}>全不选</button>
+        </div>
+        {selError && <p style={{ color: "#ff6b6b", fontSize: 12, padding: "6px 12px", margin: 0 }}>✗ {selError}</p>}
+
+        <div style={{ flex: 1, overflow: "auto", padding: 8 }}>
+          {total === 0 ? (
+            <p style={{ color: "#888", fontSize: 13, padding: 8 }}>素材无 hotclips 候选</p>
+          ) : (
+            candidates.map((c, i) => {
+              const isDetail = detailIdx === i;
+              const dur = c.duration_sec;
+              // Row shows the raw AI hook (faithful to _render_candidate_row,
+              // which reads the hotclips dict, not the per-candidate override).
+              const hook = (c.hook || c.suggested_title || "").trim();
+              return (
+                <div
+                  key={i}
+                  onClick={() => setDetailIdx(i)}
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    padding: "8px 8px",
+                    marginBottom: 4,
+                    borderRadius: 6,
+                    border: `1px solid ${isDetail ? "#2d6cdf" : "#262629"}`,
+                    background: isDetail ? "#172033" : "#1a1a1e",
+                    cursor: "pointer",
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.has(i)}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={() => toggle(i)}
+                    style={{ marginTop: 2 }}
+                  />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ display: "flex", alignItems: "baseline", gap: 0 }}>
+                      <span style={{ color: "#888", fontWeight: 700, fontSize: 12 }}>#{i + 1}</span>
+                      <span style={{ color: "#4a9eff", fontFamily: "Consolas, monospace", fontSize: 12, marginLeft: 6 }}>
+                        {c.start} → {c.end}
+                      </span>
+                      {typeof dur === "number" && (
+                        <span style={{ color: "#888", fontSize: 12, marginLeft: 6 }}>{Math.trunc(dur)}s</span>
+                      )}
+                      {c.score != null && (
+                        <span
+                          style={{
+                            marginLeft: "auto",
+                            color: scoreColor(c.score),
+                            fontWeight: 700,
+                            fontSize: 13,
+                          }}
+                        >
+                          ⭐ {c.score}
+                        </span>
+                      )}
+                    </div>
+                    {hook && (
+                      <div style={{ color: "#ddd", fontWeight: 600, fontSize: 13, marginTop: 3 }}>{hook}</div>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* Right: detail editor */}
+      <div style={{ flex: 1, overflow: "auto" }}>
+        {detailCandidate && detailIdx !== null ? (
+          <ClipDetailPanel
+            key={detailIdx}
+            type={type}
+            instance={instance}
+            candidateIndex={detailIdx}
+            candidate={detailCandidate}
+            override={data.overrides[detailIdx]}
+            components={components ?? []}
+            srcPath={data.srcPath}
+            srtByLang={data.srtByLang}
+            lang={data.lang}
+            mode={data.mode}
+            aspect={data.aspect}
+            onChanged={reload}
+          />
+        ) : (
+          <Centered>选择左侧候选以编辑</Centered>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Centered(props: { children: React.ReactNode }) {
+  return (
+    <div style={{ padding: 24, color: "#777", fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center", height: "100%" }}>
+      {props.children}
+    </div>
+  );
+}
+
+const hdrBtn: React.CSSProperties = {
+  background: "#2a2a2e",
+  color: "#ccc",
+  border: "1px solid #3a3a40",
+  borderRadius: 4,
+  padding: "2px 8px",
+  fontSize: 12,
+  cursor: "pointer",
+};

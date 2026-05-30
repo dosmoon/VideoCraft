@@ -23,6 +23,7 @@ import type {
   ClipOverride,
   ClipSubtitleConfig,
   ClipTextWatermarkConfig,
+  CropRect,
   HotclipCandidate,
 } from "./types.js";
 
@@ -43,6 +44,15 @@ export function parseTimestamp(s: string): number {
   return base;
 }
 
+/** Format seconds as "HH:MM:SS.mmm" — inverse of parseTimestamp (clip_editor._format_ts). */
+export function formatTimestamp(seconds: number): string {
+  const s = Math.max(0, seconds);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const rest = (s % 60).toFixed(3); // SS.mmm
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${rest.padStart(6, "0")}`;
+}
+
 /** Resolve the candidate's [start, end] window, override winning per field. */
 export function resolveStartEnd(
   candidate: HotclipCandidate,
@@ -61,6 +71,42 @@ export function resolveHookText(candidate: HotclipCandidate, override?: ClipOver
 /** Outro text: override wins, else the candidate's AI closing CTA. */
 export function resolveOutroText(candidate: HotclipCandidate, override?: ClipOverride): string {
   return (override?.outro_text ?? candidate.outro ?? "").trim();
+}
+
+/**
+ * Effective title: override wins, else the candidate's AI suggested title.
+ * Mirrors clip_tool.py::_effective_title — "title" key presence wins; absence
+ * (the panel deletes the key on empty input) falls back to the AI value.
+ */
+export function resolveTitle(candidate: HotclipCandidate, override?: ClipOverride): string {
+  if (override?.title !== undefined) return String(override.title);
+  return (candidate.suggested_title ?? "").trim();
+}
+
+/**
+ * Effective hashtags: override wins, else AI `suggested_hashtags`/`hashtags`.
+ * Mirrors clip_tool.py::_effective_tags — an override string is whitespace-split
+ * into a list; a list is taken as-is; anything else yields [].
+ */
+export function resolveTags(candidate: HotclipCandidate, override?: ClipOverride): string[] {
+  if (override?.hashtags !== undefined) {
+    const t = override.hashtags;
+    if (Array.isArray(t)) return t.map(String);
+    if (typeof t === "string") return t.split(/\s+/).filter((s) => s.length > 0);
+    return [];
+  }
+  const t = candidate.suggested_hashtags ?? candidate.hashtags;
+  return Array.isArray(t) ? t.map(String) : [];
+}
+
+/**
+ * Effective crop: the candidate's own crop_rect override, or null (= center
+ * default at render time). Mirrors clip_tool.py::_effective_crop — the Style
+ * tab's staging rect is NOT a fallback; users push it onto candidates
+ * explicitly via "apply crop to all".
+ */
+export function resolveCrop(override?: ClipOverride): CropRect | null {
+  return override?.crop_rect ?? null;
 }
 
 // ── Config → canonical instance ──────────────────────────────────────────────

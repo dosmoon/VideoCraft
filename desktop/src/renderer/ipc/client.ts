@@ -92,10 +92,33 @@ export const rpc = {
       component_id: componentId,
       patch,
     }),
+  // Patch top-level config fields (output geometry, selection, per-candidate
+  // overrides via clips_overrides_merge). Returns the updated config dict.
+  updateConfig: (type: string, instance: string, patch: Record<string, unknown>) =>
+    rpcCall<Record<string, unknown>>("creation.update_config", { type, instance, patch }),
   // Per-creation preview inputs; the shape is owned by the matching TS assembler
   // (clip → ClipPreviewData), so it's opaque here.
   previewData: (type: string, instance: string) =>
     rpcCall<unknown>("creation.preview_data", { type, instance }),
+
+  // Component list management ([+ Add] menu / remove / reorder). add/remove/move
+  // return the updated component list (list order = z-order).
+  listAddableComponents: (type: string, instance: string) =>
+    rpcCall<{ kind: string; multi_instance: boolean }[]>("creation.list_addable_components", {
+      type,
+      instance,
+    }),
+  addComponent: (type: string, instance: string, kind: string) =>
+    rpcCall<Component[]>("creation.add_component", { type, instance, kind }),
+  removeComponent: (type: string, instance: string, componentId: string) =>
+    rpcCall<Component[]>("creation.remove_component", { type, instance, component_id: componentId }),
+  moveComponent: (type: string, instance: string, componentId: string, delta: number) =>
+    rpcCall<Component[]>("creation.move_component", {
+      type,
+      instance,
+      component_id: componentId,
+      delta,
+    }),
 
   /** Subscribe to server→client notifications; returns an unsubscribe fn. */
   onNotification: (cb: (method: string, params: unknown) => void): (() => void) =>

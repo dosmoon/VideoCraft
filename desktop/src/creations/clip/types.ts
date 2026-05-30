@@ -81,10 +81,24 @@ export type ClipComponentConfig =
 export interface HotclipCandidate {
   start: string;
   end: string;
+  /** Clip length in seconds (AI-supplied; shown in the candidate row). */
+  duration_sec?: number;
+  /** Virality score (AI-supplied; drives the row's ⭐ colour). */
+  score?: number;
   hook?: string;
   outro?: string;
   suggested_title?: string;
+  /** AI-suggested publication hashtags (off-screen metadata). */
+  suggested_hashtags?: string[];
   hashtags?: string[];
+}
+
+/** Normalized crop window in source-video coords [0..1] (clips_overrides[idx].crop_rect). */
+export interface CropRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 /** Per-clip user override (ClipInstanceConfig.clips_overrides[idx]). */
@@ -95,4 +109,5 @@ export interface ClipOverride {
   outro_text?: string;
   title?: string;
   hashtags?: string[] | string;
+  crop_rect?: CropRect;
 }
