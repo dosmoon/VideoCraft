@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { validateTimeline, type Clip, type Track } from "../../composition/ir.js";
+import { resolveAudioSegments } from "../../composition/compositor/resolveAudio.js";
 import type { SourceCue } from "../../composition/components/index.js";
 import {
   parseTimestamp,
@@ -157,6 +158,31 @@ describe("buildClipTimeline", () => {
     const videoClip = clipsOf(timeline.tracks[0]!)[0]!;
     expect(videoClip.sourceStart).toBe(60);
     expect(videoClip.durationSec).toBe(30);
+  });
+
+  // Regression guard: the clip assembler MUST emit an audio track windowed to
+  // the candidate. This exact edit was lost across a git-checkout and shipped
+  // green (typecheck + tests passed) because nothing asserted the audio track
+  // existed — preview/export were silently mute. See task.md 续16 + memory
+  // feedback_restored_files_lost_edits.
+  it("emits an audio track over the candidate window (lost-edit guard)", () => {
+    const timeline = buildClipTimeline({
+      components: [subtitleConfig()],
+      candidate,
+      srtByLang,
+      mediaRef: "source.mp4",
+    });
+    expect(timeline.tracks[1]!.kind).toBe("audio");
+
+    const segments = resolveAudioSegments(timeline);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toMatchObject({
+      mediaRef: "source.mp4",
+      outStartSec: 0,
+      outEndSec: 30,
+      sourceStartSec: 60, // candidate starts at 00:01:00
+      gain: 1, // 0 dB = unity
+    });
   });
 
   it("ripples the in-window SRT cue and drops the out-of-window one", () => {

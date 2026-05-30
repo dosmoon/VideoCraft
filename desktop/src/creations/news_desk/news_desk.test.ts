@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { validateTimeline, type Clip, type Track } from "../../composition/ir.js";
+import { resolveAudioSegments } from "../../composition/compositor/resolveAudio.js";
 import type { SourceCue } from "../../composition/components/index.js";
 import {
   newsDeskSubtitleToInstance,
@@ -126,6 +127,28 @@ describe("buildNewsDeskTimeline", () => {
     const videoClip = clipsOf(timeline.tracks[0]!)[0]!;
     expect(videoClip.sourceStart).toBe(0);
     expect(videoClip.durationSec).toBe(120);
+  });
+
+  // Regression guard: news_desk must emit a full-source audio track at unity
+  // gain (no cut). Mirrors the clip lost-edit guard — see task.md 续16.
+  it("emits a full-source audio track (lost-edit guard)", () => {
+    const timeline = buildNewsDeskTimeline({
+      components: [subtitleConfig()],
+      durationSec: 120,
+      cuesBySrtPath,
+      mediaRef: "source.mp4",
+    });
+    expect(timeline.tracks[1]!.kind).toBe("audio");
+
+    const segments = resolveAudioSegments(timeline);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toMatchObject({
+      mediaRef: "source.mp4",
+      outStartSec: 0,
+      outEndSec: 120,
+      sourceStartSec: 0, // full source, no cut
+      gain: 1,
+    });
   });
 
   it("under identity TimeMap, source-anchored times are output times", () => {

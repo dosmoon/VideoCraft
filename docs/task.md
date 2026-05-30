@@ -332,7 +332,16 @@ clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"
 **顺手退役 spike harness**(`5e7046f`+`6413f37`):删 `app.tsx` + Shell 的 Hub/harness 切换(Shell 直渲 Hub)+ 窗口/页面标题去 "substrate spike"。**保留** `src/renderer/harness/*.ts`(headless 测试夹具,`subtitle.test.ts` 在用)。未清(可选,非必须):`electron/main.ts` 的 `vc-media://spike/` scheme + `spike-assets/` 合成片生成脚本——只服务已退役 harness 演示,测试夹具不依赖真实媒体,要彻底无残留可一并删。
 
 **下一步(下轮可选,均非阻塞)**:
-1. 补装配器音频契约测试(防 lost-edit 复发,低成本)。
+1. ~~补装配器音频契约测试(防 lost-edit 复发,低成本)。~~ ✅ 续 17 已做。
 2. 清 `spike` scheme + `spike-assets/`(彻底去 harness 残留)。
 3. 音频打磨:音量 UI / 多音轨混音 / 转场(用户暂缓)。
 4. 回主线"substrate → 产品化":sidecar 写操作面 / 真 UI 壳深化(见续 7 末四轨)。
+
+---
+
+## ▶ 续 17(2026-05-31,装配器音频契约测试 — 防 lost-edit 复发)
+
+续 16 末点名的「装配器音频轨无契约测试」补上。两条 OTIO 装配器(`creations/clip/assemble.ts` + `creations/news_desk/assemble.ts`)各加一条断言:timeline 必须含 audio 轨(`tracks[1].kind==='audio'`)+ `resolveAudioSegments(tl)` 恰好 1 段、mediaRef/输出窗/源 in-point/gain 全对。这正面钉死了续 16 三次 lost-edit 的病根——此前测试只**绕开**音频轨(注释 `[video, audio, ...overlays]` 直接取 `tracks[2]`),从不断言它存在,所以哑掉也全绿。
+
+- clip 测 10→12,news_desk 测 7→8;**全套 120 测全绿 + typecheck 干净**(`cd desktop && env -u ELECTRON_RUN_AS_NODE pnpm exec vitest run / tsc --noEmit`)。
+- **下一步**=续 16 剩余非阻塞项(清 spike 残留 / 音频打磨 / 回主线产品化)。
