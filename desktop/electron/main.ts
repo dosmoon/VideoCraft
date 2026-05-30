@@ -1,12 +1,9 @@
 /**
- * Electron main-process entry for the VideoCraft substrate scaffold.
- *
- * Substrate round scope (foundation doc §10 step 0): just enough shell to host
- * the WebGPU/WebCodecs spikes in a real Chromium renderer. No Python sidecar,
- * no business IPC yet (that's the migration doc's M0/M1, a later round).
+ * Electron main-process entry for the VideoCraft desktop app.
  *
  * Responsibilities:
  *   - register the vc-media:// scheme (must precede app.whenReady)
+ *   - spawn + own the Python core sidecar and bridge business RPC to it
  *   - create the main window pointing at the renderer
  *   - serve local media bytes with HTTP range support so the renderer's
  *     mp4box + WebCodecs pipeline can pull a source clip incrementally
@@ -22,8 +19,6 @@ import { Sidecar, SidecarError } from "./sidecar";
 const here = __dirname;
 // here = out/main in both dev and packaged; ../../ is the desktop repo dir,
 // ../../../ is the VideoCraft repo root (where core_rpc/ + myenv/ live).
-const spikeAssetsDir = resolve(here, "../../spike-assets");
-const exportDir = resolve(here, "../../user_data/exports");
 const repoRoot = resolve(here, "../../../");
 
 // Single Python sidecar for the whole app (migration doc §2.3: one in-memory
@@ -39,7 +34,7 @@ app.commandLine.appendSwitch("disable-gpu-shader-disk-cache");
 // The GPU process intermittently crashed at startup with "Buffer handle is
 // null / SharedImage failed" (a GPU-sandbox shared-memory failure in this
 // launch context). Relaxing the GPU sandbox keeps hardware WebGPU working and
-// makes launches deterministic. Dev/spike concession; revisit for packaging.
+// makes launches deterministic. Dev concession; revisit for packaging.
 app.commandLine.appendSwitch("disable-gpu-sandbox");
 
 // ── Win11 Build 26200 sandbox-incompat workaround (TEMPORARY) ────────────────
@@ -151,11 +146,9 @@ function registerMediaProtocol(): void {
       const url = new URL(req.url);
       const rel = decodeURIComponent(url.pathname.replace(/^\//, ""));
       if (!rel) return new Response(null, { status: 404 });
-      // host "local" = absolute path; host "spike" = relative to spike-assets/.
-      let absPath: string;
-      if (url.host === "local") absPath = rel;
-      else if (url.host === "spike") absPath = join(spikeAssetsDir, rel);
-      else return new Response(null, { status: 404 });
+      // host "local" = an absolute path on disk.
+      if (url.host !== "local") return new Response(null, { status: 404 });
+      const absPath = rel;
       // net.fetch honours Range so the renderer's mp4box pipeline can stream.
       return await net.fetch(pathToFileURL(absPath).toString());
     } catch (err) {
@@ -178,15 +171,6 @@ ipcMain.handle("vc:pickVideo", async () => {
 ipcMain.handle("vc:pickFolder", async () => {
   const r = await dialog.showOpenDialog({ properties: ["openDirectory"] });
   return r.canceled ? null : (r.filePaths[0] ?? null);
-});
-
-// Spike C export sink: the renderer can't write files; it hands muxed mp4
-// bytes here for the main process to persist under user_data/exports.
-ipcMain.handle("vc:writeExport", async (_e, name: string, bytes: Uint8Array) => {
-  await mkdir(exportDir, { recursive: true });
-  const out = join(exportDir, name);
-  await writeFile(out, Buffer.from(bytes));
-  return out;
 });
 
 // Write bytes to an absolute path (rendered clips → the creation instance dir;
