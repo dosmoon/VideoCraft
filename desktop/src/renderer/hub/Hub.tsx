@@ -10,7 +10,7 @@
  * sidebar tree. Workbenches + the tab-0 preview model land in later slices.
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { rpc, RpcError, type Component, type ProjectBrief, type SlotState } from "../ipc/client";
 
 // Friendly labels for the news_video slots (placeholder — real i18n later).
@@ -343,42 +343,52 @@ function ProjectView(props: {
   );
 }
 
-// ── Creation workbench (component list + enabled toggle) ──────────────────────
+// ── Creation workbench (component list + property editor) ─────────────────────
+
+// Structural / separately-handled fields — never shown in the property editor.
+const HIDDEN_FIELDS = new Set(["id", "kind", "enabled"]);
 
 function Workbench(props: { type: string; instance: string; onClose: () => void }) {
   const { type, instance, onClose } = props;
   const [components, setComponents] = useState<Component[] | null>(null);
   const [error, setError] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
-
-  const reload = useCallback(async () => {
-    try {
-      setComponents(await rpc.listComponents(type, instance));
-    } catch (err) {
-      setError(fmt(err));
-    }
-  }, [type, instance]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
+    let alive = true;
     setComponents(null);
     setError("");
-    void reload();
-  }, [reload]);
+    setSelectedId(null);
+    void (async () => {
+      try {
+        const cs = await rpc.listComponents(type, instance);
+        if (alive) setComponents(cs);
+      } catch (err) {
+        if (alive) setError(fmt(err));
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [type, instance]);
 
-  const toggle = useCallback(
-    async (comp: Component) => {
+  // Patch fields of one component → persist → splice the returned component
+  // back into state (no full reload, so editing stays snappy).
+  const patch = useCallback(
+    async (comp: Component, fields: Record<string, unknown>) => {
       setSavingId(comp.id);
       setError("");
       try {
-        await rpc.updateComponent(type, instance, comp.id, { enabled: !(comp.enabled ?? true) });
-        await reload(); // re-read so the UI reflects the persisted state
+        const updated = await rpc.updateComponent(type, instance, comp.id, fields);
+        setComponents((prev) => prev?.map((c) => (c.id === comp.id ? updated : c)) ?? null);
       } catch (err) {
         setError(fmt(err));
       } finally {
         setSavingId(null);
       }
     },
-    [type, instance, reload],
+    [type, instance],
   );
 
   return (
@@ -410,32 +420,173 @@ function Workbench(props: { type: string; instance: string; onClose: () => void 
         <p style={{ color: "#888" }}>无组件</p>
       ) : (
         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
-          {components.map((c) => (
-            <li
-              key={c.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "6px 8px",
-                borderBottom: "1px solid #222",
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={c.enabled ?? true}
-                disabled={savingId === c.id}
-                onChange={() => void toggle(c)}
-              />
-              <span style={{ fontWeight: 500, color: "#ddd", fontSize: 13 }}>{c.kind}</span>
-              <span style={{ color: "#777", fontSize: 11 }}>{c.id}</span>
-            </li>
-          ))}
+          {components.map((c) => {
+            const selected = selectedId === c.id;
+            return (
+              <li key={c.id} style={{ borderBottom: "1px solid #222" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 8px" }}>
+                  <input
+                    type="checkbox"
+                    checked={c.enabled ?? true}
+                    disabled={savingId === c.id}
+                    onChange={() => void patch(c, { enabled: !(c.enabled ?? true) })}
+                  />
+                  <button
+                    onClick={() => setSelectedId(selected ? null : c.id)}
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      gap: 8,
+                      alignItems: "baseline",
+                      textAlign: "left",
+                      background: "transparent",
+                      border: "none",
+                      cursor: "pointer",
+                      color: "#ddd",
+                    }}
+                  >
+                    <span style={{ fontWeight: 500, fontSize: 13 }}>{c.kind}</span>
+                    <span style={{ color: "#777", fontSize: 11 }}>{c.id}</span>
+                    <span style={{ marginLeft: "auto", color: "#777", fontSize: 11 }}>
+                      {selected ? "▾" : "▸"}
+                    </span>
+                  </button>
+                </div>
+                {selected && (
+                  <PropertyPanel
+                    component={c}
+                    disabled={savingId === c.id}
+                    onCommit={(k, v) => void patch(c, { [k]: v })}
+                  />
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
   );
 }
+
+function PropertyPanel(props: {
+  component: Component;
+  disabled: boolean;
+  onCommit: (key: string, value: unknown) => void;
+}) {
+  const { component, disabled, onCommit } = props;
+  // Only primitive fields are editable here; nested values (if any) are skipped.
+  const editable = Object.keys(component).filter((k) => {
+    if (HIDDEN_FIELDS.has(k)) return false;
+    const t = typeof component[k];
+    return t === "string" || t === "number" || t === "boolean";
+  });
+  return (
+    <div
+      style={{
+        padding: "4px 8px 10px 30px",
+        display: "grid",
+        gridTemplateColumns: "auto 1fr",
+        gap: "6px 10px",
+        alignItems: "center",
+      }}
+    >
+      {editable.length === 0 && <span style={{ color: "#666", fontSize: 12 }}>无可编辑字段</span>}
+      {editable.map((k) => (
+        <PropertyField
+          key={k}
+          label={k}
+          value={component[k]}
+          disabled={disabled}
+          onCommit={(v) => onCommit(k, v)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function PropertyField(props: {
+  label: string;
+  value: unknown;
+  disabled: boolean;
+  onCommit: (value: unknown) => void;
+}) {
+  const { label, value, disabled, onCommit } = props;
+  return (
+    <>
+      <label style={{ color: "#999", fontSize: 12 }}>{label}</label>
+      {typeof value === "boolean" ? (
+        <input
+          type="checkbox"
+          checked={value}
+          disabled={disabled}
+          onChange={(e) => onCommit(e.target.checked)}
+        />
+      ) : typeof value === "number" ? (
+        <NumberInput value={value} disabled={disabled} onCommit={onCommit} />
+      ) : (
+        <TextInput value={String(value)} disabled={disabled} onCommit={onCommit} />
+      )}
+    </>
+  );
+}
+
+// Local-state inputs that commit on blur / Enter (not per keystroke), so typing
+// doesn't fire an RPC write per character.
+function TextInput(props: { value: string; disabled: boolean; onCommit: (v: string) => void }) {
+  const { value, disabled, onCommit } = props;
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  const isColor = /^#[0-9a-fA-F]{6}$/.test(v);
+  return (
+    <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      <input
+        value={v}
+        disabled={disabled}
+        onChange={(e) => setV(e.target.value)}
+        onBlur={() => v !== value && onCommit(v)}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        style={INPUT_STYLE}
+      />
+      {isColor && (
+        <span style={{ width: 14, height: 14, borderRadius: 3, background: v, border: "1px solid #444" }} />
+      )}
+    </span>
+  );
+}
+
+function NumberInput(props: { value: number; disabled: boolean; onCommit: (v: number) => void }) {
+  const { value, disabled, onCommit } = props;
+  const [v, setV] = useState(String(value));
+  useEffect(() => setV(String(value)), [value]);
+  const commit = () => {
+    const n = Number(v);
+    if (!Number.isNaN(n) && n !== value) onCommit(n);
+    else setV(String(value)); // reject NaN / no-op → snap back to current
+  };
+  return (
+    <input
+      type="number"
+      step="any"
+      value={v}
+      disabled={disabled}
+      onChange={(e) => setV(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+      style={INPUT_STYLE}
+    />
+  );
+}
+
+const INPUT_STYLE: CSSProperties = {
+  width: "100%",
+  maxWidth: 160,
+  padding: "2px 6px",
+  background: "#1a1a1e",
+  color: "#ddd",
+  border: "1px solid #333",
+  borderRadius: 3,
+  fontSize: 12,
+};
 
 function MaterialInstance(props: { name: string; slots: Record<string, SlotState> | undefined }) {
   const { name, slots } = props;

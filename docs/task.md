@@ -180,6 +180,8 @@
 
 **下一步**:① 提交续 9;② 工作台深化——组件**样式字段编辑**(不只 enabled 开关:`update_component` 已支持任意 patch,UI 补字段控件)+ 组件增删排序(`creation.add/remove_component`,需引 components spec=会拉 tkinter,得先把 spec 的 default_instance 与 tk 面板解耦)+ candidate/导出 tab;③ 或补 material 写长任务(`generate_subtitles` job 流);④ bind_material(快照,ADR-0003/0005)。
 
+**✅ 续 9 续(2026-05-30,同会话:工作台通用属性编辑器 — 纯 TS,上面"下一步②"前半)**:`Hub.tsx` 的 `Workbench` 升级——点组件行展开(▸/▾)`PropertyPanel`,按**运行期值类型**自动选控件(boolean→checkbox / number→数字框 / string→文本框,`#RRGGBB` 加色块);文本/数字 **blur+回车提交**(不每字符写),走已有 `creation.update_component` 任意 patch → 落盘 + 重读 splice。`update_component` 的 arbitrary-patch 早支持,纯 UI 增量,**Python 一行未动**。typecheck + 72 测 + **live 验通**(改 fontsize_pct/color/bold 落盘,关掉重开保持)。剩余②后半(组件增删排序 = 需解耦 components spec 的 tk 面板)与 ③④ 未动。
+
 ---
 
 ## (旧) 继续 dogfood，暂缓重构
