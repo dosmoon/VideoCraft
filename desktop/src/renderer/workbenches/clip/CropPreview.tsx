@@ -355,11 +355,12 @@ export function CropPreview(props: CropPreviewProps) {
 
         // Decode the source audio once (for preview playback). Silent/failed
         // decode → null, and the transport falls back to a wall-clock scrubber.
+        // decodeAll() self-detects audio via the browser decoder and returns
+        // null for a silent source — do NOT gate on ms.audio (the mp4box audio
+        // probe is the fragile path we're routing around).
         let audio: Map<string, DecodedAudio> | null = null;
-        if (ms.audio) {
-          const decoded = await new AudioReader(window.vc.mediaUrl(srcPath)).decodeAll();
-          if (decoded) audio = new Map([[SOURCE_REF, decoded]]);
-        }
+        const decoded = await new AudioReader(window.vc.mediaUrl(srcPath)).decodeAll();
+        if (decoded) audio = new Map([[SOURCE_REF, decoded]]);
         if (disposed) {
           reader.dispose();
           backend.dispose();

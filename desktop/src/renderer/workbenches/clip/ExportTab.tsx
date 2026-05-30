@@ -177,9 +177,9 @@ export function ExportTab(props: {
         // Decode the source audio once (shared across candidates); the export
         // mixes + muxes it per candidate window. Undefined when the source is
         // silent / has no audio track.
-        const decodedAudio = ms.audio
-          ? await new AudioReader(window.vc.mediaUrl(data.srcPath)).decodeAll()
-          : null;
+        // decodeAll() self-detects audio and returns null for a silent source —
+        // do NOT gate on ms.audio (the fragile mp4box probe we route around).
+        const decodedAudio = await new AudioReader(window.vc.mediaUrl(data.srcPath)).decodeAll();
         const audioSources = decodedAudio
           ? new Map([[SOURCE_REF, decodedAudio]])
           : undefined;
