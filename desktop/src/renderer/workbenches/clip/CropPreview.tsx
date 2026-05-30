@@ -281,6 +281,10 @@ export function CropPreview(props: CropPreviewProps) {
     const audio = audioRef.current;
     const wallStart = performance.now();
     const wallFrom = from;
+    console.info(
+      `[CropPreview] play: audioRef=${audio ? "set" : "null"} ` +
+        `hasAudio=${audio?.hasAudio ?? false} eng.audio=${eng.audio ? "set" : "null"}`,
+    );
     if (audio?.hasAudio) void audio.play(from);
 
     playingRef.current = true;
@@ -462,13 +466,22 @@ export function CropPreview(props: CropPreviewProps) {
       audioRef.current = null;
       if (eng.audio && timelineRef.current) {
         try {
+          const segs = resolveAudioSegments(timelineRef.current);
           const pb = new AudioPlayback(timelineRef.current.durationSec);
-          pb.build(resolveAudioSegments(timelineRef.current), eng.audio);
+          pb.build(segs, eng.audio);
+          console.info(
+            `[CropPreview] audio build: eng.audio=set segments=${segs.length} ` +
+              `pb.hasAudio=${pb.hasAudio} trackKinds=[${timelineRef.current.tracks
+                .map((t) => t.kind)
+                .join(",")}] audioKeys=[${[...eng.audio.keys()].join(",")}]`,
+          );
           if (pb.hasAudio) audioRef.current = pb;
           else pb.dispose();
-        } catch {
-          /* audio unavailable → silent preview, video unaffected */
+        } catch (e) {
+          console.warn("[CropPreview] audio build failed:", e);
         }
+      } else {
+        console.info(`[CropPreview] audio build skipped: eng.audio=${eng.audio ? "set" : "null"}`);
       }
       void renderAt(tRef.current);
     })();

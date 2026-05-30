@@ -166,7 +166,8 @@ describe("buildClipTimeline", () => {
       srtByLang,
       mediaRef: "source.mp4",
     });
-    const subTrack = timeline.tracks[1]!;
+    // tracks = [video, audio, ...overlays]; first overlay is at index 2.
+    const subTrack = timeline.tracks[2]!;
     const cues = clipsOf(subTrack);
     expect(cues).toHaveLength(1);
     expect(cues[0]!.data).toEqual({ text: "inside" });
@@ -182,7 +183,7 @@ describe("buildClipTimeline", () => {
       srtByLang,
       mediaRef: "source.mp4",
     });
-    const hookClip = clipsOf(timeline.tracks[1]!)[0]!;
+    const hookClip = clipsOf(timeline.tracks[2]!)[0]!;
     expect(hookClip.kind).toBe("hook_text");
     expect(hookClip.data).toEqual({ text: "wait for it" });
   });
@@ -194,7 +195,8 @@ describe("buildClipTimeline", () => {
       srtByLang,
       mediaRef: "source.mp4",
     });
-    const overlays = timeline.tracks.slice(1);
+    // Drop video + audio (both z=0); the rest are the overlay tracks.
+    const overlays = timeline.tracks.filter((t) => t.kind === "overlay");
     expect(overlays.map((t) => t.z)).toEqual([3, 2, 1]); // subtitle top, hook bottom
   });
 });

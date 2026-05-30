@@ -58,6 +58,16 @@ export function buildClipTimeline(input: BuildClipTimelineInput): Timeline {
     enabled: true,
     children: [clip({ kind: "video", durationSec, sourceStart: start, mediaRef, style: {}, data: {} })],
   };
+  // Audio track: the source audio over the same window (synced 1:1 with video).
+  // gainDb 0 = unity; preview/export read this via resolveAudioSegments.
+  const audioTrack: Track = {
+    kind: "audio",
+    z: 0,
+    enabled: true,
+    children: [
+      clip({ kind: "audio", durationSec, sourceStart: start, mediaRef, style: { gainDb: 0 }, data: {} }),
+    ],
+  };
   const timeMap = buildTimeMap(videoTrack);
   const baseCtx: CompileContext = {
     durationSec,
@@ -109,5 +119,5 @@ export function buildClipTimeline(input: BuildClipTimelineInput): Timeline {
   const n = overlayTracks.length;
   overlayTracks.forEach((track, i) => (track.z = n - i));
 
-  return { durationSec, tracks: [videoTrack, ...overlayTracks] };
+  return { durationSec, tracks: [videoTrack, audioTrack, ...overlayTracks] };
 }
