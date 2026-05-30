@@ -11,7 +11,7 @@
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { rpc, RpcError, type ProjectBrief, type SlotState } from "../ipc/client";
+import { rpc, RpcError, type Component, type ProjectBrief, type SlotState } from "../ipc/client";
 
 // Friendly labels for the news_video slots (placeholder — real i18n later).
 const SLOT_LABELS: Record<string, string> = {
@@ -36,6 +36,8 @@ export function Hub() {
   const [readiness, setReadiness] = useState<Readiness>({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // The open creation workbench (one at a time for this slice), or none.
+  const [workbench, setWorkbench] = useState<{ type: string; instance: string } | null>(null);
 
   // Load a project's material/creation tree + per-instance slot readiness.
   const loadTree = useCallback(async (brief: ProjectBrief) => {
@@ -103,6 +105,7 @@ export function Hub() {
     setMaterials({});
     setCreations({});
     setReadiness({});
+    setWorkbench(null);
   }, []);
 
   if (!current) {
@@ -117,6 +120,9 @@ export function Hub() {
       creations={creations}
       readiness={readiness}
       error={error}
+      workbench={workbench}
+      onOpenCreation={(type, instance) => setWorkbench({ type, instance })}
+      onCloseWorkbench={() => setWorkbench(null)}
       onClose={close}
     />
   );
@@ -213,9 +219,22 @@ function ProjectView(props: {
   creations: Record<string, string[]>;
   readiness: Readiness;
   error: string;
+  workbench: { type: string; instance: string } | null;
+  onOpenCreation: (type: string, instance: string) => void;
+  onCloseWorkbench: () => void;
   onClose: () => void;
 }) {
-  const { current, materials, creations, readiness, error, onClose } = props;
+  const {
+    current,
+    materials,
+    creations,
+    readiness,
+    error,
+    workbench,
+    onOpenCreation,
+    onCloseWorkbench,
+    onClose,
+  } = props;
   const matTypes = Object.entries(materials);
   const creaTypes = Object.entries(creations);
 
@@ -250,39 +269,170 @@ function ProjectView(props: {
         </button>
       </header>
 
-      <aside style={{ width: 340, padding: "12px 14px", overflowY: "auto" }}>
-        {error && <p style={{ color: "#ff6b6b" }}>✗ {error}</p>}
+      <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        <aside
+          style={{
+            width: 340,
+            flexShrink: 0,
+            padding: "12px 14px",
+            overflowY: "auto",
+            borderRight: "1px solid #2a2a2e",
+          }}
+        >
+          {error && <p style={{ color: "#ff6b6b" }}>✗ {error}</p>}
 
-        <SectionTitle>素材</SectionTitle>
-        {matTypes.length === 0 && <Empty>无素材</Empty>}
-        {matTypes.map(([type, insts]) => (
-          <div key={type} style={{ marginBottom: 10 }}>
-            <TypeLabel>{type}</TypeLabel>
-            {insts.length === 0 && <Empty>（空）</Empty>}
-            {insts.map((inst) => (
-              <MaterialInstance
-                key={inst}
-                name={inst}
-                slots={readiness[`${type}/${inst}`]}
+          <SectionTitle>素材</SectionTitle>
+          {matTypes.length === 0 && <Empty>无素材</Empty>}
+          {matTypes.map(([type, insts]) => (
+            <div key={type} style={{ marginBottom: 10 }}>
+              <TypeLabel>{type}</TypeLabel>
+              {insts.length === 0 && <Empty>（空）</Empty>}
+              {insts.map((inst) => (
+                <MaterialInstance key={inst} name={inst} slots={readiness[`${type}/${inst}`]} />
+              ))}
+            </div>
+          ))}
+
+          <SectionTitle>创作</SectionTitle>
+          {creaTypes.length === 0 && <Empty>无创作</Empty>}
+          {creaTypes.map(([type, insts]) => (
+            <div key={type} style={{ marginBottom: 10 }}>
+              <TypeLabel>{type}</TypeLabel>
+              {insts.length === 0 && <Empty>（空）</Empty>}
+              {insts.map((inst) => {
+                const active = workbench?.type === type && workbench?.instance === inst;
+                return (
+                  <button
+                    key={inst}
+                    onClick={() => onOpenCreation(type, inst)}
+                    style={{
+                      display: "block",
+                      width: "100%",
+                      textAlign: "left",
+                      padding: "4px 8px",
+                      color: active ? "#fff" : "#ccc",
+                      background: active ? "#2d6cdf" : "transparent",
+                      border: "none",
+                      borderRadius: 4,
+                      fontSize: 13,
+                      cursor: "pointer",
+                    }}
+                  >
+                    ◆ {inst}
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </aside>
+
+        <main style={{ flex: 1, overflow: "auto" }}>
+          {workbench ? (
+            <Workbench
+              key={`${workbench.type}/${workbench.instance}`}
+              type={workbench.type}
+              instance={workbench.instance}
+              onClose={onCloseWorkbench}
+            />
+          ) : (
+            <div style={{ padding: 24, color: "#666" }}>选择一个创作以打开工作台</div>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}
+
+// ── Creation workbench (component list + enabled toggle) ──────────────────────
+
+function Workbench(props: { type: string; instance: string; onClose: () => void }) {
+  const { type, instance, onClose } = props;
+  const [components, setComponents] = useState<Component[] | null>(null);
+  const [error, setError] = useState("");
+  const [savingId, setSavingId] = useState<string | null>(null);
+
+  const reload = useCallback(async () => {
+    try {
+      setComponents(await rpc.listComponents(type, instance));
+    } catch (err) {
+      setError(fmt(err));
+    }
+  }, [type, instance]);
+
+  useEffect(() => {
+    setComponents(null);
+    setError("");
+    void reload();
+  }, [reload]);
+
+  const toggle = useCallback(
+    async (comp: Component) => {
+      setSavingId(comp.id);
+      setError("");
+      try {
+        await rpc.updateComponent(type, instance, comp.id, { enabled: !(comp.enabled ?? true) });
+        await reload(); // re-read so the UI reflects the persisted state
+      } catch (err) {
+        setError(fmt(err));
+      } finally {
+        setSavingId(null);
+      }
+    },
+    [type, instance, reload],
+  );
+
+  return (
+    <div style={{ padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <strong>{instance}</strong>
+        <span style={{ color: "#777", fontSize: 12 }}>{type} · 组件</span>
+        <button
+          onClick={onClose}
+          style={{
+            marginLeft: "auto",
+            padding: "2px 9px",
+            background: "#2a2a2e",
+            color: "#ddd",
+            border: "none",
+            borderRadius: 4,
+            cursor: "pointer",
+          }}
+        >
+          ✕
+        </button>
+      </div>
+
+      {error && <p style={{ color: "#ff6b6b" }}>✗ {error}</p>}
+
+      {components === null ? (
+        <p style={{ color: "#888" }}>加载中…</p>
+      ) : components.length === 0 ? (
+        <p style={{ color: "#888" }}>无组件</p>
+      ) : (
+        <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
+          {components.map((c) => (
+            <li
+              key={c.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "6px 8px",
+                borderBottom: "1px solid #222",
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={c.enabled ?? true}
+                disabled={savingId === c.id}
+                onChange={() => void toggle(c)}
               />
-            ))}
-          </div>
-        ))}
-
-        <SectionTitle>创作</SectionTitle>
-        {creaTypes.length === 0 && <Empty>无创作</Empty>}
-        {creaTypes.map(([type, insts]) => (
-          <div key={type} style={{ marginBottom: 10 }}>
-            <TypeLabel>{type}</TypeLabel>
-            {insts.length === 0 && <Empty>（空）</Empty>}
-            {insts.map((inst) => (
-              <div key={inst} style={{ padding: "4px 8px", color: "#ccc", fontSize: 13 }}>
-                ◆ {inst}
-              </div>
-            ))}
-          </div>
-        ))}
-      </aside>
+              <span style={{ fontWeight: 500, color: "#ddd", fontSize: 13 }}>{c.kind}</span>
+              <span style={{ color: "#777", fontSize: 11 }}>{c.id}</span>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

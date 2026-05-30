@@ -11,6 +11,7 @@ Two side effects on import:
 from __future__ import annotations
 
 # Domain handler modules (order irrelevant; each self-registers).
+from . import creation as creation  # noqa: F401
 from . import material as material  # noqa: F401
 from . import project as project  # noqa: F401
 from . import system as system  # noqa: F401
@@ -23,3 +24,4 @@ def load_plugins() -> None:
     in plugin trees, and so the server can fail loudly if a plugin import breaks.
     """
     import materials.news_video  # noqa: F401  (registers the news_video type)
+    import creations.clip  # noqa: F401  (registers the clip creation type)

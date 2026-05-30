@@ -160,6 +160,26 @@
 
 **下一步**:① 提交续 8(单 commit);② 继续轨②:把"创作实例单击 → 开工作台 tab"接上(clip 工作台首选,migration §4 试点)——这会**首次需要写操作面**(`creation.load_config`/`update_component` 等),轨①写方法**届时按 UI 真实需要补**(避免猜形状);③ 或先补 material 写长任务(`add_source_video`/`generate_subtitles`,job+事件+取消)。preview/render 域待 composition Python/TS 边界理顺。
 
+## ▶ 续 9(2026-05-30,轨② 第二切片:creation 写操作面 — sidecar 首个写,live 验通)
+
+续 8 只读 Hub 之后接上**创作工作台 + 写操作面**(下一步②那条)。**架构关键一环**:renderer 瘦客户端发意图 → sidecar 单一所有者写 → 落盘 + 广播,base 层零硬编码 plugin 名。
+
+**已落地(Python,37 core_rpc 测 + clip arch 测不破)**:
+- **creation 插件契约扩展**:`CreationType` 加 `config_owner_cls`(单一 config 所有者类;契约 = classmethod `load(path)` + 实例 `save(path)` + dataclass asdict-able + `components: list[dict]`)。clip `__init__` 注册 `ClipInstanceConfig`。**core_rpc base 层经注册表解析,绝不 import "clip"**(ADR-0004,与 material 的 `instance_factory` 同构)。
+- `session.py` — `creation_owner(type,inst)→(owner,path)`:经注册表 `config_owner_cls.load()` 装载 + 缓存 = **单一内存所有者**([[project_creation_config_owner]]);set/close_project 清缓存。
+- `methods/creation.py` — `creation.load_config`(asdict)/`list_components`/`update_component`(按 id 浅合并 patch → `owner.save(path)` → 广播 `event.creation.changed`;id/kind 结构字段防改写)。`load_plugins` 加 `import creations.clip`。
+- `tests/core_rpc/test_creation.py`(5 测):load/list + **update 落盘验证(读回 config.json 确认 enabled 持久化)** + 未知 id/未知 type 错误 + id/kind 不可改写。
+
+**已落地(desktop,typecheck + 72 测)**:
+- `ipc/client.ts` — `Component` 类型(id/kind/enabled + 任意 style)+ `loadConfig`/`listComponents`/`updateComponent` 方法桩。
+- `hub/Hub.tsx` — 创作实例行变**可点按钮** → 右侧 `<main>` 开**工作台**(sidebar | main 双栏布局重构);`Workbench` 列出组件(kind+id+`enabled` 勾选框),切换 → `updateComponent` 写盘 → 重读刷新。一次一个工作台(本切片)。
+
+**live 验通(这台 26200,用户)**:开有 clip 创作的项目 → 创作区点 clip 实例 → 工作台组件列表出来 → 切 `enabled` **真写 config.json**(关掉重开状态保持=落盘确认),无报错。**写路径零旁路 dataclass owner。**
+
+**⚠️ 未提交**(基线 `8d62037` 之后):Python `src/creations/__init__.py` + `src/creations/clip/__init__.py` + `core_rpc/session.py` + 新 `core_rpc/methods/creation.py` + `core_rpc/methods/__init__.py` + 新 `tests/core_rpc/test_creation.py`;desktop `ipc/client.ts` + `hub/Hub.tsx`;task.md。
+
+**下一步**:① 提交续 9;② 工作台深化——组件**样式字段编辑**(不只 enabled 开关:`update_component` 已支持任意 patch,UI 补字段控件)+ 组件增删排序(`creation.add/remove_component`,需引 components spec=会拉 tkinter,得先把 spec 的 default_instance 与 tk 面板解耦)+ candidate/导出 tab;③ 或补 material 写长任务(`generate_subtitles` job 流);④ bind_material(快照,ADR-0003/0005)。
+
 ---
 
 ## (旧) 继续 dogfood，暂缓重构

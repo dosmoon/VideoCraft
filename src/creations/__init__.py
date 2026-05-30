@@ -36,6 +36,13 @@ class CreationType:
     description_en: str          # subtitle in the type-picker dialog (en)
     sidebar_renderer: Optional[Callable] = None   # filled by slice H
     icon: Optional[str] = None
+    # Config-owner class for this creation's config.json — the single
+    # in-memory owner ([[project_creation_config_owner]]). Contract: a
+    # classmethod load(path) -> owner, an instance save(path), the owner is a
+    # dataclass (asdict-able) carrying `components: list[dict]`. The core_rpc
+    # sidecar resolves writes through this so the base layer never imports a
+    # creation by name (ADR-0004). None until the plugin opts in.
+    config_owner_cls: Optional[type] = None
 
 
 # Module-private registry. Plugins call register() at import time.

@@ -49,6 +49,14 @@ export interface SlotState {
   summary: string;
 }
 
+/** A creation component instance. id/kind are structural; the rest is style. */
+export interface Component {
+  id: string;
+  kind: string;
+  enabled?: boolean;
+  [key: string]: unknown;
+}
+
 // ── Method stubs (the bound read-only surface; mutations land in later slices) ─
 
 export const rpc = {
@@ -67,6 +75,23 @@ export const rpc = {
     rpcCall<Record<string, SlotState>>("material.slot_readiness", { type, instance }),
   getArtifact: (type: string, instance: string, key: string) =>
     rpcCall<string | null>("material.get_artifact", { type, instance, key }),
+
+  loadConfig: (type: string, instance: string) =>
+    rpcCall<Record<string, unknown>>("creation.load_config", { type, instance }),
+  listComponents: (type: string, instance: string) =>
+    rpcCall<Component[]>("creation.list_components", { type, instance }),
+  updateComponent: (
+    type: string,
+    instance: string,
+    componentId: string,
+    patch: Record<string, unknown>,
+  ) =>
+    rpcCall<Component>("creation.update_component", {
+      type,
+      instance,
+      component_id: componentId,
+      patch,
+    }),
 
   /** Subscribe to server→client notifications; returns an unsubscribe fn. */
   onNotification: (cb: (method: string, params: unknown) => void): (() => void) =>
