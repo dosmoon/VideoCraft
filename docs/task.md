@@ -309,6 +309,30 @@ clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"
 
 **Compositing 复核结论**:多 overlay 轨 alpha 叠加 + `image_watermark`(`overlay/canvas2d.ts` 已实装,非 TODO)+ 视频 fit/crop 全在用 = **已完整**。唯一缺口=转场(crossfade/dip),**用户本轮决定暂不做**;地基已就位(IR `Transition` + resolver 重叠区返双 clip),真实需求来自未来录播自动剪辑(多段装配)。
 
-**下一步(下轮第一步)**:
-1. **live 肉眼验**(headless 覆盖不到):`cd desktop && env -u ELECTRON_RUN_AS_NODE pnpm dev` → ① clip 预览点播放有声、音画同步、seek 跟手;② 导出一条 clip,抽帧/播放确认 mp4 含音轨且与画面同步。
-2. 已知潜在打磨点(留 dogfood):AAC esds `description` 抽取在个别 mp4 box 结构上可能取不到(已加递归 fallback + 优雅降级为静音,非崩溃);多源/多音轨混音、音量 UI、转场 = 未来。
+**live 肉眼验已通过**(2026-05-31,见续 16)。已知潜在打磨点(留 dogfood):多源/多音轨混音、音量 UI、转场 = 未来。
+
+---
+
+## ▶ 续 16(2026-05-31,音频真机验通过 + 三处 lost-edit 修复 + harness 退役 — 已推 origin,HEAD `6413f37`)
+
+续 15 的音频代码 typecheck/测试全绿,但**真机一验全是哑的**——预览无声、导出无声。逐个 live 调试才发现:续 15 那批音频编辑**只重做回了一部分**,三处关键 land 漏掉、从未提交(早先一次 git-checkout 清理后没补全;typecheck + 118 测当时全绿,完全没挡住)。逐个揪出并修复:
+
+| 现象 | 真因 | 修复 commit |
+|---|---|---|
+| 预览无声 | `creations/clip/assemble.ts` 根本没产音频轨(只有 news_desk 产了);clip timeline 无 audio track → `resolveAudioSegments`=空 | `0d09738` |
+| 进度条拖不动(顺带) | rAF 每帧 `setT` 覆盖受控 slider 值 | `78aa018`(slider onPointerDown=pause) |
+| 导出无声 | `engine/export/encode.ts` **整个音频混流路径不存在**(`AudioEncoder`/`planAudio`/`encodeAudioTrack`/muxer 音轨全没),但 `ExportTab` 一直在传 `audioSources` 被静默忽略;且 `draw.ts` 没跳音频轨(audio clip 是 media kind,会被当视频画) | `936de6f` |
+
+中间还做了几个合理但非病根的修(`cf23adb` 去 mp4box gate、`c4421ff` await ctx.resume、`78aa018` 改用 `decodeAudioData`)——这些都保留(本身是对的加固),病根是装配/导出层 lost-edit。
+
+**教训(已存 memory [[feedback_restored_files_lost_edits]])**:跨 sibling 文件重做编辑后,**grep 全部 sibling 确认对齐**,别信 typecheck/测试(它们当时全绿)。装配器音频轨现在仍**无契约测试**——`clip.test`/`news_desk.test` 只绕开音频轨没断言它存在;补一条 `resolveAudioSegments(tl).length===1` 的断言能挡住复发(用户已知,未做,低成本可随时补)。
+
+**最终验证状态(真机肉眼)**:✅ clip 预览播放有声 + 音画同步 + 进度条可拖;✅ 导出 mp4 有声 + 与画面同步。音频端到端**真正打通**。
+
+**顺手退役 spike harness**(`5e7046f`+`6413f37`):删 `app.tsx` + Shell 的 Hub/harness 切换(Shell 直渲 Hub)+ 窗口/页面标题去 "substrate spike"。**保留** `src/renderer/harness/*.ts`(headless 测试夹具,`subtitle.test.ts` 在用)。未清(可选,非必须):`electron/main.ts` 的 `vc-media://spike/` scheme + `spike-assets/` 合成片生成脚本——只服务已退役 harness 演示,测试夹具不依赖真实媒体,要彻底无残留可一并删。
+
+**下一步(下轮可选,均非阻塞)**:
+1. 补装配器音频契约测试(防 lost-edit 复发,低成本)。
+2. 清 `spike` scheme + `spike-assets/`(彻底去 harness 残留)。
+3. 音频打磨:音量 UI / 多音轨混音 / 转场(用户暂缓)。
+4. 回主线"substrate → 产品化":sidecar 写操作面 / 真 UI 壳深化(见续 7 末四轨)。
