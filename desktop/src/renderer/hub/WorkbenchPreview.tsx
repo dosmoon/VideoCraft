@@ -1,24 +1,29 @@
 /**
- * WorkbenchPreview — in-workbench WYSIWYG. It resolves the creation's bound
- * material (creation.load_config → bound_material → material.get_artifact) and
- * renders the clip composition through the real GPU engine (Backend +
- * ClipReader + resolveFrameAt + drawFrameSlice), driven by the SAME pure
- * buildClipTimeline the export path uses — so preview ≡ render structurally.
+ * WorkbenchPreview — in-workbench WYSIWYG. Renders the clip composition through
+ * the real GPU engine (Backend + ClipReader + resolveFrameAt + drawFrameSlice),
+ * driven by the SAME pure buildClipTimeline the export path uses — so preview ≡
+ * render structurally.
  *
- * Scope of THIS slice: source + config-driven overlays (subtitle from the
- * material SRT + text/image watermarks), over the WHOLE source via a synthetic
- * full-length candidate. Editing a subtitle/watermark field rebuilds the
- * timeline and re-renders live. NOT yet wired: the real hotclip candidate
- * window + hook/outro text — those live in the creation's snapshot
- * (project_snapshot_principle) and need a creation-snapshot RPC (next slice),
- * so hook/outro cards are omitted from the preview for now.
+ * Data:
+ *   - source video   : material.get_artifact("source") via the bound material
+ *   - candidate window + hook/outro + snapshot SRT : creation.preview_data
+ *     (the clip preview provider, from the instance's snapshot — snapshot
+ *     principle). When the material has no hotclips yet, falls back to a
+ *     synthetic full-length candidate (source + config overlays, no window /
+ *     hook / outro) so subtitle/watermark editing still previews.
+ *
+ * Editing a component rebuilds the timeline and re-renders the current frame.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { resolveFrameAt } from "@composition/compositor/resolve.js";
 import type { Timeline } from "@composition/ir.js";
 import { buildClipTimeline } from "@creations/clip/assemble.js";
-import type { ClipComponentConfig, HotclipCandidate } from "@creations/clip/types.js";
+import type {
+  ClipComponentConfig,
+  ClipOverride,
+  HotclipCandidate,
+} from "@creations/clip/types.js";
 import type { SourceCue } from "@composition/components/index.js";
 import { Backend } from "../engine/gpu/Backend";
 import { MediaSource } from "../engine/source/MediaSource";
@@ -34,10 +39,19 @@ const CANVAS_W = 1280;
 const CANVAS_H = 720;
 const FPS = 30;
 
-// Overlays needing real candidate/snapshot data are deferred (see header).
-const PREVIEW_SKIP_KINDS = new Set(["clip_hook_card", "clip_outro_card"]);
+// Cards need candidate text — skipped only when we have no real candidate.
+const CARD_KINDS = new Set(["clip_hook_card", "clip_outro_card"]);
 
 type Status = "loading" | "ready" | "nobind" | "nosrc" | "error";
+
+/** Shape returned by the clip preview_provider (Python). */
+interface ClipPreviewData {
+  lang: string;
+  candidates: HotclipCandidate[];
+  selectedIndex: number;
+  subtitlePath: string | null;
+  override: ClipOverride | null;
+}
 
 interface Engine {
   backend: Backend;
@@ -47,7 +61,8 @@ interface Engine {
 interface Prep {
   srtByLang: Record<string, readonly SourceCue[]>;
   candidate: HotclipCandidate;
-  durationSec: number;
+  override: ClipOverride | undefined;
+  hasRealCandidate: boolean;
 }
 
 function secToTimestamp(sec: number): string {
@@ -67,22 +82,16 @@ export function WorkbenchPreview(props: { type: string; instance: string; compon
   const inFlight = useRef(false);
   const pending = useRef<number | null>(null);
   const tRef = useRef(0);
-  // Latest components, readable inside the load effect without making it a dep
-  // (re-loading the engine on every edit would be wrong).
-  const componentsRef = useRef(components);
-  componentsRef.current = components;
 
   const [status, setStatus] = useState<Status>("loading");
   const [message, setMessage] = useState("");
+  const [note, setNote] = useState("");
   const [duration, setDuration] = useState(0);
   const [t, setT] = useState(0);
 
   const renderAt = useCallback(async (sec: number) => {
     const eng = engineRef.current;
-    const timeline = timelineRef.current;
-    if (!eng || !timeline) return;
-    // Coalesce latest-wins (see source-preview commit): never drop the final
-    // scrub target to an in-flight guard.
+    if (!eng || !timelineRef.current) return;
     if (inFlight.current) {
       pending.current = sec;
       return;
@@ -96,8 +105,7 @@ export function WorkbenchPreview(props: { type: string; instance: string; compon
         if (!tl) break;
         const lastT = Math.max(0, tl.durationSec - 1 / FPS);
         const slice = resolveFrameAt(tl, Math.min(Math.max(0, target), lastT));
-        // exact: paused single-frame preview waits for the precise decoded frame.
-        await drawFrameSlice(slice, eng.deps, true);
+        await drawFrameSlice(slice, eng.deps, true); // exact: paused single frame
         target = pending.current;
       }
     } finally {
@@ -105,11 +113,12 @@ export function WorkbenchPreview(props: { type: string; instance: string; compon
     }
   }, []);
 
-  // Load: bound material → source video + SRTs → engine + prep.
+  // Load: bound material source + preview_data (candidates/snapshot SRT) → engine.
   useEffect(() => {
     let disposed = false;
     setStatus("loading");
     setMessage("");
+    setNote("");
     setDuration(0);
     setT(0);
     tRef.current = 0;
@@ -132,22 +141,22 @@ export function WorkbenchPreview(props: { type: string; instance: string; compon
         const canvas = canvasRef.current;
         if (!canvas || disposed) return;
 
-        // Load every SRT language referenced by a subtitle component (host
-        // parses; components stay pure).
-        const langs = new Set<string>();
-        for (const c of componentsRef.current) {
-          if (c.kind === "clip_subtitle" && typeof c["language"] === "string" && c["language"]) {
-            langs.add(c["language"] as string);
-          }
+        const pd = (await rpc.previewData(type, instance)) as ClipPreviewData;
+        const hasRealCandidate = pd.candidates.length > 0;
+        const candidate: HotclipCandidate = hasRealCandidate
+          ? (pd.candidates[Math.min(pd.selectedIndex, pd.candidates.length - 1)] as HotclipCandidate)
+          : { start: "00:00:00.000", end: "00:00:00.000" }; // end filled after probe
+
+        // SRT: snapshot path from preview_data, else the live material SRT.
+        let srtText = "";
+        if (pd.subtitlePath) {
+          srtText = await fetch(window.vc.mediaUrl(pd.subtitlePath)).then((r) => r.text());
+        } else if (pd.lang) {
+          const p = await rpc.getArtifact(mt, mi, `subtitle:${pd.lang}`);
+          if (p) srtText = await fetch(window.vc.mediaUrl(p)).then((r) => r.text());
         }
         const srtByLang: Record<string, readonly SourceCue[]> = {};
-        for (const lang of langs) {
-          const p = await rpc.getArtifact(mt, mi, `subtitle:${lang}`);
-          if (p) {
-            const text = await fetch(window.vc.mediaUrl(p)).then((r) => r.text());
-            srtByLang[lang] = parseSrt(text);
-          }
-        }
+        if (pd.lang && srtText) srtByLang[pd.lang] = parseSrt(srtText);
 
         const backend = new Backend();
         await backend.init(canvas);
@@ -158,7 +167,9 @@ export function WorkbenchPreview(props: { type: string; instance: string; compon
 
         const ms = await MediaSource.open(window.vc.mediaUrl(srcPath));
         const reader = new ClipReader(ms);
-        const durationSec = ms.durationUs / 1_000_000;
+        const fullDurationSec = ms.durationUs / 1_000_000;
+        if (!hasRealCandidate) candidate.end = secToTimestamp(fullDurationSec);
+
         const sources = new Map<string, VideoSource>([[SOURCE_REF, reader]]);
         const deps: DrawDeps = { backend, sources, fit: "contain", overlayCanvas, overlayCtx };
 
@@ -168,14 +179,18 @@ export function WorkbenchPreview(props: { type: string; instance: string; compon
           return;
         }
         engineRef.current = { backend, reader, deps };
-        // Synthetic full-length candidate — real hotclip window comes later.
         prepRef.current = {
           srtByLang,
-          candidate: { start: "00:00:00.000", end: secToTimestamp(durationSec) },
-          durationSec,
+          candidate,
+          override: pd.override ?? undefined,
+          hasRealCandidate,
         };
-        setDuration(durationSec);
-        setStatus("ready"); // flips the rebuild effect below
+        setNote(
+          hasRealCandidate
+            ? `候选 ${pd.selectedIndex + 1}/${pd.candidates.length} · 字幕/水印/hook·outro 实时`
+            : "完整源（素材无 hotclips）· 字幕/水印实时",
+        );
+        setStatus("ready");
       } catch (err) {
         if (!disposed) {
           setStatus("error");
@@ -199,15 +214,12 @@ export function WorkbenchPreview(props: { type: string; instance: string; compon
     };
   }, [type, instance]);
 
-  // Rebuild the timeline whenever the (live-edited) components change — this is
-  // the WYSIWYG loop: edit a field → new timeline → re-render the current frame.
+  // Rebuild the timeline whenever the live-edited components change.
   useEffect(() => {
     const prep = prepRef.current;
     if (status !== "ready" || !prep) return;
     let cancelled = false;
     void (async () => {
-      // Preload image-watermark images so the sync draw path can use them
-      // (cached → cheap on repeat). Covers initial render + later edits.
       for (const c of components) {
         if (c.kind === "clip_image_watermark") {
           const p = c["image_path"];
@@ -215,20 +227,27 @@ export function WorkbenchPreview(props: { type: string; instance: string; compon
             try {
               await preloadImageOverlay(p, window.vc.mediaUrl(p));
             } catch {
-              /* unloadable image → just renders without it */
+              /* unloadable image → renders without it */
             }
           }
         }
       }
       if (cancelled) return;
-      const previewComps = components.filter((c) => !PREVIEW_SKIP_KINDS.has(c.kind));
+      // Cards need candidate text; drop them only on the synthetic fallback.
+      const previewComps = prep.hasRealCandidate
+        ? components
+        : components.filter((c) => !CARD_KINDS.has(c.kind));
       try {
-        timelineRef.current = buildClipTimeline({
+        const tl = buildClipTimeline({
           components: previewComps as unknown as ClipComponentConfig[],
           candidate: prep.candidate,
           srtByLang: prep.srtByLang,
           mediaRef: SOURCE_REF,
+          // exactOptionalPropertyTypes: omit the key entirely when absent.
+          ...(prep.override ? { override: prep.override } : {}),
         });
+        timelineRef.current = tl;
+        setDuration(tl.durationSec);
       } catch (err) {
         setMessage(err instanceof Error ? `compose: ${err.message}` : String(err));
         return;
@@ -246,7 +265,7 @@ export function WorkbenchPreview(props: { type: string; instance: string; compon
         <span style={{ fontSize: 11, color: "#888", fontWeight: 700, textTransform: "uppercase" }}>
           预览
         </span>
-        <span style={{ fontSize: 11, color: "#666" }}>完整源 · 字幕/水印实时 · 暂无候选裁剪/hook·outro</span>
+        {note && <span style={{ fontSize: 11, color: "#666" }}>{note}</span>}
         {status === "error" && <span style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {message}</span>}
       </div>
 

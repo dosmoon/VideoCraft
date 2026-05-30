@@ -36,6 +36,21 @@ def list_components(ctx: Context, type: str, instance: str) -> list[dict[str, An
     return list(owner.components)
 
 
+@rpc_method("creation.preview_data")
+def preview_data(ctx: Context, type: str, instance: str) -> dict[str, Any]:
+    """Per-creation preview inputs for the workbench (candidates, snapshot SRT,
+    …), produced by the type's registered preview_provider. The shape is opaque
+    to core_rpc — the matching TS assembler consumes it (ADR-0004)."""
+    import creations
+
+    ctype = creations.get(type)
+    if ctype is None:
+        raise RpcError(-32602, f"unknown creation type: {type!r}")
+    if ctype.preview_provider is None:
+        raise RpcError(-32603, f"creation type {type!r} has no preview_provider")
+    return ctype.preview_provider(ctx.session.project, instance)
+
+
 @rpc_method("creation.update_component")
 def update_component(
     ctx: Context,

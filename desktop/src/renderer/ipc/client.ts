@@ -92,6 +92,10 @@ export const rpc = {
       component_id: componentId,
       patch,
     }),
+  // Per-creation preview inputs; the shape is owned by the matching TS assembler
+  // (clip → ClipPreviewData), so it's opaque here.
+  previewData: (type: string, instance: string) =>
+    rpcCall<unknown>("creation.preview_data", { type, instance }),
 
   /** Subscribe to server→client notifications; returns an unsubscribe fn. */
   onNotification: (cb: (method: string, params: unknown) => void): (() => void) =>

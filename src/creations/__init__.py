@@ -43,6 +43,12 @@ class CreationType:
     # sidecar resolves writes through this so the base layer never imports a
     # creation by name (ADR-0004). None until the plugin opts in.
     config_owner_cls: Optional[type] = None
+    # Preview-data provider: (project, instance_id) -> JSON-able dict consumed by
+    # this creation's matching TS assembler (Python provider + TS builder are a
+    # per-creation pair). For clip it returns the hotclip candidates + selected
+    # index + snapshot SRT path. Optional; only creations with a workbench
+    # preview implement it. core_rpc.creation.preview_data calls it generically.
+    preview_provider: Optional[Callable] = None
 
 
 # Module-private registry. Plugins call register() at import time.

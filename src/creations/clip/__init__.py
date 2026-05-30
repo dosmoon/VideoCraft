@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from creations import CreationType, register
 from creations.clip.config import ClipInstanceConfig
+from creations.clip.preview import preview_data as _preview_data
 
 register(CreationType(
     type_name="clip",
@@ -18,4 +19,5 @@ register(CreationType(
     description_zh="基于字幕热点片段，批量切出短视频",
     description_en="Batch-cut short clips from subtitle hotclips",
     config_owner_cls=ClipInstanceConfig,
+    preview_provider=_preview_data,
 ))

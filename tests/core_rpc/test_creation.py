@@ -110,3 +110,71 @@ def test_unknown_creation_type(ctx, project_with_clip):
     _open(ctx, project_with_clip)
     resp = call(ctx, "creation.load_config", {"type": "no_such", "instance": "x"})
     assert resp["error"]["code"] == -32602
+
+
+# ── creation.preview_data (clip provider over a bound material snapshot) ───────
+
+@pytest.fixture
+def project_with_bound_clip(tmp_project):
+    """clip creation bound to a news_video instance that has a hotclips JSON +
+    SRT, so the preview provider has real candidates to snapshot + return."""
+    methods.load_plugins()
+    from materials.news_video.model import NewsVideoModel
+
+    tmp_project.create_material_instance(
+        "news_video",
+        "news-1",
+        initial_config={"schema_version": 1, "type_name": "news_video", "instance_name": "news-1"},
+        config_filename="instance.json",
+    )
+    subs = NewsVideoModel(tmp_project, "news-1").subtitles_dir
+    os.makedirs(subs, exist_ok=True)
+    with open(os.path.join(subs, "en.hotclips.json"), "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "clips": [
+                    {"start": "00:00:05.000", "end": "00:00:35.000", "hook": "H0", "outro": "O0"},
+                    {"start": "00:01:00.000", "end": "00:01:20.000", "hook": "H1", "outro": "O1"},
+                ]
+            },
+            f,
+        )
+    with open(os.path.join(subs, "en.srt"), "w", encoding="utf-8") as f:
+        f.write("1\n00:00:06,000 --> 00:00:08,000\nhi\n")
+
+    clip_dir = tmp_project.creation_instance_dir("clip", "clip-1")
+    os.makedirs(clip_dir, exist_ok=True)
+    with open(os.path.join(clip_dir, "config.json"), "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "bound_material": {"type_name": "news_video", "instance_name": "news-1"},
+                "source_subtitle": "en",
+                "selected_clip_indices": [1],
+                "components": [],
+            },
+            f,
+        )
+    return tmp_project
+
+
+def test_preview_data_returns_candidates(ctx, project_with_bound_clip):
+    _open(ctx, project_with_bound_clip)
+    pd = call(ctx, "creation.preview_data", {"type": "clip", "instance": "clip-1"})["result"]
+    assert pd["lang"] == "en"
+    assert [c["hook"] for c in pd["candidates"]] == ["H0", "H1"]
+    assert pd["selectedIndex"] == 1  # from selected_clip_indices
+    # SRT was snapshotted into the clip instance dir (snapshot principle).
+    assert pd["subtitlePath"] and pd["subtitlePath"].endswith("source-subtitles.en.srt")
+
+
+def test_preview_data_unbound_is_empty(ctx, project_with_clip):
+    _open(ctx, project_with_clip)  # clip-1 here has no bound_material
+    pd = call(ctx, "creation.preview_data", {"type": "clip", "instance": "clip-1"})["result"]
+    assert pd["candidates"] == []
+
+
+def test_preview_data_no_provider(ctx, project_with_clip):
+    _open(ctx, project_with_clip)
+    resp = call(ctx, "creation.preview_data", {"type": "news_video", "instance": "x"})
+    # news_video is a material type, not a creation → unknown creation type.
+    assert resp["error"]["code"] == -32602
