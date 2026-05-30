@@ -104,6 +104,46 @@
 
 > 注:本会话(更早)完成了 uv 迁移 + portable 构建 + 一批 WebView 预览 bug 修复(canvas 合成 / range 重载 / 管道死锁),都已 commit+push 到 main。clip 原始的两个小诉求(属性框打字、预设默认)在排查 canvas 问题时回退了,待重做(真因已知)。
 
+**▶ 续 6 收尾状态更新(2026-05-30)**:续 6 那批 harness 改动**已提交**为 commit `0e76507`("desktop: real-video harness — file picker + paused-seek jitter fix + end clamp (WIP)",基线 `0f49364` 之后),工作树干净。即:续 6「明天第一步」的 ② commit **已完成**。① Bug 2 末端黑屏修复在 `app.tsx:159-162`(`renderAt` 把 t 夹到 `durationSec - 1/FPS`)——代码逻辑已复核正确,但**肉眼验仍欠**(需启 Electron 拖到末端看;headless 覆盖不到,与 substrate 渲染层同类)。
+
+---
+
+## ▶ 续 7(2026-05-30,productization 轨①:Python sidecar + JSON-RPC IPC 地基落地)
+
+主线"substrate → 产品化"四轨(见续 5 末「下一步」)中选**轨① Python sidecar + 业务 IPC** 先行——它是 UI 壳(轨②)依赖的地基。权威设计 = `docs/draft/electron-migration-design.md` §2-3。**Python 业务/引擎一行未动**;sidecar 是**薄 dispatch 层**,只把已有 core/Project/Material API 转成 RPC。
+
+**✅ 已落地 — Python 侧 `core_rpc/`(薄 JSON-RPC 2.0 sidecar,32 测全绿)**:
+- `protocol.py` — JSON-RPC 2.0 报文 + 错误码 + `parse_request`/`make_response/error/notification`(纯数据,无 I/O)。
+- `registry.py` + `jobs.py` + `session.py` — `@rpc_method` 注册表 + `Context`(handler 入参);长任务 `JobRegistry`(job_id + `progress.<kind>` + 终态 `event.job`,worker 线程);`Session` = **单一内存所有者**持当前 Project + 缓存 material model(subscribe 回调跨调用存活,§2.3)。
+- `dispatch.py` — `dispatch_message(ctx, obj) → response|None`:**transport-free 可单测内核**(malformed→INVALID_REQUEST / 未知→METHOD_NOT_FOUND / RpcError 透传 / 其它异常包成 HANDLER_ERROR;通道永不因 traceback 而死)。
+- `methods/{system,project,material}.py` — 绑定**只读 + 生命周期**面:`system.ping/echo/demo_job` + `job.cancel/active`;`project.recent_list/open/close/current/list_material_types/list_material_instances/list_materials/list_creations`;`material.slot_readiness/get_artifact`(经 `materials` registry `instance_factory` 解析,**零硬编码 plugin 名**,ADR-0004)。`material` 的 dataclass(SlotState)经 `dataclasses.asdict` 通用序列化,Path→str。
+- `server.py` — stdio main(`python -m core_rpc.server`):**二进制帧**(`sys.stdin/stdout.buffer`,换行分隔)——**关键 Windows 坑**:text-mode stdout 会把 `\n`→`\r\n` 破坏帧,故只走 `.buffer`;reader 主线程 dispatch、**单 writer 线程 drain 队列**(§2.1 stdin 死锁教训:写必须 off-thread)、job 线程经同队列 emit;**stdout 仅 JSON-RPC,日志/traceback 全 stderr**;启动自 bootstrap `src/` 进 sys.path + `load_plugins()`。
+- 测试 `tests/core_rpc/`(`pyproject` pythonpath 加 `"."` 让 sidecar 包可导入):`test_protocol`(7)+ `test_dispatch`(经 tmp_project 喂 dict 验响应/事件,15)+ `test_jobs`(progress/cancel/终态,3)+ **`test_server_subprocess`(真 `python -m` 子进程跑 stdio,4)**——后者是唯一覆盖 server.py 实帧+线程的;**CJK+emoji 经管道 byte-clean 验证**(Windows 帧坑实证关闭)。**32 测全绿。**
+
+**✅ 已落地 — Electron 侧(typecheck 干净 + 72 测全绿)**:
+- `desktop/electron/sidecar.ts` — `Sidecar` 管 python child:spawn `myenv/Scripts/python.exe -u -m core_rpc.server`(cwd=repo root,env 剥 `ELECTRON_RUN_AS_NODE` + 强制 `PYTHONUTF8`)、换行分帧、id 关联 request/response、notification→EventEmitter、`SidecarError` 携 code/data、stderr 转 console。
+- `desktop/electron/main.ts` — whenReady 起 sidecar、before-quit dispose;`ipcMain.handle("vc:rpc")` 返**tagged reply**(`{ok,result}`|`{ok:false,code,message,data}`——因 ipc 抛错会丢 JSON-RPC code/data);notification 经 `webContents.send("vc:rpc:notification")` 广播全窗。
+- `desktop/electron/preload.ts` — `window.vc.rpc.call(method,params)` + `.onNotification(cb)→unsubscribe`。
+- `desktop/src/renderer/ipc/client.ts` — 类型化客户端:`rpcCall<T>` 拆 tagged reply→值 or 抛 `RpcError`;`rpc.{ping,echo,recentList,openProject,closeProject,currentProject,listMaterials,listCreations,slotReadiness,getArtifact,onNotification}` 方法桩 + `ProjectBrief`/`SlotState` 类型。`global.d.ts` 同步 `VcRpcApi`。
+- `desktop/src/renderer/app.tsx` — 加 **sidecar 握手 smoke 面板**:mount 时 `rpc.ping()` + `rpc.recentList()`,顶部状态行显示 `✓ sidecar protocol 1 · N recent project(s)`(失败显红)——这是 renderer→main→sidecar→core 全链路的**启动即见**验证(spike harness 读数,非产品 UI)。
+
+**验证状态**:Python transport 全链路**已实证**(in-process 28 测 + 真子进程 4 测 + 一次性 smoke 跑通 ping/echo-CJK/unknown/recent_list=10/demo_job 全过)。Electron IPC 胶水 **typecheck 干净 + 72 测**,但 renderer→sidecar **live 跑(肉眼验启动状态行)欠**——与 Bug 2 同类 human-in-loop(需 `env -u ELECTRON_RUN_AS_NODE pnpm dev` 启 GUI 看顶部绿条)。
+
+**⚠️ 全部未提交**(在工作树):新增 `core_rpc/`(8 文件)+ `tests/core_rpc/`(6 文件)+ `pyproject.toml`(pythonpath 加 `.`);改 `desktop/electron/{main,preload}.ts` + 新 `desktop/electron/sidecar.ts` + `desktop/src/renderer/{global.d.ts,app.tsx}` + 新 `desktop/src/renderer/ipc/client.ts`。
+
+**下一步**:① **肉眼验** sidecar live(启 Electron 看顶部绿条 `✓ sidecar protocol 1`);② 提交续 7 这批(基线 `0e76507` 之后);③ 继续轨①**写操作面**(`project.create`/`material.add_source_video`/`generate_subtitles`/`ai_fill_context` 等长任务,走 job + 事件 + 取消;§2.2 各域剩余方法)或转**轨②真 UI 壳**(Hub+sidebar 替 harness,消费现有只读 RPC);④ render/preview 域(`preview.compile` 留 Python JSON 翻译、`render.start` job)。foundation/migration doc 可升 ADR(数据模型 + 渲染引擎 + IPC 拓扑)。
+
+**▶ 续 7 附(2026-05-30,同会话:Electron 33→42 foundation bump + Win11 26200 sandbox 兜底)**:
+- 起因:用户拿来一条"Win11 Build 26200 sandbox 不兼容致 Electron 39-42 子进程崩(exit -2147483645)"的工单问是否命中。核查:**我们正在 Build 26200**,但脚手架 `package.json` 写死 `^33.3.1`(疑似抄 Phase 仓),装成 **33.4.11**——**已 EOL**(最新 42.3.0,Electron 只支持最新 3 大版本=40/41/42,我们落后 6 个),Chromium ≈130 vs 最新 ≈140,**WebGPU/WebCodecs 落后 ~10 代**(正是自建合成器命脉)。33 反而"躲过"了那 bug,但为躲临时上游事故锁死 EOL 版本 = 反模式([[feedback_early_stage_foundation]])。
+- 决议(用户拍板)**升到最新 42**。已做:`package.json` `^33.3.1→^42.3.0` + `pnpm install`(装成 42.3.0);`main.ts` 加 **方案 B sandbox 兜底**——条件式,只在 `win32` + `render-process-gone`/`child-process-gone` 且 `exitCode===-2147483645 && reason==='crashed'` 时**带 `--no-sandbox` 自重启一次**(`--vc-no-sandbox-relaunch` 标志防无限循环);健康机器保留沙箱;注释标注"上游修复后移除"。与既有 `--disable-gpu-sandbox` 叠加。
+- 验证:**typecheck 干净(对 42 自带 type defs)+ 72 测 + `pnpm build` 全过**(main/preload/52 renderer 模块均编译)。**⚠️ 未提交**(`desktop/package.json` + `pnpm-lock.yaml` + `desktop/electron/main.ts`)。
+- **live 验进展(2026-05-30,这台 26200 实测)**:
+  - ✅ **42 干净启动,没崩**:`pnpm dev` → main 起 + `[core_rpc] ready` + 无 `render-process-gone`/GPU 崩/`[sandbox]` relaunch。**方案 B 根本没触发** → 印证工单点名 39-41、**42 已修**;兜底留作保险。
+  - ⚠️ **坑 1(已修):Electron 二进制没下载**。bump 后 `pnpm install` 装了 42 包但**没跑 electron postinstall**(下二进制),`pnpm dev` 报 `Error: Electron uninstall`。修:`node node_modules/.pnpm/electron@42.3.0/.../electron/install.js` 手动拉(226MB)。**根因 = pnpm `onlyBuiltDependencies` 的 build script 在纯版本 bump 时没自动跑;打包/CI 时注意。**
+  - ⚠️ **坑 2(已修):`vc-media://` 跨域 fetch 被 CORS 拦**。Electron 42/Chromium ~140 收紧自定义 scheme 跨域 fetch:从 `http://localhost:5174`(dev origin)fetch `vc-media://` 被拦(`Cross origin requests are only supported for ... chrome/data/http/https`)。**33 不要求,42 强制**。修:`main.ts` 的 `registerSchemesAsPrivileged` privileges 加 **`corsEnabled: true`**。
+  - ⏳ **欠**:三关 spike 在 Chromium ~140 的肉眼回归(Demo 画面 / Subtitle / Export)+ 顶部 sidecar 绿条——窗口在屏上,待用户确认。
+  - 注:electron-vite 2.3 改 `main.ts` **不自动重启 electron**,得手动杀 `electron.exe` + 重跑 `pnpm dev`(memory 已记 HMR 不可信)。
+
 ---
 
 ## (旧) 继续 dogfood，暂缓重构
