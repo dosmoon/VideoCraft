@@ -17,6 +17,7 @@ import type { ClipComponentConfig } from "@creations/clip/types.js";
 import { Backend } from "../../engine/gpu/Backend";
 import { MediaSource } from "../../engine/source/MediaSource";
 import { ClipReader } from "../../engine/source/ClipReader";
+import { AudioReader } from "../../engine/source/AudioReader";
 import { preloadImageOverlay } from "../../engine/overlay/canvas2d";
 import { exportTimelineToMp4, ExportCancelled } from "../../engine/export/encode";
 import { useClipPreview } from "./useClipPreview";
@@ -173,6 +174,14 @@ export function ExportTab(props: {
           overlayCtx,
         };
 
+        // Decode the source audio once (shared across candidates); the export
+        // mixes + muxes it per candidate window. Undefined when the source is
+        // silent / has no audio track.
+        const audioDemux = ms.audio;
+        const audioSources = audioDemux
+          ? new Map([[SOURCE_REF, await new AudioReader(audioDemux).decodeAll()]])
+          : undefined;
+
         // Preload any image-watermark assets once.
         for (const c of components ?? []) {
           if (c.kind === "clip_image_watermark") {
@@ -221,6 +230,7 @@ export function ExportTab(props: {
                   rs.map((r) => (r.outIdx === clip.outIdx ? { ...r, progress: d / t } : r)),
                 ),
               cancelCheck: () => cancelRef.current,
+              ...(audioSources ? { audioSources } : {}),
             });
             await window.vc.writeFile(clip.outputPath, bytes);
             const rendered = await rpc.commitRender(

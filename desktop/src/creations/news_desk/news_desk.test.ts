@@ -135,7 +135,8 @@ describe("buildNewsDeskTimeline", () => {
       cuesBySrtPath,
       mediaRef: "source.mp4",
     });
-    const subTrack = timeline.tracks[1]!;
+    // tracks = [video, audio, ...overlays]; first overlay is at index 2.
+    const subTrack = timeline.tracks[2]!;
     const cues = clipsOf(subTrack);
     expect(cues.map((c) => c.data.text)).toEqual(["headline", "detail"]);
     // first cue at source 5 -> output 5, so leading gap is 5s
@@ -149,14 +150,14 @@ describe("buildNewsDeskTimeline", () => {
       cuesBySrtPath,
       mediaRef: "source.mp4",
     });
-    // video + strip track + hero-card track
-    expect(timeline.tracks).toHaveLength(3);
-    const stripKinds = clipsOf(timeline.tracks[1]!).map((c) => c.kind);
-    const cardKinds = clipsOf(timeline.tracks[2]!).map((c) => c.kind);
+    // video + audio + strip track + hero-card track
+    expect(timeline.tracks).toHaveLength(4);
+    const stripKinds = clipsOf(timeline.tracks[2]!).map((c) => c.kind);
+    const cardKinds = clipsOf(timeline.tracks[3]!).map((c) => c.kind);
     expect(stripKinds).toEqual(["topic_strip", "topic_strip"]);
     expect(cardKinds).toEqual(["chapter_hero_card", "chapter_hero_card"]);
     // hero card capped at 6s within each chapter window
-    expect(clipsOf(timeline.tracks[2]!)[0]!.durationSec).toBe(6);
+    expect(clipsOf(timeline.tracks[3]!)[0]!.durationSec).toBe(6);
     expect(validateTimeline(timeline, { sourceDurations: { "source.mp4": 120 } })).toEqual([]);
   });
 

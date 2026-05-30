@@ -43,6 +43,15 @@ export function buildNewsDeskTimeline(input: BuildNewsDeskTimelineInput): Timeli
     enabled: true,
     children: [clip({ kind: "video", durationSec, sourceStart: 0, mediaRef, style: {}, data: {} })],
   };
+  // Audio track: the full source audio (no cut), unity gain.
+  const audioTrack: Track = {
+    kind: "audio",
+    z: 0,
+    enabled: true,
+    children: [
+      clip({ kind: "audio", durationSec, sourceStart: 0, mediaRef, style: { gainDb: 0 }, data: {} }),
+    ],
+  };
   const timeMap = identityTimeMap(durationSec, mediaRef);
   const baseCtx: CompileContext = { durationSec, timeMap };
 
@@ -70,5 +79,5 @@ export function buildNewsDeskTimeline(input: BuildNewsDeskTimelineInput): Timeli
   const n = overlayTracks.length;
   overlayTracks.forEach((track, i) => (track.z = n - i));
 
-  return { durationSec, tracks: [videoTrack, ...overlayTracks] };
+  return { durationSec, tracks: [videoTrack, audioTrack, ...overlayTracks] };
 }

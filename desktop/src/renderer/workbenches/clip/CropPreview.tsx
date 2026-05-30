@@ -25,6 +25,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { resolveFrameAt } from "@composition/compositor/resolve.js";
+import { resolveAudioSegments } from "@composition/compositor/resolveAudio.js";
 import type { Timeline, Clip } from "@composition/ir.js";
 import { isMediaKind } from "@composition/catalog.js";
 import { buildClipTimeline } from "@creations/clip/assemble.js";
@@ -37,6 +38,9 @@ import type { SourceCue } from "@composition/components/index.js";
 import { Backend } from "../../engine/gpu/Backend";
 import { MediaSource } from "../../engine/source/MediaSource";
 import { ClipReader } from "../../engine/source/ClipReader";
+import { AudioReader } from "../../engine/source/AudioReader";
+import { AudioPlayback } from "../../engine/playback/AudioPlayback";
+import type { DecodedAudio } from "../../engine/source/sample-types";
 import { isCanvas2dOverlay, drawOverlayClip, preloadImageOverlay } from "../../engine/overlay/canvas2d";
 import type { Component } from "../../ipc/client";
 import { centerCropRect, clampCropRect, type CropRect } from "./cropEditor";
@@ -62,6 +66,8 @@ interface Engine {
   srcW: number;
   srcH: number;
   durationSec: number;
+  /** Decoded source audio (keyed by mediaRef), or null when the source is silent. */
+  audio: ReadonlyMap<string, DecodedAudio> | null;
 }
 
 export interface CropPreviewProps {
@@ -166,11 +172,16 @@ export function CropPreview(props: CropPreviewProps) {
   const pending = useRef<number | null>(null);
   const tRef = useRef(0);
   const drag = useRef<{ offX: number; offY: number } | null>(null);
+  // Audio playback (master clock when the source has audio) + the rAF loop.
+  const audioRef = useRef<AudioPlayback | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const playingRef = useRef(false);
 
   const [status, setStatus] = useState<EngineStatus>("loading");
   const [message, setMessage] = useState("");
   const [duration, setDuration] = useState(0);
   const [t, setT] = useState(0);
+  const [playing, setPlaying] = useState(false);
 
   // Keep latest callbacks in refs so the open-effect only depends on srcPath.
   const onReadyRef = useRef(onReady);
@@ -236,6 +247,68 @@ export function CropPreview(props: CropPreviewProps) {
     }
   }, [mode]);
 
+  // ── transport: play/pause with the audio as master clock ───────────────────
+  // The video frame chases the clock (audio is sample-accurate and must not
+  // stutter; a dropped video frame is fine — standard NLE arrangement). With no
+  // audio track we fall back to a wall-clock so playback still works silently.
+  const stopLoop = useCallback(() => {
+    if (rafRef.current != null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+  }, []);
+
+  const pausePlayback = useCallback(() => {
+    if (!playingRef.current) return;
+    playingRef.current = false;
+    setPlaying(false);
+    audioRef.current?.pause();
+    stopLoop();
+  }, [stopLoop]);
+
+  const startPlayback = useCallback(() => {
+    const eng = engineRef.current;
+    const tl = timelineRef.current;
+    if (!eng || !tl || playingRef.current) return;
+    const dur = tl.durationSec;
+    // Restart from the head when sitting at (or past) the end.
+    let from = tRef.current;
+    if (from >= dur - 1 / FPS) from = 0;
+
+    const audio = audioRef.current;
+    const wallStart = performance.now();
+    const wallFrom = from;
+    if (audio?.hasAudio) audio.play(from);
+
+    playingRef.current = true;
+    setPlaying(true);
+
+    const tick = () => {
+      if (!playingRef.current) return;
+      const pos = audio?.hasAudio
+        ? audio.currentTime
+        : wallFrom + (performance.now() - wallStart) / 1000;
+      if (pos >= dur - 1 / FPS) {
+        // Reached the end: settle on the last frame and stop.
+        tRef.current = dur;
+        setT(dur);
+        void renderAt(dur);
+        pausePlayback();
+        return;
+      }
+      tRef.current = pos;
+      setT(pos);
+      void renderAt(pos);
+      rafRef.current = requestAnimationFrame(tick);
+    };
+    rafRef.current = requestAnimationFrame(tick);
+  }, [renderAt, pausePlayback]);
+
+  const togglePlay = useCallback(() => {
+    if (playingRef.current) pausePlayback();
+    else startPlayback();
+  }, [pausePlayback, startPlayback]);
+
   // Open the source once per srcPath. Engine survives candidate/crop changes.
   useEffect(() => {
     let disposed = false;
@@ -279,7 +352,24 @@ export function CropPreview(props: CropPreviewProps) {
         const overlayCanvas = new OffscreenCanvas(canvasW, canvasH);
         const overlayCtx = overlayCanvas.getContext("2d");
         if (!overlayCtx) throw new Error("failed to get 2d context");
-        engineRef.current = { backend, reader, overlayCanvas, overlayCtx, canvasW, canvasH, srcW, srcH, durationSec };
+
+        // Decode the source audio once (for preview playback). Silent/failed
+        // decode → null, and the transport falls back to a wall-clock scrubber.
+        let audio: Map<string, DecodedAudio> | null = null;
+        if (ms.audio) {
+          try {
+            audio = new Map([[SOURCE_REF, await new AudioReader(ms.audio).decodeAll()]]);
+          } catch {
+            audio = null; // unplayable audio → silent preview, not a hard error
+          }
+        }
+        if (disposed) {
+          reader.dispose();
+          backend.dispose();
+          return;
+        }
+
+        engineRef.current = { backend, reader, overlayCanvas, overlayCtx, canvasW, canvasH, srcW, srcH, durationSec, audio };
         setStatus("ready");
         onReadyRef.current?.({ durationSec, srcW, srcH });
       } catch (err) {
@@ -292,11 +382,15 @@ export function CropPreview(props: CropPreviewProps) {
 
     return () => {
       disposed = true;
+      stopLoop();
+      audioRef.current?.dispose();
+      audioRef.current = null;
       engineRef.current?.reader.dispose();
       engineRef.current?.backend.dispose();
       engineRef.current = null;
       timelineRef.current = null;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [srcPath]);
 
   // Sync the live crop rect from the controlled prop (default = centered).
@@ -352,6 +446,19 @@ export function CropPreview(props: CropPreviewProps) {
         });
         timelineRef.current = tl;
         setDuration(tl.durationSec);
+
+        // (Re)build audio playback for this timeline's audio segments. Playing
+        // is interrupted by the rebuild — pause so the clock doesn't run against
+        // a stale schedule.
+        pausePlayback();
+        audioRef.current?.dispose();
+        audioRef.current = null;
+        if (eng.audio) {
+          const pb = new AudioPlayback(tl.durationSec);
+          pb.build(resolveAudioSegments(tl), eng.audio);
+          if (pb.hasAudio) audioRef.current = pb;
+          else pb.dispose();
+        }
       } catch (err) {
         setMessage(err instanceof Error ? `compose: ${err.message}` : String(err));
         return;
@@ -442,6 +549,23 @@ export function CropPreview(props: CropPreviewProps) {
 
       {status === "ready" && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, maxWidth: 480, marginTop: 6 }}>
+          <button
+            onClick={togglePlay}
+            title={playing ? "暂停" : "播放"}
+            style={{
+              width: 30,
+              height: 30,
+              flex: "0 0 auto",
+              border: "1px solid #444",
+              borderRadius: 4,
+              background: "#2a2a2a",
+              color: "#ddd",
+              cursor: "pointer",
+              fontSize: 13,
+            }}
+          >
+            {playing ? "⏸" : "▶"}
+          </button>
           <input
             type="range"
             min={0}
@@ -452,6 +576,7 @@ export function CropPreview(props: CropPreviewProps) {
               const v = Number(e.target.value);
               setT(v);
               tRef.current = v;
+              audioRef.current?.seek(v);
               void renderAt(v);
             }}
             style={{ flex: 1 }}

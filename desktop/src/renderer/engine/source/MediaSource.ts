@@ -5,7 +5,7 @@
  * exactly the multi-segment concat case in Spike A).
  */
 
-import { demux } from "./Demuxer";
+import { demux, type AudioDemux } from "./Demuxer";
 import { SampleIndex } from "./SampleIndex";
 import type { SampleMeta } from "./sample-types";
 
@@ -17,6 +17,8 @@ export class MediaSource {
   readonly height: number;
   readonly codec: string;
   readonly durationUs: number;
+  /** First audio track's samples + config, or null when the file has no audio. */
+  readonly audio: AudioDemux | null;
 
   private constructor(init: {
     samples: SampleMeta[];
@@ -25,6 +27,7 @@ export class MediaSource {
     height: number;
     codec: string;
     durationUs: number;
+    audio: AudioDemux | null;
   }) {
     this.samples = init.samples;
     this.index = new SampleIndex(init.samples);
@@ -33,6 +36,12 @@ export class MediaSource {
     this.height = init.height;
     this.codec = init.codec;
     this.durationUs = init.durationUs;
+    this.audio = init.audio;
+  }
+
+  /** True when the source carries a decodable audio track. */
+  get hasAudio(): boolean {
+    return this.audio != null;
   }
 
   static async open(url: string): Promise<MediaSource> {
@@ -44,6 +53,7 @@ export class MediaSource {
       height: r.height,
       codec: r.track.codec,
       durationUs: r.durationUs,
+      audio: r.audio,
     });
   }
 }
