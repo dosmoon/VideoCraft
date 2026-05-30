@@ -116,7 +116,11 @@ export class AudioPlayback {
     }
     if (!this.playing) return; // paused while resuming
     this.startCtxTime = this.ctx.currentTime;
-    this.scheduleFrom(from);
+    const started = this.scheduleFrom(from);
+    console.info(
+      `[AudioPlayback] play from=${from.toFixed(2)}s ctx.state=${this.ctx.state} ` +
+        `segments=${this.segments.length} started=${started}`,
+    );
   }
 
   /** Stop playback, remembering the position for a later resume. */
@@ -144,9 +148,13 @@ export class AudioPlayback {
 
   // ─────────────────────────────────────────────────────────── internals
 
-  /** Schedule every segment overlapping [fromSec, durationSec) on the ctx clock. */
-  private scheduleFrom(fromSec: number): void {
+  /**
+   * Schedule every segment overlapping [fromSec, durationSec) on the ctx clock.
+   * Returns the number of source nodes actually started (diagnostics).
+   */
+  private scheduleFrom(fromSec: number): number {
     const now = this.ctx.currentTime;
+    let started = 0;
     for (const seg of this.segments) {
       if (seg.outEndSec <= fromSec) continue; // fully in the past
       // When does this segment start relative to `now`?
@@ -167,7 +175,9 @@ export class AudioPlayback {
       const safeOffset = Math.max(0, Math.min(seg.buffer.duration, sourceOffset));
       node.start(playWhen, safeOffset, playDur);
       this.active.push(node);
+      started++;
     }
+    return started;
   }
 
   private stopActive(): void {
