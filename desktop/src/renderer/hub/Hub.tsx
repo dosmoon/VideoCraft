@@ -1,9 +1,8 @@
 /**
- * Hub — the first real product-UI slice, driven entirely by the read-only
- * sidecar RPC (project.recent_list/open/close/current, project.list_materials/
- * list_creations, material.slot_readiness). It replaces nothing yet: the spike
- * harness stays reachable via the Shell toggle (additive, per the "new UI must
- * not swallow existing tools" rule).
+ * Hub — the product UI, driven entirely by the read-only sidecar RPC
+ * (project.recent_list/open/close/current, project.list_materials/
+ * list_creations, material.slot_readiness). It is the renderer's sole surface
+ * now that the substrate spike harness has been retired.
  *
  * Scope (migration doc §0.5 — the Electron shell is framework + 素材 + 创作;
  * the legacy Tk menubar tools are cut): a project launcher and a material
