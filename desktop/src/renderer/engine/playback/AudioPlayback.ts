@@ -116,11 +116,7 @@ export class AudioPlayback {
     }
     if (!this.playing) return; // paused while resuming
     this.startCtxTime = this.ctx.currentTime;
-    const started = this.scheduleFrom(from);
-    console.info(
-      `[AudioPlayback] play from=${from.toFixed(2)}s ctx.state=${this.ctx.state} ` +
-        `segments=${this.segments.length} started=${started}`,
-    );
+    this.scheduleFrom(from);
   }
 
   /** Stop playback, remembering the position for a later resume. */
