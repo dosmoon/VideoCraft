@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { rpc, RpcError, type Component, type ProjectBrief, type SlotState } from "../ipc/client";
+import { WorkbenchPreview } from "./WorkbenchPreview";
 
 // Friendly labels for the news_video slots (placeholder — real i18n later).
 const SLOT_LABELS: Record<string, string> = {
@@ -411,6 +412,8 @@ function Workbench(props: { type: string; instance: string; onClose: () => void 
           ✕
         </button>
       </div>
+
+      <WorkbenchPreview type={type} instance={instance} />
 
       {error && <p style={{ color: "#ff6b6b" }}>✗ {error}</p>}
 

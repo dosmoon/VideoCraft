@@ -182,6 +182,8 @@
 
 **✅ 续 9 续(2026-05-30,同会话:工作台通用属性编辑器 — 纯 TS,上面"下一步②"前半)**:`Hub.tsx` 的 `Workbench` 升级——点组件行展开(▸/▾)`PropertyPanel`,按**运行期值类型**自动选控件(boolean→checkbox / number→数字框 / string→文本框,`#RRGGBB` 加色块);文本/数字 **blur+回车提交**(不每字符写),走已有 `creation.update_component` 任意 patch → 落盘 + 重读 splice。`update_component` 的 arbitrary-patch 早支持,纯 UI 增量,**Python 一行未动**。typecheck + 72 测 + **live 验通**(改 fontsize_pct/color/bold 落盘,关掉重开保持)。剩余②后半(组件增删排序 = 需解耦 components spec 的 tk 面板)与 ③④ 未动。
 
+**✅ 续 9 续 2(2026-05-30,工作台 inline 预览第一跳:源预览接通 GPU 引擎)**:`hub/WorkbenchPreview.tsx` 新增——经 RPC `load_config → bound_material → material.get_artifact("source")` 解析绑定素材的源视频,喂续 5 的 GPU 引擎(`Backend`+`MediaSource`+`ClipReader`+`resolveFrameAt`+`drawFrameSlice`)渲染,带 scrubber。**作用域:仅源、无叠加层**(标注;改组件这里暂不变)——证明 RPC→素材→GPU 用真实数据跑通。**修了一个 scrub 黑屏 bug**:预览只渲一次用非阻塞 `frameAt()` → 新 seek 解码未就绪返 null(黑)、下次返旧缓冲帧(图),严格交替;修=① 暂停单帧改 **exact 模式**(`frameAtExact` 阻塞等精确帧)② **latest-wins 合并**(拖动有飞行中渲染则记最新、完后接着渲)。typecheck + 72 测 + **live 验通**(连点不同位置稳定正确帧,不再交替黑屏)。**下一跳**:接 `buildClipTimeline`(候选+字幕+config)→ 预览反映编辑的叠加层。引擎渲染层 headless 覆盖不到,靠真 renderer 肉眼验(同 harness)。
+
 ---
 
 ## (旧) 继续 dogfood，暂缓重构
