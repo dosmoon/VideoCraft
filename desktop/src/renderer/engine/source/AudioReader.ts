@@ -28,16 +28,25 @@ export class AudioReader {
     let bytes: ArrayBuffer;
     try {
       const resp = await fetch(this.url);
-      if (!resp.ok) return null;
+      if (!resp.ok) {
+        console.warn(`[AudioReader] fetch ${resp.status} for ${this.url}`);
+        return null;
+      }
       bytes = await resp.arrayBuffer();
-    } catch {
+    } catch (e) {
+      console.warn(`[AudioReader] fetch failed for ${this.url}:`, e);
       return null;
     }
 
+    // decodeAudioData detaches its input buffer, so pass a copy (the same bytes
+    // may be reused elsewhere). One throwaway context just to decode.
     const ctx = new AudioContext();
     try {
-      const buf = await ctx.decodeAudioData(bytes);
-      if (buf.numberOfChannels === 0 || buf.length === 0) return null;
+      const buf = await ctx.decodeAudioData(bytes.slice(0));
+      if (buf.numberOfChannels === 0 || buf.length === 0) {
+        console.warn("[AudioReader] decoded buffer is empty (no audio track?)");
+        return null;
+      }
       const channelData: Float32Array[] = [];
       for (let ch = 0; ch < buf.numberOfChannels; ch++) {
         // Copy out of the AudioBuffer so the PCM survives the context close.
@@ -49,8 +58,10 @@ export class AudioReader {
         length: buf.length,
         channelData,
       };
-    } catch {
-      return null; // no audio track / undecodable → silent
+    } catch (e) {
+      // No audio track / undecodable codec → silent (not an error).
+      console.warn("[AudioReader] decodeAudioData failed (silent source?):", e);
+      return null;
     } finally {
       void ctx.close();
     }

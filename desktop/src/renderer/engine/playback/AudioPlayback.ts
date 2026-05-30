@@ -95,15 +95,27 @@ export class AudioPlayback {
     return this.playing;
   }
 
-  /** Start playback from `fromSec` (output-timeline seconds). */
-  play(fromSec: number): void {
-    void this.ctx.resume();
+  /**
+   * Start playback from `fromSec` (output-timeline seconds). Async: the
+   * AudioContext is created suspended (no user gesture at build time), so we
+   * MUST await resume() before scheduling — otherwise currentTime is frozen and
+   * the nodes are scheduled against a stopped clock (silent). Callers may
+   * fire-and-forget; the master clock (`currentTime`) only advances once resumed.
+   */
+  async play(fromSec: number): Promise<void> {
     this.stopActive();
     const from = Math.max(0, Math.min(this.durationSec, fromSec));
     this.startOffsetSec = from;
-    this.startCtxTime = this.ctx.currentTime;
+    this.startCtxTime = this.ctx.currentTime; // provisional (corrected post-resume)
     this.playing = true;
     this.pausedAtSec = from;
+    try {
+      await this.ctx.resume();
+    } catch (e) {
+      console.warn("[AudioPlayback] ctx.resume failed:", e);
+    }
+    if (!this.playing) return; // paused while resuming
+    this.startCtxTime = this.ctx.currentTime;
     this.scheduleFrom(from);
   }
 
@@ -119,7 +131,7 @@ export class AudioPlayback {
   seek(sec: number): void {
     const to = Math.max(0, Math.min(this.durationSec, sec));
     if (this.playing) {
-      this.play(to);
+      void this.play(to);
     } else {
       this.pausedAtSec = to;
     }

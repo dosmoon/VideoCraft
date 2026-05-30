@@ -182,6 +182,9 @@ export function CropPreview(props: CropPreviewProps) {
   const [duration, setDuration] = useState(0);
   const [t, setT] = useState(0);
   const [playing, setPlaying] = useState(false);
+  // Whether the source's audio decoded (drives the ♪ / 🔇 transport indicator;
+  // also a quick visual bisect of "no sound" = decode-null vs clock-suspended).
+  const [audioOn, setAudioOn] = useState(false);
 
   // Keep latest callbacks in refs so the open-effect only depends on srcPath.
   const onReadyRef = useRef(onReady);
@@ -278,7 +281,7 @@ export function CropPreview(props: CropPreviewProps) {
     const audio = audioRef.current;
     const wallStart = performance.now();
     const wallFrom = from;
-    if (audio?.hasAudio) audio.play(from);
+    if (audio?.hasAudio) void audio.play(from);
 
     playingRef.current = true;
     setPlaying(true);
@@ -361,6 +364,7 @@ export function CropPreview(props: CropPreviewProps) {
         let audio: Map<string, DecodedAudio> | null = null;
         const decoded = await new AudioReader(window.vc.mediaUrl(srcPath)).decodeAll();
         if (decoded) audio = new Map([[SOURCE_REF, decoded]]);
+        if (!disposed) setAudioOn(decoded != null);
         if (disposed) {
           reader.dispose();
           backend.dispose();
@@ -589,6 +593,12 @@ export function CropPreview(props: CropPreviewProps) {
           />
           <span style={{ fontVariantNumeric: "tabular-nums", color: "#bbb", fontSize: 12 }}>
             {t.toFixed(2)}s
+          </span>
+          <span
+            title={audioOn ? "音轨已加载" : "无音轨 / 解码失败(静音)"}
+            style={{ fontSize: 13, color: audioOn ? "#7fd17f" : "#888" }}
+          >
+            {audioOn ? "♪" : "🔇"}
           </span>
         </div>
       )}
