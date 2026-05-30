@@ -74,6 +74,11 @@ export async function prepareFrame(
   const stats: DrawStats = { video: 0, overlay: 0, skipped: 0, videoTimestampUs: null };
 
   for (const track of slice.tracks) {
+    // Audio tracks carry no visual layers — they're mixed separately (preview
+    // AudioPlayback / export encodeAudioTrack). Skip them here, else an audio
+    // clip (also a media kind) would fetch the video reader and draw a stray
+    // video layer.
+    if (track.kind === "audio") continue;
     for (const ac of track.clips) {
       const c = ac.clip;
       if (isMediaKind(c.kind)) {
