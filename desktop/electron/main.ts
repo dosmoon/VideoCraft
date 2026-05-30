@@ -97,7 +97,7 @@ function createMainWindow(): BrowserWindow {
     minWidth: 960,
     minHeight: 600,
     show: false,
-    title: "VideoCraft (substrate spike)",
+    title: "VideoCraft",
     webPreferences: {
       preload: join(here, "../preload/index.cjs"),
       contextIsolation: true,
