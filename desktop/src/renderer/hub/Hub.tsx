@@ -413,7 +413,7 @@ function Workbench(props: { type: string; instance: string; onClose: () => void 
         </button>
       </div>
 
-      <WorkbenchPreview type={type} instance={instance} />
+      <WorkbenchPreview type={type} instance={instance} components={components ?? []} />
 
       {error && <p style={{ color: "#ff6b6b" }}>✗ {error}</p>}
 

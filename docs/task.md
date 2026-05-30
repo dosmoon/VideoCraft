@@ -184,6 +184,8 @@
 
 **✅ 续 9 续 2(2026-05-30,工作台 inline 预览第一跳:源预览接通 GPU 引擎)**:`hub/WorkbenchPreview.tsx` 新增——经 RPC `load_config → bound_material → material.get_artifact("source")` 解析绑定素材的源视频,喂续 5 的 GPU 引擎(`Backend`+`MediaSource`+`ClipReader`+`resolveFrameAt`+`drawFrameSlice`)渲染,带 scrubber。**作用域:仅源、无叠加层**(标注;改组件这里暂不变)——证明 RPC→素材→GPU 用真实数据跑通。**修了一个 scrub 黑屏 bug**:预览只渲一次用非阻塞 `frameAt()` → 新 seek 解码未就绪返 null(黑)、下次返旧缓冲帧(图),严格交替;修=① 暂停单帧改 **exact 模式**(`frameAtExact` 阻塞等精确帧)② **latest-wins 合并**(拖动有飞行中渲染则记最新、完后接着渲)。typecheck + 72 测 + **live 验通**(连点不同位置稳定正确帧,不再交替黑屏)。**下一跳**:接 `buildClipTimeline`(候选+字幕+config)→ 预览反映编辑的叠加层。引擎渲染层 headless 覆盖不到,靠真 renderer 肉眼验(同 harness)。
 
+**✅ 续 9 续 3(2026-05-30,工作台 WYSIWYG:叠加层进预览 + 补两个 overlay 引擎缺口)**:`WorkbenchPreview` 接 `buildClipTimeline`(**与导出同一条纯逻辑**)——config.components → 全多轨 Timeline → GPU 引擎,**字幕(`srt.ts` host 解析素材 SRT 喂 cues)+ 文字/图片水印**都画上;`components` prop 变 → 重建 timeline + 重渲(WYSIWYG 闭环)。`Hub` 把 live `components` 传入预览。**作用域**:完整源 + config 叠加层(synthetic full-source candidate,无候选裁剪);hook/outro 卡片暂跳过(文本在创作快照,需 snapshot RPC)。**修了两个 substrate overlay 缺口**(`engine/overlay/canvas2d.ts`,惠及预览+导出):① 文字水印之前硬编码画**正中**(忽略四角)→ 加 `placement()` 按 position+margin 定位 + 对齐;② **图片水印之前完全没实现** → 加 `preloadImageOverlay`(异步 fetch→createImageBitmap→缓存)+ `drawImageWatermark`(角落+scale+opacity),`vc-media://local/` 服务项目外绝对路径(中文路径 OK)。typecheck + 72 测 + **live 验通**(字幕/文字水印/图片水印全出 + 改字段实时变)。**下一跳**:真候选窗口 + hook/outro = 加 creation snapshot RPC(读 `source-hotclips.<lang>.json` + 快照 SRT);之后导出域(`render.start` job,复用同一 buildClipTimeline→encode)。
+
 ---
 
 ## (旧) 继续 dogfood，暂缓重构

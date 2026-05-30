@@ -16,18 +16,55 @@
 
 import type { Clip } from "@composition/ir.js";
 
-const TEXT_OVERLAY_KINDS = new Set<string>([
+const OVERLAY_KINDS = new Set<string>([
   "subtitle_cue",
   "hook_text",
   "outro_text",
   "chapter_hero_card",
   "text_watermark",
   "topic_strip",
+  "image_watermark", // image, not text — handled by drawImageWatermark below
 ]);
 
 /** Whether this overlay kind is handled by the canvas2D path. */
 export function isCanvas2dOverlay(kind: string): boolean {
-  return TEXT_OVERLAY_KINDS.has(kind);
+  return OVERLAY_KINDS.has(kind);
+}
+
+// Decoded watermark images, keyed by the clip's image_path. Filled by
+// preloadImageOverlay (async) before a frame is drawn, so drawOverlayClip stays
+// synchronous. Module-level: shared across preview + export.
+const imageCache = new Map<string, ImageBitmap>();
+
+/** Decode + cache a watermark image so the sync draw path can use it. Idempotent. */
+export async function preloadImageOverlay(imagePath: string, url: string): Promise<void> {
+  if (!imagePath || imageCache.has(imagePath)) return;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`image fetch ${resp.status} for ${imagePath}`);
+  const bitmap = await createImageBitmap(await resp.blob());
+  imageCache.set(imagePath, bitmap);
+}
+
+/** Draw an image watermark at its corner + scale. Skips if not yet preloaded. */
+function drawImageWatermark(ctx: Ctx2D, clip: Clip, w: number, h: number): boolean {
+  const path = typeof clip.data["image_path"] === "string" ? (clip.data["image_path"] as string) : "";
+  const img = path ? imageCache.get(path) : undefined;
+  if (!img) return false;
+  const style = clip.style;
+  const scale = num(style, "image_scale", 0.15);
+  const opacity = num(style, "image_opacity", 100) / 100;
+  const pos = str(style, "position", "top-right");
+  const mx = num(style, "margin_x_pct", 0.025) * w;
+  const my = num(style, "margin_y_pct", 0.025) * h;
+  const drawW = Math.max(1, scale * w);
+  const drawH = drawW * (img.height / Math.max(1, img.width));
+  const x = pos.endsWith("right") ? w - mx - drawW : mx;
+  const y = pos.startsWith("top") ? my : h - my - drawH;
+  const prevAlpha = ctx.globalAlpha;
+  ctx.globalAlpha = Math.max(0, Math.min(1, opacity));
+  ctx.drawImage(img, x, y, drawW, drawH);
+  ctx.globalAlpha = prevAlpha;
+  return true;
 }
 
 type Ctx2D = OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D;
@@ -71,10 +108,37 @@ function resolveY(clip: Clip, fontPx: number, h: number): number {
 }
 
 /**
+ * Text anchor + alignment. Watermarks sit in a corner (position + margins);
+ * everything else is horizontally centred at its resolveY line.
+ */
+function placement(
+  clip: Clip,
+  fontPx: number,
+  w: number,
+  h: number,
+): { align: CanvasTextAlign; x: number; y: number } {
+  if (clip.kind === "text_watermark") {
+    const style = clip.style;
+    const pos = str(style, "position", "top-right");
+    const mx = num(style, "margin_x_pct", 0.025) * w;
+    const my = num(style, "margin_y_pct", 0.025) * h;
+    const isRight = pos.endsWith("right");
+    const isTop = pos.startsWith("top");
+    return {
+      align: isRight ? "right" : "left",
+      x: isRight ? w - mx : mx,
+      y: isTop ? my + fontPx / 2 : h - my - fontPx / 2,
+    };
+  }
+  return { align: "center", x: w / 2, y: resolveY(clip, fontPx, h) };
+}
+
+/**
  * Render one overlay clip into a 2D context sized w×h (caller clears it first).
  * Returns false (no-op) for unhandled kinds or empty text.
  */
 export function drawOverlayClip(ctx: Ctx2D, clip: Clip, w: number, h: number): boolean {
+  if (clip.kind === "image_watermark") return drawImageWatermark(ctx, clip, w, h);
   if (!isCanvas2dOverlay(clip.kind)) return false;
   const text = typeof clip.data["text"] === "string" ? (clip.data["text"] as string) : "";
   if (text.trim() === "") return false;
@@ -97,24 +161,31 @@ export function drawOverlayClip(ctx: Ctx2D, clip: Clip, w: number, h: number): b
   const padPx = num(style, isSub ? "bg_padding_x_pct" : "box_padding_pct", 0.012) * h;
 
   ctx.font = `${bold ? "bold " : ""}${fontPx}px "${fontName}", sans-serif`;
-  ctx.textAlign = "center";
   ctx.textBaseline = "middle";
 
-  const cx = w / 2;
-  const cy = resolveY(clip, fontPx, h);
+  const place = placement(clip, fontPx, w, h);
+  ctx.textAlign = place.align;
+  const { x, y } = place;
   const textW = ctx.measureText(text).width;
+  // Background box's left edge depends on the text alignment.
+  const boxLeft =
+    place.align === "right"
+      ? x - textW - padPx
+      : place.align === "left"
+        ? x - padPx
+        : x - textW / 2 - padPx;
 
   if (bgOpacity > 0) {
     ctx.fillStyle = rgba(bgColor, bgOpacity);
-    ctx.fillRect(cx - textW / 2 - padPx, cy - fontPx / 2 - padPx, textW + padPx * 2, fontPx + padPx * 2);
+    ctx.fillRect(boxLeft, y - fontPx / 2 - padPx, textW + padPx * 2, fontPx + padPx * 2);
   }
   if (strokeW > 0) {
     ctx.lineWidth = strokeW;
     ctx.strokeStyle = strokeColor;
     ctx.lineJoin = "round";
-    ctx.strokeText(text, cx, cy);
+    ctx.strokeText(text, x, y);
   }
   ctx.fillStyle = color;
-  ctx.fillText(text, cx, cy);
+  ctx.fillText(text, x, y);
   return true;
 }
