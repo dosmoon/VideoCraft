@@ -24,6 +24,20 @@ const api = {
   pickVideo(): Promise<string | null> {
     return ipcRenderer.invoke("vc:pickVideo");
   },
+  /** Business RPC to the Python sidecar. Returns the tagged reply from main;
+   *  the renderer's ipc client (src/renderer/ipc/) unwraps it. */
+  rpc: {
+    call(method: string, params?: Record<string, unknown>): Promise<unknown> {
+      return ipcRenderer.invoke("vc:rpc", method, params);
+    },
+    /** Subscribe to server→client notifications. Returns an unsubscribe fn. */
+    onNotification(cb: (method: string, params: unknown) => void): () => void {
+      const listener = (_e: unknown, method: string, params: unknown): void =>
+        cb(method, params);
+      ipcRenderer.on("vc:rpc:notification", listener);
+      return () => ipcRenderer.removeListener("vc:rpc:notification", listener);
+    },
+  },
   platform: process.platform,
 };
 

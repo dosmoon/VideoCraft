@@ -9,6 +9,7 @@ import { drawFrameSlice, type DrawDeps } from "./engine/compositor/draw";
 import { buildDemoTimeline, buildSubtitleTimeline, DEMO_MEDIA_REF } from "./harness/demoTimeline";
 import { buildMultiSegmentTimeline } from "./harness/multiSegment";
 import { exportTimelineToMp4 } from "./engine/export/encode";
+import { rpc } from "./ipc/client";
 
 const FPS = 30; // synthetic test clip is 30fps; used for the frame-number readout.
 const CANVAS_W = 1280;
@@ -60,6 +61,9 @@ export function App() {
   const [drawInfo, setDrawInfo] = useState("");
   const [exporting, setExporting] = useState(false);
   const [exportMsg, setExportMsg] = useState("");
+  // Sidecar (Python RPC) smoke: proves the renderer→main→sidecar→core round
+  // trip on launch. This is a spike-harness readout, not product UI.
+  const [sidecarStatus, setSidecarStatus] = useState("connecting to sidecar…");
 
   const mode_ = useRef<Mode>("demo");
   const playing_ = useRef(false);
@@ -147,6 +151,30 @@ export function App() {
       backendRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // One-shot sidecar handshake on mount: ping (protocol/handshake) + a real
+  // core call (recent_list) → renderer→IPC→main→python→core all the way down.
+  useEffect(() => {
+    let alive = true;
+    void (async () => {
+      try {
+        const pong = await rpc.ping();
+        const recents = await rpc.recentList();
+        if (alive) {
+          setSidecarStatus(
+            `✓ sidecar protocol ${pong.protocol} · ${recents.length} recent project(s)`,
+          );
+        }
+      } catch (err) {
+        if (alive) {
+          setSidecarStatus(`✗ sidecar: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    })();
+    return () => {
+      alive = false;
+    };
   }, []);
 
   async function renderAt(sec: number, exact = false): Promise<void> {
@@ -274,7 +302,16 @@ export function App() {
 
   return (
     <main style={{ fontFamily: "system-ui, sans-serif", padding: 16 }}>
-      <h2 style={{ fontWeight: 600, margin: "0 0 8px" }}>VideoCraft — substrate spike harness</h2>
+      <h2 style={{ fontWeight: 600, margin: "0 0 4px" }}>VideoCraft — substrate spike harness</h2>
+      <p
+        style={{
+          margin: "0 0 10px",
+          fontSize: 13,
+          color: sidecarStatus.startsWith("✗") ? "#ff6b6b" : "#7fd17f",
+        }}
+      >
+        {sidecarStatus}
+      </p>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
         {(["demo", "seek", "subtitle"] as Mode[]).map((m) => (
