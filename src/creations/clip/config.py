@@ -11,6 +11,7 @@ Mirrors the news_desk pattern (see creations/news_desk/config.py and
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 from dataclasses import asdict, dataclass, field
@@ -231,6 +232,11 @@ class ClipInstanceConfig:
         Returns the new component dict."""
         from creations.clip import component_defs
         instance = component_defs.default_instance(kind, duration)
+        # A new subtitle inherits the active language so the first add "just
+        # works"; the user can switch it in the property panel for bilingual
+        # (faithful to style_panel._on_add).
+        if kind == "clip_subtitle":
+            instance["language"] = self.source_subtitle
         instance["id"] = self._unique_id(str(instance.get("id") or kind))
         self.components.append(instance)
         return instance
@@ -251,6 +257,72 @@ class ClipInstanceConfig:
             return
         comps = self.components
         comps[idx], comps[target] = comps[target], comps[idx]
+
+    # ── presets (Style-tab toolbar) ─────────────────────────────────────────
+    # Presets are clip-global (a shared store under user_data), but applying /
+    # saving operates on this instance's config. The owner mediates so the base
+    # RPC layer stays creation-agnostic. Faithful to style_panel.py::_on_preset_*.
+    # presets is imported lazily — it's headless now (component_defs, not the
+    # tkinter-coupled spec registry), so this is safe in the sidecar.
+
+    @staticmethod
+    def list_presets() -> dict:
+        from creations.clip import presets
+        store = presets.load_store()
+        return {
+            "names": presets.list_presets(store),
+            "builtins": presets.builtin_names(),
+            "lastUsed": presets.get_last_used(store),
+        }
+
+    def apply_preset(self, name: str) -> None:
+        """Replace components + output geometry from the named preset (deep-
+        copied; ids re-uniqued since presets carry the specs' fixed ids)."""
+        from creations.clip import presets
+        store = presets.load_store()
+        preset = presets.get_preset(store, name)
+        if preset is None:
+            raise ValueError(f"unknown preset: {name!r}")
+        out = preset.get("output") or {}
+        self.output_aspect = str(out.get("aspect", self.output_aspect))
+        try:
+            self.output_short_edge = int(out.get("short_edge", self.output_short_edge))
+        except (TypeError, ValueError):
+            pass
+        self.output_mode = str(out.get("mode", self.output_mode))
+        self.encode_preset = str(preset.get("encode_preset", self.encode_preset))
+        self.components = copy.deepcopy(preset.get("components") or [])
+        _ensure_unique_ids(self.components)
+        self.preset_name = name
+        presets.set_last_used(store, name)
+        presets.save_store(store)
+
+    def save_preset(self, name: str) -> None:
+        """Upsert the current config as a preset (save-as / overwrite). Builtins
+        are protected."""
+        from creations.clip import presets
+        if presets.is_builtin(name):
+            raise ValueError(f"cannot overwrite builtin preset: {name!r}")
+        store = presets.load_store()
+        presets.upsert_preset(
+            store, name,
+            components=self.components,
+            output_aspect=self.output_aspect,
+            output_short_edge=int(self.output_short_edge),
+            output_mode=self.output_mode,
+            encode_preset=self.encode_preset,
+        )
+        presets.set_last_used(store, name)
+        presets.save_store(store)
+        self.preset_name = name
+
+    def delete_preset(self, name: str) -> None:
+        from creations.clip import presets
+        if presets.is_builtin(name):
+            raise ValueError(f"cannot delete builtin preset: {name!r}")
+        store = presets.load_store()
+        presets.delete_preset(store, name)
+        presets.save_store(store)
 
     def save(self, path: str) -> None:
         """Atomically persist to disk. The single write path for

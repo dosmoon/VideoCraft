@@ -77,6 +77,13 @@ export interface RenderPlan {
   clips: RenderPlanClip[];
 }
 
+/** Clip preset listing (creation.list_presets). */
+export interface PresetList {
+  names: string[];
+  builtins: string[];
+  lastUsed: string;
+}
+
 /** A persisted rendered output (config.rendered[]). */
 export interface RenderedClip {
   file: string;
@@ -170,6 +177,17 @@ export const rpc = {
     }),
   deleteRender: (type: string, instance: string, outIdx: number) =>
     rpcCall<RenderedClip[]>("creation.delete_render", { type, instance, out_idx: outIdx }),
+
+  // Presets (Style-tab toolbar). apply returns the updated config; save/delete
+  // return the updated preset list.
+  listPresets: (type: string, instance: string) =>
+    rpcCall<PresetList>("creation.list_presets", { type, instance }),
+  applyPreset: (type: string, instance: string, name: string) =>
+    rpcCall<Record<string, unknown>>("creation.apply_preset", { type, instance, name }),
+  savePreset: (type: string, instance: string, name: string) =>
+    rpcCall<PresetList>("creation.save_preset", { type, instance, name }),
+  deletePreset: (type: string, instance: string, name: string) =>
+    rpcCall<PresetList>("creation.delete_preset", { type, instance, name }),
 
   /** Subscribe to server→client notifications; returns an unsubscribe fn. */
   onNotification: (cb: (method: string, params: unknown) => void): (() => void) =>

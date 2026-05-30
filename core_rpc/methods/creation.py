@@ -95,6 +95,64 @@ def delete_render(ctx: Context, type: str, instance: str, out_idx: int) -> list[
     return rendered
 
 
+@rpc_method("creation.list_presets")
+def list_presets(ctx: Context, type: str, instance: str) -> dict[str, Any]:
+    """{names, builtins, lastUsed} for the Style-tab preset combo."""
+    owner, _ = ctx.session.creation_owner(type, instance)
+    fn = getattr(owner, "list_presets", None)
+    if not callable(fn):
+        raise RpcError(-32603, f"creation type {type!r} has no presets")
+    return fn()
+
+
+@rpc_method("creation.apply_preset")
+def apply_preset(ctx: Context, type: str, instance: str, name: str) -> dict[str, Any]:
+    """Replace components + output geometry from a preset; persist + broadcast.
+    Returns the updated config."""
+    owner, path = ctx.session.creation_owner(type, instance)
+    fn = getattr(owner, "apply_preset", None)
+    if not callable(fn):
+        raise RpcError(-32603, f"creation type {type!r} has no presets")
+    try:
+        fn(name)
+    except ValueError as exc:
+        raise RpcError(-32602, str(exc)) from exc
+    owner.save(path)
+    ctx.notify("event.creation.changed", {"type": type, "instance": instance})
+    return _config_dict(owner)
+
+
+@rpc_method("creation.save_preset")
+def save_preset(ctx: Context, type: str, instance: str, name: str) -> dict[str, Any]:
+    """Upsert the current config as a preset (save-as / overwrite). Returns the
+    updated preset list."""
+    owner, path = ctx.session.creation_owner(type, instance)
+    fn = getattr(owner, "save_preset", None)
+    if not callable(fn):
+        raise RpcError(-32603, f"creation type {type!r} has no presets")
+    try:
+        fn(name)
+    except ValueError as exc:
+        raise RpcError(-32602, str(exc)) from exc
+    owner.save(path)  # preset_name changed
+    ctx.notify("event.creation.changed", {"type": type, "instance": instance})
+    return owner.list_presets()
+
+
+@rpc_method("creation.delete_preset")
+def delete_preset(ctx: Context, type: str, instance: str, name: str) -> dict[str, Any]:
+    """Delete a user preset (builtins protected). Returns the updated list."""
+    owner, _ = ctx.session.creation_owner(type, instance)
+    fn = getattr(owner, "delete_preset", None)
+    if not callable(fn):
+        raise RpcError(-32603, f"creation type {type!r} has no presets")
+    try:
+        fn(name)
+    except ValueError as exc:
+        raise RpcError(-32602, str(exc)) from exc
+    return owner.list_presets()
+
+
 @rpc_method("creation.update_config")
 def update_config(ctx: Context, type: str, instance: str, patch: dict[str, Any]) -> dict[str, Any]:
     """Patch top-level config fields (output geometry, selection, per-candidate

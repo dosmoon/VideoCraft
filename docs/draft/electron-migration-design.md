@@ -7,6 +7,70 @@
 
 ---
 
+## ★ 实现进度 / Implementation Status(2026-05-30,新会话从这读起)
+
+> **clip 创作工作台已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现完整并真机肉眼验过。** 本节是后续工作的**接力入口**;实现细节集中在此(task.md 只保留一行接力指针,不再堆细节)。下面"实际实现"凡与本文档正文不同的,以本节为准(正文写于迁移启动期,部分已被实现推翻——另见 §0.5)。
+>
+> 已提交基线:见 `git log`(clip 工作台系列 commit,最新含导出/预设/双语)。
+
+### 已实现(代码位置)
+
+**进程/IPC**(对齐正文 §1-3,基本如设计):
+- Python sidecar `core_rpc/`(JSON-RPC 2.0 over stdio,单一状态所有者,二进制帧 Windows 坑已处理);Electron `desktop/electron/{sidecar,main,preload}.ts` 转发 + 事件广播;renderer `desktop/src/renderer/ipc/client.ts` 类型化客户端。
+- Electron IPC:`vc:rpc`(+notification)/`vc:pickVideo`/`vc:pickFolder`/`vc:writeFile`(写实例目录)/`vc:showInFolder`/`vc:openPath`/`vc-media://`(privileged + corsEnabled,Electron 42)。
+
+**composition / 渲染**(整块在 TS renderer):
+- OTIO IR + 公共组件库 + clip/news_desk 映射:`desktop/src/composition/`、`desktop/src/creations/{clip,news_desk}/`。`buildClipTimeline`(`creations/clip/assemble.ts`)= 候选+config→全多轨 OTIO。
+- 自建 GPU 合成器:`desktop/src/renderer/engine/`(gpu/source/compositor/overlay/export)。`resolveFrameAt` 单解析器喂预览+导出(preview≡render)。
+- **字幕单行适配**(移植缺口已补):`composition/subtitleWrap.ts` = `compute_subtitle_max_chars`+`split_subtitle` 的 TS 移植(长 cue 按时间轴切多条、每条 1 行、按内容自动判中英、maxChars=aspect·0.92/(fontsizePct·ratio) 分辨率无关);经 `CompileContext.frameAspect` 驱动 `subtitle.compile`。
+
+**clip 工作台 UI**(per-plugin,`desktop/src/renderer/workbenches/clip/`):
+- 三 tab 壳 `ClipWorkbench`(tab 首访挂载、之后只切 display 不卸载 → 不重开引擎);Hub 通用派发 `workbenches/index.tsx`。
+- 样式 tab `StyleTab`:`CropPreview`(受控可拖裁剪框,引擎按 srcPath 开一次)+ 组件**增删排序**管理器(`+添加`/删除/↑↓,spec 由 `component_defs` 驱动)+ 属性面板 `propertyEditor`(类型驱动 + enum 下拉)+ 工具栏(比例/短边/模式/编码/预设)。
+- 候选 tab `ClipsTab` + `ClipDetailPanel`:列表(行格式/score 着色/☑多选→selected_clip_indices/全选-全不选/计数/点行开详情)+ 详情(per-candidate 裁剪框、start/end ±0.5 微调+clamp、hook/outro/title/tags 覆盖、SRT cue 列表、恢复 AI 文本)。
+- 导出 tab `ExportTab`:状态表 + 批量渲染(plan→encode→writeFile→commit)+ 进度/取消 + 行操作(播放/打开文件夹/重渲/删除/错误详情)。
+
+**Python 业务面**(`src/creations/clip/`,均 headless 无 tkinter):
+- `config.py ClipInstanceConfig` 单一所有者:`apply_patch`/组件 `add/remove/move_component`(+ load 去重历史冲突 id)/预设 `list/apply/save/delete_preset`/`addable_kinds`。
+- `component_defs.py`(纯,新):addable kinds + default instances —— Tk specs(`components/*`,tkinter 耦合)的 new-arch 双胞胎,Tk 退役时合并。
+- `export.py`(render_provider):`plan_render`(命名 `clip_NNN[_hook]`/out_idx/crop 默认/路径)/`commit_render`(sidecar JSON + stale 清理 + rendered[])/`delete_render`。
+- `preview.py`(preview_provider):候选 + 快照 SRT(**全部字幕语言**,双语用)+ override。
+- `presets.py` 改用 `component_defs`(去 tkinter)。
+
+**RPC 面**(`core_rpc/methods/{creation,project,material,system}.py`,base 层经注册表/getattr,**零硬编码 plugin 名** ADR-0004):
+`creation.`{load_config / list_components / update_component / update_config / list_addable_components / add_component / remove_component / move_component / preview_data / plan_render / commit_render / delete_render / list_presets / apply_preset / save_preset / delete_preset}。
+
+### 与本文档正文不同的关键实现决策
+
+| 正文/设计 | 实际实现 | 原因 |
+|---|---|---|
+| §1/§2.2 Python sidecar 有 **Render 域**(render.start job) | **渲染在 renderer**(GPU/WebCodecs);Python 只 `plan/commit/delete_render`(路径/sidecar JSON/rendered[]);mp4 字节经 `vc:writeFile` 写盘**不走 RPC** | GPU 只在 renderer;大二进制不走 stdio |
+| §4 渲染后端"留 ffmpeg" | 自建 GPU 合成器 + WebCodecs;ffmpeg 仅潜在 mux | 已被 foundation doc 取代(§0.5) |
+| 预览"复用 .html 视觉" | TS 原生 compositor;裁剪框是编辑层(`<video>` 显整源 + 暗化+框,**不裁预览像素**),导出才按 crop_rect 偏移裁(shader UV 重映射 + mode 标志,fit 路径字节不变) | preview≡render,且裁剪是 NLE 编辑语义 |
+| (未在正文)组件 spec | 新架构 spec 元数据/默认实例走 `component_defs`(headless);组件按 **id** 寻址(RPC),load() 去重 Tk 时代的固定 id | sidecar 必须 UI-free;id-based RPC |
+| `CreationType` 契约 | 扩 `config_owner_cls` / `preview_provider` / `render_provider`(per-creation 提供者,base 层通用调用) | 保持 base 层 clip 无关 |
+| (新增)双语 | 字幕**按组件 language** 烧;`preview_data` 返回**所有 SRT 语言**(`subtitleLangs`,区别于 hotclips 候选语言 `availableLangs`);字幕属性面板语言下拉 | 双语 = 多字幕组件,各绑一语言 |
+| (删除)工具栏候选语言下拉 | **已删** | 冗余(同内容、文案可改)+ 切换会按下标错位毁勾选/覆盖(footgun);候选语言是创建期决定,`source_subtitle` 字段保留,`preview_data` 未设时自动取首个 hotclips 语言 |
+
+### 已知坑 / 已修(避免重新踩)
+- **React StrictMode dev 双挂载**毁 WebGPU canvas 单例 context → 黑屏:`CropPreview` 在 `new Backend()` 前 `if(disposed) return`,只存活挂载 configure canvas。
+- **H.264 档撞分辨率上限**:`encode.ts` 用 `isConfigSupported` 从 High 5.2 往下挑(固定 L3.1 拒绝 1080×1920 → "closed codec")。
+- **canvas 等比**:预览 canvas 用 `maxWidth+maxHeight+auto`(固定 height + maxWidth 会在窄容器里压扁画面+裁剪框)。
+- **预览陈旧**:tab 保活下导出 tab 切到前台 `active` 时重 plan;失败行保留不被 reload 刷回。
+- **环境**:agent shell 带 `ELECTRON_RUN_AS_NODE=1`,启动必 `env -u ELECTRON_RUN_AS_NODE pnpm dev`;改 Python 必整重启 sidecar(Ctrl+R 只重载 renderer);HMR 不可信,改 renderer 后清 `node_modules/.vite` 整重启;启动前 `taskkill electron.exe` + 杀 5174。
+
+### 测试
+TS:`pnpm typecheck` + `pnpm test`(103,含 ir/timemap/components/clip/news_desk/cropEditor/mapping/subtitleWrap)。Python:`pytest tests/core_rpc`(56,含 creation 全 RPC + render plan/commit/delete + 预设 + 双语)。引擎渲染层 headless 覆盖不到,靠真 renderer 肉眼验。
+
+### 下一步(后续会话)
+- clip 工作台 dogfood / 体验打磨(用户验证中)。
+- news_desk 迁到同套组件库 + workbench 模式(证明公共库覆盖多插件)。
+- Tk clip 工作台退役 → `component_defs` 与 `components/*` Tk specs 合并为单一源。
+- 导出域细化:逐帧精确 decode、音轨 mux、转场、剩余 overlay kind。
+- 升 ADR(数据模型 + 渲染引擎 + IPC 拓扑;预定 ADR-0007）。
+
+---
+
 ## 0. 对齐结论(代码探查 + 文档复核已完成)
 
 启动稿断言"引擎/UI 边界是设计时就有意铺好的"。**复核结果:成立,且比启动稿描述的更彻底。**

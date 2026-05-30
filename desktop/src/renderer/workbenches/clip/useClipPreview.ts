@@ -41,6 +41,12 @@ export interface ClipPreviewData {
   selectedIndices: number[];
   /** Previously rendered outputs (config.rendered[]). */
   rendered: RenderedClip[];
+  /** x264 encode preset (config.encode_preset). */
+  encodePreset: string;
+  /** Applied preset name (config.preset_name), "" if none. */
+  presetName: string;
+  /** Subtitle (SRT) languages — the subtitle component's language dropdown. */
+  subtitleLangs: string[];
 }
 
 /** Shape returned by the clip preview_provider (Python). */
@@ -49,7 +55,11 @@ interface RawPreviewData {
   candidates: HotclipCandidate[];
   selectedIndex: number;
   subtitlePath: string | null;
+  /** Snapshot SRT path per subtitle language (bilingual: each subtitle picks its own). */
+  subtitlePaths?: Record<string, string>;
   override: ClipOverride | null;
+  availableLangs?: string[];
+  subtitleLangs?: string[];
 }
 
 function fmtErr(err: unknown): string {
@@ -97,6 +107,8 @@ export function useClipPreview(type: string, instance: string) {
                   ? (cfg["selected_clip_indices"] as number[])
                   : [],
                 rendered: Array.isArray(cfg["rendered"]) ? (cfg["rendered"] as RenderedClip[]) : [],
+                encodePreset: String(cfg["encode_preset"] ?? prev.encodePreset),
+                presetName: String(cfg["preset_name"] ?? ""),
               }
             : prev,
         );
@@ -132,16 +144,20 @@ export function useClipPreview(type: string, instance: string) {
 
         const pd = (await rpc.previewData(type, instance)) as RawPreviewData;
 
-        // Snapshot SRT (preview_data) → else the live material SRT for the lang.
-        let srtText = "";
-        if (pd.subtitlePath) {
-          srtText = await fetch(window.vc.mediaUrl(pd.subtitlePath)).then((r) => r.text());
-        } else if (pd.lang) {
-          const p = await rpc.getArtifact(mt, mi, `subtitle:${pd.lang}`);
-          if (p) srtText = await fetch(window.vc.mediaUrl(p)).then((r) => r.text());
-        }
+        // Load EVERY available language's snapshot SRT so a bilingual clip's
+        // second subtitle component (a different language) resolves its cues.
+        // Falls back to the active subtitlePath for older payloads.
+        const paths: Record<string, string> =
+          pd.subtitlePaths ?? (pd.subtitlePath && pd.lang ? { [pd.lang]: pd.subtitlePath } : {});
         const srtByLang: Record<string, readonly SourceCue[]> = {};
-        if (pd.lang && srtText) srtByLang[pd.lang] = parseSrt(srtText);
+        for (const [lang, path] of Object.entries(paths)) {
+          try {
+            const txt = await fetch(window.vc.mediaUrl(path)).then((r) => r.text());
+            srtByLang[lang] = parseSrt(txt);
+          } catch {
+            /* skip a lang whose SRT can't be read */
+          }
+        }
 
         if (disposed) return;
         setData({
@@ -158,6 +174,9 @@ export function useClipPreview(type: string, instance: string) {
             ? (cfg["selected_clip_indices"] as number[])
             : [],
           rendered: Array.isArray(cfg["rendered"]) ? (cfg["rendered"] as RenderedClip[]) : [],
+          encodePreset: String(cfg["encode_preset"] ?? "medium"),
+          presetName: String(cfg["preset_name"] ?? ""),
+          subtitleLangs: Array.isArray(pd.subtitleLangs) ? pd.subtitleLangs : [],
         });
         setStatus("ready");
       } catch (err) {

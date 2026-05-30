@@ -48,6 +48,14 @@ def _open(ctx, project):
     assert "result" in resp, resp
 
 
+@pytest.fixture
+def isolated_presets(monkeypatch, tmp_path):
+    """Redirect the global clip preset store to a tmp file so preset tests don't
+    touch the user's real store (user_data/presets/clip_preset.json)."""
+    import creations.clip.presets as presets
+    monkeypatch.setattr(presets, "CLIP_PRESETS_PATH", str(tmp_path / "clip_preset.json"))
+
+
 def test_load_config_and_list_components(ctx, project_with_clip):
     _open(ctx, project_with_clip)
     cfg = call(ctx, "creation.load_config", {"type": "clip", "instance": "clip-1"})["result"]
@@ -210,6 +218,18 @@ def test_add_component_unique_id_and_persist(ctx, project_with_clip, emit):
     assert len(on_disk_ids) == len(set(on_disk_ids))  # all unique on disk
 
 
+def test_add_subtitle_inherits_active_language(ctx, project_with_clip):
+    """A newly added subtitle inherits source_subtitle so the first add works
+    (faithful to style_panel._on_add); the user switches it for bilingual."""
+    _open(ctx, project_with_clip)  # config source_subtitle == "en"
+    comps = call(
+        ctx, "creation.add_component", {"type": "clip", "instance": "clip-1", "kind": "clip_subtitle"}
+    )["result"]
+    added = comps[-1]
+    assert added["kind"] == "clip_subtitle"
+    assert added["language"] == "en"
+
+
 def test_add_component_unknown_kind(ctx, project_with_clip):
     _open(ctx, project_with_clip)
     resp = call(
@@ -333,12 +353,64 @@ def test_preview_data_returns_candidates(ctx, project_with_bound_clip):
     assert pd["selectedIndex"] == 1  # from selected_clip_indices
     # SRT was snapshotted into the clip instance dir (snapshot principle).
     assert pd["subtitlePath"] and pd["subtitlePath"].endswith("source-subtitles.en.srt")
+    # Every SUBTITLE language's SRT is exposed for bilingual subtitle components
+    # (distinct from candidate/hotclips languages).
+    assert "en" in pd["subtitlePaths"]
+    assert pd["availableLangs"] == ["en"]  # hotclips langs
+    assert "en" in pd["subtitleLangs"]  # SRT langs
 
 
 def test_preview_data_unbound_is_empty(ctx, project_with_clip):
     _open(ctx, project_with_clip)  # clip-1 here has no bound_material
     pd = call(ctx, "creation.preview_data", {"type": "clip", "instance": "clip-1"})["result"]
     assert pd["candidates"] == []
+
+
+# ── presets (Style-tab toolbar) ───────────────────────────────────────────────
+
+
+def test_list_presets_has_builtins(isolated_presets, ctx, project_with_clip):
+    _open(ctx, project_with_clip)
+    res = call(ctx, "creation.list_presets", {"type": "clip", "instance": "clip-1"})["result"]
+    assert "Default 9:16" in res["names"]
+    assert "Default 9:16" in res["builtins"]
+
+
+def test_apply_preset_replaces_components_and_output(isolated_presets, ctx, project_with_clip, emit):
+    _open(ctx, project_with_clip)
+    cfg = call(
+        ctx,
+        "creation.apply_preset",
+        {"type": "clip", "instance": "clip-1", "name": "Default 9:16"},
+    )["result"]
+    assert cfg["output_aspect"] == "9:16"
+    assert cfg["preset_name"] == "Default 9:16"
+    # Default preset = subtitle + hook card; ids are unique after apply.
+    kinds = [c["kind"] for c in cfg["components"]]
+    assert "clip_subtitle" in kinds and "clip_hook_card" in kinds
+    ids = [c["id"] for c in cfg["components"]]
+    assert len(ids) == len(set(ids))
+    assert ("event.creation.changed", {"type": "clip", "instance": "clip-1"}) in emit.events
+
+
+def test_save_and_delete_user_preset(isolated_presets, ctx, project_with_clip):
+    _open(ctx, project_with_clip)
+    saved = call(
+        ctx, "creation.save_preset", {"type": "clip", "instance": "clip-1", "name": "我的预设"}
+    )["result"]
+    assert "我的预设" in saved["names"]
+    after = call(
+        ctx, "creation.delete_preset", {"type": "clip", "instance": "clip-1", "name": "我的预设"}
+    )["result"]
+    assert "我的预设" not in after["names"]
+
+
+def test_cannot_delete_builtin_preset(isolated_presets, ctx, project_with_clip):
+    _open(ctx, project_with_clip)
+    resp = call(
+        ctx, "creation.delete_preset", {"type": "clip", "instance": "clip-1", "name": "Default 9:16"}
+    )
+    assert resp["error"]["code"] == -32602
 
 
 # ── render orchestration (plan_render / commit_render / delete_render) ─────────

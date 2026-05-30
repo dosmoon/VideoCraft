@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import type { Component } from "../../ipc/client";
+import type { Component, PresetList } from "../../ipc/client";
 import { rpc, RpcError } from "../../ipc/client";
 import { PropertyPanel } from "./propertyEditor";
 import { CropPreview } from "./CropPreview";
@@ -36,6 +36,29 @@ const KIND_LABELS: Record<string, string> = {
 };
 
 const EMPTY_CANDIDATE: HotclipCandidate = { start: "00:00:00.000", end: "00:00:00.000" };
+
+// Mirrors style_panel.py::_ASPECTS / _ENCODE_PRESETS.
+const ASPECTS = ["9:16", "1:1", "16:9", "4:5"];
+const ENCODE_PRESETS = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower"];
+const SHORT_EDGES = [720, 1080, 1440, 2160];
+
+const selStyle: React.CSSProperties = {
+  background: "#1a1a1e",
+  color: "#ddd",
+  border: "1px solid #333",
+  borderRadius: 4,
+  padding: "2px 4px",
+  fontSize: 12,
+};
+const tbBtn: React.CSSProperties = {
+  background: "#2a2a2e",
+  color: "#ccc",
+  border: "1px solid #3a3a40",
+  borderRadius: 4,
+  padding: "2px 8px",
+  fontSize: 12,
+  cursor: "pointer",
+};
 
 const mgrBtn: React.CSSProperties = {
   background: "#2a2a2e",
@@ -126,7 +149,97 @@ export function StyleTab(props: {
     [type, instance, selectedId, onComponentsReplaced],
   );
 
-  const { status, message, data } = useClipPreview(type, instance);
+  const { status, message, data, reload } = useClipPreview(type, instance);
+
+  // ── toolbar (aspect / short-edge / mode / encode / presets) ─────────────────
+  const [presets, setPresets] = useState<PresetList | null>(null);
+  const [selectedPreset, setSelectedPreset] = useState("");
+  const [toolbarErr, setToolbarErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    void rpc
+      .listPresets(type, instance)
+      .then((p) => {
+        if (!alive) return;
+        setPresets(p);
+        setSelectedPreset((cur) => cur || p.lastUsed || p.names[0] || "");
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [type, instance]);
+
+  const tErr = (err: unknown) =>
+    setToolbarErr(err instanceof RpcError ? `[${err.code}] ${err.message}` : String(err));
+
+  // Patch a top-level output field → lightweight reload (no engine reopen).
+  const patchOutput = useCallback(
+    async (patch: Record<string, unknown>) => {
+      setToolbarErr("");
+      try {
+        await rpc.updateConfig(type, instance, patch);
+        reload();
+      } catch (err) {
+        tErr(err);
+      }
+    },
+    [type, instance, reload],
+  );
+
+  const onApplyPreset = useCallback(async () => {
+    if (!selectedPreset) return;
+    setToolbarErr("");
+    try {
+      const cfg = await rpc.applyPreset(type, instance, selectedPreset);
+      if (Array.isArray(cfg["components"])) onComponentsReplaced(cfg["components"] as Component[]);
+      onSelect(null);
+      reload();
+    } catch (err) {
+      tErr(err);
+    }
+  }, [type, instance, selectedPreset, onComponentsReplaced, onSelect, reload]);
+
+  const onSavePresetAs = useCallback(async () => {
+    const name = window.prompt("预设名称：", "");
+    if (!name || !name.trim()) return;
+    setToolbarErr("");
+    try {
+      const list = await rpc.savePreset(type, instance, name.trim());
+      setPresets(list);
+      setSelectedPreset(name.trim());
+      reload();
+    } catch (err) {
+      tErr(err);
+    }
+  }, [type, instance, reload]);
+
+  const onOverwritePreset = useCallback(async () => {
+    if (!selectedPreset) return;
+    if (!window.confirm(`覆盖预设「${selectedPreset}」？`)) return;
+    setToolbarErr("");
+    try {
+      const list = await rpc.savePreset(type, instance, selectedPreset);
+      setPresets(list);
+      reload();
+    } catch (err) {
+      tErr(err);
+    }
+  }, [type, instance, selectedPreset, reload]);
+
+  const onDeletePreset = useCallback(async () => {
+    if (!selectedPreset) return;
+    if (!window.confirm(`删除预设「${selectedPreset}」？`)) return;
+    setToolbarErr("");
+    try {
+      const list = await rpc.deletePreset(type, instance, selectedPreset);
+      setPresets(list);
+      setSelectedPreset(list.lastUsed || list.names[0] || "");
+    } catch (err) {
+      tErr(err);
+    }
+  }, [type, instance, selectedPreset]);
   // In-memory staging crop (style_panel.py never persisted a global crop).
   const [stagedCrop, setStagedCrop] = useState<CropRect | null>(null);
   const [note, setNote] = useState("");
@@ -162,9 +275,123 @@ export function StyleTab(props: {
   const sample = data?.candidates[0];
   const isReframe = data?.mode === "reframe";
 
+  const aspectStr = data ? `${data.aspect.aw}:${data.aspect.ah}` : "9:16";
+
   return (
-    <div style={{ display: "flex", gap: 16, padding: 16, alignItems: "flex-start" }}>
-      {/* Left: source preview + staging crop + component checkbox list */}
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* Toolbar (style_panel.py::_build_toolbar): language / aspect / encode /
+          mode / short-edge + preset combo with apply / save-as / overwrite / delete. */}
+      <div
+        style={{
+          display: "flex",
+          flexWrap: "wrap",
+          alignItems: "center",
+          gap: 10,
+          padding: "8px 16px",
+          borderBottom: "1px solid #2a2a2e",
+          fontSize: 12,
+          color: "#999",
+        }}
+      >
+        <label>
+          比例{" "}
+          <select
+            value={aspectStr}
+            disabled={!data}
+            onChange={(e) => void patchOutput({ output_aspect: e.target.value })}
+            style={selStyle}
+          >
+            {ASPECTS.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          短边{" "}
+          <select
+            value={String(data?.shortEdge ?? 1080)}
+            disabled={!data}
+            onChange={(e) => void patchOutput({ output_short_edge: Number(e.target.value) })}
+            style={selStyle}
+          >
+            {SHORT_EDGES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          模式{" "}
+          <select
+            value={data?.mode ?? "reframe"}
+            disabled={!data}
+            onChange={(e) => void patchOutput({ output_mode: e.target.value })}
+            style={selStyle}
+          >
+            <option value="reframe">重构裁剪</option>
+            <option value="passthrough">原样</option>
+          </select>
+        </label>
+        <label>
+          编码{" "}
+          <select
+            value={data?.encodePreset ?? "medium"}
+            disabled={!data}
+            onChange={(e) => void patchOutput({ encode_preset: e.target.value })}
+            style={selStyle}
+          >
+            {ENCODE_PRESETS.map((p) => (
+              <option key={p} value={p}>
+                {p}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <span style={{ width: 1, height: 18, background: "#3a3a40", margin: "0 2px" }} />
+
+        <label>
+          预设{" "}
+          <select
+            value={selectedPreset}
+            onChange={(e) => setSelectedPreset(e.target.value)}
+            style={{ ...selStyle, maxWidth: 200 }}
+          >
+            {(presets?.names ?? []).map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
+        <button onClick={() => void onApplyPreset()} disabled={!selectedPreset} style={tbBtn}>
+          应用
+        </button>
+        <button onClick={() => void onSavePresetAs()} style={tbBtn}>
+          另存为
+        </button>
+        <button
+          onClick={() => void onOverwritePreset()}
+          disabled={!selectedPreset || (presets?.builtins.includes(selectedPreset) ?? false)}
+          style={tbBtn}
+        >
+          覆盖
+        </button>
+        <button
+          onClick={() => void onDeletePreset()}
+          disabled={!selectedPreset || (presets?.builtins.includes(selectedPreset) ?? false)}
+          style={tbBtn}
+        >
+          删除
+        </button>
+        {toolbarErr && <span style={{ color: "#ff6b6b" }}>✗ {toolbarErr}</span>}
+      </div>
+
+      <div style={{ display: "flex", gap: 16, padding: 16, alignItems: "flex-start", flex: 1, overflow: "auto" }}>
+        {/* Left: source preview + staging crop + component checkbox list */}
       <div style={{ flex: "0 0 auto", minWidth: 360 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
           <span style={{ fontSize: 11, color: "#888", fontWeight: 700, textTransform: "uppercase" }}>
@@ -347,10 +574,14 @@ export function StyleTab(props: {
             component={selected}
             disabled={savingId === selected.id}
             onCommit={(k, v) => onPatch(selected, { [k]: v })}
+            {...(selected.kind === "clip_subtitle"
+              ? { enums: { language: data?.subtitleLangs ?? [] } }
+              : {})}
           />
         ) : (
           <p style={{ color: "#666", fontSize: 12 }}>选择一个组件以编辑其属性</p>
         )}
+      </div>
       </div>
     </div>
   );

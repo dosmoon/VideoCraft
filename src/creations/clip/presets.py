@@ -43,7 +43,10 @@ from typing import Optional
 
 from core import user_data
 
-from creations.clip.components import spec_for_kind
+# Pure default-instance source (no tkinter) so this module stays headless and
+# the sidecar's config owner can import it. The Tk component specs' default_*
+# are the soon-to-retire twin of component_defs (see component_defs.py).
+from creations.clip import component_defs
 
 
 PRESET_DIR = user_data.path("presets")
@@ -58,12 +61,12 @@ def _default_component(kind: str, **overrides) -> dict:
     """Build a fresh default instance for `kind` and merge `overrides`
     on top. Raises if the kind isn't registered — catches typos in
     BUILTINS at import time rather than at apply time."""
-    spec = spec_for_kind(kind)
-    if spec is None or spec.default_instance is None:
-        raise RuntimeError(f"unknown component kind in preset: {kind}")
     # duration is unused by current default_instance impls; pass a
     # plausible clip length so any future use sees a real number.
-    inst = spec.default_instance(60.0)
+    try:
+        inst = component_defs.default_instance(kind, 60.0)
+    except ValueError as exc:
+        raise RuntimeError(f"unknown component kind in preset: {kind}") from exc
     inst.update(overrides)
     return inst
 

@@ -21,7 +21,8 @@ from creations.clip.config import ClipInstanceConfig
 
 def _empty(lang: str) -> dict[str, Any]:
     return {"lang": lang, "candidates": [], "selectedIndex": 0,
-            "subtitlePath": None, "override": None}
+            "subtitlePath": None, "subtitlePaths": {}, "override": None,
+            "availableLangs": [], "subtitleLangs": []}
 
 
 def preview_data(project, instance_id: str) -> dict[str, Any]:
@@ -42,10 +43,8 @@ def preview_data(project, instance_id: str) -> dict[str, Any]:
         return _empty(cfg.source_subtitle)
 
     repo = HotclipsRepo(inst_dir, model)
-    lang = cfg.source_subtitle
-    if not lang:
-        avail = repo.list_available_langs()
-        lang = avail[0] if avail else ""
+    avail = repo.list_available_langs()
+    lang = cfg.source_subtitle or (avail[0] if avail else "")
 
     data = repo.load_hotclips(lang) or {}
     raw = data.get("clips") if isinstance(data, dict) else None
@@ -55,10 +54,25 @@ def preview_data(project, instance_id: str) -> dict[str, Any]:
     if sel < 0 or sel >= len(candidates):
         sel = 0
 
+    # Snapshot every SUBTITLE language's SRT so bilingual clips work: each
+    # subtitle component resolves its own language against this map (mirrors
+    # clip_tool._srt_by_lang). Subtitle languages (SRT files) are distinct from
+    # candidate languages (hotclips) — a video can have en+zh subtitles but only
+    # zh AI hotclips. subtitlePath kept as the active-lang convenience.
+    sub_langs = repo.list_subtitle_langs()
+    sub_paths: dict[str, str] = {}
+    for l in sub_langs:
+        p = repo.resolve_source_srt(l)
+        if p:
+            sub_paths[l] = p
+
     return {
         "lang": lang,
         "candidates": candidates,
         "selectedIndex": sel,
-        "subtitlePath": repo.resolve_source_srt(lang),
+        "subtitlePath": sub_paths.get(lang),
+        "subtitlePaths": sub_paths,
         "override": cfg.clips_overrides.get(sel),
+        "availableLangs": avail,        # hotclips/candidate languages (toolbar picker)
+        "subtitleLangs": sub_langs,     # SRT languages (subtitle component dropdown)
     }

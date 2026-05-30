@@ -1,7 +1,20 @@
 # 当前任务 / Current Task
 
 > **不是 backlog。**仅记录"现在正在做什么 + 上次停在哪儿 + 下一步要做什么"，
-> 用于会话清理后下一次 Claude 能直接接力。
+> 用于会话清理后下一次 Claude 能直接接力。**实现细节不放这里**——放到对应设计文档。
+
+---
+
+## ▶ 接力入口(2026-05-30 更新)
+
+**clip 创作工作台已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现完整、真机肉眼验过。**
+
+- **新会话先读**:[`docs/draft/electron-migration-design.md`](draft/electron-migration-design.md) 顶部「★ 实现进度」——那里有完整实现状态、代码位置、与设计文档不同的决策、已知坑、测试、下一步。**clip 工作台的细节都在那,不在本文件。**
+- 数据模型/渲染/进程拓扑权威 = [`composition-otio-foundation.md`](draft/composition-otio-foundation.md)。
+- **下一步**:clip dogfood 打磨 → news_desk 迁同套组件库 → Tk clip 退役(`component_defs` 合并 Tk specs)。详见上述文档「下一步」。
+- 工作纪律(踩过 3 次):忠实还原既存 UI 交互,不发明、不简化;只改重构文档已决议的(ffmpeg→GPU / composition Python→TS / 单进程→sidecar)。见 [[feedback_faithful_port_not_invent]]。
+
+> 下面 续1~续7 是 sidecar/IPC/substrate 地基的历史记录(已落地);clip 工作台的 续8~续14 细节已迁入设计文档,本文件仅留此入口。
 
 ---
 
@@ -144,184 +157,10 @@
   - ⏳ **欠**:三关 spike 在 Chromium ~140 的肉眼回归(Demo 画面 / Subtitle / Export)+ 顶部 sidecar 绿条——窗口在屏上,待用户确认。
   - 注:electron-vite 2.3 改 `main.ts` **不自动重启 electron**,得手动杀 `electron.exe` + 重跑 `pnpm dev`(memory 已记 HMR 不可信)。
 
-## ▶ 续 8(2026-05-30,productization 轨②首切片:真 Hub UI 壳 — read-only RPC 端到端 live 验通)
+## ▶ 续 8~14 已迁入设计文档(2026-05-30)
 
-续 7 sidecar 只读面建好后,选**轨②真 UI 壳**先行(而非轨①写操作面)——理由:写方法无 UI 消费者会"猜形状",先用真 UI 把已有只读面端到端跑通,反推 UI 真正需要的写方法。**首切片 = 项目 launcher + 素材 sidebar 树,纯只读,additive(不吞 harness)**。Python 一行未动。
-
-**已落地(desktop 侧,typecheck 干净 + 72 测)**:
-- `vc:pickFolder` IPC(`main.ts` + `preload.ts` + `global.d.ts`,镜像 `vc:pickVideo`)——launcher 选项目文件夹。
-- `src/renderer/hub/Hub.tsx` — **首个真产品 UI**,全由只读 RPC 驱动:① launcher(`project.recent_list` 拉真实最近项目 / `project.open` / `project.current` 复用 sidecar 已开项目 / `pickFolder→open`);② 项目视图 sidebar(`project.list_materials`+`list_creations` 出树,每个 material 实例 `material.slot_readiness` 出 3 slot=源视频/新闻背景/字幕,`✓`绿/`✗`红/`🔒`锁 + summary,**零前端硬编码**)。
-- `src/renderer/shell.tsx` — 顶部 **[Hub | Spike harness] 切换**,默认 Hub;harness 只在选中时 mount(WebGPU heavy init 不空跑)。**additive**([[feedback_flexibility_over_perfection]]:新 UI 不吞旧工具)。`main.tsx` 渲 `<Shell>`。
-- **作用域刻意收窄**(migration §0.5:Electron 壳 = 框架+素材+创作,legacy menubar 工具全砍)——`docs/design/03-ui-hub.md` 的 26-工具菜单 Hub 是旧 Tk 版,**对 Electron 壳已 superseded**;workbench + tab-0 预览模型留后续切片。
-
-**live 验通(这台 26200,用户肉眼)**:① Hub launcher 真实最近项目列表出来;② 点开项目 → 素材 sidebar 树 + slot 状态正确;③ 切 Spike harness WebGPU 画面还在(additive 没破坏);④ 无红字报错。**证明"瘦客户端 renderer + sidecar 单一所有者"架构在真实数据上成立。**
-
-**⚠️ 未提交**(在工作树,基线 `c941196` 之后):`desktop/electron/{main,preload}.ts`、`desktop/src/renderer/{global.d.ts,main.tsx}`、新 `desktop/src/renderer/hub/Hub.tsx` + `shell.tsx` + task.md。
-
-**下一步**:① 提交续 8(单 commit);② 继续轨②:把"创作实例单击 → 开工作台 tab"接上(clip 工作台首选,migration §4 试点)——这会**首次需要写操作面**(`creation.load_config`/`update_component` 等),轨①写方法**届时按 UI 真实需要补**(避免猜形状);③ 或先补 material 写长任务(`add_source_video`/`generate_subtitles`,job+事件+取消)。preview/render 域待 composition Python/TS 边界理顺。
-
-## ▶ 续 9(2026-05-30,轨② 第二切片:creation 写操作面 — sidecar 首个写,live 验通)
-
-续 8 只读 Hub 之后接上**创作工作台 + 写操作面**(下一步②那条)。**架构关键一环**:renderer 瘦客户端发意图 → sidecar 单一所有者写 → 落盘 + 广播,base 层零硬编码 plugin 名。
-
-**已落地(Python,37 core_rpc 测 + clip arch 测不破)**:
-- **creation 插件契约扩展**:`CreationType` 加 `config_owner_cls`(单一 config 所有者类;契约 = classmethod `load(path)` + 实例 `save(path)` + dataclass asdict-able + `components: list[dict]`)。clip `__init__` 注册 `ClipInstanceConfig`。**core_rpc base 层经注册表解析,绝不 import "clip"**(ADR-0004,与 material 的 `instance_factory` 同构)。
-- `session.py` — `creation_owner(type,inst)→(owner,path)`:经注册表 `config_owner_cls.load()` 装载 + 缓存 = **单一内存所有者**([[project_creation_config_owner]]);set/close_project 清缓存。
-- `methods/creation.py` — `creation.load_config`(asdict)/`list_components`/`update_component`(按 id 浅合并 patch → `owner.save(path)` → 广播 `event.creation.changed`;id/kind 结构字段防改写)。`load_plugins` 加 `import creations.clip`。
-- `tests/core_rpc/test_creation.py`(5 测):load/list + **update 落盘验证(读回 config.json 确认 enabled 持久化)** + 未知 id/未知 type 错误 + id/kind 不可改写。
-
-**已落地(desktop,typecheck + 72 测)**:
-- `ipc/client.ts` — `Component` 类型(id/kind/enabled + 任意 style)+ `loadConfig`/`listComponents`/`updateComponent` 方法桩。
-- `hub/Hub.tsx` — 创作实例行变**可点按钮** → 右侧 `<main>` 开**工作台**(sidebar | main 双栏布局重构);`Workbench` 列出组件(kind+id+`enabled` 勾选框),切换 → `updateComponent` 写盘 → 重读刷新。一次一个工作台(本切片)。
-
-**live 验通(这台 26200,用户)**:开有 clip 创作的项目 → 创作区点 clip 实例 → 工作台组件列表出来 → 切 `enabled` **真写 config.json**(关掉重开状态保持=落盘确认),无报错。**写路径零旁路 dataclass owner。**
-
-**⚠️ 未提交**(基线 `8d62037` 之后):Python `src/creations/__init__.py` + `src/creations/clip/__init__.py` + `core_rpc/session.py` + 新 `core_rpc/methods/creation.py` + `core_rpc/methods/__init__.py` + 新 `tests/core_rpc/test_creation.py`;desktop `ipc/client.ts` + `hub/Hub.tsx`;task.md。
-
-**下一步**:① 提交续 9;② 工作台深化——组件**样式字段编辑**(不只 enabled 开关:`update_component` 已支持任意 patch,UI 补字段控件)+ 组件增删排序(`creation.add/remove_component`,需引 components spec=会拉 tkinter,得先把 spec 的 default_instance 与 tk 面板解耦)+ candidate/导出 tab;③ 或补 material 写长任务(`generate_subtitles` job 流);④ bind_material(快照,ADR-0003/0005)。
-
-**✅ 续 9 续(2026-05-30,同会话:工作台通用属性编辑器 — 纯 TS,上面"下一步②"前半)**:`Hub.tsx` 的 `Workbench` 升级——点组件行展开(▸/▾)`PropertyPanel`,按**运行期值类型**自动选控件(boolean→checkbox / number→数字框 / string→文本框,`#RRGGBB` 加色块);文本/数字 **blur+回车提交**(不每字符写),走已有 `creation.update_component` 任意 patch → 落盘 + 重读 splice。`update_component` 的 arbitrary-patch 早支持,纯 UI 增量,**Python 一行未动**。typecheck + 72 测 + **live 验通**(改 fontsize_pct/color/bold 落盘,关掉重开保持)。剩余②后半(组件增删排序 = 需解耦 components spec 的 tk 面板)与 ③④ 未动。
-
-**✅ 续 9 续 2(2026-05-30,工作台 inline 预览第一跳:源预览接通 GPU 引擎)**:`hub/WorkbenchPreview.tsx` 新增——经 RPC `load_config → bound_material → material.get_artifact("source")` 解析绑定素材的源视频,喂续 5 的 GPU 引擎(`Backend`+`MediaSource`+`ClipReader`+`resolveFrameAt`+`drawFrameSlice`)渲染,带 scrubber。**作用域:仅源、无叠加层**(标注;改组件这里暂不变)——证明 RPC→素材→GPU 用真实数据跑通。**修了一个 scrub 黑屏 bug**:预览只渲一次用非阻塞 `frameAt()` → 新 seek 解码未就绪返 null(黑)、下次返旧缓冲帧(图),严格交替;修=① 暂停单帧改 **exact 模式**(`frameAtExact` 阻塞等精确帧)② **latest-wins 合并**(拖动有飞行中渲染则记最新、完后接着渲)。typecheck + 72 测 + **live 验通**(连点不同位置稳定正确帧,不再交替黑屏)。**下一跳**:接 `buildClipTimeline`(候选+字幕+config)→ 预览反映编辑的叠加层。引擎渲染层 headless 覆盖不到,靠真 renderer 肉眼验(同 harness)。
-
-**✅ 续 9 续 3(2026-05-30,工作台 WYSIWYG:叠加层进预览 + 补两个 overlay 引擎缺口)**:`WorkbenchPreview` 接 `buildClipTimeline`(**与导出同一条纯逻辑**)——config.components → 全多轨 Timeline → GPU 引擎,**字幕(`srt.ts` host 解析素材 SRT 喂 cues)+ 文字/图片水印**都画上;`components` prop 变 → 重建 timeline + 重渲(WYSIWYG 闭环)。`Hub` 把 live `components` 传入预览。**作用域**:完整源 + config 叠加层(synthetic full-source candidate,无候选裁剪);hook/outro 卡片暂跳过(文本在创作快照,需 snapshot RPC)。**修了两个 substrate overlay 缺口**(`engine/overlay/canvas2d.ts`,惠及预览+导出):① 文字水印之前硬编码画**正中**(忽略四角)→ 加 `placement()` 按 position+margin 定位 + 对齐;② **图片水印之前完全没实现** → 加 `preloadImageOverlay`(异步 fetch→createImageBitmap→缓存)+ `drawImageWatermark`(角落+scale+opacity),`vc-media://local/` 服务项目外绝对路径(中文路径 OK)。typecheck + 72 测 + **live 验通**(字幕/文字水印/图片水印全出 + 改字段实时变)。**下一跳**:真候选窗口 + hook/outro = 加 creation snapshot RPC(读 `source-hotclips.<lang>.json` + 快照 SRT);之后导出域(`render.start` job,复用同一 buildClipTimeline→encode)。
-
----
-
-## ⚠️ 续 10(2026-05-30,**接力关键**:停止发明,忠实还原 clip 工作台 —— 新对话从这读起)
-
-> **一句话总纲(用户原话)**:**请依据重构的文档,对原本的功能进行 1:1 还原。**
-
-**核心教训(用户多次喊停)**:我在做工作台 preview/export 时**反复"发明 / 简化"了 clip 的真实功能**,而不是忠实还原。用户明确要求:**精确还原 clip 原本的 UI 交互功能/语义**,**唯独不包括重构文档已明确决议要改的东西**(ffmpeg→自建 GPU 合成器 / composition Python→TS `buildClipTimeline` / 单进程→sidecar IPC —— 这些以 foundation+migration doc 为准,**不从旧实现搬**;但 UI 交互行为要照旧还原,用新架构实现)。
-
-**我已被抓到的"发明"(都要改回忠实)**:
-1. **`fit:contain`(letterbox)** ❌ —— clip 是 **reframe 裁剪填满**,不是黑边。
-2. **`fit:cover`(永远中心裁剪)** ❌ —— 这仍是发明!**reframe 的核心 = 一个可拖动的裁剪框**:源是 16:9,用户**在源画面上拖动输出比例(如 9:16)的裁剪框**,手动决定成片取景在原画面哪个位置。`crop_rect={x,y,w,h}`(归一化 source 坐标)是**用户拖出来的**;`_center_crop_rect` 只是没拖时的默认。**我两次把这个核心交互砍成"以后再说"——绝不能再砍。**
-3. **扁平"组件列表+单预览"** ❌ —— clip 原本是**三 tab 工作台**(见下)。
-4. **只预览 selected[0]** ❌ —— 候选是 **☑ 勾选多选入批量 + 点行进详情** 两种交互。
-
-**裁剪交互真相(`src/ui/composition_preview.html` + `src/creations/clip/style_panel.py`)**:预览 = `<video>` 显示**源**(reframe 时按输出比例,passthrough 时按源比例)+ canvas 叠一个**可拖动裁剪框**(`enableCropDrag`/`setCrop`,框外变暗),用户拖框 → `_on_crop_changed(rect)`。Style tab = **全局 crop(staging 内存暂存)** + 「apply-crop-to-all」按钮(写进所有候选 `clips_overrides[idx]["crop_rect"]`);Clips tab = **per-clip crop**(同 override)。
-
-**原本 clip 工作台 = 三 tab(`clip_tool.py:1-13` docstring 权威)**:
-- **样式 Style**(`style_panel.py`):toolbar(语言/aspect/encode/preset combo + 应用/另存为/覆盖/删除)|左:源预览 + **crop bar + apply-crop-to-all** + 组件勾选列表(subtitle/hook/outro/watermark)|右:选中组件属性面板 | 输出设置(aspect/short_edge/mode/encode)| preset 保存=快照 cfg.components。
-- **候选 Clips**(`clip_tool.py:_build_tab_clips` + `clip_editor.py:ClipDetailPanel`):左候选列表(行=`#N · 起→止 · 时长 · ⭐score · hook`;**☑ checkbox=入批量** → `selected_clip_indices`;**点行文字=`_detail.show(i)` 进详情**)+ 全选/全不选 + 头部"已选/总"。右详情:选中候选**预览(自己的 crop)**、start/end 微调、hook/outro/title/tags 覆盖(写 `clips_overrides[idx]`)、SRT cue 列表。
-- **导出 Export**(`clip_tool.py:_build_tab_export`):批量渲染 + 取消 + 状态 Treeview + 右键/双击行操作(播放/打开文件夹/重渲/删除/错误详情)+ sidecar JSON。
-
-**reframe/几何语义(`render.py`)**:`passthrough`=源原样;`reframe`=`_target_dims_for_aspect`(短边=较短维,`(n+1)//2*2` 偶数)定尺寸 + `crop_rect`(用户拖,默认 `_center_crop_rect` 中心)裁剪→缩放填满。候选字段:start/end/hook/outro/suggested_title/**score**/duration_sec/hashtags。
-
-**已读过的文件(接力别重读)**:`clip_tool.py`(docstring + `_build_tab_clips`/`_build_tab_export`/`_reload_candidates`/`_render_candidate_row`/`_on_selection_changed`/`_cues_for_window`)、`clip_editor.py`(docstring=host 契约+方法名)、`style_panel.py`(docstring 布局 + crop bar + `_on_crop_changed`/`_on_apply_crop_to_all`)、`candidates.py`(HotclipsRepo)、`config.py`、`creations/__init__.py`、`render.py`(`_center_crop_rect`/`_crop_rect_to_pixels`/`_target_dims_for_aspect`/`render_composition` 60-160+733-777)、`preview.py`(set_source/set_geometry/set_crop/enable_crop_drag)、`composition_preview.html`(crop 拖拽 JS)。desktop 侧:`buildClipTimeline`(`creations/clip/assemble.ts`)= composer 的 TS 移植(可复用)、`engine/gpu/aspect.ts`(已有 contain/cover)、`engine/overlay/canvas2d.ts`、`engine/export/encode.ts`。
-
-**当前代码状态**:
-- **已提交 8 个 commit**(`0e76507` 基线 → `6338e79`):sidecar / Electron42 / Hub壳 / 写操作面 / 属性编辑器 / 源预览 / WYSIWYG叠加 / 真候选。**这些大体可留**(sidecar+RPC+组件库 OK;但工作台 UX 是我发明的扁平版,要按三 tab 重构)。
-- **⚠️ 未提交**:`desktop/src/renderer/hub/WorkbenchPreview.tsx`(Inc1 reframe 修——`targetDimsForAspect` 精确移植 OK 可留;但 `fit:cover` 中心裁剪**仍是发明**,要换成可拖 crop_rect)。**新对话先决定:revert 这个未提交改动还是接着改。**
-- **我发明的 `WorkbenchPreview.tsx`/`Hub.tsx` 工作台 UX** 需重构成 **per-plugin clip 工作台模块(三 tab)**,放 `desktop/src/renderer/workbenches/clip/`(migration §3.1),Hub 通用化只托管。
-
-**忠实重建增量计划(GPU 合成器架构,语义照旧)**:Inc1 引擎 reframe(几何移植✅ / crop_rect 可拖❌待做)→ Inc2 per-plugin 三 tab 壳 → Inc3 候选 tab(checkbox 批量+点行详情+详情面板)→ **Inc4 可拖裁剪框**(源视图 + 拖 crop_rect + apply-to-all;合成器按任意 crop_rect 裁,不只中心 cover;需 compositor 支持偏移裁剪 + 新 RPC 写 crop_rect)→ Inc5 导出 tab(批量+状态表+行操作+sidecar)。需新增写 RPC:`creation.update_config`(顶层字段 selected_clip_indices/output_*/crop)、presets CRUD、render 编排。
-
-**环境**:dev server 后台还可能在跑(本会话开过多次,task id 已失效);新对话 `env -u ELECTRON_RUN_AS_NODE pnpm dev`,改前先 `taskkill //F //IM electron.exe` + 杀 5174 端口 + 清 `node_modules/.vite`。Electron 42 在 Build 26200 上正常([[project_electron_version_policy]])。
-
-**新对话起手**:① 读本节 + 上面"原本 UI 清单";② 决定未提交 `WorkbenchPreview.tsx` 去留;③ 从 Inc2(三 tab 结构)或直接 Inc4(可拖裁剪——用户最在意)入手,**全程对照 Python 源,不自创**;④ 每个增量真 renderer 肉眼验收(用户负责体验验收)。
-
-**✅ Inc2 已落地(2026-05-30,per-plugin 三 tab 壳 — 结构搭好,样式 tab 装真功能,候选/导出诚实占位)**:用户拍板「抢救几何,丢发明」+「Inc2 三 tab 先行」。
-- **未提交 `WorkbenchPreview.tsx` 处理**:保留 `targetDimsForAspect`(`render._target_dims_for_aspect` 精确移植)+ `resolveOutput`(passthrough→源原样 / reframe→目标尺寸);**砍掉内嵌"导出 mp4"单按钮 + export state**(那是 Inc5 导出 tab 的活,内嵌单按钮是发明)。`fit:cover` 暂留作 reframe 的**中心裁剪默认**(注释标 Inc4 换可拖 crop_rect;这是默认值非终态)。
-- **新模块 `desktop/src/renderer/workbenches/clip/`**(migration §3.1):`ClipWorkbench.tsx`(壳:加载 components + patch 写路径 + tab 状态 + 选中态,三 tab 头 样式/候选/导出)、`StyleTab.tsx`(忠实 style_panel 结构:左=源预览 + 组件勾选列表 / 右=选中组件属性面板;crop bar 留 Inc4 注释占位)、`ClipsTab.tsx`/`ExportTab.tsx`(**诚实占位**,docstring 写明 Inc3/Inc5 忠实目标,不发明)、`propertyEditor.tsx`(从 Hub 搬出的通用属性编辑器)、`WorkbenchPreview.tsx`+`srt.ts`(git mv 自 hub/,import 深度 `../`→`../../`)。
-- **新 `workbenches/index.tsx`**:`CreationWorkbench` 按 creation type 派发(`REGISTRY={clip}`,未注册类型出"尚未迁移"提示);Hub 渲染它,**Hub 不再含任何 clip 专属代码**。
-- **Hub.tsx 瘦身**:删内嵌 `Workbench`/`PropertyPanel`/输入控件,`<main>` 改渲 `<CreationWorkbench>`。**typecheck 干净 + 72 测全绿**(纯逻辑层未动;UI 层 headless 覆盖不到,靠真 renderer 肉眼验)。**Python 一行未动。⚠️ 未提交**(基线 `6338e79` 之后)。
-- **欠肉眼验**(下次启 `env -u ELECTRON_RUN_AS_NODE pnpm dev`):开 clip 创作 → 三 tab 头出现;样式 tab 预览 + 组件列表 + 选中改属性落盘照常;候选/导出 tab 显占位文案;切 Spike harness 不破。
-- **✅ Inc4 起步:reframe 裁剪框做对(2026-05-30,用户喊停"预览不该裁剪视频"后回原始代码重做)**:
-- **根因**:reframe/crop 在新 TS IR 里**根本不存在**(§2.5 Clip 无 crop 字段、`buildClipTimeline` 写 `style:{}`、`aspect.ts` 只有全局 contain/cover 视口缩放),所以我之前拿 `fit:cover` 中心裁糊上去——**那是把成片结果当编辑视图,不是 NLE**。
-- **回读的原始权威**:`src/ui/composition_preview.html`(crop 拖拽 + drawOverlay 全在 cropBox 坐标)、`src/core/composition/render.py`(`_center_crop_rect`/`_crop_rect_to_pixels`/`_target_dims_for_aspect`/`render_composition` 的 `crop=cw:ch:cx:cy,scale,pad`)、`src/creations/clip/{config,composer,style_panel}.py`。**真相**:`<video>` 永远显示整源;canvas 暗化整帧 → 擦亮 crop 框 → 绿框+十字 → 叠加层按 `cropBox()` 画在框内。亮框=成片(导出=框内裁到 target dims),**preview≡render 成立**;crop 框是编辑层,不裁视频。`crop_rect={x,y,w,h}` 归一化源坐标,默认居中(`_center_crop_rect`),只能移动(box=最大贴合窗,沿自由轴拖)。staging:Style tab=全局 `_global_crop_rect`(内存)+ apply-crop-to-all 写进所有 `clips_overrides[idx].crop_rect`;Clips tab=per-candidate。
-- **已落地(忠实重做,GPU 架构)**:`cropEditor.ts`(纯 + 8 测:`centerCropRect`≡render.py、`clampCropRect`≡HTML、`parseAspect`、`targetDimsForAspect` 留给 Inc5 导出)。`WorkbenchPreview.tsx` **重写为裁剪框编辑器**:WebGPU canvas 按**源宽高比**画整源(fit contain 填满)+ 一个合成编辑层(同 `drawOverlayClip`)画 暗化/擦亮框/十字/**叠加层 translate+clip 进框内**(box dims 当帧 → 与导出同布局)。指针拖框 → `clampCropRect` 取景 → 实时重渲;默认 crop 取 per-candidate override 或居中。passthrough=整帧无框。**typecheck + 80 测 + (待)live 验**。
-**✅ crop 持久化(2026-05-30 续,①已落地)**:`creation.update_config(type,instance,patch)` 通用 RPC → 委托 `owner.apply_patch(patch)`(base 层不知 clip,ADR-0004;单一所有者也拥有 mutation 语义)。`ClipInstanceConfig.apply_patch`:top-level 字段(output_aspect/short_edge/mode/encode/source_subtitle/preset_name/selected_clip_indices)+ `clips_overrides_merge`(`{idx:{key:val|None}}` 深合并 per-candidate override;val=None 删 key、空 override 丢弃)——**忠实 style_panel `_on_apply_crop_to_all`**(写 crop_rect 进每个候选 override + clear,从无全局 crop 字段)。`WorkbenchPreview` 加 crop bar(`应用裁剪到全部` 按钮)→ 写全部 N 个候选 override → 落盘;重开经 `cropFromOverride(pd.override)` 读回。pytest +2(apply-to-all 落盘 / 深合并保留 sibling+clear),**42 core_rpc 测 + 80 TS 测 + typecheck 全绿**。
-
-- **⚠️ 仍欠**:② 导出按 crop_rect 偏移裁剪(export 路径还按全帧;Inc5 接,`targetDimsForAspect` 已备);③ Clips tab per-candidate crop 编辑(Inc3,`update_config` 的 `clips_overrides_merge` 已支持单 idx 写,UI 待接)。
-
-**下一步**:验收 crop 编辑+持久化 → **Inc3 候选 tab**(候选多选 + 点行详情 + per-candidate crop,复用 update_config 单 idx 写)→ Inc5 导出(偏移裁剪 + 批量)。(候选多选 checkbox→selected_clip_indices + 点行进详情面板 + start/end 微调 + hook/outro/title override + SRT cue 列表;需 `creation.update_config` + per-candidate override 写 RPC),或用户最在意的 **Inc4 可拖裁剪框**(源视图拖 crop_rect + apply-to-all;compositor 支持偏移裁剪;写 crop_rect RPC)。**全程对照 Python 源,不自创。**
-
-**✅ 续 9 续 4(2026-05-30,预览数据层对齐导出:真候选窗口 + hook/outro,经创作快照)**:预览从"完整源"升到**真实候选片段**——`creation.preview_data` RPC + 新 `CreationType.preview_provider` 契约(per-creation:Python provider + TS assembler 配对,base 层不 import clip,ADR-0004)。clip `preview.py` provider:config → bound material(经 materials registry 解析,不硬编码)→ `HotclipsRepo` → 返 `{lang, candidates(clips[]), selectedIndex(=selected_clip_indices[0]), subtitlePath(快照 SRT,snapshot principle), override}`。`WorkbenchPreview`:用真候选 `[start,end]` 窗口 + override 喂 `buildClipTimeline`,**hook/outro 卡片不再跳过**(有候选文本了),字幕走快照 SRT;素材无 hotclips 时 fallback synthetic 完整源(跳卡片)。pytest 3 测(bound clip + hotclips 快照 → candidates/selectedIndex/快照 SRT 落地;unbound 空;非 creation 类型错)。**40 core_rpc 测 + clip arch 不破 + typecheck + 72 测 + live 验通**(note 显示候选 N/M、画面是真切片、hook/outro 出、改字段实时变)。**preview≡render 数据层对齐**(同 `buildClipTimeline` + 同候选 + 同快照)。**下一跳**:导出域 `render.start`(job + 进度 + 取消,复用 buildClipTimeline → 续 5 WebCodecs encode);或候选切换 UI(`selected_clip_indices` 多候选挑选)。
-
----
-
-## ▶ 续 11(2026-05-30,Inc3 候选 tab 忠实还原 —— 一次性全做,**Python 一行未动**)
-
-> 计划稿 `~/.claude/plans/eager-conjuring-steele.md`;纪律 = 对照 `clip_tool._build_tab_clips` / `clip_editor.ClipDetailPanel` / `_effective_*` 逐条还原,不发明、不简化。用户拍板「一次性全做 + 含可拖 per-candidate 裁剪」。
-
-**关键前置(已勘探确认)**:RPC 地基**已完整,无新增 RPC**——`update_config` 的 `selected_clip_indices`(顶层)+ `clips_overrides_merge`(per-candidate 深合并,null 删 key)+ `preview_data`(candidates/selectedIndex/subtitlePath)+ `load_config`(clips_overrides/selected_clip_indices)全已就绪。本轮**纯 TS/React**。
-
-**发现并修复的前置坏账**:工作树里 `WorkbenchPreview.tsx`(上一会话 Inc4 未提交中间态)**typecheck 是坏的**(`hasRealCandidate` 未定义 + 两个 unused)——基线 80 测过但 typecheck 红。本轮重构时一并修掉。
-
-**已落地(全绿:typecheck + 90 TS 测 + 42 pytest + `pnpm build` 71 模块)**:
-- **类型补缺**(`creations/clip/types.ts`):`HotclipCandidate` +`score`/`duration_sec`/`suggested_hashtags`;新 `CropRect`;`ClipOverride` +`crop_rect`。
-- **override 解析纯逻辑**(`creations/clip/mapping.ts`,**未另起 effective.ts —— resolve\* 家族已在 mapping.ts,加进同一 home 避免分裂**):新 `resolveTitle`/`resolveTags`/`resolveCrop`(逐条镜像 `_effective_title/_tags/_crop`,key-presence-wins、空删、tags 空白 split、crop 无 fallback)+ `formatTimestamp`(`_format_ts` 反函数)。`mapping.test.ts` **10 测**钉死(override-wins/空删/split/crop 无 fallback/时间 round-trip)。
-- **泛化预览**(删 `WorkbenchPreview.tsx` → 新 `CropPreview.tsx`):受控 crop 的可复用 GPU 裁剪编辑器,引擎按 `srcPath` 开一次(候选切换只重建 timeline,**不重开 WebGPU**)。两 tab 共用:样式 tab `fullSource`=整源+staging crop;候选详情 = 候选窗口+per-candidate crop。crop 拖动 release 时 `onCropChange` 回传宿主持久化;`onReady` 报源尺寸供宿主算居中。引擎/渲染代码 1:1 沿用旧 WorkbenchPreview。
-- **共享数据 hook**(新 `useClipPreview.ts`):一次拉 srcPath + 快照 SRT + candidates + config(overrides/selection/几何);`reload()` = **仅重读 config 原地 patch**(不 blank、不重开引擎,解决每次编辑闪烁)。
-- **样式 tab 重写**(`StyleTab.tsx`):用 hook + CropPreview;staging crop 内存态 + apply-crop-to-all 写全候选 override(忠实 `_on_apply_crop_to_all`)。
-- **详情面板**(新 `ClipDetailPanel.tsx`,忠实 `ClipDetailPanel`):CropPreview(候选窗口+per-candidate crop+重置裁剪)+ start/end 录入(`HH:MM:SS.mmm`)+ ±0.5 微调 + clamp(`start<end-0.1`)+ hook/outro/title/tags 覆盖(空→删 key、tags 空白 split)+ SRT cue 只读列表(源时间 overlap 窗口)+ 恢复 AI 文本(确认→删四 key)。每写一次 → `update_config` clips_overrides_merge[idx] → `reload`。
-- **候选 tab 串接**(`ClipsTab.tsx`,忠实 `_build_tab_clips`):左候选列表(行 `#N · start→end · Ns · ⭐score` + hook 行,**score 着色 ≥8/≥6/else**,行 hook 取**原始 AI hook 非 override**——忠实 `_render_candidate_row`)+ ☑ checkbox→selected_clip_indices + 全选/全不选 + "已选 N/总 M" + 点行开详情(自动开首选/首个)| 右 `ClipDetailPanel`。`ClipWorkbench` 把 `components` 传入 ClipsTab。
-
-**⚠️ 仍欠肉眼验(下次启 `env -u ELECTRON_RUN_AS_NODE pnpm dev`,先 taskkill electron + 杀 5174 + 清 `.vite`)**:开 clip 创作 → 候选 tab:① 行格式/score 着色/hook 正确;② ☑多选+全选/全不选+计数,关掉重开 `selected_clip_indices` 保持;③ 点行开详情、预览=该候选窗口;④ 拖 per-candidate 裁剪框生效、重置回中心、关掉重开 crop 保持且与全局 crop 独立;⑤ start/end ±0.5+clamp、hook/outro/title/tags 改写落盘、空→恢复 AI 默认;⑥ SRT cue 列表随窗口变;⑦ 恢复 AI 文本清四字段;⑧ 切样式 tab/Spike harness 不破。
-
-**⚠️ 全部未提交**(基线 `6338e79` 之后,叠在 Inc2 那批未提交改动上):git rm `hub→workbenches/clip/WorkbenchPreview.tsx`;新增 `desktop/src/renderer/workbenches/clip/{CropPreview,ClipDetailPanel,useClipPreview}.tsx` + `creations/clip/mapping.test.ts`;改 `StyleTab.tsx`/`ClipsTab.tsx`/`ClipWorkbench.tsx`/`creations/clip/{types,mapping}.ts`/`task.md`。
-
-**下一步**:肉眼验收 Inc3 → **Inc5 导出 tab**(批量渲染 + 状态表 + 行操作 + sidecar JSON;export 路径按 `crop_rect` 偏移裁剪——`targetDimsForAspect` 已备;`render.start` job+进度+取消,复用 `buildClipTimeline`→续 5 WebCodecs encode)。
-
----
-
-## ▶ 续 12(2026-05-30,Inc2 补完:组件「增删排序」管理 —— 用户喊停"组件是增删管理的,你不懂吗")
-
-**我又做错的**:Style tab 组件列表我做成"固定列表 + 仅 enable/disable",但原始 `style_panel.py` 是**增删排序管理**(`+ 添加` 菜单由 spec 注册表驱动 + `multi_instance` 门控 / `删除` / `↑↓`,每行 1:1 映射 `config.components`)。这是续9 自标"欠"的那块(blocker = spec 拉 tkinter)。回读 `style_panel.py` + 全 3 spec 模块照做。
-
-**顺带挖出的真 bug**:spec `default_instance` 给**固定 id**(`sub1`/`hook`…),Tk 按列表下标做身份所以双字幕没事;但新架构 `update_component` **按 id** 找 → 用户那两条字幕 id 都是 `sub1`,新工作台编辑任一条都改第一条。**新架构必须 id 唯一**。
-
-**已落地(全绿:typecheck + 90 TS 测 + 48 pytest + build 71 模块)**:
-- **新纯模块 `creations/clip/component_defs.py`**(headless,无 tkinter):`ADDABLE`(5 类 + multi_instance,注册序)+ `default_instance(kind,dur)`,值**忠实复制**自 Tk 各 `_default_*`。决策:sidecar 不能拉 tkinter,故不复用 spec 注册表;Tk spec 模块**不动**(soon-to-retire twin,注释标明,Tk 退役时合并)。
-- **`ClipInstanceConfig`**:`addable_kinds()`/`add_component(kind)`(唯一 id + append 末尾=最低 z)/`remove_component(id)`/`move_component(id,±1)`;模块级 `_ensure_unique_ids` 在 `load()` 修复历史冲突 id(首条留、后续 `-2`/`-3`;组件互不按 id 引用,re-id 安全)。
-- **`core_rpc/methods/creation.py`** 加 4 个 RPC(`list_addable_components`/`add_component`/`remove_component`/`move_component`,全经 `getattr` 通用转发 + save + 广播,base 层零 clip 硬编码 ADR-0004)。
-- **pytest +6**(list_addable / add 唯一 id 落盘 / 未知 kind / remove / move 重排+越界 no-op / **load 去重历史冲突 id 后双字幕可分别编辑**)。
-- **TS**:`client.ts` 4 桩;`StyleTab` 组件区重写为 `+ 添加`(菜单 label 走 KIND_LABELS,单实例已存在→禁用)/ `删除` / `↑↓` 管理器,增删排序后 RPC 返新列表 → `onComponentsReplaced=setComponents`(整列表替换,区别于单组件 patch splice),新增自动选中;`ClipWorkbench` 传该回调。
-
-**⚠️ 仍欠肉眼验**(叠在续 11 + Inc2/Inc3 未提交之上):`+ 添加` 列 5 类/hook-outro 已存在时禁用;加字幕→新行 id 唯一(连开两条各自编辑互不串改);删除/↑↓ 重排(预览 z 序随之变);**既有双字幕(历史 id 冲突)重开后能分别编辑**(load 去重);关掉重开持久化;候选 tab/harness 不破。
-
-**⚠️ 全部未提交**:新增 `src/creations/clip/component_defs.py`;改 `src/creations/clip/config.py` + `core_rpc/methods/creation.py` + `tests/core_rpc/test_creation.py`;desktop `ipc/client.ts` + `workbenches/clip/{StyleTab,ClipWorkbench}.tsx` + task.md。
-
-**🐛 续11 预览全黑修复(2026-05-30,用户报"预览看不到视频")**:症状=画布全黑、连绿裁剪框都没有。根因 = **React StrictMode(main.tsx 开着)dev 双挂载** + 我把 `CropPreview` 的 `MediaSource.open` 排在 `backend.init` **之前**(旧 WorkbenchPreview 是 init 在前)。canvas 的 WebGPU context 是单例;双挂载下两个 Backend 竞争 configure;被取消那次的 `backend.init` 可能**最后** configure(因 MediaSource 完成顺序不定),随后它 `dispose()`→`device.destroy()` 把 context 绑定的 device 销毁 → 存活那次渲染到死 context = 全黑。修:`CropPreview` open effect 在 `await MediaSource.open` 后、`new Backend()` **之前**加 `if (disposed) { reader.dispose(); return; }`——被取消的挂载绝不碰 GPU canvas,只有存活挂载 configure。typecheck + build 过。**待用户 Ctrl+R 重载验证视频回来。**
-
-**🐛 续11 再修两处(2026-05-30,用户报后,已验通)**:
-- **候选 tab 裁剪框比例错**:`CropPreview` canvas 用了 `height:340 + maxWidth:100%`,在候选详情右栏(`flex:1` 宽度受限)被截断宽度但高度固定 → 画面+框横向变形(样式 tab 左栏收缩到内容,不触发,故只候选错)。修=canvas 改 `maxWidth + maxHeight + 宽高 auto`,任何容器等比缩放。
-- **切 tab / 切候选都重载视频**:① `ClipsTab` 的 `<ClipDetailPanel key={detailIdx}>` 强制每次切候选重挂 → 引擎重开;去掉 key(局部态由 `[candidateIndex,candidate,override]` effect 重置)。② `ClipWorkbench` tab 条件渲染 → 切 tab 卸载/重挂;改"首次访问即挂载、之后只切 `display(contents/none)` 不卸载"(忠实 Tk notebook 常驻)。结果:每 tab 引擎只开一次,切 tab/切候选不再重载。代价=样式+候选都访问后两个引擎常驻(同 Tk 两预览控件常驻)。
-
-**已提交**:`4470cfa`(工作台主体)。续11 两处再修 = 其后一个 commit。
-
-**下一步**:Inc5 导出 tab(crop 偏移裁剪 + 批量渲染)。
-
----
-
-## ▶ 续 13(2026-05-30,clip 工作台彻底做完整 — Part A 导出落地)
-
-按计划稿 `~/.claude/plans/eager-conjuring-steele.md` 分两部分。**Part A(导出)已落地,全自动门绿,待肉眼验**;Part B(Style 工具栏/预设/语言)待 Part A 肉眼过后做。
-
-**架构分工**:渲染在 renderer(GPU/WebCodecs);Python 拥有路径/命名/sidecar JSON/stale 清理/rendered[]/config。mp4 二进制走 Electron IPC 写盘(非 RPC)。
-
-**已落地(typecheck + 94 TS 测 + build + 51 pytest 全绿)**:
-- **A1 GPU 偏移裁剪**:[videoFrame.ts] 视频 shader 加 mode 分支(0=fit 字节不变保预览/spike;1=crop `sampleUV=cropOrigin+uv*cropSize`),uniform 32B;[Backend.ts] `drawVideoFrame(...,crop?)`。**最高风险、headless 验不到,肉眼重点验**。
-- **A2** [encode.ts] `exportTimelineToMp4` 加 `cropRect`(经 DrawDeps→paintPreparedFrame→drawVideoFrame)+ `cancelCheck` + `ExportCancelled`;[draw.ts] DrawDeps/Layer 加 crop。
-- **A3** [electron/main.ts]+preload+global.d.ts:`vc:writeFile(absPath,bytes)`(写实例目录)/`vc:showInFolder`/`vc:openPath`。
-- **A4** 新 [src/creations/clip/export.py](src/creations/clip/export.py)(render_provider,headless):`plan_render`(selected→out_idx 升序+`clip_NNN[_hook]` 命名+crop 默认+路径)/`commit_render`(写 sidecar JSON 忠实字段+stale 清理+rendered[] insert head+save)/`delete_render`。`CreationType.render_provider` 新契约;clip `__init__` 注册;[core_rpc/methods/creation.py] 3 通用 RPC(getattr,base 层不知 clip)。
-- **A5** [client.ts] planRender/commitRender/deleteRender + RenderPlan/RenderedClip 类型。
-- **A6** [ExportTab.tsx] 状态表(#/源/时长/状态/hook)+ 批量渲染(plan→per-clip buildClipTimeline→encode(crop+目标尺寸)→writeFile→commit_render)+ 进度/取消 + 行操作(播放/打开文件夹/重渲/删除/错误详情;**右键菜单换成行内按钮 + 双击播放**——机制小偏离,动作齐全)。隐藏 canvas 给导出 Backend;引擎按需开/用完 dispose(避开 StrictMode)。
-- **A7** cropEditor.test +4(targetDimsForAspect 对齐 render.py);pytest +3(plan/commit/delete)。
-
-**⚠️ 待肉眼验(Part A,关键)**:选候选→导出→实例目录出 `clip_NNN[_hook].mp4` + sidecar JSON;**成片确实按裁剪框取景**(reframe 偏移裁剪对/passthrough 原样)、字幕/水印/hook/outro 烧进、目标尺寸对;状态表 排队→渲染%→完成;取消;行操作;关掉重开 rendered[] 还原。**全部未提交。**
-
-**Part A 肉眼验中发现并修(均已修+用户确认成片正确)**:
-- **编码档撞上限**:`exportTimelineToMp4` 硬编码 `avc1.42001f`(Baseline L3.1,≤1280×720),导出 1080×1920 时 configure 失败 → `encode on closed codec`。修:`pickAvcCodec` 用 `isConfigSupported` 从 High 5.2 往下挑支持该分辨率的档 + 码率随分辨率走。
-- **导出 tab 不显示已选**:tab 保活,选择在候选 tab 改后导出 tab 不重新 plan。修:`ExportTab` 加 `active` prop,每次被切到前台自动 `refresh()`(重 plan_render)。
-- **失败一闪而过**:渲染失败后 `reload()→rebuildRows` 把失败行刷回"排队"。修:rebuildRows 保留 failed/rendering 态;失败原因直接红字显示在行里。
-- **字幕溢出屏宽**(真实移植缺口):TS 链路没移植"按宽切 cue"。修:新 [composition/subtitleWrap.ts](desktop/src/composition/subtitleWrap.ts)(忠实 `compute_subtitle_max_chars`+`split_subtitle`:长 cue 时间轴切多条、每条 1 行、CJK/英文按**内容**自动判、maxChars=aspect·0.92/(fontsizePct·ratio) 分辨率无关);`CompileContext.frameAspect` 驱动 `subtitle.compile` 切分;`buildClipTimeline` 加 `frameAspect`,预览(输出比例)+导出(目标尺寸)都传 → **preview≡render**,两端字幕同时修好。+9 wrap 单测。
-
-**Part A 用户肉眼验通**:导出成片 9:16 取景/偏移裁剪正确、水印、字幕已适配宽度。**typecheck + 103 TS 测 + build + 51 pytest 全绿。**
-
-**下一步**:Part B(presets.py 改用 component_defs 去 tkinter 依赖 → preset list/apply/save/delete RPC + creation.list_langs + StyleTab 工具栏:语言/比例/编码/mode/short_edge/预设)。
+clip 工作台新架构实现的全部细节(Hub 壳 / creation 写操作面 / Inc2 三 tab + 组件增删排序 / Inc3 候选 tab + 详情 / Part A 导出管线 / Part B 工具栏+预设 / 双语 / 删候选语言下拉,及一路踩过的坑与修复),已整理进
+[`docs/draft/electron-migration-design.md`](draft/electron-migration-design.md) 顶部「★ 实现进度」。**本文件不再保留这些细节**——见顶部「接力入口」。
 
 ---
 

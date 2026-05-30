@@ -18,8 +18,10 @@ export function PropertyPanel(props: {
   component: Component;
   disabled: boolean;
   onCommit: (key: string, value: unknown) => void;
+  /** Fields rendered as a dropdown of fixed choices (e.g. subtitle language). */
+  enums?: Record<string, readonly string[]>;
 }) {
-  const { component, disabled, onCommit } = props;
+  const { component, disabled, onCommit, enums } = props;
   // Only primitive fields are editable here; nested values (if any) are skipped.
   const editable = Object.keys(component).filter((k) => {
     if (HIDDEN_FIELDS.has(k)) return false;
@@ -43,6 +45,7 @@ export function PropertyPanel(props: {
           label={k}
           value={component[k]}
           disabled={disabled}
+          {...(enums?.[k] ? { options: enums[k] } : {})}
           onCommit={(v) => onCommit(k, v)}
         />
       ))}
@@ -54,9 +57,33 @@ function PropertyField(props: {
   label: string;
   value: unknown;
   disabled: boolean;
+  options?: readonly string[];
   onCommit: (value: unknown) => void;
 }) {
-  const { label, value, disabled, onCommit } = props;
+  const { label, value, disabled, options, onCommit } = props;
+  // Fixed-choice field (e.g. subtitle language) → dropdown. Keep the current
+  // value selectable even if it's not in the offered list.
+  if (options) {
+    const cur = value == null ? "" : String(value);
+    const opts = options.includes(cur) ? options : [cur, ...options];
+    return (
+      <>
+        <label style={{ color: "#999", fontSize: 12 }}>{label}</label>
+        <select
+          value={cur}
+          disabled={disabled}
+          onChange={(e) => onCommit(e.target.value)}
+          style={INPUT_STYLE}
+        >
+          {opts.map((o) => (
+            <option key={o} value={o}>
+              {o || "（未设置）"}
+            </option>
+          ))}
+        </select>
+      </>
+    );
+  }
   return (
     <>
       <label style={{ color: "#999", fontSize: 12 }}>{label}</label>
