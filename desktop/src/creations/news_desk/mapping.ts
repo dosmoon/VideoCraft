@@ -95,7 +95,11 @@ export function newsDeskChapterToInstance(c: NewsDeskChapterConfig): ChapterInst
         durationSec: card.duration_sec,
       },
     },
-    schedule: c.schedule.map((row) => ({
+    // A preset-applied chapter carries no schedule (it's per-project content,
+    // dropped when the preset was saved and imported per-instance later), so
+    // tolerate it being absent — `c.schedule.map` on undefined would throw and
+    // take the whole timeline build (and the preview) down.
+    schedule: (c.schedule ?? []).map((row) => ({
       startSec: row.start_sec,
       endSec: row.end_sec,
       title: row.title,

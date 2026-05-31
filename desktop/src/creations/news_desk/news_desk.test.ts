@@ -190,4 +190,24 @@ describe("buildNewsDeskTimeline", () => {
     expect(inst.fontsizePct).toBe(0.026); // news_desk value, canonical field
     expect(inst.color).toBe("#FFFF00");
   });
+
+  it("tolerates a preset chapter with no schedule (no throw → preview stays live)", () => {
+    // A saved preset drops per-project content, so an applied chapter has no
+    // `schedule`. buildNewsDeskTimeline must not throw — a throw took the whole
+    // timeline (and the preview canvas) down, black-screening on preset apply.
+    const ch = chapterConfig();
+    delete (ch as { schedule?: unknown }).schedule;
+    const timeline = buildNewsDeskTimeline({
+      components: [ch],
+      durationSec: 120,
+      cuesBySrtPath: {},
+      mediaRef: "source.mp4",
+    });
+    // The video + audio tracks always build; the schedule-less chapter just
+    // contributes no overlay clips (its rows get imported per-instance later).
+    expect(timeline.tracks[0]!.kind).toBe("video");
+    expect(clipsOf(timeline.tracks[0]!).length).toBe(1);
+    expect(resolveAudioSegments(timeline).length).toBe(1);
+    expect(validateTimeline(timeline, { sourceDurations: { "source.mp4": 120 } })).toEqual([]);
+  });
 });

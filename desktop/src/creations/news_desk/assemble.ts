@@ -64,21 +64,29 @@ export function buildNewsDeskTimeline(input: BuildNewsDeskTimelineInput): Timeli
 
   const overlayTracks: Track[] = [];
   for (const c of components) {
-    switch (c.kind) {
-      case "subtitle": {
-        const cues = cuesBySrtPath[c.srt_path] ?? [];
-        overlayTracks.push(...subtitle.compile(newsDeskSubtitleToInstance(c), { ...baseCtx, cues }));
-        break;
+    // A single malformed/content-less component (e.g. a preset chapter with no
+    // imported schedule) must never take the whole timeline — and the preview —
+    // down. Skip it on error; the video/audio tracks and the other overlays
+    // still build, so the preview shows video instead of going black.
+    try {
+      switch (c.kind) {
+        case "subtitle": {
+          const cues = cuesBySrtPath[c.srt_path] ?? [];
+          overlayTracks.push(...subtitle.compile(newsDeskSubtitleToInstance(c), { ...baseCtx, cues }));
+          break;
+        }
+        case "text_watermark":
+          overlayTracks.push(...textWatermark.compile(newsDeskTextWatermarkToInstance(c), baseCtx));
+          break;
+        case "image_watermark":
+          overlayTracks.push(...imageWatermark.compile(newsDeskImageWatermarkToInstance(c), baseCtx));
+          break;
+        case "chapter":
+          overlayTracks.push(...chapter.compile(newsDeskChapterToInstance(c), baseCtx));
+          break;
       }
-      case "text_watermark":
-        overlayTracks.push(...textWatermark.compile(newsDeskTextWatermarkToInstance(c), baseCtx));
-        break;
-      case "image_watermark":
-        overlayTracks.push(...imageWatermark.compile(newsDeskImageWatermarkToInstance(c), baseCtx));
-        break;
-      case "chapter":
-        overlayTracks.push(...chapter.compile(newsDeskChapterToInstance(c), baseCtx));
-        break;
+    } catch (err) {
+      console.warn(`[news_desk] skipped component ${(c as { kind?: string }).kind ?? "?"}:`, err);
     }
   }
 
