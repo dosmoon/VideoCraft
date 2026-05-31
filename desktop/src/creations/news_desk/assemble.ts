@@ -31,10 +31,13 @@ export interface BuildNewsDeskTimelineInput {
   cuesBySrtPath: Readonly<Record<string, readonly SourceCue[]>>;
   /** Source media id/path for the video track. */
   mediaRef: string;
+  /** Output frame aspect (W/H); enables subtitle one-line fitting when set.
+   *  news_desk renders the full source, so this is the source aspect. */
+  frameAspect?: number;
 }
 
 export function buildNewsDeskTimeline(input: BuildNewsDeskTimelineInput): Timeline {
-  const { components, durationSec, cuesBySrtPath, mediaRef } = input;
+  const { components, durationSec, cuesBySrtPath, mediaRef, frameAspect } = input;
 
   // Full-video track → identity TimeMap (no cut, source time === output time).
   const videoTrack: Track = {
@@ -53,7 +56,11 @@ export function buildNewsDeskTimeline(input: BuildNewsDeskTimelineInput): Timeli
     ],
   };
   const timeMap = identityTimeMap(durationSec, mediaRef);
-  const baseCtx: CompileContext = { durationSec, timeMap };
+  const baseCtx: CompileContext = {
+    durationSec,
+    timeMap,
+    ...(frameAspect != null ? { frameAspect } : {}),
+  };
 
   const overlayTracks: Track[] = [];
   for (const c of components) {

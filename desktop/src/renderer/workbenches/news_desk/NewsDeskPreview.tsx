@@ -322,6 +322,8 @@ export function NewsDeskPreview(props: NewsDeskPreviewProps) {
           durationSec: eng.durationSec,
           cuesBySrtPath,
           mediaRef: SOURCE_REF,
+          // Full-source render → the subtitle one-line fit uses the source aspect.
+          frameAspect: eng.srcW / eng.srcH,
         });
         timelineRef.current = tl;
         setDuration(tl.durationSec);
