@@ -25,3 +25,4 @@ def load_plugins() -> None:
     """
     import materials.news_video  # noqa: F401  (registers the news_video type)
     import creations.clip  # noqa: F401  (registers the clip creation type)
+    import creations.news_desk  # noqa: F401  (registers the news_desk creation type)
