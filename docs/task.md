@@ -502,3 +502,37 @@ clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"
 验证:app typecheck rc=0;**128 TS 测**(124+4);build 83 模块。**真机编辑待用户验**。
 
 **下一步**:① 真机验章节属性编辑(开关层、改色/字号→预览实时变)② 导出渲染按钮 ③ preset RPC ④ Tk 退役。
+
+---
+
+## ▶ 续 28(2026-05-31,news_desk 迁移进展盘点 + 三项待办)
+
+news_desk 迁新架构(Electron renderer + sidecar)已走通**绝大部分**,真机逐项验过。本节盘点已完成 + 用户指出的剩余缺口,作为接力点。
+
+### 已完成并真机验过(续19~续27)
+- **Python 业务面**:config 单一所有者(增删改组件 + `_ensure_unique_ids`)、`component_defs.py`(headless 默认实例)、注册 `config_owner_cls`。修了真 bug:`load_plugins` 漏 import news_desk(续19,`344dcc4`)。
+- **providers**:`preview.py`(全源 media + 时长 + 各 srt_path 快照 SRT)、`export.py`(plan/commit/delete,单全源输出)、`imports.py`(import_provider:字幕/章节从素材导入)。
+- **create-creation 流程**:`project.list_creation_types` + `create_creation_instance` + Hub `[+]` 菜单(续23,`5089c56`)——之前新架构根本没法新建创作。同轮发现 **Hub 一直能渲染工作台**(续22 误诊已纠正)。
+- **TS 工作台**:两 tab(样式/导出)、组件增删改排序、注册进 Hub。
+- **实时预览**:`NewsDeskPreview`(全源 canvas,复用引擎层 + `buildNewsDeskTimeline`,preview≡render;播放/拖动/音频主时钟)。**真机验:画面+双语字幕+水印+章节条+章节卡全部显示正常。**
+- **字幕自适应宽度**:装配器传 `frameAspect`,长字幕单行自动切多条(续25,真机验过)。
+- **导入(快照,非引用)**:字幕 `shutil.copyfile` 进 `<instance>/subtitles/<id>.srt`;章节 `read_analysis` 把行拷进 `schedule`。**已核对:两者都是快照、数据落进 creation 自己目录/config,符合 ADR-0003 快照约定,非引用上游。**
+- **章节图元绘制**:canvas2d 加 `drawTopicStrip`/`drawHeroCard`,真因是 data-key 不匹配(`topic_text`/`title`/`body` vs `text`)(续26,真机验过条+卡)。
+- **章节属性编辑器**:`ChapterProperties`(嵌套 modes/style 编辑,shallow-merge 安全 patch 构造器)(续27)。
+- 测试:core_rpc 85+;TS 128。每步 typecheck/test/build 三绿。
+
+### ⚠️ 用户指出的三项剩余缺口(下一轮做)
+1. **详情列表缺失**(功能不完善):
+   - **字幕详情列表**:legacy Tk subtitle 属性面板底部有只读 cue 列表(start/end/text Treeview,点击 seek 预览)。新架构 StyleTab 字幕组件**没有**。需:`preview_data` 已返回 SRT 路径,host 已 parse cues(`useNewsDeskPreview` 的 `cuesBySrtPath`),把对应组件的 cues 列出来即可(参考 clip ClipDetailPanel 的 cue 列表)。
+   - **章节详情列表**:章节的 `schedule`(逐章 start/end/title/refined/key_points)目前只能整体导入,**面板里看不到也不能逐章编辑**。需:列出 schedule 行(至少只读 + 点击 seek;编辑是更后)。
+2. **快照 vs 引用约定核查**:本轮已核对 news_desk 导入路径=快照(见上「导入」条),**符合约定**。但用户要求系统性检查——**待办**:确认 preview.py / export.py / 渲染路径全程只读 instance 内快照,不回头引用素材(preview.py 看着是对的:从 `inst_dir` 解析 srt_path;但需通读一遍 export 渲染链确认无 material 直引)。
+3. **导出功能未实现**:导出 tab 目前**只读显示渲染计划 + rendered[]**,**没有真渲染按钮**。需:镜像 clip ExportTab 的渲染循环(`buildNewsDeskTimeline → GPU 引擎逐帧 encode → vc:writeFile 写 output.mp4 → commit_render`),全源单输出。后端 `plan/commit/delete_render` 已就绪,缺 renderer 侧的编码触发 + 进度/取消 UI。
+
+### 其它已知欠债(非阻塞)
+- preset RPC 未接(presets.py builtins 仍 legacy 绝对-px 形)。
+- Tk news_desk 未退役(`component_defs.py` 与 Tk `components/*` 双源待合并)。
+- 字幕组件属性仍用通用 PropertyPanel(扁平字段 OK);若要双语并排/语言切换等可后续。
+- `imports.py:91` 一行死注释待清。
+- 外部文件导入(磁盘选 SRT,非素材)未做。
+
+**下一轮建议顺序**:① 字幕+章节详情列表(功能完整性,ROI 高)→ ② 导出渲染按钮(端到端可用)→ ③ 系统核查快照约定 → ④ preset / Tk 退役。
