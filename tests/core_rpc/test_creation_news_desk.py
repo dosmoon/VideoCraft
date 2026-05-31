@@ -170,7 +170,61 @@ def test_update_config_sets_preset_name(ctx, project_with_news_desk):
     assert cfg["preset_name"] == "演讲"
 
 
-# ── deferred: presets / providers not wired yet ──────────────────────────────
+# ── preview provider (news_desk: full-source media + snapshot SRTs) ───────────
+
+@pytest.fixture
+def project_with_bound_news_desk(tmp_project):
+    """news_desk instance bound to a news_video material, with a subtitle
+    component whose snapshot SRT exists in the instance dir — enough for the
+    preview provider to resolve mediaRef + subtitlePaths."""
+    methods.load_plugins()
+    tmp_project.create_material_instance(
+        "news_video", "news-1",
+        initial_config={"schema_version": 1, "type_name": "news_video", "instance_name": "news-1"},
+        config_filename="instance.json",
+    )
+    inst_dir = tmp_project.creation_instance_dir("news_desk", "news")
+    os.makedirs(os.path.join(inst_dir, "subtitles"), exist_ok=True)
+    with open(os.path.join(inst_dir, "subtitles", "sub.srt"), "w", encoding="utf-8") as f:
+        f.write("1\n00:00:01,000 --> 00:00:03,000\nhello\n")
+    with open(os.path.join(inst_dir, "config.json"), "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "bound_material": {"type_name": "news_video", "instance_name": "news-1"},
+                "components": [
+                    {"id": "sub", "kind": "subtitle", "srt_path": "subtitles/sub.srt"},
+                    # a subtitle with no snapshot yet → excluded from subtitlePaths
+                    {"id": "sub2", "kind": "subtitle", "srt_path": ""},
+                    {"id": "chap", "kind": "chapter"},
+                ],
+            },
+            f,
+        )
+    return tmp_project
+
+
+def test_preview_data_returns_media_and_snapshot_srt(ctx, project_with_bound_news_desk):
+    _open(ctx, project_with_bound_news_desk)
+    pd = call(ctx, "creation.preview_data", {"type": "news_desk", "instance": "news"})["result"]
+    # mediaRef = the bound material's source video path.
+    from materials.news_video.model import NewsVideoModel
+    expected = NewsVideoModel(project_with_bound_news_desk, "news-1").source_video_path
+    assert pd["mediaRef"] == expected
+    assert isinstance(pd["durationSec"], float)
+    # Only the subtitle whose snapshot exists is resolved, keyed by its srt_path.
+    assert list(pd["subtitlePaths"].keys()) == ["subtitles/sub.srt"]
+    assert pd["subtitlePaths"]["subtitles/sub.srt"].endswith("sub.srt")
+    assert os.path.isfile(pd["subtitlePaths"]["subtitles/sub.srt"])
+
+
+def test_preview_data_unbound_is_empty(ctx, project_with_news_desk):
+    """The fixture instance has no bound_material → empty preview shape."""
+    _open(ctx, project_with_news_desk)
+    pd = call(ctx, "creation.preview_data", {"type": "news_desk", "instance": "news"})["result"]
+    assert pd == {"mediaRef": None, "durationSec": 0.0, "subtitlePaths": {}}
+
+
+# ── deferred: presets not wired yet ──────────────────────────────────────────
 
 def test_presets_not_supported_yet(ctx, project_with_news_desk):
     """Preset RPC is deferred for news_desk (the presets.py builtins still carry
@@ -178,14 +232,4 @@ def test_presets_not_supported_yet(ctx, project_with_news_desk):
     layer reports it gracefully rather than crashing."""
     _open(ctx, project_with_news_desk)
     resp = call(ctx, "creation.list_presets", {"type": "news_desk", "instance": "news"})
-    assert "error" in resp
-
-
-def test_preview_provider_not_wired_yet(ctx, project_with_news_desk):
-    """preview_data has no provider for news_desk yet (per-chapter preview is the
-    next increment) → the base layer reports an error, not a crash. (Code is
-    -32603 'no preview_provider' once registered, like presets — pinned loosely
-    so the deferral guard isn't brittle on the exact code.)"""
-    _open(ctx, project_with_news_desk)
-    resp = call(ctx, "creation.preview_data", {"type": "news_desk", "instance": "news"})
     assert "error" in resp

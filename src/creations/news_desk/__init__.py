@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from creations import CreationType, register
 from creations.news_desk.config import NewsDeskInstanceConfig
+from creations.news_desk.preview import preview_data as _preview_data
 
 register(CreationType(
     type_name="news_desk",
@@ -19,7 +20,8 @@ register(CreationType(
     description_en="News / speech / press-briefing video with bilingual"
                    " subs, lower-third name plates, and topic strip",
     # New-arch sidecar: single-owner config drives the component/config RPC face
-    # (ADR-0004 resolves it generically). preview_provider / render_provider are
-    # not wired yet — per-chapter preview/render is the next increment.
+    # (ADR-0004 resolves it generically). render_provider is not wired yet —
+    # per-chapter export is the next increment.
     config_owner_cls=NewsDeskInstanceConfig,
+    preview_provider=_preview_data,
 ))
