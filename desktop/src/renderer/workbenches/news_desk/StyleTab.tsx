@@ -71,6 +71,11 @@ export function StyleTab(props: {
   // bound material) re-fetch.
   const [refreshKey, setRefreshKey] = useState(0);
 
+  // Full-source composition preview (whole source + overlays; no crop box).
+  const preview = useNewsDeskPreview(type, instance);
+  // Drives the preview playhead from the subtitle/chapter detail lists.
+  const previewRef = useRef<NewsDeskPreviewHandle>(null);
+
   useEffect(() => {
     let alive = true;
     void rpc
@@ -97,23 +102,24 @@ export function StyleTab(props: {
         onComponentsReplaced(
           (components ?? []).map((c) => (c.id === componentId ? updated : c)),
         );
+        // A subtitle import snapshots a new SRT into the instance; the preview's
+        // cuesBySrtPath comes from preview_data, so it must re-fetch or the
+        // subtitle has an srt_path but no cues and renders nothing. (Chapter
+        // schedule rides in the component config, so it renders without this —
+        // but reloading is cheap/in-place and covers both.)
+        preview.reload();
       } catch (err) {
         setImportErr(fmtErr(err));
       } finally {
         setImportBusy(false);
       }
     },
-    [type, instance, components, onComponentsReplaced],
+    [type, instance, components, onComponentsReplaced, preview],
   );
 
   const presentKinds = new Set((components ?? []).map((c) => c.kind));
   const fmtErr = (err: unknown) =>
     err instanceof RpcError ? `[${err.code}] ${err.message}` : String(err);
-
-  // Full-source composition preview (whole source + overlays; no crop box).
-  const preview = useNewsDeskPreview(type, instance);
-  // Drives the preview playhead from the subtitle/chapter detail lists.
-  const previewRef = useRef<NewsDeskPreviewHandle>(null);
 
   // After binding a material, refresh the preview (nobind → ready) and the
   // import options (which read the now-bound material).
@@ -338,6 +344,15 @@ export function StyleTab(props: {
         {presetErr && <span style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {presetErr}</span>}
       </div>
 
+      {/* Material binding — a persistent setting (not a one-time gate): shows the
+          bound material and lets the user re-bind at any time. */}
+      <MaterialBindingBar
+        type={type}
+        instance={instance}
+        refreshKey={refreshKey}
+        onBound={onMaterialBound}
+      />
+
       <div style={{ display: "flex", gap: 16, padding: 16, alignItems: "flex-start", flex: 1, overflow: "auto" }}>
       {/* Left: full-source preview + component manager (list order = z-order). */}
       <div style={{ flex: "0 0 auto", minWidth: 360 }}>
@@ -347,7 +362,7 @@ export function StyleTab(props: {
           </div>
           {preview.status === "loading" && <p style={{ color: "#888", fontSize: 12 }}>加载源…</p>}
           {preview.status === "nobind" && (
-            <BindMaterialRow type={type} instance={instance} onBound={onMaterialBound} />
+            <p style={{ color: "#888", fontSize: 12 }}>未绑定素材 — 在上方「素材」处绑定后预览</p>
           )}
           {preview.status === "nosrc" && <p style={{ color: "#888", fontSize: 12 }}>绑定素材尚无源视频</p>}
           {preview.status === "error" && <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {preview.message}</p>}
@@ -564,20 +579,44 @@ export function StyleTab(props: {
   );
 }
 
-// Bind-material picker shown when the creation is unbound (the new-arch create
-// flow makes unbound instances; this is the headless replacement for the Tk
-// material picker). Lists every material instance in the project (no type
-// filter, faithful to material_binding.show_material_picker) and binds the
-// chosen one so the preview/import/export surfaces light up.
-function BindMaterialRow(props: { type: string; instance: string; onBound: () => void }) {
-  const { type, instance, onBound } = props;
+// Persistent material-binding setting (ADR-0005). Always visible in the Style
+// tab: shows the currently-bound material and lets the user (re-)bind at any
+// time — binding is part of the creation's settings, not a one-time gate. The
+// new-arch create flow makes unbound instances; this is the headless
+// replacement for the Tk material picker. Lists every material instance in the
+// project (no type filter, faithful to material_binding.show_material_picker).
+function MaterialBindingBar(props: {
+  type: string;
+  instance: string;
+  refreshKey: number;
+  onBound: () => void;
+}) {
+  const { type, instance, refreshKey, onBound } = props;
+  const [bound, setBound] = useState<{ matType: string; matInstance: string } | null>(null);
   const [entries, setEntries] = useState<{ matType: string; matInstance: string }[]>([]);
+  const [editing, setEditing] = useState(false);
   const [choice, setChoice] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
 
+  // Read the current binding + the project's material instances. Re-runs on
+  // refreshKey so an external change (or our own bind) is reflected.
   useEffect(() => {
     let alive = true;
+    void rpc
+      .loadConfig(type, instance)
+      .then((cfg) => {
+        if (!alive) return;
+        const bm = cfg["bound_material"] as
+          | { type_name?: string; instance_name?: string }
+          | null;
+        setBound(
+          bm?.type_name && bm.instance_name
+            ? { matType: bm.type_name, matInstance: bm.instance_name }
+            : null,
+        );
+      })
+      .catch(() => {});
     void rpc
       .listMaterials()
       .then((m) => {
@@ -587,21 +626,23 @@ function BindMaterialRow(props: { type: string; instance: string; onBound: () =>
           for (const i of insts) flat.push({ matType: t, matInstance: i });
         }
         setEntries(flat);
-        setChoice(flat.length ? `${flat[0]!.matType}/${flat[0]!.matInstance}` : "");
+        setChoice((cur) => cur || (flat.length ? `${flat[0]!.matType}/${flat[0]!.matInstance}` : ""));
       })
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, []);
+  }, [type, instance, refreshKey]);
 
-  const onBind = useCallback(async () => {
+  const doBind = useCallback(async () => {
     const e = entries.find((x) => `${x.matType}/${x.matInstance}` === choice);
     if (!e) return;
     setBusy(true);
     setErr("");
     try {
       await rpc.bindMaterial(type, instance, e.matType, e.matInstance);
+      setBound(e);
+      setEditing(false);
       onBound();
     } catch (er) {
       setErr(er instanceof RpcError ? `[${er.code}] ${er.message}` : String(er));
@@ -610,55 +651,73 @@ function BindMaterialRow(props: { type: string; instance: string; onBound: () =>
     }
   }, [type, instance, choice, entries, onBound]);
 
-  if (entries.length === 0) {
-    return (
-      <p style={{ color: "#888", fontSize: 12 }}>
-        未绑定素材 — 项目里还没有素材;先在「素材」区新建并导入源视频
-      </p>
-    );
-  }
+  const barStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "8px 16px 0",
+    flexWrap: "wrap",
+  };
+  const sel: React.CSSProperties = {
+    background: "#222",
+    color: "#ddd",
+    border: "1px solid #3a3a40",
+    borderRadius: 4,
+    padding: "3px 6px",
+    fontSize: 12,
+    minWidth: 160,
+  };
+  const bindBtn: React.CSSProperties = {
+    background: "#2d6cdf",
+    color: "#fff",
+    border: "none",
+    borderRadius: 4,
+    padding: "3px 12px",
+    fontSize: 12,
+    cursor: busy ? "default" : "pointer",
+    opacity: busy ? 0.6 : 1,
+  };
+
+  const picking = editing || !bound;
+
   return (
-    <div>
-      <p style={{ color: "#888", fontSize: 12, margin: "0 0 6px" }}>未绑定素材 — 选择要绑定的素材:</p>
-      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-        <select
-          value={choice}
-          onChange={(e) => setChoice(e.target.value)}
-          style={{
-            flex: 1,
-            background: "#222",
-            color: "#ddd",
-            border: "1px solid #3a3a40",
-            borderRadius: 4,
-            padding: "3px 6px",
-            fontSize: 12,
-            minWidth: 160,
-          }}
-        >
-          {entries.map((e) => (
-            <option key={`${e.matType}/${e.matInstance}`} value={`${e.matType}/${e.matInstance}`}>
-              {e.matInstance} · {e.matType}
-            </option>
-          ))}
-        </select>
-        <button
-          onClick={() => void onBind()}
-          disabled={busy || !choice}
-          style={{
-            background: "#2d6cdf",
-            color: "#fff",
-            border: "none",
-            borderRadius: 4,
-            padding: "3px 14px",
-            fontSize: 12,
-            cursor: busy ? "default" : "pointer",
-            opacity: busy ? 0.6 : 1,
-          }}
-        >
-          绑定
-        </button>
-      </div>
-      {err && <p style={{ color: "#ff6b6b", fontSize: 12, margin: "6px 0 0" }}>✗ {err}</p>}
+    <div style={barStyle}>
+      <span style={{ fontSize: 12, color: "#888" }}>素材</span>
+      {picking ? (
+        entries.length === 0 ? (
+          <span style={{ fontSize: 12, color: "#c87" }}>
+            项目里还没有素材;先在「素材」区新建并导入源视频
+          </span>
+        ) : (
+          <>
+            <select value={choice} onChange={(e) => setChoice(e.target.value)} style={sel}>
+              {entries.map((e) => (
+                <option key={`${e.matType}/${e.matInstance}`} value={`${e.matType}/${e.matInstance}`}>
+                  {e.matInstance} · {e.matType}
+                </option>
+              ))}
+            </select>
+            <button onClick={() => void doBind()} disabled={busy || !choice} style={bindBtn}>
+              绑定
+            </button>
+            {bound && (
+              <button onClick={() => setEditing(false)} style={mgrBtn}>
+                取消
+              </button>
+            )}
+          </>
+        )
+      ) : (
+        <>
+          <span style={{ fontSize: 12, color: "#ddd" }}>
+            {bound!.matInstance} <span style={{ color: "#777" }}>· {bound!.matType}</span>
+          </span>
+          <button onClick={() => setEditing(true)} style={mgrBtn}>
+            换绑
+          </button>
+        </>
+      )}
+      {err && <span style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {err}</span>}
     </div>
   );
 }
