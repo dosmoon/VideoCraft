@@ -1,26 +1,17 @@
-"""Clip-workbench component registry — Step 5.0 scaffold.
+"""Clip-workbench component registry.
 
-A "component" in clip is the same edit-time unit news_desk uses
-(see creations/news_desk/components/__init__.py). Clip migrates to the
-component model so its hook / outro / subtitle / watermark each become
-a registered ComponentSpec and the render path can go through
-compile_timeline() against composed adapters.
+A "component" in clip is an edit-time unit: its hook / outro / subtitle /
+watermark each become a registered ComponentSpec and the render path goes
+through compile_timeline() against composed adapters (ComponentDictAdapter).
 
-Why a clip-local registry instead of sharing news_desk's:
-    Each creation owns its own set of component kinds (clip's subtitle
-    has dual-track semantics that news_desk's subtitle doesn't; clip
-    has hook/outro that news_desk doesn't have). Sharing one REGISTRY
-    would let creations see each other's kinds and collide on shared
-    names (e.g. both want "subtitle").
-
-The ComponentSpec dataclass itself is reused as-is from news_desk's
-components package — pure type, no state, zero coupling. A follow-up
-will physically relocate it to core/composition/component_spec.py
-once both creations have been on it for a release cycle.
-
-This module is a SCAFFOLD: no component specs are registered yet.
-Step 5.1 onward will drop one component file at a time into this
-package, each calling register() at import time.
+clip owns its component framework locally — the ComponentSpec / ImportSource /
+ProjectContext dataclasses are defined below, and clip keeps its own REGISTRY.
+This is deliberate: each creation owns its own component kinds (clip's subtitle
+has dual-track semantics news_desk's doesn't; clip has hook/outro it doesn't),
+and a shared registry would let creations see each other's kinds and collide on
+shared names. These framework types were formerly imported from news_desk; they
+moved here when the Tk news_desk workbench was retired (clip is the sole
+remaining Tk consumer of the framework). They die with clip's Tk workbench.
 """
 
 from __future__ import annotations

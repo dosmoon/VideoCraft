@@ -1,7 +1,7 @@
 """creations/clip/components — Step 5.0 scaffold contract.
 
 These tests pin the bare scaffolding before any actual spec lands:
-- clip has its OWN registry (not news_desk's)
+- clip owns its component framework (registry + ComponentSpec) locally
 - ComponentDictAdapter resolves against clip's registry
 - ClipProjectContext carries clip_overrides + the engine's 4 fields
 """
@@ -12,7 +12,6 @@ import pytest
 
 from core.composition.compile import ClipRange, CompileContext
 from creations.clip import components as cc
-from creations.news_desk import components as nd
 
 
 # ── Registry isolation ─────────────────────────────────────────────────────
@@ -24,17 +23,18 @@ def test_clip_subtitle_registered():
     assert spec.compile is not None
 
 
-def test_clip_registry_is_separate_from_news_desk():
-    """Same kind in both registries must not collide — sharing one would
-    let creations see each other's components."""
-    assert cc.REGISTRY is not nd.REGISTRY
+def test_clip_owns_component_framework():
+    """clip defines its own ComponentSpec + registry locally (no cross-plugin
+    import) — sharing one registry would let creations see each other's kinds."""
+    assert isinstance(cc.REGISTRY, dict)
+    assert cc.ComponentSpec.__module__ == "creations.clip.components"
 
 
 # ── register / lookup helpers ──────────────────────────────────────────────
 
 def test_register_and_lookup(monkeypatch):
     monkeypatch.setattr(cc, "REGISTRY", {})
-    spec = nd.ComponentSpec(
+    spec = cc.ComponentSpec(
         kind="test_kind", name_key="x", add_label_key="y")
     cc.register(spec)
     assert cc.spec_for_kind("test_kind") is spec
@@ -48,8 +48,8 @@ def test_register_and_lookup(monkeypatch):
 def test_register_last_wins(monkeypatch):
     """Hot-reload friendliness — re-registering the same kind replaces."""
     monkeypatch.setattr(cc, "REGISTRY", {})
-    a = nd.ComponentSpec(kind="k", name_key="a", add_label_key="a")
-    b = nd.ComponentSpec(kind="k", name_key="b", add_label_key="b")
+    a = cc.ComponentSpec(kind="k", name_key="a", add_label_key="a")
+    b = cc.ComponentSpec(kind="k", name_key="b", add_label_key="b")
     cc.register(a)
     cc.register(b)
     assert cc.spec_for_kind("k") is b
@@ -65,7 +65,7 @@ def test_adapter_resolves_against_clip_registry(monkeypatch):
         calls.append((instance["kind"], clip_range.duration_sec))
         return []
 
-    cc.register(nd.ComponentSpec(
+    cc.register(cc.ComponentSpec(
         kind="t", name_key="x", add_label_key="y", compile=_compile))
     adapter = cc.ComponentDictAdapter({"kind": "t", "id": "i1"})
     assert adapter.kind == "t"

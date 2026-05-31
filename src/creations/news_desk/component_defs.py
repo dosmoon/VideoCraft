@@ -1,35 +1,22 @@
 """News-desk component definitions — pure, headless component metadata.
 
-The new-arch (Electron + headless sidecar) twin of the Tk component specs in
-`creations/news_desk/components/*`. Those spec modules import tkinter at module
-top (they carry the property-panel builders), so the UI-free sidecar can't
-import them. This module re-states only the *pure* parts the workbench's "add
-component" flow needs — the addable-kind list (registration order +
-`multi_instance` gating) and each kind's default instance dict.
+The SINGLE source of news_desk's addable-kind list (registration order +
+`multi_instance` gating) and each kind's default instance dict, for the new-arch
+(Electron + headless sidecar) workbench's "add component" flow. The Tk component
+specs (`creations/news_desk/components/*`) that used to be the parallel twin were
+retired with the Tk workbench — this module absorbed their `_default_instance`.
 
-⚠️ One deliberate deviation from the Tk specs' `_default_instance` (NOT a
-verbatim copy, unlike clip's component_defs):
-
-  The Tk specs emit subtitle/text-watermark font + stroke sizes as ABSOLUTE
-  pixels (`fontsize: 28`, `stroke_width: 2`). The new engine is
-  resolution-independent — every visual size is a fraction of target height
-  (the dogfood invariant "所有视觉尺寸量归一化为 pct of target_h"). So this
-  module emits the CANONICAL fraction shape the already-merged TS layer
-  consumes (`fontsize_pct`/`stroke_pct`, and `text_fontsize_pct`/`text_color`/
-  `text_opacity` for the text watermark — see desktop/src/creations/news_desk/
-  types.ts + mapping.ts). The defaults are the 1080p-baseline conversions of the
-  Tk values (28/1080 ≈ 0.026, 2/1080 ≈ 0.002), so a fresh component looks the
-  same. Fields that news_desk keeps as integers on purpose (block_margin_pct,
-  bg_opacity, scale_pct, margins, chapter strip fontsize) match the Tk specs
-  verbatim — the TS mapping normalises those.
-
-  The Python render path never reads these visual fields (the GPU compositor in
-  the renderer does), so this shape change is opaque to the sidecar — it just
-  stores/forwards the dicts.
-
-⚠️ Temporary duplication (pre-alpha): the Tk specs are the soon-to-retire twin.
-When the Tk workbench is removed, this module becomes the single source and the
-spec modules' `_default_instance` go away with them.
+Shape note — the engine is resolution-independent: every visual size is a
+fraction of target height (the dogfood invariant "所有视觉尺寸量归一化为 pct of
+target_h"). So subtitle/text-watermark font + stroke sizes are emitted as
+CANONICAL fractions (`fontsize_pct`/`stroke_pct`, and `text_fontsize_pct`/
+`text_color`/`text_opacity` for the text watermark — matching the TS layer at
+desktop/src/creations/news_desk/types.ts + mapping.ts). Defaults are the
+1080p-baseline values (28/1080 ≈ 0.026, 2/1080 ≈ 0.002). Fields news_desk keeps
+as integers on purpose (block_margin_pct, bg_opacity, scale_pct, margins,
+chapter strip fontsize) stay integers — the TS mapping normalises those. The
+Python render path never reads these visual fields (the GPU compositor in the
+renderer does); the sidecar just stores/forwards the dicts.
 """
 
 from __future__ import annotations

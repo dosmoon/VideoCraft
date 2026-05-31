@@ -1,28 +1,24 @@
 """Architecture compliance regression guard for creations/news_desk.
 
-Asserts ADR-0003 (creation snapshot semantics), ADR-0004 (plugin
-contract / file ownership), and ADR-0005 (material binding) invariants
-that the news_desk creation is expected to maintain.
-
-Some ADR-0003 "snapshot only" rules are behavioral (which code path
-runs at render time vs import time) and aren't fully covered here —
-those needs e2e tests with mock filesystems. The mechanical checks
-below catch the common regressions.
+Asserts the ADR-0003 (snapshot semantics) / ADR-0004 (plugin contract /
+decoupling) / ADR-0005 (material binding) invariants that survive the Tk-app
+retirement. The Tk workbench (news_desk_tool.py + components/* specs + the
+publish renderer) was retired when the new-arch Electron workbench took over
+(see desktop/src/renderer/workbenches/news_desk/); news_desk is now a headless
+sidecar plugin. The old Tk-tool/component-spec/publish checks went with it —
+the new-arch component + config + provider surface is covered by
+tests/core_rpc/test_creation_news_desk.py.
 """
 
 from __future__ import annotations
 
-import inspect
 import os
 import re
-import ast
 
 import creations
 import creations.news_desk  # noqa: F401  trigger registration
-from creations import CreationType
 
 
-NEWS_DESK_TOOL_PATH = "src/creations/news_desk/news_desk_tool.py"
 NEWS_DESK_DIR = "src/creations/news_desk"
 
 
@@ -46,32 +42,16 @@ def test_news_desk_required_fields():
 
 
 def test_news_desk_display_name_key_resolves_in_i18n():
-    """Slice I rename: display_name_key MUST point to a 'creation.X' key."""
+    """display_name_key MUST point to a resolvable 'creation.X' key."""
     ct = creations.get("news_desk")
     assert ct.display_name_key.startswith("creation."), (
         f"display_name_key not in 'creation.*' namespace: "
         f"{ct.display_name_key}")
     from i18n import tr
     rendered = tr(ct.display_name_key)
-    # tr() falls back to key on miss; rendered != key means the i18n
-    # entry exists in zh.json or en.json.
+    # tr() falls back to key on miss; rendered != key means the entry exists.
     assert rendered != ct.display_name_key, (
         f"i18n key {ct.display_name_key} not found in i18n files")
-
-
-def test_news_desk_tool_key_matches_tool_map():
-    """tool_key must reference an existing TOOL_MAP entry pointing at
-    creations/news_desk/news_desk_tool.py with class NewsDeskApp."""
-    with open("src/VideoCraftHub.py", "r", encoding="utf-8") as f:
-        hub_src = f.read()
-    ct = creations.get("news_desk")
-    pat = rf'"{re.escape(ct.tool_key)}":\s*\{{\s*"file":\s*"([^"]+)",\s*"class":\s*"([^"]+)"'
-    m = re.search(pat, hub_src)
-    assert m, f"TOOL_MAP entry for {ct.tool_key!r} not found"
-    file_path, class_name = m.group(1), m.group(2)
-    assert file_path == "creations/news_desk/news_desk_tool.py", (
-        f"unexpected file: {file_path}")
-    assert class_name == "NewsDeskApp"
 
 
 def test_news_desk_register_idempotent():
@@ -81,7 +61,18 @@ def test_news_desk_register_idempotent():
     assert len(creations.all_types()) == before
 
 
-# ── B. File ownership ────────────────────────────────────────────────────────
+def test_news_desk_wires_new_arch_providers():
+    """The sidecar resolves preview/render/import providers + the single config
+    owner generically (ADR-0004). Wiring them on the CreationType is what makes
+    the whole RPC surface work without the base layer naming news_desk."""
+    ct = creations.get("news_desk")
+    assert ct.config_owner_cls is not None
+    assert ct.preview_provider is not None
+    assert ct.render_provider is not None
+    assert ct.import_provider is not None
+
+
+# ── B. File ownership / headlessness ─────────────────────────────────────────
 
 def test_news_desk_in_creations_dir():
     """ADR-0004 slice C moved news_desk to creations/. Guard against
@@ -91,39 +82,26 @@ def test_news_desk_in_creations_dir():
         "news_desk regrew under src/tools/ — slice C migration regressed")
 
 
-def test_news_desk_tool_module_exports_app_class():
-    """Spec entry point: NewsDeskApp class in news_desk_tool.py."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "news_desk_tool", NEWS_DESK_TOOL_PATH)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    assert hasattr(mod, "NewsDeskApp")
-
-
-def test_news_desk_components_subpackage():
-    """Component specs (chapter / subtitle / text_wm / image_wm)
-    live under components/."""
-    comp_dir = os.path.join(NEWS_DESK_DIR, "components")
-    assert os.path.isdir(comp_dir)
-    for name in ("chapter.py", "subtitle.py",
-                 "text_watermark.py", "image_watermark.py"):
-        assert os.path.isfile(os.path.join(comp_dir, name)), (
-            f"missing component: {name}")
-
-
-def test_news_desk_publish_renderer_exists():
-    """publish.md template lives next to the workbench, not in core."""
-    pub = os.path.join(NEWS_DESK_DIR, "publish.py")
-    assert os.path.isfile(pub)
-    with open(pub, "r", encoding="utf-8") as f:
-        src = f.read()
-    assert "def render_news_desk_publish" in src
+def test_news_desk_is_headless_no_tkinter():
+    """Post-Tk-retirement invariant: the sidecar plugin must import zero
+    tkinter — all UI lives in the new-arch Electron renderer (desktop/)."""
+    violations: list[str] = []
+    for root, _dirs, files in os.walk(NEWS_DESK_DIR):
+        if "__pycache__" in root:
+            continue
+        for fn in files:
+            if not fn.endswith(".py"):
+                continue
+            p = os.path.join(root, fn)
+            with open(p, "r", encoding="utf-8") as f:
+                src = f.read()
+            if re.search(r"(^|\n)\s*(from\s+tkinter|import\s+tkinter)", src):
+                violations.append(p)
+    assert not violations, f"news_desk still imports tkinter: {violations}"
 
 
 def test_no_news_desk_specific_ui_leaked_outside():
-    """News-desk-specific UI must live under news_desk/. Generic Tk
-    helpers can remain in src/ui/."""
+    """News-desk-specific UI must not live under src/ui/."""
     leaked: list[str] = []
     for f in os.listdir("src/ui"):
         if not f.endswith(".py") or f.startswith("__"):
@@ -133,168 +111,37 @@ def test_no_news_desk_specific_ui_leaked_outside():
     assert not leaked, f"leaked into src/ui/: {leaked}"
 
 
-# ── C. Workbench contract ───────────────────────────────────────────────────
-
-def test_news_desk_app_init_signature():
-    """Hub.open_tool calls cls(master, project=..., instance_name=...)."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "news_desk_tool", NEWS_DESK_TOOL_PATH)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    sig = inspect.signature(mod.NewsDeskApp.__init__)
-    params = list(sig.parameters.keys())
-    assert params == ["self", "master", "project", "instance_name"], (
-        f"got: {params}")
-
-
-def test_news_desk_app_inherits_tool_base():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "news_desk_tool", NEWS_DESK_TOOL_PATH)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    from tools.base import ToolBase
-    assert issubclass(mod.NewsDeskApp, ToolBase)
-
-
-# ── D. ADR-0005 material binding ────────────────────────────────────────────
-
-def test_news_desk_app_init_loads_instance_config():
-    """__init__ MUST load NewsDeskInstanceConfig — the single owner of
-    config.json. No ad-hoc json reads of the file."""
-    with open(NEWS_DESK_TOOL_PATH, "r", encoding="utf-8") as f:
-        src = f.read()
-    tree = ast.parse(src)
-    init_src: str | None = None
-    for node in ast.walk(tree):
-        if (isinstance(node, ast.ClassDef) and node.name == "NewsDeskApp"):
-            for sub in node.body:
-                if (isinstance(sub, ast.FunctionDef)
-                        and sub.name == "__init__"):
-                    init_src = ast.unparse(sub)
-                    break
-    assert init_src is not None
-    assert "NewsDeskInstanceConfig" in init_src
-    assert "NewsDeskInstanceConfig.load" in init_src
-
-
-def test_news_desk_app_init_uses_picker_when_unbound():
-    """__init__ MUST call show_material_picker when the loaded config
-    has no bound_material. The picker is the ONLY UI path that asks
-    the user; orchestration / persistence lives in the host."""
-    with open(NEWS_DESK_TOOL_PATH, "r", encoding="utf-8") as f:
-        src = f.read()
-    assert "show_material_picker" in src
-    assert "bound_material is None" in src
-
+# ── C. ADR-0005 material binding ─────────────────────────────────────────────
 
 def test_material_binding_module_is_picker_only():
-    """material_binding.py exposes ONLY show_material_picker — no config
-    IO functions. The previous read_bound_material / write_bound_material
-    / get_or_bind helpers were retired when news_desk_tool took over
-    persistence via NewsDeskInstanceConfig."""
+    """material_binding.py exposes ONLY show_material_picker — no config IO."""
     import creations.material_binding as mb
     publicish = [n for n in dir(mb)
                  if not n.startswith("_") and callable(getattr(mb, n))]
-    # show_material_picker is the only legitimate public callable.
-    forbidden = {"read_bound_material", "write_bound_material",
-                  "get_or_bind"}
+    forbidden = {"read_bound_material", "write_bound_material", "get_or_bind"}
     leaked = forbidden & set(publicish)
     assert not leaked, f"material_binding leaks config-IO API: {leaked}"
 
 
-def test_news_desk_app_stores_material_instance_id():
-    with open(NEWS_DESK_TOOL_PATH, "r", encoding="utf-8") as f:
-        src = f.read()
-    assert "self.material_instance_id" in src, (
-        "NewsDeskApp doesn't store material_instance_id")
+# ── D. ADR-0003 snapshot semantics (import path) ─────────────────────────────
 
-
-def test_news_desk_tool_does_not_call_nv_paths():
-    """The workbench host accesses upstream material data through
-    self.material_model. Direct _nv_paths.X calls are forbidden."""
-    with open(NEWS_DESK_TOOL_PATH, "r", encoding="utf-8") as f:
-        src = f.read()
-    assert "_nv_paths." not in src, (
-        "news_desk_tool must not call _nv_paths.*")
-
-
-def test_project_context_has_material_model():
-    """ProjectContext exposes the bound material's model — the ONLY
-    legitimate handle components have on upstream material data."""
-    from creations.news_desk.components import ProjectContext
-    assert "material_model" in ProjectContext.__dataclass_fields__
-
-
-def test_components_dont_import_nv_paths():
-    """Components must NOT reach into materials.news_video.paths — that
-    module is a private implementation detail of the material plugin.
-    All material-data access goes through ctx.material_model."""
-    comp_dir = os.path.join(NEWS_DESK_DIR, "components")
-    violations: list[str] = []
-    for fn in os.listdir(comp_dir):
-        if not fn.endswith(".py") or fn.startswith("__"):
-            continue
-        p = os.path.join(comp_dir, fn)
-        with open(p, "r", encoding="utf-8") as f:
-            src = f.read()
-        if re.search(r"from\s+materials\.news_video(?:\.paths)?\s+import\s+paths", src):
-            violations.append(f"{fn}: imports materials.news_video.paths")
-        if "_nv_paths." in src:
-            violations.append(f"{fn}: calls _nv_paths.*")
-    assert not violations, (
-        f"components must not import or call _nv_paths: {violations}")
-
-
-def test_ctx_constructors_pass_material_model():
-    """Each nd_components.ProjectContext(...) call must include
-    material_model=self.material_model."""
-    with open(NEWS_DESK_TOOL_PATH, "r", encoding="utf-8") as f:
-        src = f.read()
-    blocks = re.findall(
-        r"nd_components\.ProjectContext\([^)]+\)", src, re.DOTALL)
-    missing = [b for b in blocks if "material_model" not in b]
-    assert not missing, (
-        f"ProjectContext constructors missing material_model: "
-        f"{len(missing)} of {len(blocks)}")
-
-
-# ── E. ADR-0003 snapshot semantics (partial — behavioral) ───────────────────
-
-def test_subtitle_component_snapshots_to_instance_dir():
-    """subtitle.py copies the imported SRT into instance_dir/subtitles/,
-    not just stores a reference to upstream."""
-    with open(os.path.join(NEWS_DESK_DIR, "components", "subtitle.py"),
+def test_imports_snapshot_subtitle_into_instance_dir():
+    """imports.py copies the imported SRT into <instance_dir>/, not a reference
+    to upstream — the snapshot decision the Tk subtitle spec used to make."""
+    with open(os.path.join(NEWS_DESK_DIR, "imports.py"),
               "r", encoding="utf-8") as f:
         src = f.read()
-    # Snapshot signal: copy/copyfile + ctx.instance_dir + "subtitles/"
-    has_copy = re.search(r"shutil\.(copy|copyfile)", src)
-    references_instance = "ctx.instance_dir" in src
-    assert has_copy and references_instance, (
-        "subtitle component doesn't appear to snapshot SRT into instance_dir")
+    assert re.search(r"shutil\.(copy|copyfile)", src), (
+        "imports.py doesn't snapshot the SRT (no shutil.copy*)")
+    assert "inst_dir" in src
 
 
-def test_publish_writes_into_instance_dir():
-    """publish.py renders publish.md content; the consumer (workbench)
-    is responsible for writing it inside <instance_dir>/."""
-    with open(os.path.join(NEWS_DESK_DIR, "publish.py"),
-              "r", encoding="utf-8") as f:
-        src = f.read()
-    # Convention check: publish.py is a pure renderer (returns string),
-    # no direct writes to source/ layer.
-    bad = re.findall(r"_nv_paths\.\w+", src)
-    assert not bad, f"publish.py references upstream paths: {bad}"
-
-
-# ── F. Decoupling ────────────────────────────────────────────────────────────
+# ── E. Decoupling ────────────────────────────────────────────────────────────
 
 def test_news_desk_does_not_import_other_creation_plugins():
-    """news_desk MUST NOT import other creation plugins.
-    Each creation plugin is independent."""
-    forbidden_imports = ["creations.clip"]
+    """news_desk MUST NOT import other creation plugins. Each is independent."""
     violations: list[str] = []
-    for root, dirs, files in os.walk(NEWS_DESK_DIR):
+    for root, _dirs, files in os.walk(NEWS_DESK_DIR):
         if "__pycache__" in root:
             continue
         for fn in files:
@@ -303,16 +150,15 @@ def test_news_desk_does_not_import_other_creation_plugins():
             p = os.path.join(root, fn)
             with open(p, "r", encoding="utf-8") as f:
                 src = f.read()
-            for imp in forbidden_imports:
-                if re.search(rf"(^|\n)\s*(from|import)\s+{re.escape(imp)}", src):
-                    violations.append(f"{p} → {imp}")
+            if re.search(r"(^|\n)\s*(from|import)\s+creations\.clip", src):
+                violations.append(f"{p} → creations.clip")
     assert not violations, f"cross-creation imports: {violations}"
 
 
 def test_core_does_not_import_news_desk():
     """core/ MUST NOT know any creation plugin's name."""
     violations: list[str] = []
-    for root, dirs, files in os.walk("src/core"):
+    for root, _dirs, files in os.walk("src/core"):
         if "__pycache__" in root:
             continue
         for fn in files:
@@ -326,16 +172,11 @@ def test_core_does_not_import_news_desk():
     assert not violations, f"core imports news_desk: {violations}"
 
 
-def test_hub_does_not_hardcode_news_desk_outside_tool_map():
-    """Hub references news_desk via TOOL_MAP (file path + class name)
-    and via the package import for self-registration. It must not
-    reach into news_desk internals."""
+def test_hub_does_not_reach_into_news_desk_internals():
+    """The Tk hub retired news_desk; it must not reach into news_desk internals
+    (creations.news_desk.X attribute access)."""
     with open("src/VideoCraftHub.py", "r", encoding="utf-8") as f:
         src = f.read()
-    # Acceptable: 'creations/news_desk/news_desk_tool.py' in TOOL_MAP,
-    # 'import creations.news_desk' for registration side-effect.
-    # Anything else (e.g. creations.news_desk.components.X) signals
-    # Hub leaking knowledge.
     attr_refs = re.findall(r"creations\.news_desk\.[a-zA-Z_]+", src)
     assert not attr_refs, (
         f"Hub reaches into news_desk internals: {attr_refs}")
