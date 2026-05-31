@@ -17,6 +17,8 @@ import { useCallback, useEffect, useState } from "react";
 import type { Component } from "../../ipc/client";
 import { rpc, RpcError } from "../../ipc/client";
 import { PropertyPanel } from "../clip/propertyEditor";
+import { NewsDeskPreview } from "./NewsDeskPreview";
+import { useNewsDeskPreview } from "./useNewsDeskPreview";
 
 // Friendly component labels — the UI must never show the internal kind name
 // ([[feedback_user_facing_naming]]). Matches the default_instance names in
@@ -71,6 +73,9 @@ export function StyleTab(props: {
   const fmtErr = (err: unknown) =>
     err instanceof RpcError ? `[${err.code}] ${err.message}` : String(err);
 
+  // Full-source composition preview (whole source + overlays; no crop box).
+  const preview = useNewsDeskPreview(type, instance);
+
   const onAdd = useCallback(
     async (kind: string) => {
       setAddMenuOpen(false);
@@ -115,8 +120,26 @@ export function StyleTab(props: {
 
   return (
     <div style={{ display: "flex", gap: 16, padding: 16, alignItems: "flex-start", height: "100%" }}>
-      {/* Left: component manager (list order = z-order, top = topmost). */}
-      <div style={{ flex: "0 0 auto", minWidth: 320 }}>
+      {/* Left: full-source preview + component manager (list order = z-order). */}
+      <div style={{ flex: "0 0 auto", minWidth: 360 }}>
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontSize: 11, color: "#888", fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>
+            预览
+          </div>
+          {preview.status === "loading" && <p style={{ color: "#888", fontSize: 12 }}>加载源…</p>}
+          {preview.status === "nobind" && <p style={{ color: "#888", fontSize: 12 }}>未绑定素材 — 无法预览</p>}
+          {preview.status === "nosrc" && <p style={{ color: "#888", fontSize: 12 }}>绑定素材尚无源视频</p>}
+          {preview.status === "error" && <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {preview.message}</p>}
+          {preview.status === "ready" && preview.data && (
+            <NewsDeskPreview
+              srcPath={preview.data.srcPath}
+              durationSec={preview.data.durationSec}
+              components={components ?? []}
+              cuesBySrtPath={preview.data.cuesBySrtPath}
+            />
+          )}
+        </div>
+
         <div
           style={{
             display: "flex",
