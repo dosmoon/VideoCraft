@@ -19,6 +19,7 @@ import { rpc, RpcError } from "../../ipc/client";
 import { PropertyPanel } from "../clip/propertyEditor";
 import { NewsDeskPreview } from "./NewsDeskPreview";
 import { useNewsDeskPreview } from "./useNewsDeskPreview";
+import { ChapterProperties } from "./ChapterProperties";
 
 // Friendly component labels — the UI must never show the internal kind name
 // ([[feedback_user_facing_naming]]). Matches the default_instance names in
@@ -332,15 +333,18 @@ export function StyleTab(props: {
               />
             )}
             {importErr && <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {importErr}</p>}
-            <PropertyPanel
-              component={selected}
-              disabled={savingId === selected.id}
-              onCommit={(k, v) => onPatch(selected, { [k]: v })}
-            />
-            {selected.kind === "chapter" && (
-              <p style={{ color: "#666", fontSize: 11, marginTop: 10 }}>
-                章节排期 + 卡片样式编辑待后续迭代
-              </p>
+            {selected.kind === "chapter" ? (
+              <ChapterProperties
+                component={selected}
+                disabled={savingId === selected.id}
+                onPatch={(fields) => onPatch(selected, fields)}
+              />
+            ) : (
+              <PropertyPanel
+                component={selected}
+                disabled={savingId === selected.id}
+                onCommit={(k, v) => onPatch(selected, { [k]: v })}
+              />
             )}
           </>
         ) : (
