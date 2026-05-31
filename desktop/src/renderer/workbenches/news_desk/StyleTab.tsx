@@ -14,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Component } from "../../ipc/client";
+import type { Component, PresetList } from "../../ipc/client";
 import { rpc, RpcError } from "../../ipc/client";
 import type { NewsDeskChapterRow } from "@creations/news_desk/types.js";
 import { PropertyPanel } from "../clip/propertyEditor";
@@ -112,6 +112,81 @@ export function StyleTab(props: {
   // Drives the preview playhead from the subtitle/chapter detail lists.
   const previewRef = useRef<NewsDeskPreviewHandle>(null);
 
+  // ── presets (component-list templates; news_desk has no output geometry) ────
+  const [presets, setPresets] = useState<PresetList | null>(null);
+  const [selectedPreset, setSelectedPreset] = useState("");
+  const [presetErr, setPresetErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    void rpc
+      .listPresets(type, instance)
+      .then((p) => {
+        if (!alive) return;
+        setPresets(p);
+        setSelectedPreset((cur) => cur || p.lastUsed || p.names[0] || "");
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [type, instance]);
+
+  const pErr = (err: unknown) =>
+    setPresetErr(err instanceof RpcError ? `[${err.code}] ${err.message}` : String(err));
+
+  const onApplyPreset = useCallback(async () => {
+    if (!selectedPreset) return;
+    if (!window.confirm(`应用预设「${selectedPreset}」？这会替换当前所有组件。`)) return;
+    setPresetErr("");
+    try {
+      const cfg = await rpc.applyPreset(type, instance, selectedPreset);
+      if (Array.isArray(cfg["components"])) onComponentsReplaced(cfg["components"] as Component[]);
+      onSelect(null);
+      preview.reload();
+    } catch (err) {
+      pErr(err);
+    }
+  }, [type, instance, selectedPreset, onComponentsReplaced, onSelect, preview]);
+
+  const onSavePresetAs = useCallback(async () => {
+    const name = window.prompt("预设名称：", "");
+    if (!name || !name.trim()) return;
+    setPresetErr("");
+    try {
+      const list = await rpc.savePreset(type, instance, name.trim());
+      setPresets(list);
+      setSelectedPreset(name.trim());
+    } catch (err) {
+      pErr(err);
+    }
+  }, [type, instance]);
+
+  const onOverwritePreset = useCallback(async () => {
+    if (!selectedPreset) return;
+    if (!window.confirm(`覆盖预设「${selectedPreset}」？`)) return;
+    setPresetErr("");
+    try {
+      const list = await rpc.savePreset(type, instance, selectedPreset);
+      setPresets(list);
+    } catch (err) {
+      pErr(err);
+    }
+  }, [type, instance, selectedPreset]);
+
+  const onDeletePreset = useCallback(async () => {
+    if (!selectedPreset) return;
+    if (!window.confirm(`删除预设「${selectedPreset}」？`)) return;
+    setPresetErr("");
+    try {
+      const list = await rpc.deletePreset(type, instance, selectedPreset);
+      setPresets(list);
+      setSelectedPreset(list.lastUsed || list.names[0] || "");
+    } catch (err) {
+      pErr(err);
+    }
+  }, [type, instance, selectedPreset]);
+
   const onAdd = useCallback(
     async (kind: string) => {
       setAddMenuOpen(false);
@@ -155,7 +230,62 @@ export function StyleTab(props: {
   );
 
   return (
-    <div style={{ display: "flex", gap: 16, padding: 16, alignItems: "flex-start", height: "100%" }}>
+    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
+      {/* Preset toolbar — component-list templates (news_desk has no output
+          geometry, so this is just the preset combo + apply/save/delete). */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          padding: "10px 16px 0",
+          flexWrap: "wrap",
+        }}
+      >
+        <span style={{ fontSize: 12, color: "#888" }}>预设</span>
+        <select
+          value={selectedPreset}
+          onChange={(e) => setSelectedPreset(e.target.value)}
+          style={{
+            background: "#222",
+            color: "#ddd",
+            border: "1px solid #3a3a40",
+            borderRadius: 4,
+            padding: "3px 6px",
+            fontSize: 12,
+            minWidth: 140,
+          }}
+        >
+          {(presets?.names ?? []).map((n) => (
+            <option key={n} value={n}>
+              {n}
+            </option>
+          ))}
+        </select>
+        <button onClick={() => void onApplyPreset()} disabled={!selectedPreset} style={mgrBtn}>
+          应用
+        </button>
+        <button onClick={() => void onSavePresetAs()} style={mgrBtn}>
+          另存为…
+        </button>
+        <button
+          onClick={() => void onOverwritePreset()}
+          disabled={!selectedPreset || (presets?.builtins.includes(selectedPreset) ?? false)}
+          style={mgrBtn}
+        >
+          覆盖
+        </button>
+        <button
+          onClick={() => void onDeletePreset()}
+          disabled={!selectedPreset || (presets?.builtins.includes(selectedPreset) ?? false)}
+          style={mgrBtn}
+        >
+          删除
+        </button>
+        {presetErr && <span style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {presetErr}</span>}
+      </div>
+
+      <div style={{ display: "flex", gap: 16, padding: 16, alignItems: "flex-start", flex: 1, overflow: "auto" }}>
       {/* Left: full-source preview + component manager (list order = z-order). */}
       <div style={{ flex: "0 0 auto", minWidth: 360 }}>
         <div style={{ marginBottom: 12 }}>
@@ -373,6 +503,7 @@ export function StyleTab(props: {
         ) : (
           <p style={{ color: "#666", fontSize: 12 }}>选择一个组件以编辑其属性</p>
         )}
+      </div>
       </div>
     </div>
   );
