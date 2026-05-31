@@ -7,9 +7,9 @@
 
 ---
 
-## ★ 实现进度 / Implementation Status(2026-05-30,新会话从这读起)
+## ★ 实现进度 / Implementation Status(2026-05-31,新会话从这读起)
 
-> **clip 创作工作台已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现完整并真机肉眼验过。** 本节是后续工作的**接力入口**;实现细节集中在此(task.md 只保留一行接力指针,不再堆细节)。下面"实际实现"凡与本文档正文不同的,以本节为准(正文写于迁移启动期,部分已被实现推翻——另见 §0.5)。
+> **clip + news_desk 两个创作工作台均已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)实现并真机验过**(clip 端到端含导出;news_desk 除导出渲染按钮外端到端,三项缺口见本节末)。本节是后续工作的**接力入口**;实现细节集中在此(task.md 只保留接力指针 + 逐次进展「续 N」,不堆架构细节)。下面"实际实现"凡与本文档正文不同的,以本节为准(正文写于迁移启动期,部分已被实现推翻——另见 §0.5)。
 >
 > 已提交基线:见 `git log`(clip 工作台系列 commit,最新含导出/预设/双语)。
 
@@ -38,7 +38,36 @@
 - `presets.py` 改用 `component_defs`(去 tkinter)。
 
 **RPC 面**(`core_rpc/methods/{creation,project,material,system}.py`,base 层经注册表/getattr,**零硬编码 plugin 名** ADR-0004):
-`creation.`{load_config / list_components / update_component / update_config / list_addable_components / add_component / remove_component / move_component / preview_data / plan_render / commit_render / delete_render / list_presets / apply_preset / save_preset / delete_preset}。
+`creation.`{load_config / list_components / update_component / update_config / list_addable_components / add_component / remove_component / move_component / preview_data / plan_render / commit_render / delete_render / list_presets / apply_preset / save_preset / delete_preset / **list_imports / import_resource**}；`project.`{recent_list / open / close / current / list_material* / list_materials / list_creations / **list_creation_types / create_creation_instance**}。后两组(import_provider + create-creation)随 news_desk 迁移补齐(见下)。
+
+### news_desk 创作工作台(2026-05-31,第二个迁入新架构的创作)
+
+news_desk 与 clip 走同一套契约,正面验证「公共组件库 + provider 模式覆盖多插件」。**关键差异:全源模型**——无候选切片、无 reframe 裁剪、单全源输出。真机逐项验过(画面 + 双语字幕 + 自适应宽度 + 文字/图片水印 + 章节条 + 章节卡 + 音画同步)。
+
+**Python 业务面**(`src/creations/news_desk/`,headless):
+- `config.py NewsDeskInstanceConfig` 单一所有者:`apply_patch`(只 `preset_name`,全源无 reframe 几何)+ `add/remove/move_component`(+ load `_ensure_unique_ids` 修 Tk 时代无/重 id)+ `addable_kinds` + `rendered[]` 字段。
+- `component_defs.py`(纯,新):addable kinds(chapter 单例 + subtitle/text_wm/image_wm 多例)+ default instances。**一处刻意偏离 Tk specs**:subtitle/text_wm 字号/描边发 canonical 分数形(`fontsize_pct`/`stroke_pct`),非 Tk 绝对 px,与已合并的 TS 层对齐;默认值=1080 基线换算。
+- `preview.py`(preview_provider):全源 `mediaRef` + `durationSec`(读 source meta,**不跑 ffprobe**)+ 各 subtitle 组件 srt_path 的快照 SRT 绝对路径(`subtitlePaths`)。**章节不返回**——schedule 已快照进 config。
+- `export.py`(render_provider):`plan_render`(单 `output.mp4`,out_idx 恒 1,src_idx 不用)/`commit_render`(写 `output.json` sidecar + `rendered[]`)/`delete_render`。**deferred**:legacy 的按章节切 mp4 + publish sidecar 归 `tools/news_desk/publish.py`(publish 侧 ffmpeg),不进 core render-state。
+- `imports.py`(import_provider,**新 provider 类型**):`list_imports → {subtitleLangs, analyses}`;`import_resource(component_id, params)` **快照进组件**——`{kind:subtitle,lang}` 把素材 `<lang>.srt` 拷进 `<instance>/subtitles/<id>.srt` 设 srt_path;`{kind:chapters,filename}` 从 analysis.json 填 chapter schedule。**核对:快照非引用,符合 ADR-0003;经 registry 取素材零硬编码名。**
+- `__init__.py`:注册 `config_owner_cls` + `preview_provider` + `render_provider` + `import_provider`。**注:`load_plugins` 必须 import news_desk**(`core_rpc/methods/__init__.py`)——曾漏致 sidecar 看不到它(真 bug,已修)。
+
+**新增框架契约**:`CreationType.import_provider`(`src/creations/__init__.py`);`creation.list_imports`/`import_resource`(core_rpc,泛型派发 params 不透明);`project.list_creation_types`/`create_creation_instance`(create-creation 流程,Hub `[+]` 菜单依赖)。
+
+**news_desk 工作台 UI**(`desktop/src/renderer/workbenches/news_desk/`):
+- 壳 `NewsDeskWorkbench`:**两 tab**(样式/导出,无候选 tab——全源)。
+- 样式 tab `StyleTab`:`NewsDeskPreview`(全源 canvas 预览,**无裁剪框**,复用引擎层 + `buildNewsDeskTimeline`,preview≡render,播放/拖动/音频主时钟)+ 组件增删排序 + `ImportRow`(字幕选语言 / 章节选 analysis 导入)+ 属性面板(字幕/水印用通用 `PropertyPanel`;**章节用专用 `ChapterProperties`**——嵌套 modes/style,`chapterPatch.ts` 出 shallow-merge 安全 patch)。
+- 导出 tab `ExportTab`:**目前只读**显示渲染计划 + rendered[];**真渲染按钮未实现**(下一轮)。
+- `useNewsDeskPreview`:加载源 + 时长 + 各 srt_path 快照 cues(`cuesBySrtPath`)。
+- Hub `[+]` 创建创作菜单(`hub/Hub.tsx`,`CreateCreationMenu`)+ ProjectView 已渲染选中创作工作台。
+
+**chapter 图元绘制**(`engine/overlay/canvas2d.ts`):`drawTopicStrip`(顶部条带)+ `drawHeroCard`(侧栏卡,accent + 标题 + 正文 char-wrap)。几何镜像 `core/composition/primitives/{topic_strip,chapter_hero_card}.py`;字号 1080 基线绝对 px 按 h/1080 缩放。**坑:data-key 必须用组件真发的**(`topic_text`/`title`/`body`,非 `text`)。
+
+**news_desk 三项剩余缺口**(2026-05-31,接力点见 task.md 续28):
+1. **详情列表缺失**:字幕只读 cue 列表(legacy Tk 有,cues 已 parse 在 `useNewsDeskPreview`)+ 章节 schedule 逐章列表(现只能整体导入,看不到逐章)。
+2. **快照约定系统核查**:导入路径已确认快照;待通读导出渲染链确认不直引素材。
+3. **导出渲染按钮**:镜像 clip ExportTab 渲染循环(`buildNewsDeskTimeline → GPU 逐帧 encode → vc:writeFile → commit_render`),全源单输出。后端 provider 已就绪,缺 renderer 编码触发 + 进度/取消。
+- 其它欠债:preset RPC 未接(presets.py builtins 仍 legacy 绝对-px)、Tk news_desk 未退役、外部文件导入未做。
 
 ### 与本文档正文不同的关键实现决策
 
