@@ -469,3 +469,19 @@ clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"
 > **过程坑(本会话第 N 次)**:第一次提交导入功能时,shell 工作目录黏在 `desktop/` 致 `git add` 路径翻倍失败、**整批被取消**——`imports.py` 等文件根本没写成,只有问题3 的两文件落地。我一度起草了「24/85 passed、含导入功能」的 commit message(假的,幸亏被取消)。后重建全部导入代码并真验。教训:① git 操作从 repo 根用绝对/明确路径,别靠 shell cwd;② 提交前 `git status` 核对实际 staged 文件,别凭记忆写 message。
 
 **外部文件导入**(磁盘选 SRT)本轮刻意未做。**下一步**:① 真机验(导入字幕→预览出字幕;导入分析→章节条/卡出现;长字幕单行不溢出)② 导出渲染按钮 ③ preset RPC ④ Tk 退役。
+
+---
+
+## ▶ 续 26(2026-05-31,修章节不显示 — data-key + 几何不匹配)
+
+用户:字幕双语 + 自适应宽度正常,章节导入成功(已导入 3 章)却**预览不显示**。**真因不是 kind 缺失**(`topic_strip`/`chapter_hero_card` 早在 `OVERLAY_KINDS` 里)——是 **data-key + 几何不匹配**:`drawOverlayClip` 读 `clip.data["text"]` 且空则 bail,但 chapter 组件发的是 `data.topic_text`(条)和 `data.title`/`data.body`(卡),且需要顶部条带/侧栏面板而非通用居中文本路径。
+
+修(commit `3d8f254`):
+- `canvas2d.ts`:专用 `drawTopicStrip` + `drawHeroCard`,在通用文本路径前派发。条=整宽顶部条带(height_pct)+ `data.topic_text` 左缩进标题;卡=左锚半透明面板 + 屏缘 accent 条 + 标题 + 正文,按面板宽 char-wrap(CJK 安全)。几何常量镜像 `core/composition/primitives/{topic_strip,chapter_hero_card}.py`;章节字号是 1080 基线绝对 px(组件保留 legacy 绝对值),故按 h/1080 缩放保 preview≡export。**单一 overlay 路径,导出也会画章节。**
+- `chapterDraw.test.ts`(新,4 测):kind 认识 / 条从 topic_text 画 / 卡从 title+body 画 / 空条+卡跳过。**起草时第一版用错 data key(text/refined/keyPoints)致 2 测失败,已改为组件真发的 key。**
+
+验证:app+node typecheck rc=0;**124 TS 测**;build 81 模块。**真机章节条/卡待用户验**。
+
+> 过程:首次 Edit canvas2d.ts 没匹配上(我臆想了文件结构,实际它已有 OVERLAY_KINDS 且 drawOverlayClip 单函数),silently 失败 → 测试反而帮我暴露真因(data-key 不匹配)。
+
+**下一步**:① 真机验章节条/卡 ② 导出渲染按钮 ③ preset RPC ④ Tk 退役。
