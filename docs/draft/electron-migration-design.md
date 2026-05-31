@@ -100,9 +100,14 @@ news_desk 与 clip 走同一套契约,正面验证「公共组件库 + provider 
 - **A 源视频预览**:SourceTab `<video controls>` 走 `getArtifact("source")` → `vc-media://`(对齐 Tk source_preview_pane)。
 - **B 字幕查看 + 质检/修复**:`SubtitleViewer`(SRT 文本 + `check_subtitle` 按 hard/fixable/advisory 分类 + `quick_fix_subtitle` 一键清残留);RPC `material.read_subtitle`/`check_subtitle`/`quick_fix_subtitle`(对齐 Tk srt_preview_pane / subtitles_dialogs)。
 - **C 章节编辑器视频 seek**:`ChapterScheduleEditor` 加 `<video>` + 每行「跳转」(seek 到 start)/「取当前」(取播放秒写回 start),`getArtifact("source")` 供源(对齐 Tk chapter_editor)。
-- **D 外部 SRT 导入 + 全部分析 kind**:`material.import_subtitle`(+ `vc:pickSubtitle` 原生 .srt 选择器)snapshot 外部 SRT;SubtitlesTab 接全部 4 个分析 kind(analysis/transcript/chapter_transcript/hotclips,经既有 `run_analysis`)+ `list_analysis_artifacts`/`read_analysis_text` + `AnalysisTextViewer`(md/json 只读查看,analysis kind 走章节编辑器)。
+- **D 外部 SRT 导入 + 分析 kind**:`material.import_subtitle`(+ `vc:pickSubtitle` 原生 .srt 选择器)snapshot 外部 SRT;SubtitlesTab **生成菜单只 `analysis`+`hotclips`**(镜像 Tk `node_panes._show_analysis_menu` 的 `hidden={transcript,chapter_transcript}`——那俩只供 news_desk export/publish 内部用,引擎 registry 仍有但 UI 不放;续 33 修正,见 [[feedback_ui_menu_from_tk_not_engine]]);查看已有产物经 `list_analysis_artifacts`/`read_analysis_text` + `AnalysisTextViewer`(md/json 只读,analysis kind 走章节编辑器),不限 kind。
 
-**测试**:`tests/core_rpc/test_material.py`(22,inline-job runner 同步跑 work 防 daemon 竞态;含 create / context round-trip / set_source local+失败category+cancel / asr / analysis / save_chapters 归一化 / ai_fill no-progress_cb 回归守 / read·check·quick_fix·import subtitle / list_analysis_artifacts+read_text)。TS `pnpm typecheck` 干净 + `pnpm test` 130 全绿 + `pnpm build` 通过。
+**续 33 真机复核三处修正(已落 `9aeb9bd`)**:
+- **预置语言选择器**:ASR 源/翻译目标/导入语言从裸文本框换成 `LanguagePicker` 组合框 + `system.list_languages`(暴露 `core.lang_names.WHISPER_LANG_CHOICES` 99 语言;打字过滤预置、选中存 iso、ASR 带「自动检测」)——还原 Tk `ttk.Combobox` 的预置匹配。
+- **ContextTab 用法澄清**:重构成显式三步(① 你的线索/AI 输入提示 → ② AI 填充 → ③ AI 生成 15 字段背景/下游唯一源/可校正)+ 各组来源标签,解决"分不清用户输入 vs AI 产出"。
+- **分析 kind 精选**(见上 D)。
+
+**测试**:`tests/core_rpc/test_material.py`(23,inline-job runner 同步跑 work 防 daemon 竞态;含 create / context round-trip / set_source local+失败category+cancel / asr / analysis / save_chapters 归一化 / ai_fill no-progress_cb 回归守 / read·check·quick_fix·import subtitle / list_analysis_artifacts+read_text / list_languages)。TS `pnpm typecheck` 干净 + `pnpm test` 130 全绿 + `pnpm build` 通过。
 
 **⚠️ 已知限制 / 欠债**(均非阻塞):
 - **单源 wart(决策性)**:2nd news_video 实例拿不到自己的源/ASR(读写实例#1);`single_instance=True` 在菜单层挡住,`subtitle_pipeline.py:29-34` 的 `TODO(ADR-0005)` 保留待后续真·per-instance 化。

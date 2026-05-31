@@ -5,28 +5,59 @@
 
 ---
 
-## ▶▶ 新会话从这读起(2026-05-31 更新,接力点)
+## ▶▶ 新会话从这读起(2026-06-01 更新,接力点)
 
-**clip + news_desk 两个创作工作台 + 素材(material)侧均已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现;Tk news_desk 已退役。** 续29~续31 收口 news_desk;**续 32 把素材侧整块迁过来(M0~M6)**:新架构里现在能从零造出可用 news_video 素材(建实例 → 导源视频本地/yt-dlp → ASR/翻译/章节分析 sidecar job → 编辑 15 字段新闻背景 + AI 填充)。
+**clip + news_desk + 素材(material)侧均已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现;Tk news_desk 已退役。** 续29~31 收口 news_desk;**续 32 把素材侧整块迁过来(M0~M6 + gap A~D)**,**续 33 真机复核后修了三处**(预置语言选择器 / 新闻背景页用法澄清 / 分析 kind 精选)。**两笔已落 `main`:`fd2cffb`(素材迁移)+ `9aeb9bd`(三处修正),均未 push。**
 
-**▶ 下一步 = 全 Electron renderer 双语(i18n)改造 + 素材侧真机肉眼验。** 用户已定:先把素材功能补全(✅ 已含 gap A~D:源视频预览 / 字幕查看+质检修复 / 章节编辑器视频 seek / 外部 SRT 导入+全部分析 kind),**再做完整双语改造**——当前整个 renderer(clip/news_desk/Hub/素材)纯中文硬编码、无 `tr()`(设计文档 §7.4 待决),要铺一层轻量 i18n + 复用现有 zh/en JSON 把所有硬编码中文抽成 key。素材侧 typecheck/测试/build 全绿但 GUI headless 覆盖不到,需 `env -u ELECTRON_RUN_AS_NODE pnpm dev` 肉眼验。**完整实现状态 + 代码位置 + 已知限制见 `docs/draft/electron-migration-design.md` ★实现进度 末「素材(material)侧」节**(权威接力入口)。
+**▶ 下一大任务 = 全 Electron renderer 双语(i18n)改造**(详见本文件下「▶ 下一大任务:Electron renderer 双语 i18n 改造」块,有完整范围 + 起手步骤)。当前整个 renderer(clip/news_desk/Hub/素材)**纯中文硬编码、零 `tr()`**,要铺一层轻量 i18n + 复用现有 zh/en JSON 把所有硬编码中文抽成 key。**另:素材侧真机肉眼验仍欠**(typecheck/测试/build 全绿但 GUI/渲染 headless 覆盖不到),需 `env -u ELECTRON_RUN_AS_NODE pnpm dev` 跑一遍建实例→导源→ASR→质检→章节(seek)→context→AI 填充。
 
-- **新会话先读**:`docs/draft/electron-migration-design.md` 顶部「★ 实现进度」(含 clip + news_desk + 素材侧 全部实现状态、代码位置、坑、下一步)+ 奠基稿 `composition-otio-foundation.md`(数据模型/渲染/拓扑权威)。
-- 工作纪律:忠实还原既存 Tk UI 交互,不发明/不简化([[feedback_faithful_port_not_invent]]);改 Python 必整重启 sidecar(`desktop/dev.ps1`,Ctrl+R 只重载 renderer);创作/素材访问素材数据经 Material Model([[feedback_material_via_model_only]]);config 单一所有者([[project_creation_config_owner]])。
-- 历史进展见下「续 N」;news_desk 迁移全程 = 续19~续31;素材侧 = 续 32。
+- **新会话先读**:`docs/draft/electron-migration-design.md` 顶部「★ 实现进度」(含 clip + news_desk + 素材侧 全部实现状态、代码位置、坑)+ 奠基稿 `composition-otio-foundation.md`(数据模型/渲染/拓扑权威)。
+- 工作纪律:忠实还原既存 Tk UI 交互,不发明/不简化([[feedback_faithful_port_not_invent]]);**用户菜单/选项列表照搬 Tk 实际菜单构造,别从引擎 registry 重建**([[feedback_ui_menu_from_tk_not_engine]],续 33 踩过:分析 kind 多列了 2 个);改 Python 必整重启 sidecar(`desktop/dev.ps1`,Ctrl+R 只重载 renderer);素材数据经 Material Model([[feedback_material_via_model_only]]);config 单一所有者([[project_creation_config_owner]]);**改 i18n 必 zh/en 双语同步、UI 新字符串走 tr()**([[feedback_i18n_symmetry]])。
+- 历史进展见下「续 N」;news_desk 迁移 = 续19~31;素材侧 = 续 32~33。
 
 ---
 
-## ▶ 续 32(2026-05-31,素材(material)侧迁新架构 M0~M6 — ⚠️ 未提交,在工作树)
+## ▶ 续 32(2026-05-31,素材(material)侧迁新架构 M0~M6 + gap A~D — 已落 main `fd2cffb`)
 
 用户决策:**忠实照搬 project-level 单源行为**(不修 per-instance 地基)、**整个素材侧一次做完**、**源获取本地+yt-dlp 都做**。第三个迁入新架构的产品本体。**Python 业务一行未重写**——薄 RPC + job 包既有 `NewsVideoModel`/`source_acquire`/`subtitle_pipeline`/`chapters_io`。细节(代码位置 / 已知限制 / 单源 wart)全在 `electron-migration-design.md` ★实现进度 末「素材(material)侧」节。
 
 - **20 RPC**:`project.{create_material_instance,list_material_types_info}` + `material.*`(context/basic_info 读写、source_meta、字幕/分析读、save_chapters + 5 个 job:set_source/run_asr/run_translate/run_analysis/ai_fill_context)。
 - **renderer**:`ipc/runJob.ts`(通用 sidecar-job 消费,subscribe-first 防竞态 + `useJob`)、`workbenches/material/*`(三 tab 壳 + Source/Subtitles/Context tab + ChapterScheduleEditor)、`workbenches/shared/fields.tsx`(字段行从 news_desk 抽出共享)、Hub 素材 [+] + 可点行 + 事件实时刷新。
 - **修了一处 dead-broken bug**:`model.ai_fill_context` 旧代码向无该参数的 `extract` 转发 `progress_cb` → 必 TypeError(无 Tk 调用方,Tk 直调 extract);改为不转发。
-- **gap A~D 补全(对照 Tk 检视/编辑层)**:A 源视频预览(SourceTab `<video>` + vc-media://)/ B 字幕查看+质检(`SubtitleViewer` + `check_subtitle`/`quick_fix_subtitle`)/ C 章节编辑器视频 seek(跳转+取当前)/ D 外部 SRT 导入(`import_subtitle`+`vc:pickSubtitle`)+全部 4 个分析 kind(`list_analysis_artifacts`/`read_analysis_text`/`AnalysisTextViewer`)。material RPC 共 24 个。
-- **验证**:`tests/core_rpc/test_material.py` 22 测全绿(inline-job runner 防 daemon 竞态);TS typecheck + 130 vitest + `pnpm build`(93 模块)全过;全套 `pytest tests/` 仅 3 个 pre-existing 失败(golden CRLF x2 + clip_config stale id),无新增。
-- **欠**:真机肉眼验(GUI headless 覆盖不到);提交(工作树未提交)。**全 renderer 双语 i18n 改造 = 紧接着的下一大任务**(见顶部下一步)。单源 wart(`single_instance=True` 挡 2nd 实例)+ 字幕双语并排 = 后续打磨。
+- **gap A~D 补全(对照 Tk 检视/编辑层)**:A 源视频预览(SourceTab `<video>` + vc-media://)/ B 字幕查看+质检(`SubtitleViewer` + `check_subtitle`/`quick_fix_subtitle`)/ C 章节编辑器视频 seek(跳转+取当前)/ D 外部 SRT 导入(`import_subtitle`+`vc:pickSubtitle`)+ 分析产物查看(`list_analysis_artifacts`/`read_analysis_text`/`AnalysisTextViewer`)。material RPC 共 24 个。
+- **验证**:`tests/core_rpc/test_material.py`(inline-job runner 防 daemon 竞态);TS typecheck + 130 vitest + `pnpm build` 全过;全套 `pytest tests/` 仅 3 个 pre-existing 失败(golden CRLF x2 + clip_config stale id),无新增。
+- **单源 wart**(`single_instance=True` 挡 2nd 实例)+ 字幕双语并排 = 后续打磨。
+
+---
+
+## ▶ 续 33(2026-06-01,真机复核三处修正 — 已落 main `9aeb9bd`)
+
+`fd2cffb` 真机过了一遍,用户当场抓出三处,逐个修:
+- **预置语言选择器**:ASR 源/翻译目标/导入语言原本是裸文本框,丢了 Tk `ttk.Combobox` 的预置匹配。加 `system.list_languages`(暴露 `core.lang_names.WHISPER_LANG_CHOICES` 99 语言)+ 新 `LanguagePicker` 组合框(打字过滤预置、选中存 iso、ASR 带「自动检测」)。
+- **新闻背景页用法**:看不出哪些是用户输入、哪些是 AI 产出(5 字段线索默认折叠藏了)。重构成显式三步(① 你的线索/AI 输入 → ② AI 填充 → ③ AI 生成的 15 字段背景/下游唯一源/可校正)+ 各组来源标签。
+- **分析 kind 多列**:"生成分析"按钮列了全 4 种(从引擎 `subtitle_analysis.ANALYSIS_TYPES`/`RUNNERS` 取),但 Tk 只给 2 种——`node_panes._show_analysis_menu` 里 `hidden={transcript, chapter_transcript}`(那俩只供 news_desk export/publish 内部用)。改成只 `analysis`+`hotclips`,镜像 Tk hidden 过滤;查看已有产物仍不限 kind(Tk 也只精选"生成")。**教训存记忆 [[feedback_ui_menu_from_tk_not_engine]]:用户菜单照搬 Tk 实际菜单,别拿引擎能力全集当菜单。**
+- **验证**:`test_material.py` 23 测(+`system.list_languages`)+ TS typecheck + 130 vitest + build 全过。
+
+---
+
+## ▶ 下一大任务:Electron renderer 双语 i18n 改造
+
+**现状**:整个 `desktop/src/renderer/`(clip / news_desk / Hub / 素材 工作台)**纯中文硬编码、零 `tr()`**(grep `desktop/src/renderer/` 无任何 `i18next`/`useTranslation`/`tr(`)。Tk 侧有完整双语(`src/i18n/{zh,en}.json` 806 key + `tr()`),但 Electron renderer 迁移时一直没接 i18n——见迁移设计文档 §7 待决问题第 4 条。这是用户明确要求恢复的缺口(创作侧迁移时就欠下,不是这次砍的)。
+
+**目标**:给 renderer 铺一层轻量 i18n,把所有硬编码中文抽成 key,补齐 en,zh/en 同步([[feedback_i18n_symmetry]])。
+
+**范围**(全前端,一次做全,别只做素材造成半中半 key 的不一致):
+- `desktop/src/renderer/hub/Hub.tsx`(素材/创作 sidebar、launcher、菜单)
+- `desktop/src/renderer/workbenches/clip/*`、`workbenches/news_desk/*`、`workbenches/material/*`、`workbenches/shared/*`
+- 文案分两类:① UI label/按钮/section → 走 tr();② 错误信息(很多来自 sidecar `RpcError.message`,那是 Python 侧文案)——sidecar 错误文案是否也要双语化是单独决策,**先只做 renderer 自有的硬编码中文**。
+
+**起手步骤建议**:
+1. 选方案:i18next(成熟、重)vs 自建轻量 `tr(key, vars?)`(读 locale + zh/en JSON,~30 行)。renderer 是新栈、字符串量中等,**倾向自建轻量**,与 Tk 的 `tr()` 心智一致;key 命名可复用/对齐 Tk 的 `src/i18n/{zh,en}.json` 结构。
+2. 建 `desktop/src/renderer/i18n/`(`zh.json`/`en.json` + `tr.ts` + locale 来源:先固定跟随系统或加个开关,后续再接 preferences)。
+3. **逐文件抽**:grep 中文字符串 → 起 key → 替换成 `tr("...")` → 同步写 zh/en。建议从 Hub + shared/fields 开始(共享面最大),再 clip/news_desk/material 各工作台。
+4. 每抽一批 `pnpm typecheck` + `pnpm test`(快照/逻辑测不应受影响)+ 真机扫一眼。
+
+**工作纪律**:UI 新字符串必须走 tr()、zh/en 双语同步([[feedback_i18n_symmetry]]);core/sidecar 层不引 renderer 的 tr;改 UI 布局/模块前 grep `docs/`([[feedback_check_design_docs]]);UI 文案不准用代码内部名([[feedback_user_facing_naming]])。
 
 ---
 
