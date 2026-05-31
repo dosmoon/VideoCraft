@@ -73,6 +73,10 @@ class NewsDeskInstanceConfig:
     bound_material: Optional[BoundMaterial] = None
     preset_name: str = ""
     components: list[dict] = field(default_factory=list)
+    # Persisted render-state (single full-source output). Owned by export.py's
+    # commit_render/delete_render; mirrors clip's `rendered[]` so the workbench
+    # Export tab can show what's on disk.
+    rendered: list[dict] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: str) -> "NewsDeskInstanceConfig":
@@ -101,10 +105,15 @@ class NewsDeskInstanceConfig:
         # era so the id-based RPCs can address each component unambiguously.
         _ensure_unique_ids(components)
 
+        rendered_raw = raw.get("rendered")
+        rendered = ([r for r in rendered_raw if isinstance(r, dict)]
+                     if isinstance(rendered_raw, list) else [])
+
         return cls(
             bound_material=bm,
             preset_name=str(raw.get("preset_name", "")),
             components=components,
+            rendered=rendered,
         )
 
     # ── top-level patch (creation.update_config) ────────────────────────────
@@ -178,6 +187,7 @@ class NewsDeskInstanceConfig:
         out: dict = {
             "preset_name": self.preset_name,
             "components": self.components,
+            "rendered": list(self.rendered),
         }
         if self.bound_material is not None:
             out["bound_material"] = self.bound_material.to_dict()

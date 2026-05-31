@@ -224,6 +224,60 @@ def test_preview_data_unbound_is_empty(ctx, project_with_news_desk):
     assert pd == {"mediaRef": None, "durationSec": 0.0, "subtitlePaths": {}}
 
 
+# ── render provider (news_desk: single full-source output) ────────────────────
+
+def test_plan_render_single_output(ctx, project_with_bound_news_desk):
+    _open(ctx, project_with_bound_news_desk)
+    plan = call(ctx, "creation.plan_render", {"type": "news_desk", "instance": "news"})["result"]
+    from materials.news_video.model import NewsVideoModel
+    expected = NewsVideoModel(project_with_bound_news_desk, "news-1").source_video_path
+    assert plan["mediaRef"] == expected
+    assert plan["outIdx"] == 1
+    assert plan["outputPath"].replace("\\", "/").endswith("output.mp4")
+    assert isinstance(plan["durationSec"], float)
+
+
+def test_commit_render_writes_sidecar_and_records(ctx, project_with_bound_news_desk, emit):
+    _open(ctx, project_with_bound_news_desk)
+    rendered = call(
+        ctx, "creation.commit_render",
+        {"type": "news_desk", "instance": "news", "src_idx": 0, "out_idx": 1, "duration_sec": 42.0},
+    )["result"]
+    assert len(rendered) == 1
+    assert rendered[0]["file"] == "output.mp4"
+    assert rendered[0]["output_index"] == 1
+    assert ("event.creation.changed", {"type": "news_desk", "instance": "news"}) in emit.events
+
+    inst_dir = project_with_bound_news_desk.creation_instance_dir("news_desk", "news")
+    with open(os.path.join(inst_dir, "output.json"), encoding="utf-8") as f:
+        sidecar = json.load(f)
+    assert sidecar["duration_sec"] == 42.0
+    assert sidecar["output_index"] == 1
+    # rendered[] persisted into config.json.
+    with open(os.path.join(inst_dir, "config.json"), encoding="utf-8") as f:
+        on_disk = json.load(f)
+    assert [r["output_index"] for r in on_disk["rendered"]] == [1]
+
+
+def test_delete_render_unlinks_and_clears(ctx, project_with_bound_news_desk):
+    _open(ctx, project_with_bound_news_desk)
+    inst_dir = project_with_bound_news_desk.creation_instance_dir("news_desk", "news")
+    call(
+        ctx, "creation.commit_render",
+        {"type": "news_desk", "instance": "news", "src_idx": 0, "out_idx": 1, "duration_sec": 42.0},
+    )
+    # Simulate the renderer's mp4 on disk (written via vc:writeFile in the app).
+    with open(os.path.join(inst_dir, "output.mp4"), "wb") as f:
+        f.write(b"\x00")
+
+    rendered = call(
+        ctx, "creation.delete_render", {"type": "news_desk", "instance": "news", "out_idx": 1}
+    )["result"]
+    assert rendered == []
+    assert not os.path.exists(os.path.join(inst_dir, "output.mp4"))
+    assert not os.path.exists(os.path.join(inst_dir, "output.json"))
+
+
 # ── deferred: presets not wired yet ──────────────────────────────────────────
 
 def test_presets_not_supported_yet(ctx, project_with_news_desk):
