@@ -95,6 +95,45 @@ def delete_render(ctx: Context, type: str, instance: str, out_idx: int) -> list[
     return rendered
 
 
+def _import_provider(type: str):
+    """Resolve a creation type's import provider or raise (ADR-0004)."""
+    import creations
+
+    ctype = creations.get(type)
+    if ctype is None:
+        raise RpcError(-32602, f"unknown creation type: {type!r}")
+    provider = ctype.import_provider
+    if provider is None:
+        raise RpcError(-32603, f"creation type {type!r} has no import_provider")
+    return provider
+
+
+@rpc_method("creation.list_imports")
+def list_imports(ctx: Context, type: str, instance: str) -> dict[str, Any]:
+    """What this instance can import from its bound material (provider-defined
+    shape — e.g. news_desk returns {subtitleLangs, analyses}). The matching TS
+    workbench consumes it (ADR-0004)."""
+    return _import_provider(type).list_imports(ctx.session.project, instance)
+
+
+@rpc_method("creation.import_resource")
+def import_resource(
+    ctx: Context, type: str, instance: str, component_id: str, params: dict[str, Any]
+) -> dict[str, Any]:
+    """Import a material artifact into a component (snapshot SRT / fill chapter
+    schedule), persist via the single owner, broadcast. `params` is provider-
+    defined + opaque here. Returns the updated component dict."""
+    if not isinstance(params, dict):
+        raise RpcError(-32602, "params must be an object")
+    try:
+        component = _import_provider(type).import_resource(
+            ctx.session.project, instance, component_id, params)
+    except ValueError as exc:
+        raise RpcError(-32602, str(exc)) from exc
+    ctx.notify("event.creation.changed", {"type": type, "instance": instance})
+    return component
+
+
 @rpc_method("creation.list_presets")
 def list_presets(ctx: Context, type: str, instance: str) -> dict[str, Any]:
     """{names, builtins, lastUsed} for the Style-tab preset combo."""

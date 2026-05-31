@@ -278,6 +278,99 @@ def test_delete_render_unlinks_and_clears(ctx, project_with_bound_news_desk):
     assert not os.path.exists(os.path.join(inst_dir, "output.json"))
 
 
+# ── import provider (snapshot subtitle SRT / chapter schedule from material) ──
+
+def _seed_material_artifacts(project):
+    """Populate the bound news_video material with two subtitle languages + an
+    analysis.json envelope, so the import provider has something to snapshot."""
+    from materials.news_video.model import NewsVideoModel
+
+    model = NewsVideoModel(project, "news-1")
+    os.makedirs(model.subtitles_dir, exist_ok=True)
+    with open(os.path.join(model.subtitles_dir, "zh.srt"), "w", encoding="utf-8") as f:
+        f.write("1\n00:00:01,000 --> 00:00:03,000\n你好\n")
+    with open(os.path.join(model.subtitles_dir, "en.srt"), "w", encoding="utf-8") as f:
+        f.write("1\n00:00:01,000 --> 00:00:03,000\nhello\n")
+    with open(os.path.join(model.subtitles_dir, "zh.analysis.json"), "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "schema_version": 2,
+                "chapters": [
+                    {"start_sec": 0.0, "end_sec": 30.0, "title": "开始", "refined": "intro", "key_points": ["a"]},
+                    {"start_sec": 30.0, "end_sec": 90.0, "title": "正文", "refined": "body", "key_points": []},
+                ],
+            },
+            f,
+        )
+
+
+def test_list_imports_reports_material_artifacts(ctx, project_with_bound_news_desk):
+    _seed_material_artifacts(project_with_bound_news_desk)
+    _open(ctx, project_with_bound_news_desk)
+    res = call(ctx, "creation.list_imports", {"type": "news_desk", "instance": "news"})["result"]
+    assert res["subtitleLangs"] == ["en", "zh"]
+    assert res["analyses"] == ["zh.analysis.json"]
+
+
+def test_import_subtitle_snapshots_and_sets_srt_path(ctx, project_with_bound_news_desk, emit):
+    _seed_material_artifacts(project_with_bound_news_desk)
+    _open(ctx, project_with_bound_news_desk)
+    comp = call(
+        ctx, "creation.import_resource",
+        {"type": "news_desk", "instance": "news", "component_id": "sub2",
+         "params": {"kind": "subtitle", "lang": "zh"}},
+    )["result"]
+    assert comp["srt_path"] == "subtitles/sub2.srt"
+    assert ("event.creation.changed", {"type": "news_desk", "instance": "news"}) in emit.events
+    # The SRT was snapshotted into the creation instance dir (snapshot principle).
+    inst_dir = project_with_bound_news_desk.creation_instance_dir("news_desk", "news")
+    snap = os.path.join(inst_dir, "subtitles", "sub2.srt")
+    assert os.path.isfile(snap)
+    assert "你好" in open(snap, encoding="utf-8").read()
+    # Persisted into config.json.
+    with open(os.path.join(inst_dir, "config.json"), encoding="utf-8") as f:
+        on_disk = json.load(f)
+    sub2 = next(c for c in on_disk["components"] if c["id"] == "sub2")
+    assert sub2["srt_path"] == "subtitles/sub2.srt"
+
+
+def test_import_chapters_fills_schedule(ctx, project_with_bound_news_desk):
+    _seed_material_artifacts(project_with_bound_news_desk)
+    _open(ctx, project_with_bound_news_desk)
+    comp = call(
+        ctx, "creation.import_resource",
+        {"type": "news_desk", "instance": "news", "component_id": "chap",
+         "params": {"kind": "chapters", "filename": "zh.analysis.json"}},
+    )["result"]
+    sched = comp["schedule"]
+    assert [s["title"] for s in sched] == ["开始", "正文"]
+    assert sched[0]["start_sec"] == 0.0 and sched[0]["end_sec"] == 30.0
+    assert sched[0]["key_points"] == ["a"]
+
+
+def test_import_subtitle_unknown_lang(ctx, project_with_bound_news_desk):
+    _seed_material_artifacts(project_with_bound_news_desk)
+    _open(ctx, project_with_bound_news_desk)
+    resp = call(
+        ctx, "creation.import_resource",
+        {"type": "news_desk", "instance": "news", "component_id": "sub2",
+         "params": {"kind": "subtitle", "lang": "fr"}},
+    )
+    assert resp["error"]["code"] == -32602
+
+
+def test_import_wrong_component_kind(ctx, project_with_bound_news_desk):
+    _seed_material_artifacts(project_with_bound_news_desk)
+    _open(ctx, project_with_bound_news_desk)
+    # chapters import targeting a subtitle component → rejected.
+    resp = call(
+        ctx, "creation.import_resource",
+        {"type": "news_desk", "instance": "news", "component_id": "sub2",
+         "params": {"kind": "chapters", "filename": "zh.analysis.json"}},
+    )
+    assert resp["error"]["code"] == -32602
+
+
 # ── deferred: presets not wired yet ──────────────────────────────────────────
 
 def test_presets_not_supported_yet(ctx, project_with_news_desk):

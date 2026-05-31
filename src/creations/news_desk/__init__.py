@@ -10,6 +10,7 @@ from creations import CreationType, register
 from creations.news_desk.config import NewsDeskInstanceConfig
 from creations.news_desk.preview import preview_data as _preview_data
 from creations.news_desk import export as _export
+from creations.news_desk import imports as _imports
 
 register(CreationType(
     type_name="news_desk",
@@ -25,4 +26,5 @@ register(CreationType(
     config_owner_cls=NewsDeskInstanceConfig,
     preview_provider=_preview_data,
     render_provider=_export,
+    import_provider=_imports,
 ))

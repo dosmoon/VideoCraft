@@ -450,3 +450,22 @@ clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"
 验证:app+node typecheck rc=0;120 TS 测;`electron-vite build` 80 模块(原 76)。**真机画面 + 播放待用户验**(GPU 预览 headless 覆盖不到)。已提交 `6960c4a`。
 
 **下一步**:① 真机验预览(画面/字幕/章节条/播放有声)② 导出渲染按钮(整源合成→编码→writeFile→commit_render,镜像 clip ExportTab,用户选「先预览后导出」)③ preset RPC ④ Tk 退役。
+
+---
+
+## ▶ 续 25(2026-05-31,news_desk 真机反馈三修:字幕导入 + 章节导入 + 字幕自适应宽度)
+
+用户真机验:画面/字幕/水印有,但三处缺:① 字幕组件要能选字幕导入 ② 章节组件要能选章节导入 ③ 字幕自适应宽度没做。
+
+**问题3(自适应宽度,commit `3bb44c4`)**:`subtitle.compile` 仅当 `ctx.frameAspect` 有值才单行 fit;`buildNewsDeskTimeline` 从没传 → news_desk 字幕不换行。修:装配器加可选 `frameAspect`(全源=源宽高比),`NewsDeskPreview` 传 `srcW/srcH`。
+
+**问题1+2(导入,commit `2a48de2`,用户选「只从素材选」)**:新增 **import_provider**(沿用 preview/render provider 模式,base 层 ADR-0004 泛型派发):
+- `CreationType.import_provider` 字段;`creations/news_desk/imports.py`:`list_imports → {subtitleLangs, analyses}`;`import_resource(component_id, params)` 快照进组件 + 单一所有者持久化。`{kind:subtitle,lang}` 把素材 `<lang>.srt` 拷进 `<instance>/subtitles/<id>.srt` 设 srt_path;`{kind:chapters,filename}` 从 analysis.json 填 chapter schedule。忠实 Tk `_import_srt`/`_import_from_analysis`,经 registry 取素材零硬编码名。
+- `core_rpc/methods/creation.py`:`creation.list_imports` + `creation.import_resource`。
+- `ipc/client.ts` 两 stub;`StyleTab.tsx` 在属性面板上方加 `ImportRow`(字幕→语言选择器;章节→分析文件选择器;带已导入/未导入/已导入 N 章状态 + 空态提示)。
+
+验证:news_desk RPC **21 测** standalone;core_rpc **85 测**;app+node typecheck rc=0;**120 TS 测**;build 80 模块。**真机导入点击 + 字幕换行待用户验**。
+
+> **过程坑(本会话第 N 次)**:第一次提交导入功能时,shell 工作目录黏在 `desktop/` 致 `git add` 路径翻倍失败、**整批被取消**——`imports.py` 等文件根本没写成,只有问题3 的两文件落地。我一度起草了「24/85 passed、含导入功能」的 commit message(假的,幸亏被取消)。后重建全部导入代码并真验。教训:① git 操作从 repo 根用绝对/明确路径,别靠 shell cwd;② 提交前 `git status` 核对实际 staged 文件,别凭记忆写 message。
+
+**外部文件导入**(磁盘选 SRT)本轮刻意未做。**下一步**:① 真机验(导入字幕→预览出字幕;导入分析→章节条/卡出现;长字幕单行不溢出)② 导出渲染按钮 ③ preset RPC ④ Tk 退役。

@@ -175,6 +175,27 @@ export const rpc = {
       delta,
     }),
 
+  // Material-artifact imports (provider-defined shape). list_imports reports what
+  // the bound material offers; import_resource snapshots one into a component and
+  // returns the updated component. news_desk: subtitle SRT + chapter schedule.
+  listImports: (type: string, instance: string) =>
+    rpcCall<{ subtitleLangs: string[]; analyses: string[] }>("creation.list_imports", {
+      type,
+      instance,
+    }),
+  importResource: (
+    type: string,
+    instance: string,
+    componentId: string,
+    params: Record<string, unknown>,
+  ) =>
+    rpcCall<Component>("creation.import_resource", {
+      type,
+      instance,
+      component_id: componentId,
+      params,
+    }),
+
   // Render orchestration. plan_render returns output paths + geometry for the
   // selected candidates; the renderer encodes each to outputPath, writes it via
   // window.vc.writeFile, then commit_render records it (sidecar JSON + rendered[]).

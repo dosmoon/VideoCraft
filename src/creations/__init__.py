@@ -56,6 +56,12 @@ class CreationType:
     # cleanup, and the persisted rendered[] state. core_rpc.creation.* call it
     # generically (ADR-0004). Optional; only creations with export implement it.
     render_provider: Optional[object] = None
+    # Import provider: an object exposing list_imports(project, instance) ->
+    # {importable resources} and import_resource(project, instance, component_id,
+    # params) -> updated component, snapshotting material artifacts into a
+    # component (e.g. news_desk subtitle SRT / chapter schedule). Both shapes are
+    # provider-defined + opaque to core_rpc.creation.* (ADR-0004). Optional.
+    import_provider: Optional[object] = None
 
 
 # Module-private registry. Plugins call register() at import time.

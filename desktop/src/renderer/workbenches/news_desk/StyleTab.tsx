@@ -57,6 +57,13 @@ export function StyleTab(props: {
   const [addable, setAddable] = useState<{ kind: string; multi_instance: boolean }[]>([]);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [compErr, setCompErr] = useState("");
+  // Importable material artifacts (subtitle languages + analysis files).
+  const [imports, setImports] = useState<{ subtitleLangs: string[]; analyses: string[] }>({
+    subtitleLangs: [],
+    analyses: [],
+  });
+  const [importBusy, setImportBusy] = useState(false);
+  const [importErr, setImportErr] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -64,10 +71,34 @@ export function StyleTab(props: {
       .listAddableComponents(type, instance)
       .then((a) => alive && setAddable(a))
       .catch(() => alive && setAddable([]));
+    void rpc
+      .listImports(type, instance)
+      .then((i) => alive && setImports(i))
+      .catch(() => alive && setImports({ subtitleLangs: [], analyses: [] }));
     return () => {
       alive = false;
     };
   }, [type, instance]);
+
+  // Import a material artifact into the selected component → splice the returned
+  // (updated) component back into the list. The owner persisted it server-side.
+  const onImport = useCallback(
+    async (componentId: string, params: Record<string, unknown>) => {
+      setImportBusy(true);
+      setImportErr("");
+      try {
+        const updated = await rpc.importResource(type, instance, componentId, params);
+        onComponentsReplaced(
+          (components ?? []).map((c) => (c.id === componentId ? updated : c)),
+        );
+      } catch (err) {
+        setImportErr(fmtErr(err));
+      } finally {
+        setImportBusy(false);
+      }
+    },
+    [type, instance, components, onComponentsReplaced],
+  );
 
   const presentKinds = new Set((components ?? []).map((c) => c.kind));
   const fmtErr = (err: unknown) =>
@@ -272,6 +303,35 @@ export function StyleTab(props: {
         </div>
         {selected ? (
           <>
+            {selected.kind === "subtitle" && (
+              <ImportRow
+                label="字幕来源"
+                options={imports.subtitleLangs}
+                emptyHint="素材无可用字幕(先在素材里跑字幕生成)"
+                current={
+                  typeof selected["srt_path"] === "string" && selected["srt_path"]
+                    ? "已导入"
+                    : "未导入"
+                }
+                busy={importBusy}
+                onPick={(lang) => void onImport(selected.id, { kind: "subtitle", lang })}
+              />
+            )}
+            {selected.kind === "chapter" && (
+              <ImportRow
+                label="章节来源"
+                options={imports.analyses}
+                emptyHint="素材无章节分析(先在素材里跑章节分析)"
+                current={
+                  Array.isArray(selected["schedule"]) && (selected["schedule"] as unknown[]).length
+                    ? `已导入 ${(selected["schedule"] as unknown[]).length} 章`
+                    : "未导入"
+                }
+                busy={importBusy}
+                onPick={(filename) => void onImport(selected.id, { kind: "chapters", filename })}
+              />
+            )}
+            {importErr && <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {importErr}</p>}
             <PropertyPanel
               component={selected}
               disabled={savingId === selected.id}
@@ -279,7 +339,7 @@ export function StyleTab(props: {
             />
             {selected.kind === "chapter" && (
               <p style={{ color: "#666", fontSize: 11, marginTop: 10 }}>
-                章节排期 + 卡片样式编辑待后续迭代(排期在导入时已快照)
+                章节排期 + 卡片样式编辑待后续迭代
               </p>
             )}
           </>
@@ -287,6 +347,78 @@ export function StyleTab(props: {
           <p style={{ color: "#666", fontSize: 12 }}>选择一个组件以编辑其属性</p>
         )}
       </div>
+    </div>
+  );
+}
+
+// Import-from-material row: a dropdown of options (subtitle langs / analysis
+// files) + an import button. Picking one snapshots it into the component.
+function ImportRow(props: {
+  label: string;
+  options: string[];
+  emptyHint: string;
+  current: string;
+  busy: boolean;
+  onPick: (option: string) => void;
+}) {
+  const { label, options, emptyHint, current, busy, onPick } = props;
+  const [choice, setChoice] = useState("");
+  const sel = choice || options[0] || "";
+  return (
+    <div
+      style={{
+        marginBottom: 12,
+        padding: "8px 10px",
+        background: "#1a1a1e",
+        border: "1px solid #2a2a2e",
+        borderRadius: 6,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "#ccc" }}>{label}</span>
+        <span style={{ fontSize: 11, color: "#777" }}>{current}</span>
+      </div>
+      {options.length === 0 ? (
+        <p style={{ color: "#888", fontSize: 11, margin: 0 }}>{emptyHint}</p>
+      ) : (
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <select
+            value={sel}
+            onChange={(e) => setChoice(e.target.value)}
+            style={{
+              flex: 1,
+              background: "#222",
+              color: "#ddd",
+              border: "1px solid #3a3a40",
+              borderRadius: 4,
+              padding: "3px 6px",
+              fontSize: 12,
+            }}
+          >
+            {options.map((o) => (
+              <option key={o} value={o}>
+                {o}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => sel && onPick(sel)}
+            disabled={busy || !sel}
+            style={{
+              background: "#2d6cdf",
+              color: "#fff",
+              border: "none",
+              borderRadius: 4,
+              padding: "3px 12px",
+              fontSize: 12,
+              cursor: busy ? "default" : "pointer",
+              opacity: busy ? 0.6 : 1,
+            }}
+          >
+            导入
+          </button>
+        </div>
+      )}
     </div>
   );
 }
