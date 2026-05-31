@@ -133,6 +133,20 @@ export const rpc = {
 
   loadConfig: (type: string, instance: string) =>
     rpcCall<Record<string, unknown>>("creation.load_config", { type, instance }),
+  // Bind a material instance to the creation (ADR-0005). A new-arch creation is
+  // created unbound; this is how it gets its source. Returns the updated config.
+  bindMaterial: (
+    type: string,
+    instance: string,
+    materialType: string,
+    materialInstance: string,
+  ) =>
+    rpcCall<Record<string, unknown>>("creation.bind_material", {
+      type,
+      instance,
+      material_type: materialType,
+      material_instance: materialInstance,
+    }),
   listComponents: (type: string, instance: string) =>
     rpcCall<Component[]>("creation.list_components", { type, instance }),
   updateComponent: (

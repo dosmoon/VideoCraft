@@ -203,6 +203,17 @@ class ClipInstanceConfig:
                 if not ov:
                     self.clips_overrides.pop(idx, None)
 
+    def bind_material(self, material_type: str, material_instance: str) -> None:
+        """Bind this creation to a material instance (ADR-0005). The single
+        owner of config.json persists it — `material_binding.py` is UI-only and
+        never writes here. Replaces any existing binding (re-bind)."""
+        mt = str(material_type).strip()
+        mi = str(material_instance).strip()
+        if not mt or not mi:
+            raise ValueError("material_type and material_instance are required")
+        self.bound_material = BoundMaterial(
+            type_name=mt, instance_name=mi, bound_at=now_iso())
+
     # ── component add / remove / reorder (creation.*_component RPCs) ────────
     # The single owner owns component-list mutation, just as it owns
     # apply_patch. The base RPC layer calls these generically (getattr), so it

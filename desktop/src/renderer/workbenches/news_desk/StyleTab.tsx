@@ -67,6 +67,9 @@ export function StyleTab(props: {
   });
   const [importBusy, setImportBusy] = useState(false);
   const [importErr, setImportErr] = useState("");
+  // Bumped after a material bind so the import options (which come from the now-
+  // bound material) re-fetch.
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => {
     let alive = true;
@@ -81,7 +84,7 @@ export function StyleTab(props: {
     return () => {
       alive = false;
     };
-  }, [type, instance]);
+  }, [type, instance, refreshKey]);
 
   // Import a material artifact into the selected component → splice the returned
   // (updated) component back into the list. The owner persisted it server-side.
@@ -111,6 +114,13 @@ export function StyleTab(props: {
   const preview = useNewsDeskPreview(type, instance);
   // Drives the preview playhead from the subtitle/chapter detail lists.
   const previewRef = useRef<NewsDeskPreviewHandle>(null);
+
+  // After binding a material, refresh the preview (nobind → ready) and the
+  // import options (which read the now-bound material).
+  const onMaterialBound = useCallback(() => {
+    setRefreshKey((k) => k + 1);
+    preview.reload();
+  }, [preview]);
 
   // ── presets (component-list templates; news_desk has no output geometry) ────
   const [presets, setPresets] = useState<PresetList | null>(null);
@@ -336,7 +346,9 @@ export function StyleTab(props: {
             预览
           </div>
           {preview.status === "loading" && <p style={{ color: "#888", fontSize: 12 }}>加载源…</p>}
-          {preview.status === "nobind" && <p style={{ color: "#888", fontSize: 12 }}>未绑定素材 — 无法预览</p>}
+          {preview.status === "nobind" && (
+            <BindMaterialRow type={type} instance={instance} onBound={onMaterialBound} />
+          )}
           {preview.status === "nosrc" && <p style={{ color: "#888", fontSize: 12 }}>绑定素材尚无源视频</p>}
           {preview.status === "error" && <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {preview.message}</p>}
           {preview.status === "ready" && preview.data && (
@@ -548,6 +560,105 @@ export function StyleTab(props: {
         )}
       </div>
       </div>
+    </div>
+  );
+}
+
+// Bind-material picker shown when the creation is unbound (the new-arch create
+// flow makes unbound instances; this is the headless replacement for the Tk
+// material picker). Lists every material instance in the project (no type
+// filter, faithful to material_binding.show_material_picker) and binds the
+// chosen one so the preview/import/export surfaces light up.
+function BindMaterialRow(props: { type: string; instance: string; onBound: () => void }) {
+  const { type, instance, onBound } = props;
+  const [entries, setEntries] = useState<{ matType: string; matInstance: string }[]>([]);
+  const [choice, setChoice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  useEffect(() => {
+    let alive = true;
+    void rpc
+      .listMaterials()
+      .then((m) => {
+        if (!alive) return;
+        const flat: { matType: string; matInstance: string }[] = [];
+        for (const [t, insts] of Object.entries(m)) {
+          for (const i of insts) flat.push({ matType: t, matInstance: i });
+        }
+        setEntries(flat);
+        setChoice(flat.length ? `${flat[0]!.matType}/${flat[0]!.matInstance}` : "");
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const onBind = useCallback(async () => {
+    const e = entries.find((x) => `${x.matType}/${x.matInstance}` === choice);
+    if (!e) return;
+    setBusy(true);
+    setErr("");
+    try {
+      await rpc.bindMaterial(type, instance, e.matType, e.matInstance);
+      onBound();
+    } catch (er) {
+      setErr(er instanceof RpcError ? `[${er.code}] ${er.message}` : String(er));
+    } finally {
+      setBusy(false);
+    }
+  }, [type, instance, choice, entries, onBound]);
+
+  if (entries.length === 0) {
+    return (
+      <p style={{ color: "#888", fontSize: 12 }}>
+        未绑定素材 — 项目里还没有素材;先在「素材」区新建并导入源视频
+      </p>
+    );
+  }
+  return (
+    <div>
+      <p style={{ color: "#888", fontSize: 12, margin: "0 0 6px" }}>未绑定素材 — 选择要绑定的素材:</p>
+      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+        <select
+          value={choice}
+          onChange={(e) => setChoice(e.target.value)}
+          style={{
+            flex: 1,
+            background: "#222",
+            color: "#ddd",
+            border: "1px solid #3a3a40",
+            borderRadius: 4,
+            padding: "3px 6px",
+            fontSize: 12,
+            minWidth: 160,
+          }}
+        >
+          {entries.map((e) => (
+            <option key={`${e.matType}/${e.matInstance}`} value={`${e.matType}/${e.matInstance}`}>
+              {e.matInstance} · {e.matType}
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={() => void onBind()}
+          disabled={busy || !choice}
+          style={{
+            background: "#2d6cdf",
+            color: "#fff",
+            border: "none",
+            borderRadius: 4,
+            padding: "3px 14px",
+            fontSize: 12,
+            cursor: busy ? "default" : "pointer",
+            opacity: busy ? 0.6 : 1,
+          }}
+        >
+          绑定
+        </button>
+      </div>
+      {err && <p style={{ color: "#ff6b6b", fontSize: 12, margin: "6px 0 0" }}>✗ {err}</p>}
     </div>
   );
 }

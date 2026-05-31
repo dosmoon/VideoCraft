@@ -170,6 +170,37 @@ def test_update_config_sets_preset_name(ctx, project_with_news_desk):
     assert cfg["preset_name"] == "演讲"
 
 
+# ── material binding (ADR-0005; the new-arch create flow makes unbound) ───────
+
+def test_bind_material_sets_bound_material(ctx, project_with_news_desk, emit):
+    """A fresh creation is unbound; bind_material writes bound_material via the
+    single owner, persists, and broadcasts so the preview can refresh."""
+    _open(ctx, project_with_news_desk)
+    cfg = call(ctx, "creation.bind_material", {
+        "type": "news_desk", "instance": "news",
+        "material_type": "news_video", "material_instance": "demo",
+    })["result"]
+    assert cfg["bound_material"]["type_name"] == "news_video"
+    assert cfg["bound_material"]["instance_name"] == "demo"
+    assert ("event.creation.changed",
+            {"type": "news_desk", "instance": "news"}) in emit.events
+    # persisted on disk
+    path = os.path.join(
+        project_with_news_desk.creation_instance_dir("news_desk", "news"), "config.json")
+    with open(path, encoding="utf-8") as f:
+        on_disk = json.load(f)
+    assert on_disk["bound_material"]["instance_name"] == "demo"
+
+
+def test_bind_material_rejects_empty(ctx, project_with_news_desk):
+    _open(ctx, project_with_news_desk)
+    resp = call(ctx, "creation.bind_material", {
+        "type": "news_desk", "instance": "news",
+        "material_type": "", "material_instance": "demo",
+    })
+    assert "error" in resp
+
+
 # ── preview provider (news_desk: full-source media + snapshot SRTs) ───────────
 
 @pytest.fixture

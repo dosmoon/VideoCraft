@@ -134,6 +134,27 @@ def import_resource(
     return component
 
 
+@rpc_method("creation.bind_material")
+def bind_material(
+    ctx: Context, type: str, instance: str, material_type: str, material_instance: str
+) -> dict[str, Any]:
+    """Bind a material instance to the creation (ADR-0005). The single owner
+    persists bound_material; broadcast so all views refresh. Returns the updated
+    config. The new-arch create flow makes an unbound instance, so this is how a
+    creation gets its source (the Tk material picker's headless replacement)."""
+    owner, path = ctx.session.creation_owner(type, instance)
+    fn = getattr(owner, "bind_material", None)
+    if not callable(fn):
+        raise RpcError(-32603, f"creation type {type!r} cannot bind materials")
+    try:
+        fn(material_type, material_instance)
+    except ValueError as exc:
+        raise RpcError(-32602, str(exc)) from exc
+    owner.save(path)
+    ctx.notify("event.creation.changed", {"type": type, "instance": instance})
+    return _config_dict(owner)
+
+
 @rpc_method("creation.list_presets")
 def list_presets(ctx: Context, type: str, instance: str) -> dict[str, Any]:
     """{names, builtins, lastUsed} for the Style-tab preset combo."""
