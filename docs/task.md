@@ -382,3 +382,24 @@ clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"
 2. **preset RPC**——`presets.py` 已存在但 builtins 仍是 legacy 绝对-px 形(`fontsize:28`);要么 canonicalise builtins 成分数形,要么 apply 时转。**当前刻意 deferred**(测试已钉死会 error)。
 3. **TS workbench**(`desktop/src/renderer/workbenches/news_desk/`)——克隆 clip 工作台结构,但:无 per-candidate 裁剪(全源)、加章节编辑 tab、per-chapter 导出;注册进 `workbenches/index.tsx`(现 fallback「尚未迁移」)。
 4. Tk news_desk 退役 → `component_defs.py` 与 `components/*` Tk specs 合并为单一源。
+
+> **续 19 第 1 项(preview/render providers)已于续 20 完成**,见下。
+
+---
+
+## ▶ 续 20(2026-05-31,news_desk 迁移第 2 步:preview + render providers)
+
+接续 19,把 news_desk 的 **preview_provider + render_provider** 补上(镜像 clip 的 `preview.py`/`export.py`,但适配 news_desk 的**全源**模型——无候选切片)。**Python only,零 TS/引擎改动。**
+
+**已落地**:
+- `creations/news_desk/preview.py`(新)——`preview_data(project, instance_id)`:经 `materials` 注册表 `instance_factory` 解析绑定素材(零硬编码名 ADR-0004),返回 `{mediaRef(源视频路径), durationSec(来自 source meta,headless 不跑 ffprobe), subtitlePaths(各 subtitle 组件快照 SRT 的绝对路径,以组件自身 srt_path 为 key,即 TS `cuesBySrtPath` 的 key;只发磁盘上真存在的)}`。**章节不返回**——chapter 组件的 `schedule` 创建期已快照进 config,随 load_config 走。
+- `creations/news_desk/export.py`(新)——provider 三连 `plan_render`/`commit_render`/`delete_render`。news_desk 渲**单个全源输出**(out_idx 恒 1,src_idx 不用),区别于 clip 的逐候选列表;`plan_render` 返回单个 `output.mp4` 的 mediaRef+路径+时长;`commit_render` 写 `output.json` sidecar + 记 `rendered[]`;`delete_render` 删文件清 `rendered[]`。
+- `creations/news_desk/config.py`——加 `rendered: list[dict]` 字段(load+save),持久化单输出渲染态。
+- `__init__.py`——接上 `preview_provider` + `render_provider`。
+- 测试 `tests/core_rpc/test_creation_news_desk.py`——加 preview(绑定→media+快照 SRT / 未绑定→空)+ render(plan 单输出 / commit sidecar+rendered+事件 / delete 删文件清空)5 条。
+
+**刻意 deferred(写在 export.py docstring)**:legacy Tk 的「渲完按章节切 mp4 + 写 publish sidecar/transcript」是 **publish 侧 ffmpeg 产物(非 GPU 渲染)**,归 `tools/news_desk/publish.py`,不进 core render-state owner。
+
+验证(读字面 summary 行):**news_desk RPC 16 测 standalone 全绿;news_desk config 13 测全绿;core_rpc 72 测全绿**。已提交 `7f97d12`(preview)+ `9c9bf7a`(render),均已推 origin。
+
+**下一步(news_desk 迁移剩余)**:① TS workbench(`desktop/src/renderer/workbenches/news_desk/`,注册进 `workbenches/index.tsx`)② preset RPC(presets.py builtins 绝对-px→分数形)③ Tk news_desk 退役。其中 TS workbench 是用户能看见的下一块。
