@@ -5,6 +5,18 @@
 
 ---
 
+## ▶▶ 新会话从这读起(2026-05-31 更新,接力点)
+
+**clip + news_desk 两个创作工作台已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现并真机验过;Tk news_desk 已退役。** 本会话(续29~续31)把 news_desk 收口完整(详情列表 + 全源导出真渲染 + preset + 素材绑定 UI + 一串真机 bug),并退役了 Tk news_desk(clip Tk 仍 ship)。
+
+**▶ 下一大任务 = 素材(material)侧迁新架构。** 用户已明确:**"素材功能根本没实现"**。新架构素材侧目前**只有只读 RPC**(列表/槽位就绪/get_artifact),Hub 只读显示素材树,**没有素材工作台**——创建素材、导入源视频、跑 ASR(字幕)、章节分析、编辑新闻背景全部仍只在 Tk。创作侧能消费素材(绑定),但素材本身在新架构里造不出来。**完整设计 + 实现路线见 `docs/draft/electron-migration-design.md` ★实现进度 末「⚠️ 素材(material)侧」节**(权威接力入口,细节都在那)。
+
+- **新会话先读**:`docs/draft/electron-migration-design.md` 顶部「★ 实现进度」(含 clip + news_desk 全部实现状态、代码位置、坑、下一步)+ 奠基稿 `composition-otio-foundation.md`(数据模型/渲染/拓扑权威)。
+- 工作纪律:忠实还原既存 Tk UI 交互,不发明/不简化([[feedback_faithful_port_not_invent]]);改 Python 必整重启 sidecar(`desktop/dev.ps1`,Ctrl+R 只重载 renderer);创作/素材访问素材数据经 Material Model([[feedback_material_via_model_only]]);config 单一所有者([[project_creation_config_owner]])。
+- 历史进展见下「续 N」;news_desk 迁移全程 = 续19~续31。
+
+---
+
 ## ▶ 接力入口(2026-05-30 更新)
 
 **clip 创作工作台已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现完整、真机肉眼验过。**
@@ -588,3 +600,29 @@ news_desk 迁新架构(Electron renderer + sidecar)已走通**绝大部分**,真
 **承重决策**:框架 dataclass 落 clip-local 非 core/——它们是 Tk-era 脚手架(新架构用 TS component contract),随 clip Tk 退役一起死,不该进 core 永久层再删一遍(pre-alpha no-legacy + [[feedback_no_universal_standard]] 每插件自持)。这覆盖了「ComponentSpec 搬 core」旧债——前提(两活插件共享)已失效,改判 clip-local。
 
 **news_desk 迁新架构(Electron + sidecar)至此=功能完整**:create/preview/export/imports/detail-lists/chapter-editor/presets 全通,Tk 侧退役。剩非阻塞:字幕双语并排 UI、外部文件导入、逐章 schedule 编辑、`tools/news_desk/publish.py` 新架构 publish(defer)。**clip Tk 仍在**(本轮只退 news_desk Tk);clip Tk→Electron 是独立后续。
+
+---
+
+## ▶ 续 31(2026-05-31,真机 dogfood 一串 bug 修复 + 素材侧缺口定性)
+
+续30 后用户真机 dogfood news_desk,逐个报 bug,逐个修(均 land 推 origin)。按时间序:
+
+| bug | 真因 | 修 |
+|---|---|---|
+| 另存为按钮无效(报 `prompt() is not supported`) | Electron 渲染进程不实现 `window.prompt` | 内联名称输入框(news_desk + clip StyleTab 都改);`9...`/`ac9d3d3` 系列 |
+| 应用预设预览黑屏(其一) | `onApplyPreset` 的 `preview.reload()` blank 了 data→预览 unmount→重挂 WebGPU backend 黑屏 | `useNewsDeskPreview.reload()` 改**原地刷新**(只 type/instance 变才 blank) |
+| 应用预设预览黑屏(其二) | 预设丢 `schedule`,`newsDeskChapterToInstance` 对 `undefined.map` 抛错→整 timeline build 崩→不重绘 | mapping `(c.schedule ?? []).map`;装配器 per-component try/catch(单组件崩不拖垮整 timeline + 视频轨) |
+| 图片水印组件被跳过(`imagePath.trim()` 抛错) | 预设丢 `image_path`→mapping 传 undefined→compile `.trim()` 崩 | mapping `image_path ?? ""` + `text ?? ""` |
+| 绑定是一次性的 | `BindMaterialRow` 只在 nobind 显示 | 改 `MaterialBindingBar` **常驻持久设置**(显示已绑 + 换绑) |
+| 导入字幕不显示 | import 设了 srt_path 但 `cuesBySrtPath`(来自 preview_data)没刷 | `onImport` 调 `preview.reload()` |
+| **导入切实例丢数据** | import provider(imports.py)越过 session 缓存 owner **直写 config**→缓存陈旧;`list_components`(切回)返旧组件,且后续 `owner.save()` 覆盖磁盘 | `Session.invalidate_creation` 在 import/commit/delete_render 后调,re-sync 单一所有者([[project_creation_config_owner]]);+回归测试 |
+| 导入下拉跨字幕组件联动 | `ImportRow` 内部 choice state 被 React 复用 | `key={selected.id}` 每组件重置 |
+| 图片水印无文件选择器/路径配置 | 通用 `PropertyPanel` 只渲染存在的字段且无 browse | `vc:pickImage` IPC + 专用 `ImageWatermarkProperties`(常驻路径行 + 浏览…/清除);PropertyPanel 加 `hide` prop |
+
+**坑(已记 [[reference_electron_run_as_node]])**:bug 修在 sidecar(Python)/主进程(IPC)的,**Ctrl+R 不重载**——必须 `desktop/dev.ps1` 整重启(杀 electron + 清 .vite + 重 spawn sidecar)。bug 1/3/2 同批报来,其中 1(渲染)Ctrl+R 即生效,2(sidecar)/3(主进程)要整重启才生效——一度被误判"没修好"。
+
+**全部真机验过基本正常。** 测试:全套 `pytest tests/` = **378 passed / 3 pre-existing failed / 0 新**;desktop typecheck rc=0 / **130 TS 测** / build。HEAD 已推 origin。
+
+### ▶ 下一大任务 = 素材(material)侧迁新架构(用户点名"素材功能根本没实现")
+
+新架构素材侧**只有只读 RPC**;**没有素材工作台**——创建素材 / 导入源视频 / ASR(字幕)/ 章节分析 / 编辑新闻背景 全部仍只在 Tk。创作侧能消费素材(绑定),但素材本身造不出来。**完整实现路线已写入 `docs/draft/electron-migration-design.md` ★实现进度 末「⚠️ 素材(material)侧」节**(权威):① Project/Material 写 RPC(create_material_instance / add_source_video 长任务)② 分析 kind 作 job(ASR/章节/翻译)③ context 编辑 RPC ④ 素材工作台 UI ⑤ Hub 素材 `[+]`。对齐 §2.2 设计 + 续7 四轨。source 获取/ASR/翻译 按 §0.5 "能力重归素材",顺带消化遗留 menubar 工具。

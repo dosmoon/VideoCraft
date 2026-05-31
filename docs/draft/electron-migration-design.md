@@ -9,7 +9,9 @@
 
 ## ★ 实现进度 / Implementation Status(2026-05-31,新会话从这读起)
 
-> **clip + news_desk 两个创作工作台均已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)实现并真机验过**(clip 端到端含导出;news_desk 除导出渲染按钮外端到端,三项缺口见本节末)。本节是后续工作的**接力入口**;实现细节集中在此(task.md 只保留接力指针 + 逐次进展「续 N」,不堆架构细节)。下面"实际实现"凡与本文档正文不同的,以本节为准(正文写于迁移启动期,部分已被实现推翻——另见 §0.5)。
+> **clip + news_desk 两个创作工作台均已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现并真机验过**(均含导出渲染;news_desk 含 preset + 素材绑定 + 详情列表 + 章节属性编辑;Tk news_desk 已退役)。本节是后续工作的**接力入口**;实现细节集中在此(task.md 只保留接力指针 + 逐次进展「续 N」,不堆架构细节)。下面"实际实现"凡与本文档正文不同的,以本节为准(正文写于迁移启动期,部分已被实现推翻——另见 §0.5)。
+>
+> **⚠️ 下一大里程碑 = 素材(material)侧迁新架构(见本节末「素材侧」)。** 当前新架构素材侧**只有只读 RPC**(列表/槽位就绪/get_artifact),Hub 只读显示素材树;**创建素材、导入源视频、跑 ASR(字幕)、章节分析、编辑新闻背景全部仍只在 Tk**——新架构里建一个全新素材实例、给它喂源视频/字幕/章节的能力**根本没有**。创作侧已能消费素材(绑定),但素材本身造不出来。
 >
 > 已提交基线:见 `git log`(clip 工作台系列 commit,最新含导出/预设/双语)。
 
@@ -57,17 +59,43 @@ news_desk 与 clip 走同一套契约,正面验证「公共组件库 + provider 
 **news_desk 工作台 UI**(`desktop/src/renderer/workbenches/news_desk/`):
 - 壳 `NewsDeskWorkbench`:**两 tab**(样式/导出,无候选 tab——全源)。
 - 样式 tab `StyleTab`:`NewsDeskPreview`(全源 canvas 预览,**无裁剪框**,复用引擎层 + `buildNewsDeskTimeline`,preview≡render,播放/拖动/音频主时钟)+ 组件增删排序 + `ImportRow`(字幕选语言 / 章节选 analysis 导入)+ 属性面板(字幕/水印用通用 `PropertyPanel`;**章节用专用 `ChapterProperties`**——嵌套 modes/style,`chapterPatch.ts` 出 shallow-merge 安全 patch)。
-- 导出 tab `ExportTab`:**目前只读**显示渲染计划 + rendered[];**真渲染按钮未实现**(下一轮)。
-- `useNewsDeskPreview`:加载源 + 时长 + 各 srt_path 快照 cues(`cuesBySrtPath`)。
-- Hub `[+]` 创建创作菜单(`hub/Hub.tsx`,`CreateCreationMenu`)+ ProjectView 已渲染选中创作工作台。
+- 导出 tab `ExportTab`:**真渲染已实装**——`buildNewsDeskTimeline → exportTimelineToMp4(GPU/WebCodecs + 源音频混流)→ vc:writeFile → commit_render`,全源单输出;带进度%/取消/播放·打开·删除。
+- `useNewsDeskPreview`:加载源 + 时长 + 各 srt_path 快照 cues(`cuesBySrtPath`);`reload()` **原地刷新**(不 blank,不重挂 GPU——blank 会让预览 unmount 重建 backend 黑屏)。
+- 详情列表 `ComponentDetail`(`SubtitleCueList`/`ChapterScheduleList`,只读 + 点击 seek;`NewsDeskPreview` 经 `controlRef` 暴露 `seek`)。
+- preset 工具栏(预设下拉 + 应用/另存为/覆盖/删除,builtin 防护;**另存为用内联输入**,`window.prompt` 在 Electron 渲染进程不支持)。
+- 素材绑定 `MaterialBindingBar`(**常驻持久设置**,非一次性闸门):显示已绑素材 + 换绑,未绑定显示选择器;`creation.bind_material` RPC 写 `bound_material`(新架构 create 流程建的是未绑定实例)。
+- 图片水印 `ImageWatermarkProperties`:**专用编辑器**——常驻「图片文件」行 + 浏览…(`vc:pickImage` 原生对话框)+ 清除(通用 `PropertyPanel` 只渲染存在的字段且无文件选择器)。
+- Hub `[+]` 创建创作菜单(`hub/Hub.tsx`)+ ProjectView 已渲染选中创作工作台。
 
 **chapter 图元绘制**(`engine/overlay/canvas2d.ts`):`drawTopicStrip`(顶部条带)+ `drawHeroCard`(侧栏卡,accent + 标题 + 正文 char-wrap)。几何镜像 `core/composition/primitives/{topic_strip,chapter_hero_card}.py`;字号 1080 基线绝对 px 按 h/1080 缩放。**坑:data-key 必须用组件真发的**(`topic_text`/`title`/`body`,非 `text`)。
 
-**news_desk 三项剩余缺口**(2026-05-31,接力点见 task.md 续28):
-1. **详情列表缺失**:字幕只读 cue 列表(legacy Tk 有,cues 已 parse 在 `useNewsDeskPreview`)+ 章节 schedule 逐章列表(现只能整体导入,看不到逐章)。
-2. **快照约定系统核查**:导入路径已确认快照;待通读导出渲染链确认不直引素材。
-3. **导出渲染按钮**:镜像 clip ExportTab 渲染循环(`buildNewsDeskTimeline → GPU 逐帧 encode → vc:writeFile → commit_render`),全源单输出。后端 provider 已就绪,缺 renderer 编码触发 + 进度/取消。
-- 其它欠债:preset RPC 未接(presets.py builtins 仍 legacy 绝对-px)、Tk news_desk 未退役、外部文件导入未做。
+**news_desk 已全部完成(2026-05-31,续29~续31 真机验过)**:① 详情列表 ✅ ② 快照约定核查 ✅(全链路只读实例快照,唯一 material 引用=源视频路径+时长 meta=输入媒介,正确)③ 导出真渲染 ✅ ④ preset RPC + 规范化 builtins(`component_defs` 成组件形单一源)✅ ⑤ Tk news_desk 退役 ✅(删 `news_desk_tool.py`+`components/*`+`publish.py`,VideoCraftHub 注销;clip 拿走共享组件框架 dataclass=clip-local,杀跨插件 import)⑥ 素材绑定 UI + bind RPC ✅。
+
+**真机踩过并修的 bug(均已 land)**:`window.prompt` 崩(→内联输入)/ 应用预设黑屏两因(reload 重挂 GPU→原地刷新;mapping 对缺 schedule/image_path 抛错→`?? []`/`?? ""` + 装配器 per-component try/catch)/ 导入后字幕不显示(import 没刷 cues→`preview.reload()`)/ **导入切实例丢数据**(import provider 越过 session 缓存 owner 直写 config→缓存陈旧;修=`Session.invalidate_creation` 在 import/commit/delete_render 后调,re-sync 单一所有者)/ 导入下拉跨组件联动(`ImportRow` key by id)/ 图片水印无文件选择器(`vc:pickImage` + `ImageWatermarkProperties`)。
+
+剩余非阻塞欠债:逐章 schedule 编辑(现只读+seek)、字幕双语并排 UI、外部文件导入(磁盘选 SRT)、`tools/news_desk/publish.py` 新架构 publish(per-chapter mp4 切分,defer)。
+
+### ⚠️ 素材(material)侧 —— 当前只读,工作台未实现(下一大里程碑)
+
+**现状**:新架构素材侧只有**只读 RPC**——`material.slot_readiness`/`get_artifact`、`project.list_material_types/instances/materials`。Hub sidebar 只读显示素材树(news_video→实例→源视频/新闻背景/字幕 槽位就绪)。renderer **无任何素材工作台**。
+
+**根本没实现的**(全部仍只在 Tk:`materials/news_video/{sidebar,ui,ai_fill,model}.py` + `tools/{download,speech,translate}`):
+- **创建素材实例**(`project.create_material_instance` 设计在 §2.2 但 RPC 未建)。
+- **导入/设置源视频**(`material.add_source_video`,§2.2 设计为长任务,未建)。
+- **跑 ASR 生成字幕**(分析 kind:source→SRT 物件,长任务 job)。
+- **章节分析**(source→`analysis.json` chapters,长任务 job + AI)。
+- **编辑新闻背景 context**(`context.json` 15 字段,见 [[project_news_context]];AI 填 + 人工校正)。
+
+**为什么现在卡住**:创作侧(clip/news_desk)已能**消费**素材(绑定 + get_artifact + import 快照),但素材本身在新架构里**造不出来**——全新项目里点不出一个带源视频/字幕/章节的素材实例,只能靠 Tk 先建好再在 Electron 里绑。这是新架构自洽的最后一大缺口。
+
+**实现路线**(对齐 §2.2 Material/Project 域设计 + 续7「四轨」的轨①写操作 + 轨②UI):
+1. **Project/Material 写 RPC**:`project.create_material_instance`;`material.add_source_video`(长任务,走 job + `progress.*` + `event.material.changed`)。
+2. **分析 kind 作为长任务 job**:ASR(`tools/speech` 的能力重归素材,产 SRT)、章节分析(产 analysis.json)、翻译(产多语 SRT)——经 job registry,可取消/进度。
+3. **context 编辑 RPC**:读/写 `context.json`(单一所有者,15 字段);AI 填走 job。
+4. **素材工作台 UI**(`desktop/src/renderer/materials/news_video/` 或 workbenches 同构):源准备面板 + 分析 kind 触发/进度 + context 编辑表单 + sidebar 槽位。镜像 Tk `materials/news_video/{sidebar,ui}.py` 的交互(忠实还原,[[feedback_faithful_port_not_invent]])。
+5. Hub 素材区加 `[+]` 新建素材(对齐创作侧 create 流程)。
+
+> 注:source 获取(yt-dlp)/ASR/翻译在 §0.5 已定调"能力**重归素材**,不做独立 menubar 工具"——所以这一步同时消化掉那几个遗留工具。AI 调用(ASR/章节/context 填)经现有 `core.ai` 路由。
 
 ### 与本文档正文不同的关键实现决策
 
@@ -89,14 +117,14 @@ news_desk 与 clip 走同一套契约,正面验证「公共组件库 + provider 
 - **环境**:agent shell 带 `ELECTRON_RUN_AS_NODE=1`,启动必 `env -u ELECTRON_RUN_AS_NODE pnpm dev`;改 Python 必整重启 sidecar(Ctrl+R 只重载 renderer);HMR 不可信,改 renderer 后清 `node_modules/.vite` 整重启;启动前 `taskkill electron.exe` + 杀 5174。
 
 ### 测试
-TS:`pnpm typecheck` + `pnpm test`(103,含 ir/timemap/components/clip/news_desk/cropEditor/mapping/subtitleWrap)。Python:`pytest tests/core_rpc`(56,含 creation 全 RPC + render plan/commit/delete + 预设 + 双语)。引擎渲染层 headless 覆盖不到,靠真 renderer 肉眼验。
+TS:`pnpm typecheck` + `pnpm test`(130,含 ir/timemap/components/clip/news_desk/cropEditor/mapping/subtitleWrap/chapterPatch/chapterDraw)。Python:`pytest tests/core_rpc`(88,含 creation 全 RPC + render plan/commit/delete + 预设 + 双语 + import + bind + cache 失效回归)。引擎渲染层 headless 覆盖不到,靠真 renderer 肉眼验。全套 `pytest tests/` = 378 passed / 3 pre-existing failed(golden CRLF/tmp 路径 x2 + clip_config stale id)。
 
 ### 下一步(后续会话)
-- clip 工作台 dogfood / 体验打磨(用户验证中)。
-- news_desk 迁到同套组件库 + workbench 模式(证明公共库覆盖多插件)。
-- Tk clip 工作台退役 → `component_defs` 与 `components/*` Tk specs 合并为单一源。
-- 导出域细化:逐帧精确 decode、音轨 mux、转场、剩余 overlay kind。
-- 升 ADR(数据模型 + 渲染引擎 + IPC 拓扑;预定 ADR-0007）。
+- **★ 素材(material)侧迁新架构**(最大缺口,见上「素材侧」节):创建素材 + 导入源视频 + ASR/章节分析/翻译(分析 kind 长任务)+ context 编辑 + 素材工作台 UI + Hub 素材 `[+]`。这是新架构自洽的最后一大块。
+- Tk clip 工作台退役 → clip `component_defs` 与 `components/*` Tk specs 合并单一源(news_desk 已退;clip 仍 ship)。
+- news_desk 打磨:逐章 schedule 编辑、字幕双语并排 UI、外部文件导入、`tools/news_desk/publish.py` 新架构 publish。
+- 导出域细化:逐帧精确 decode、转场、剩余 overlay kind。
+- 升 ADR(数据模型 + 渲染引擎 + IPC 拓扑;预定 ADR-0007)。
 
 ---
 
