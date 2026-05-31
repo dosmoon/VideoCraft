@@ -403,3 +403,21 @@ clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"
 验证(读字面 summary 行):**news_desk RPC 16 测 standalone 全绿;news_desk config 13 测全绿;core_rpc 72 测全绿**。已提交 `7f97d12`(preview)+ `9c9bf7a`(render),均已推 origin。
 
 **下一步(news_desk 迁移剩余)**:① TS workbench(`desktop/src/renderer/workbenches/news_desk/`,注册进 `workbenches/index.tsx`)② preset RPC(presets.py builtins 绝对-px→分数形)③ Tk news_desk 退役。其中 TS workbench 是用户能看见的下一块。
+
+---
+
+## ▶ 续 21(2026-05-31,news_desk 迁移第 3 步:TS workbench — Style + Export tab)
+
+接续 20,补 renderer 侧工作台,使 Hub 对 news_desk 不再显示「尚未迁移」、点开即真编辑器。仿 Tk `news_desk_tool.py`,但**两 tab**(非 clip 的三 tab)——news_desk 渲全源无候选,故无「候选」tab,只 样式 / 导出。
+
+**已落地**(`desktop/src/renderer/workbenches/news_desk/`):
+- `NewsDeskWorkbench.tsx` —— 壳:持组件列表 + `update_component` patch 路径,镜像 ClipWorkbench(tab 首访挂载、保活)。
+- `StyleTab.tsx` —— 组件管理器([+ 添加]/删除/↑↓,chapter 单例 gating)+ 复用 clip 的通用 `PropertyPanel`(组件无关)。全程走 `creation.*` RPC(base 层 creation-agnostic, ADR-0004)。友好 kind 文案,不露内部名([[feedback_user_facing_naming]])。
+- `ExportTab.tsx` —— 只读渲染计划(单 `output.mp4` + 时长)+ config 的 `rendered[]`,tab 激活时刷新。
+- `index.tsx` —— 注册 `news_desk → NewsDeskWorkbench`。
+
+**刻意 deferred(写进文件 header)**:① 实时 GPU 源预览 ② 真渲染触发(`buildNewsDeskTimeline → engine → encode → vc:writeFile → commit_render`)③ chapter 嵌套排期/样式编辑。这些只能真机跑验,故与验证一起落,不作未测 UI 先塞。
+
+验证:**两 typecheck rc=0;120 TS 测全绿;`electron-vite build` 成功(76 模块,原 73)**。已提交 `9069e94`,推 origin。**真机工作台交互待人验**(`env -u ELECTRON_RUN_AS_NODE pnpm dev`,开 news_desk 创作)。
+
+**下一步**:① **真机验** news_desk 工作台(组件增删改、Export 计划显示)② 真渲染管线(整源合成→编码→写盘,镜像 clip ExportTab)③ preset RPC(presets.py builtins 绝对-px→分数形)④ Tk news_desk 退役。
