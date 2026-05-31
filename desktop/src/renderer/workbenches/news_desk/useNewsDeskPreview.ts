@@ -10,7 +10,7 @@
  * (snapshot principle — the SRTs already live in the instance dir).
  */
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { SourceCue } from "@composition/components/index.js";
 import { rpc, RpcError } from "../../ipc/client";
 import { parseSrt } from "../clip/srt";
@@ -42,6 +42,10 @@ export function useNewsDeskPreview(type: string, instance: string) {
   const [status, setStatus] = useState<PreviewStatus>("loading");
   const [message, setMessage] = useState("");
   const [data, setData] = useState<NewsDeskPreviewData | null>(null);
+  // Bumped by reload() to re-run the full fetch (source + snapshot SRTs) after a
+  // Style-tab import changes which SRTs a component points at.
+  const [token, setToken] = useState(0);
+  const reload = useCallback(() => setToken((n) => n + 1), []);
 
   useEffect(() => {
     let disposed = false;
@@ -90,7 +94,7 @@ export function useNewsDeskPreview(type: string, instance: string) {
     return () => {
       disposed = true;
     };
-  }, [type, instance]);
+  }, [type, instance, token]);
 
-  return { status, message, data };
+  return { status, message, data, reload };
 }

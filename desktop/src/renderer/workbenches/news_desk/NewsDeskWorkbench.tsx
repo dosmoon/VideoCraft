@@ -8,11 +8,10 @@
  * write path) exactly like ClipWorkbench, and hands each tab its slice. The Hub
  * hosts it generically (dispatch by creation type, workbenches/index.tsx).
  *
- * Deferred to a live-verify increment (NOT dropped): the live GPU preview (the
- * full-source composition canvas) and the actual export render pipeline
- * (buildNewsDeskTimeline → engine → encode → vc:writeFile → commit_render). The
- * Style tab edits config; the Export tab shows the render plan + rendered state
- * read-only until the render wiring lands.
+ * The Style tab edits config + shows the live GPU preview; the Export tab runs
+ * the full-source render (buildNewsDeskTimeline → engine → encode →
+ * vc:writeFile → commit_render). Both share the same compositor, so the
+ * exported mp4 ≡ the preview.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -150,7 +149,12 @@ export function NewsDeskWorkbench(props: {
         )}
         {visited.has("export") && (
           <div style={{ display: tab === "export" ? "contents" : "none" }}>
-            <ExportTab type={type} instance={instance} active={tab === "export"} />
+            <ExportTab
+              type={type}
+              instance={instance}
+              components={components}
+              active={tab === "export"}
+            />
           </div>
         )}
       </div>
