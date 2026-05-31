@@ -436,3 +436,17 @@ clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"
 验证:test_dispatch standalone **21 passed**;core_rpc **77 passed**;app+node typecheck rc=0;120 TS 测;`electron-vite build` 77 模块。**真机点击流程仍待用户验**。
 
 **真机重验步骤**:重启 dev(`desktop/dev.ps1`)→ 开项目 → 「创作」标题旁点 `[+]` → 选「新闻/演讲/发布会成片…」→ 应建出 news-1 并自动打开两-tab 工作台 → 测组件增删改 + 导出计划显示。
+
+---
+
+## ▶ 续 24(2026-05-31,news_desk 样式 tab 实时预览 — 全源,无裁剪框)
+
+用户真机反馈「界面功能残缺不全,没有预览」。补样式 tab 的实时合成预览(全源模型,clip CropPreview 的精简版——同引擎编排,无裁剪框)。
+
+- `useNewsDeskPreview.ts`(新)——加载源路径(`material.get_artifact "source"`)+ 时长 + 各 srt_path 快照 SRT(`creation.preview_data`),解析成以组件 srt_path 为 key 的 cues。镜像 clip useClipPreview 的无候选/无裁剪版。
+- `NewsDeskPreview.tsx`(新)——全源 canvas 预览,复用引擎层(Backend + ClipReader + AudioReader/AudioPlayback + canvas2D overlay + resolveFrameAt)+ `buildNewsDeskTimeline`,preview≡render 单 compositor。overlay 铺满整帧(无 reframe 裁剪);transport=播放/暂停+拖动,音频主时钟(wall-clock fallback)。源按 srcPath 开一次,组件实时编辑只 rebuild timeline 不重起 WebGPU。StrictMode 双挂载防护同 CropPreview。
+- `StyleTab.tsx`——预览放在组件管理器上方,loading/nobind/nosrc/error 状态同 clip。
+
+验证:app+node typecheck rc=0;120 TS 测;`electron-vite build` 80 模块(原 76)。**真机画面 + 播放待用户验**(GPU 预览 headless 覆盖不到)。已提交 `6960c4a`。
+
+**下一步**:① 真机验预览(画面/字幕/章节条/播放有声)② 导出渲染按钮(整源合成→编码→writeFile→commit_render,镜像 clip ExportTab,用户选「先预览后导出」)③ preset RPC ④ Tk 退役。
