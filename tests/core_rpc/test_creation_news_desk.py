@@ -5,9 +5,9 @@ The base RPC layer is creation-agnostic (ADR-0004): wiring
 config face to work, exactly as clip's. These drive the dispatch kernel against
 a tmp news_desk instance, mirroring test_creation.py's (ctx + _open) pattern.
 
-Presets and the preview/render providers are NOT wired yet for news_desk (the
-preset shape decision + per-chapter providers are a follow-up increment), so a
-preset call is expected to error — pinned here so the deferral is explicit.
+Presets and the preview/render/import providers are all wired now; the preset
+builtins are canonical (component_defs is the single shape source after the Tk
+workbench retired). The preset RPCs are covered at the bottom of this file.
 """
 
 from __future__ import annotations
@@ -371,12 +371,63 @@ def test_import_wrong_component_kind(ctx, project_with_bound_news_desk):
     assert resp["error"]["code"] == -32602
 
 
-# ── deferred: presets not wired yet ──────────────────────────────────────────
+# ── presets (canonical builtins; component_defs is the single shape source) ───
 
-def test_presets_not_supported_yet(ctx, project_with_news_desk):
-    """Preset RPC is deferred for news_desk (the presets.py builtins still carry
-    the legacy absolute-px shape; canonicalising them is a follow-up). The base
-    layer reports it gracefully rather than crashing."""
+def test_list_presets_returns_builtins(ctx, project_with_news_desk):
     _open(ctx, project_with_news_desk)
-    resp = call(ctx, "creation.list_presets", {"type": "news_desk", "instance": "news"})
+    res = call(ctx, "creation.list_presets",
+               {"type": "news_desk", "instance": "news"})["result"]
+    assert "新闻发布会" in res["names"]
+    assert "新闻发布会" in res["builtins"]
+    assert res["lastUsed"]  # current preset_name or the default
+
+
+def test_apply_preset_replaces_components(ctx, project_with_news_desk, emit):
+    """Applying 极简 (a single subtitle) wholesale-replaces the fixture's two
+    components, sets preset_name, re-uniques ids, persists, and broadcasts."""
+    _open(ctx, project_with_news_desk)
+    cfg = call(ctx, "creation.apply_preset",
+               {"type": "news_desk", "instance": "news", "name": "极简"})["result"]
+    assert cfg["preset_name"] == "极简"
+    assert [c["kind"] for c in cfg["components"]] == ["subtitle"]
+    # canonical fractional shape (component_defs single source), not legacy px
+    sub = cfg["components"][0]
+    assert "fontsize_pct" in sub and "fontsize" not in sub
+    ids = [c["id"] for c in cfg["components"]]
+    assert len(ids) == len(set(ids)) and all(ids)
+    assert ("event.creation.changed",
+            {"type": "news_desk", "instance": "news"}) in emit.events
+
+
+def test_apply_unknown_preset_errors(ctx, project_with_news_desk):
+    _open(ctx, project_with_news_desk)
+    resp = call(ctx, "creation.apply_preset",
+                {"type": "news_desk", "instance": "news", "name": "不存在的预设"})
+    assert "error" in resp
+
+
+def test_save_and_delete_user_preset(ctx, project_with_news_desk, tmp_path, monkeypatch):
+    """save_preset upserts the current components as a user preset (then lists);
+    delete_preset removes it. Builtins are protected on both. The preset store
+    is redirected to tmp so the test never touches user_data."""
+    from creations.news_desk import presets as nd_presets
+    monkeypatch.setattr(nd_presets, "PRESETS_PATH", str(tmp_path / "store.json"))
+    _open(ctx, project_with_news_desk)
+
+    saved = call(ctx, "creation.save_preset",
+                 {"type": "news_desk", "instance": "news", "name": "我的预设"})["result"]
+    assert "我的预设" in saved["names"]
+
+    # builtin name is protected on save
+    resp = call(ctx, "creation.save_preset",
+                {"type": "news_desk", "instance": "news", "name": "新闻发布会"})
+    assert "error" in resp
+
+    deleted = call(ctx, "creation.delete_preset",
+                   {"type": "news_desk", "instance": "news", "name": "我的预设"})["result"]
+    assert "我的预设" not in deleted["names"]
+
+    # builtins are protected on delete too
+    resp = call(ctx, "creation.delete_preset",
+                {"type": "news_desk", "instance": "news", "name": "新闻发布会"})
     assert "error" in resp

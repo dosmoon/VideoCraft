@@ -12,6 +12,7 @@ overwrote config.json with its own narrow view, wiping the binding.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 from dataclasses import asdict, dataclass, field
@@ -179,6 +180,52 @@ class NewsDeskInstanceConfig:
             return
         comps = self.components
         comps[idx], comps[target] = comps[target], comps[idx]
+
+    # ── presets (creation.*_preset RPCs) ────────────────────────────────────
+    # Presets are news_desk-global (a shared store under user_data); applying /
+    # saving operates on this instance's components. The owner mediates so the
+    # base RPC layer stays creation-agnostic (ADR-0004). presets is imported
+    # lazily — it's headless (component_defs, not the retired Tk specs).
+    # news_desk has NO output geometry (full-source, no reframe), so a preset
+    # is just an ordered component list; apply replaces components wholesale.
+
+    def list_presets(self) -> dict:
+        from creations.news_desk import presets
+        return {
+            "names": presets.list_preset_names(),
+            "builtins": list(presets.BUILTIN_PRESETS.keys()),
+            "lastUsed": self.preset_name or presets.DEFAULT_PRESET_NAME,
+        }
+
+    def apply_preset(self, name: str) -> None:
+        """Replace components from the named preset (deep-copied; ids re-uniqued
+        with news_desk's kind-based scheme). Presets are clean by construction
+        (builtins carry no project content; the save path drops it), so there's
+        no pollution to scrub here."""
+        from creations.news_desk import presets
+        preset = presets.get_preset(name)
+        if preset is None:
+            raise ValueError(f"unknown preset: {name!r}")
+        self.components = copy.deepcopy(preset.components)
+        _ensure_unique_ids(self.components)
+        self.preset_name = name
+
+    def save_preset(self, name: str) -> None:
+        """Upsert the current components as a user preset (builtins protected).
+        save_user_preset drops per-project content (srt_path / schedule /
+        image_path) so the preset captures visual decisions only."""
+        from creations.news_desk import presets
+        if presets.is_builtin(name):
+            raise ValueError(f"cannot overwrite builtin preset: {name!r}")
+        presets.save_user_preset(
+            presets.NewsDeskPreset(name=name, components=self.components))
+        self.preset_name = name
+
+    def delete_preset(self, name: str) -> None:
+        from creations.news_desk import presets
+        if presets.is_builtin(name):
+            raise ValueError(f"cannot delete builtin preset: {name!r}")
+        presets.delete_user_preset(name)
 
     def save(self, path: str) -> None:
         """Atomically persist to disk. The single write path for

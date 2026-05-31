@@ -19,6 +19,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Optional
 
 from core import user_data
+from creations.news_desk import component_defs
 
 
 # ── On-disk store ───────────────────────────────────────────────────────────
@@ -58,88 +59,48 @@ class NewsDeskPreset:
 
 # ── Builtin starter presets ────────────────────────────────────────────────
 # Three intentionally-different templates so picking between them shows
-# visible change. Component shapes mirror each component's
-# _default_instance() — keep in sync when adding new fields there.
+# visible change. Each component is built from component_defs.default_instance
+# (the SINGLE canonical-shape source) + the preset's style overrides — so a
+# preset can never drift from the live component shape. Font/stroke sizes are
+# canonical fractions (fraction of target_h), not absolute px.
 
 def _chapter_component(*, top_strip: bool, start_card: bool,
                         name: str = "章节") -> dict:
-    return {
-        "kind": "chapter",
-        "name": name,
-        "enabled": True,
-        "modes": {"top_strip": top_strip, "start_card": start_card},
-        "style": {
-            "top_strip": {
-                "bg_color": "#1E40AF",
-                "text_color": "#FFFFFF",
-                "fontsize": 26,
-            },
-            "start_card": {
-                "title_color": "#FFFFFF",
-                "title_fontsize": 40,
-                "body_color": "#E5E7EB",
-                "body_fontsize": 22,
-                "bg_color": "#0F1B2C",
-                "bg_opacity": 55,
-                "accent_color": "#DC2626",
-                "duration_sec": 6,
-            },
-        },
-        "schedule": [],
-    }
+    c = component_defs.default_instance("chapter")
+    c["name"] = name
+    c["modes"] = {"top_strip": top_strip, "start_card": start_card}
+    return c
 
 
 def _subtitle_component(*, is_chinese: bool, color: str, name: str,
-                          fontsize: int = 28) -> dict:
-    return {
-        "kind": "subtitle",
-        "id": uuid.uuid4().hex[:8],            # replaced on apply, see _fresh_components
-        "name": name,
-        "enabled": True,
-        "srt_path": "",
-        "position": "bottom",
-        "block_margin_pct": 9,
-        "fontsize": fontsize,
-        "color": color,
-        "is_chinese": is_chinese,
-        "stroke_color": "#000000",
-        "stroke_width": 2,
-        "bg_enabled": True,
-        "bg_color": "#000000",
-        "bg_opacity": 55,
-    }
+                          fontsize_pct: Optional[float] = None) -> dict:
+    c = component_defs.default_instance("subtitle")
+    c["name"] = name
+    c["color"] = color
+    c["is_chinese"] = is_chinese
+    if fontsize_pct is not None:
+        c["fontsize_pct"] = fontsize_pct
+    return c
 
 
 def _text_watermark_component(*, text: str, name: str,
                                 position: str = "bottom-left",
-                                fontsize: int = 28) -> dict:
-    return {
-        "kind": "text_watermark",
-        "name": name,
-        "enabled": True,
-        "text": text,
-        "fontsize": fontsize,
-        "color": "#FFFFFF",
-        "opacity": 70,
-        "position": position,
-        "margin_x_pct": 2.5,
-        "margin_y_pct": 2.5,
-    }
+                                fontsize_pct: Optional[float] = None) -> dict:
+    c = component_defs.default_instance("text_watermark")
+    c["name"] = name
+    c["text"] = text
+    c["position"] = position
+    if fontsize_pct is not None:
+        c["text_fontsize_pct"] = fontsize_pct
+    return c
 
 
 def _image_watermark_component(*, name: str = "台标",
                                  position: str = "top-right") -> dict:
-    return {
-        "kind": "image_watermark",
-        "name": name,
-        "enabled": True,
-        "image_path": "",
-        "scale_pct": 15,
-        "opacity": 100,
-        "position": position,
-        "margin_x_pct": 2.5,
-        "margin_y_pct": 2.5,
-    }
+    c = component_defs.default_instance("image_watermark")
+    c["name"] = name
+    c["position"] = position
+    return c
 
 
 BUILTIN_PRESETS: dict[str, NewsDeskPreset] = {
@@ -151,10 +112,11 @@ BUILTIN_PRESETS: dict[str, NewsDeskPreset] = {
             _subtitle_component(is_chinese=True, color="#FFFF00",
                                  name="中文字幕"),
             _subtitle_component(is_chinese=False, color="#FFFFFF",
-                                 name="英文字幕", fontsize=24),
+                                 name="英文字幕", fontsize_pct=0.0222),  # 24px @ 1080
             _image_watermark_component(),
             _text_watermark_component(text="", name="日期戳",
-                                       position="bottom-left", fontsize=26),
+                                       position="bottom-left",
+                                       fontsize_pct=0.024),  # 26px @ 1080
         ],
     ),
     "演讲": NewsDeskPreset(
@@ -163,7 +125,7 @@ BUILTIN_PRESETS: dict[str, NewsDeskPreset] = {
         components=[
             _chapter_component(top_strip=True, start_card=False),
             _subtitle_component(is_chinese=True, color="#FFFF00",
-                                 name="字幕", fontsize=32),
+                                 name="字幕", fontsize_pct=0.0296),  # 32px @ 1080
             _text_watermark_component(text="", name="主讲人",
                                        position="top-left"),
         ],
