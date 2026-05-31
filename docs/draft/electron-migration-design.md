@@ -11,7 +11,7 @@
 
 > **clip + news_desk 两个创作工作台均已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现并真机验过**(均含导出渲染;news_desk 含 preset + 素材绑定 + 详情列表 + 章节属性编辑;Tk news_desk 已退役)。本节是后续工作的**接力入口**;实现细节集中在此(task.md 只保留接力指针 + 逐次进展「续 N」,不堆架构细节)。下面"实际实现"凡与本文档正文不同的,以本节为准(正文写于迁移启动期,部分已被实现推翻——另见 §0.5)。
 >
-> **⚠️ 下一大里程碑 = 素材(material)侧迁新架构(见本节末「素材侧」)。** 当前新架构素材侧**只有只读 RPC**(列表/槽位就绪/get_artifact),Hub 只读显示素材树;**创建素材、导入源视频、跑 ASR(字幕)、章节分析、编辑新闻背景全部仍只在 Tk**——新架构里建一个全新素材实例、给它喂源视频/字幕/章节的能力**根本没有**。创作侧已能消费素材(绑定),但素材本身造不出来。
+> **✅ 素材(material)侧已迁新架构(2026-05-31,M0~M6 完整,见本节末「素材侧」)。** 新架构里现在能从零造出可用 news_video 素材(建实例 → 导源视频本地/yt-dlp → ASR/翻译/章节分析 job → 编辑 15 字段新闻背景 + AI 填充)。clip + news_desk + 素材三大本体均已迁;Tk 仍 ship clip 工作台 + 素材 sidebar(待退役)。**下一步见本节末「下一步」**(真机肉眼验 / Tk clip 退役 / 打磨)。
 >
 > 已提交基线:见 `git log`(clip 工作台系列 commit,最新含导出/预设/双语)。
 
@@ -75,27 +75,41 @@ news_desk 与 clip 走同一套契约,正面验证「公共组件库 + provider 
 
 剩余非阻塞欠债:逐章 schedule 编辑(现只读+seek)、字幕双语并排 UI、外部文件导入(磁盘选 SRT)、`tools/news_desk/publish.py` 新架构 publish(per-chapter mp4 切分,defer)。
 
-### ⚠️ 素材(material)侧 —— 当前只读,工作台未实现(下一大里程碑)
+### 素材(material)侧 —— 已迁新架构(2026-05-31,M0~M6 实现完整)
 
-**现状**:新架构素材侧只有**只读 RPC**——`material.slot_readiness`/`get_artifact`、`project.list_material_types/instances/materials`。Hub sidebar 只读显示素材树(news_video→实例→源视频/新闻背景/字幕 槽位就绪)。renderer **无任何素材工作台**。
+**第三个迁入新架构的产品本体**(继 clip + news_desk)。新架构里现在能**从零造出可用的 news_video 素材**:建实例 → 导源视频(本地/yt-dlp)→ ASR/翻译/章节分析(sidecar job)→ 编辑 15 字段新闻背景(+ AI 填充)。**用户决策:忠实照搬 project-level 单源行为**(不修 per-instance 地基;`subtitle_pipeline.run_asr/translate(project)` 仍走 `default_instance`;RPC 带 `instance` 参数前向兼容;`single_instance=True` 让 [+] 菜单「打开已有」不静默建坏 2nd 实例)。**Python 业务一行未重写**——薄 RPC + job 包既有 `NewsVideoModel`/`core.source_acquire`/`subtitle_pipeline`/`chapters_io`。
 
-**根本没实现的**(全部仍只在 Tk:`materials/news_video/{sidebar,ui,ai_fill,model}.py` + `tools/{download,speech,translate}`):
-- **创建素材实例**(`project.create_material_instance` 设计在 §2.2 但 RPC 未建)。
-- **导入/设置源视频**(`material.add_source_video`,§2.2 设计为长任务,未建)。
-- **跑 ASR 生成字幕**(分析 kind:source→SRT 物件,长任务 job)。
-- **章节分析**(source→`analysis.json` chapters,长任务 job + AI)。
-- **编辑新闻背景 context**(`context.json` 15 字段,见 [[project_news_context]];AI 填 + 人工校正)。
+**Python 业务面/注册表**:
+- `src/materials/__init__.py` `MaterialType` 扩 `single_instance`/`suggest_name`/`description_*` + 模块 `suggest_instance_name`(镜像 creations);`news_video/__init__.py` `single_instance=True` + `suggest_name`。
+- `src/materials/news_video/model.py` 加 `write_context_dict`/`write_basic_info_dict`(sidecar 传 dict,base 层零插件名 ADR-0004)。**修了一处 dead-but-broken bug**:`ai_fill_context` 旧代码 `extract(..., progress_cb=...)` 但 `extract` 无该参数 → 必 TypeError;无 Tk 调用方(Tk 直接调 `extract`),改为不转发 progress_cb。
 
-**为什么现在卡住**:创作侧(clip/news_desk)已能**消费**素材(绑定 + get_artifact + import 快照),但素材本身在新架构里**造不出来**——全新项目里点不出一个带源视频/字幕/章节的素材实例,只能靠 Tk 先建好再在 Electron 里绑。这是新架构自洽的最后一大缺口。
+**RPC 面**(`core_rpc/methods/`):
+- `project.py`:`list_material_types_info` + `create_material_instance`(镜像 `create_creation_instance`;建 instance.json + `source/`+`subtitles/` 骨架 + `event.materials.changed`)。
+- `material.py`(扩既有 2 个只读):同步读写 `read/write_context`、`read/write_basic_info`、`context_completion`、`source_meta`、`list_subtitle_languages`、`list_analyses`、`analysis_summary`、`read_analysis`、`save_chapters`(经 `chapters_io.save_analysis_chapters_only` 归一化);长任务 job `set_source`(local+yt-dlp,AcquireError category 前缀进失败 `event.job`)、`run_asr`、`run_translate`、`run_analysis`、`ai_fill_context`(**不传 progress_cb**)。每写发 `event.material.changed`;每 job 成功末尾发 changed。
+- `_jobs_util.py`(新):`AcquireCancelBridge`/`AiCancelBridge`(桥 `job.cancelled`→两种 CancelToken)+ `acquire_progress_to_job`/`pipeline_progress_to_job`(ProgressInfo→`job.progress`)。
 
-**实现路线**(对齐 §2.2 Material/Project 域设计 + 续7「四轨」的轨①写操作 + 轨②UI):
-1. **Project/Material 写 RPC**:`project.create_material_instance`;`material.add_source_video`(长任务,走 job + `progress.*` + `event.material.changed`)。
-2. **分析 kind 作为长任务 job**:ASR(`tools/speech` 的能力重归素材,产 SRT)、章节分析(产 analysis.json)、翻译(产多语 SRT)——经 job registry,可取消/进度。
-3. **context 编辑 RPC**:读/写 `context.json`(单一所有者,15 字段);AI 填走 job。
-4. **素材工作台 UI**(`desktop/src/renderer/materials/news_video/` 或 workbenches 同构):源准备面板 + 分析 kind 触发/进度 + context 编辑表单 + sidebar 槽位。镜像 Tk `materials/news_video/{sidebar,ui}.py` 的交互(忠实还原,[[feedback_faithful_port_not_invent]])。
-5. Hub 素材区加 `[+]` 新建素材(对齐创作侧 create 流程)。
+**renderer**(`desktop/src/renderer/`):
+- `ipc/runJob.ts`(新):**通用 sidecar-job 消费**(创作侧是 GPU-in-renderer,素材侧是 sidecar job)——**subscribe-first + 缓冲**防瞬时 job 抢跑;按 job_id 过滤 `progress.*`/`event.job`;配 React `useJob()`(running/progress/error + cancel)。
+- `workbenches/material/`(新):`MaterialWorkbench`(三 tab 壳,slot 锁映射 source/subtitles/news_context)+ `SourceTab`(本地 pickVideo / yt-dlp URL / clip_range / category 恢复提示)+ `SubtitlesTab`(ASR/翻译/章节分析 + analysis 列表)+ `ChapterScheduleEditor`(改 start/title,refined/key_points 只读保留,服务端归一化)+ `ContextTab`(15 字段 commit-on-blur + 5 字段 basic_info seed + ✨AI 填充 job + 覆盖警告)。
+- `workbenches/shared/fields.tsx`(新):`TextRow`/`TextAreaRow`/`NumRow`/`ColorRow`/`CheckRow`/`Section` 从 news_desk `ChapterProperties` 抽出共享(news_desk 改 import,去重)。
+- `workbenches/index.tsx`:加 `MaterialWorkbench` dispatch(`materialWorkbenches` registry,对称 creations)。
+- `hub/Hub.tsx`:素材实例行可点开工作台(`workbench` state 加 `kind:'creation'|'material'` 判别)+ 素材 `[+]` 菜单(`CreateMaterialMenu`,single_instance 已存在则「打开已有」)+ **订阅 `event.materials/material.changed` 实时刷新树**。
+- `ipc/client.ts`:`MaterialTypeInfo`/`SourceContext`/`SourceBasicInfo`/`SourceMeta`/`AnalysisSummary`/`AcquireSource` 类型 + `rpc.{listMaterialTypes,createMaterialInstance,materialSourceMeta,read/writeContext,read/writeBasicInfo,listSubtitleLanguages,listAnalyses,analysisSummary,readAnalysis,saveChapters,startSetSource,startRunAsr,startRunTranslate,startRunAnalysis,startAiFillContext,cancelJob}`。
 
-> 注:source 获取(yt-dlp)/ASR/翻译在 §0.5 已定调"能力**重归素材**,不做独立 menubar 工具"——所以这一步同时消化掉那几个遗留工具。AI 调用(ASR/章节/context 填)经现有 `core.ai` 路由。
+**检视/编辑增量(对照 Tk 补全的 4 个缺口,gap A~D)**:
+- **A 源视频预览**:SourceTab `<video controls>` 走 `getArtifact("source")` → `vc-media://`(对齐 Tk source_preview_pane)。
+- **B 字幕查看 + 质检/修复**:`SubtitleViewer`(SRT 文本 + `check_subtitle` 按 hard/fixable/advisory 分类 + `quick_fix_subtitle` 一键清残留);RPC `material.read_subtitle`/`check_subtitle`/`quick_fix_subtitle`(对齐 Tk srt_preview_pane / subtitles_dialogs)。
+- **C 章节编辑器视频 seek**:`ChapterScheduleEditor` 加 `<video>` + 每行「跳转」(seek 到 start)/「取当前」(取播放秒写回 start),`getArtifact("source")` 供源(对齐 Tk chapter_editor)。
+- **D 外部 SRT 导入 + 全部分析 kind**:`material.import_subtitle`(+ `vc:pickSubtitle` 原生 .srt 选择器)snapshot 外部 SRT;SubtitlesTab 接全部 4 个分析 kind(analysis/transcript/chapter_transcript/hotclips,经既有 `run_analysis`)+ `list_analysis_artifacts`/`read_analysis_text` + `AnalysisTextViewer`(md/json 只读查看,analysis kind 走章节编辑器)。
+
+**测试**:`tests/core_rpc/test_material.py`(22,inline-job runner 同步跑 work 防 daemon 竞态;含 create / context round-trip / set_source local+失败category+cancel / asr / analysis / save_chapters 归一化 / ai_fill no-progress_cb 回归守 / read·check·quick_fix·import subtitle / list_analysis_artifacts+read_text)。TS `pnpm typecheck` 干净 + `pnpm test` 130 全绿 + `pnpm build` 通过。
+
+**⚠️ 已知限制 / 欠债**(均非阻塞):
+- **单源 wart(决策性)**:2nd news_video 实例拿不到自己的源/ASR(读写实例#1);`single_instance=True` 在菜单层挡住,`subtitle_pipeline.py:29-34` 的 `TODO(ADR-0005)` 保留待后续真·per-instance 化。
+- yt-dlp 需 sidecar 进程能找到 Node.js(JS 挑战);失败 category 已透传提示。AI job(ASR/translate/章节/ai_fill)经 `core.ai`,无 provider 配置则 job failed,各 tab 渲染 error 不崩。
+- **真机肉眼验欠**(渲染/GUI 层 headless 覆盖不到,同 clip/news_desk):需 `env -u ELECTRON_RUN_AS_NODE pnpm dev` 跑一遍建实例→导源→ASR→质检→章节(seek)→context→AI 填充。
+- **整个 Electron renderer 目前纯中文硬编码、无 i18n**(clip/news_desk/Hub/素材都是;设计文档 §7.4 待决)——下一步做"全前端双语改造"(轻量 `tr()` + 复用 zh/en JSON,把所有硬编码中文抽成 key)。
+- 字幕双语并排 UI = 后续打磨。
 
 ### 与本文档正文不同的关键实现决策
 
@@ -120,9 +134,10 @@ news_desk 与 clip 走同一套契约,正面验证「公共组件库 + provider 
 TS:`pnpm typecheck` + `pnpm test`(130,含 ir/timemap/components/clip/news_desk/cropEditor/mapping/subtitleWrap/chapterPatch/chapterDraw)。Python:`pytest tests/core_rpc`(88,含 creation 全 RPC + render plan/commit/delete + 预设 + 双语 + import + bind + cache 失效回归)。引擎渲染层 headless 覆盖不到,靠真 renderer 肉眼验。全套 `pytest tests/` = 378 passed / 3 pre-existing failed(golden CRLF/tmp 路径 x2 + clip_config stale id)。
 
 ### 下一步(后续会话)
-- **★ 素材(material)侧迁新架构**(最大缺口,见上「素材侧」节):创建素材 + 导入源视频 + ASR/章节分析/翻译(分析 kind 长任务)+ context 编辑 + 素材工作台 UI + Hub 素材 `[+]`。这是新架构自洽的最后一大块。
-- Tk clip 工作台退役 → clip `component_defs` 与 `components/*` Tk specs 合并单一源(news_desk 已退;clip 仍 ship)。
-- news_desk 打磨:逐章 schedule 编辑、字幕双语并排 UI、外部文件导入、`tools/news_desk/publish.py` 新架构 publish。
+- **★ 素材侧真机肉眼验**(M0~M6 已 typecheck/测试/build 全绿,但渲染/GUI headless 覆盖不到):`env -u ELECTRON_RUN_AS_NODE pnpm dev` 跑一遍 建实例→导源(本地+yt-dlp)→ASR→章节分析→编辑章节→context→AI 填充,逐项肉眼确认。
+- 素材打磨:字幕双语并排 UI、外部磁盘 SRT 导入、章节 seek-to-time 预览、(决策性单源 wart 的真·per-instance 化,`subtitle_pipeline.py` TODO)。
+- Tk 退役推进:clip 工作台退役 → clip `component_defs` 与 `components/*` Tk specs 合并单一源(news_desk 已退);素材 Tk sidebar 退役。
+- news_desk 打磨:逐章 schedule 编辑、`tools/news_desk/publish.py` 新架构 publish。
 - 导出域细化:逐帧精确 decode、转场、剩余 overlay kind。
 - 升 ADR(数据模型 + 渲染引擎 + IPC 拓扑;预定 ADR-0007)。
 

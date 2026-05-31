@@ -35,6 +35,10 @@ const api = {
   pickFolder(): Promise<string | null> {
     return ipcRenderer.invoke("vc:pickFolder");
   },
+  /** Open a file dialog to pick a local .srt; returns its absolute path or null. */
+  pickSubtitle(): Promise<string | null> {
+    return ipcRenderer.invoke("vc:pickSubtitle");
+  },
   /** Business RPC to the Python sidecar. Returns the tagged reply from main;
    *  the renderer's ipc client (src/renderer/ipc/) unwraps it. */
   rpc: {

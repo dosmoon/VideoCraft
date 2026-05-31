@@ -10,8 +10,8 @@
  * (the ImportRow above this panel) — per-row editing is a later increment.
  */
 
-import { useEffect, useState } from "react";
 import type { Component } from "../../ipc/client";
+import { Section, CheckRow, TextRow, NumRow, ColorRow } from "../shared/fields";
 import {
   patchMode,
   patchStrip,
@@ -87,114 +87,6 @@ export function ChapterProperties(props: {
       <p style={{ color: "#666", fontSize: 11, marginTop: 8 }}>
         章节排期来自素材分析(上方导入);逐章编辑待后续迭代。
       </p>
-    </div>
-  );
-}
-
-// ── field rows ───────────────────────────────────────────────────────────────
-
-function Section({ title }: { title: string }) {
-  return (
-    <div
-      style={{
-        fontSize: 11,
-        color: "#888",
-        fontWeight: 700,
-        margin: "8px 0 2px",
-      }}
-    >
-      {title}
-    </div>
-  );
-}
-
-const LABEL: React.CSSProperties = { color: "#999", fontSize: 12, width: 86, flexShrink: 0 };
-const INPUT: React.CSSProperties = {
-  flex: 1,
-  maxWidth: 160,
-  padding: "2px 6px",
-  background: "#1a1a1e",
-  color: "#ddd",
-  border: "1px solid #333",
-  borderRadius: 3,
-  fontSize: 12,
-};
-
-function CheckRow(props: { label: string; value: boolean; disabled: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0" }}>
-      <input
-        type="checkbox"
-        checked={props.value}
-        disabled={props.disabled}
-        onChange={(e) => props.onChange(e.target.checked)}
-      />
-      <span style={{ color: "#ccc", fontSize: 12 }}>{props.label}</span>
-    </label>
-  );
-}
-
-function TextRow(props: { label: string; value: string; disabled: boolean; onCommit: (v: string) => void }) {
-  const [v, setV] = useState(props.value);
-  useEffect(() => setV(props.value), [props.value]);
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0" }}>
-      <span style={LABEL}>{props.label}</span>
-      <input
-        value={v}
-        disabled={props.disabled}
-        onChange={(e) => setV(e.target.value)}
-        onBlur={() => v !== props.value && props.onCommit(v)}
-        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-        style={INPUT}
-      />
-    </div>
-  );
-}
-
-function NumRow(props: { label: string; value: number; disabled: boolean; onCommit: (v: number) => void }) {
-  const [v, setV] = useState(String(props.value));
-  useEffect(() => setV(String(props.value)), [props.value]);
-  const commit = () => {
-    const n = Number(v);
-    if (!Number.isNaN(n) && n !== props.value) props.onCommit(n);
-    else setV(String(props.value));
-  };
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0" }}>
-      <span style={LABEL}>{props.label}</span>
-      <input
-        type="number"
-        step="any"
-        value={v}
-        disabled={props.disabled}
-        onChange={(e) => setV(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-        style={INPUT}
-      />
-    </div>
-  );
-}
-
-function ColorRow(props: { label: string; value: string; disabled: boolean; onCommit: (v: string) => void }) {
-  const [v, setV] = useState(props.value);
-  useEffect(() => setV(props.value), [props.value]);
-  const isColor = /^#[0-9a-fA-F]{6}$/.test(v);
-  return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0" }}>
-      <span style={LABEL}>{props.label}</span>
-      <input
-        value={v}
-        disabled={props.disabled}
-        onChange={(e) => setV(e.target.value)}
-        onBlur={() => v !== props.value && props.onCommit(v)}
-        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-        style={{ ...INPUT, maxWidth: 110 }}
-      />
-      {isColor && (
-        <span style={{ width: 14, height: 14, borderRadius: 3, background: v, border: "1px solid #444" }} />
-      )}
     </div>
   );
 }

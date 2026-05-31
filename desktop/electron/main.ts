@@ -182,6 +182,15 @@ ipcMain.handle("vc:pickFolder", async () => {
   return r.canceled ? null : (r.filePaths[0] ?? null);
 });
 
+// Pick an external SRT to import into a material's subtitles slot.
+ipcMain.handle("vc:pickSubtitle", async () => {
+  const r = await dialog.showOpenDialog({
+    properties: ["openFile"],
+    filters: [{ name: "Subtitle", extensions: ["srt"] }],
+  });
+  return r.canceled ? null : (r.filePaths[0] ?? null);
+});
+
 // Write bytes to an absolute path (rendered clips → the creation instance dir;
 // the path is computed by the Python sidecar, which owns naming/locations).
 ipcMain.handle("vc:writeFile", async (_e, absPath: string, bytes: Uint8Array) => {

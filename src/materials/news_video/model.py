@@ -148,6 +148,23 @@ class NewsVideoModel:
         write_context(self.source_dir, ctx)
         self._notify()
 
+    def write_context_dict(self, data: dict) -> dict:
+        """Persist a plain context dict (sidecar passes JSON, never the dataclass
+        — keeps the base RPC layer free of plugin-specific imports, ADR-0004).
+        Returns the stored 15-field dict."""
+        ctx = SourceContext.from_dict(data or {})
+        write_context(self.source_dir, ctx)
+        self._notify()
+        return ctx.to_dict()
+
+    def write_basic_info_dict(self, data: dict) -> dict:
+        """Persist a plain basic_info dict (the 5-field AI-fill seed). Returns the
+        stored dict. Same ADR-0004 rationale as write_context_dict."""
+        info = SourceBasicInfo.from_dict(data or {})
+        write_basic_info(self.source_dir, info)
+        self._notify()
+        return info.to_dict()
+
     def context_completion(self) -> tuple[int, int]:
         """(filled, total) — drives the sidebar status badge."""
         ctx = self.read_context().to_dict()
@@ -157,10 +174,14 @@ class NewsVideoModel:
 
     def ai_fill_context(self, *, progress_cb=None, cancel_token=None) -> SourceContext:
         """Run AI extraction to populate context.json. Returns the new
-        SourceContext. Caller wraps in progress modal."""
+        SourceContext. Caller wraps in progress modal.
+
+        `progress_cb` is accepted for API symmetry with the other long ops but
+        unused — extract() is a single AI call with no sub-steps and does not
+        take a progress callback (forwarding it raises TypeError)."""
+        del progress_cb
         from materials.news_video.ai_fill import extract
-        ctx = extract(self.source_dir,
-                      progress_cb=progress_cb, cancel_token=cancel_token)
+        ctx = extract(self.source_dir, cancel_token=cancel_token)
         write_context(self.source_dir, ctx)
         self._notify()
         return ctx

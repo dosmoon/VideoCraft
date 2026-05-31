@@ -110,6 +110,63 @@ def list_creation_types(ctx: Context) -> list[dict[str, Any]]:
     ]
 
 
+@rpc_method("project.list_material_types_info")
+def list_material_types_info(ctx: Context) -> list[dict[str, Any]]:
+    """Registered material types for the 素材 [+] menu, in registration order.
+    Returns user-facing descriptions — `display_name_key` is an i18n key not
+    resolvable headless, so the renderer shows description_zh/_en, never the raw
+    type_name ([[feedback_user_facing_naming]])."""
+    import materials
+
+    return [
+        {
+            "type_name": t.type_name,
+            "single_instance": t.single_instance,
+            "description_zh": t.description_zh,
+            "description_en": t.description_en,
+        }
+        for t in materials.all_types()
+    ]
+
+
+@rpc_method("project.create_material_instance")
+def create_material_instance(ctx: Context, type: str, name: str | None = None) -> dict[str, Any]:
+    """Create a new material instance and return {type, instance}. When `name`
+    is omitted the plugin's auto-name scheme is used (suggest_instance_name). The
+    instance starts with an instance.json skeleton + empty source/ + subtitles/
+    dirs (faithful to the Tk _create_handler). Emits event.materials.changed so
+    the sidebar tree refreshes."""
+    import materials
+
+    if materials.get(type) is None:
+        raise RpcError(-32602, f"unknown material type: {type!r}")
+    proj = ctx.session.project
+    existing = proj.list_material_instances(type)
+    inst = (name or "").strip() or materials.suggest_instance_name(type, existing)
+    if inst in existing:
+        raise RpcError(-32602, f"material instance already exists: {inst!r}")
+    try:
+        inst_dir = proj.create_material_instance(
+            type, inst,
+            initial_config={
+                "schema_version": 1,
+                "type_name": type,
+                "instance_name": inst,
+                "display_name": inst,
+            },
+            config_filename="instance.json",
+        )
+    except FileExistsError as exc:
+        raise RpcError(-32602, f"material instance already exists: {inst!r}") from exc
+    except ValueError as exc:
+        raise RpcError(-32602, str(exc)) from exc
+    # Skeleton slot dirs so later writes (source acquire, ASR) don't ENOENT.
+    os.makedirs(os.path.join(inst_dir, "source"), exist_ok=True)
+    os.makedirs(os.path.join(inst_dir, "subtitles"), exist_ok=True)
+    ctx.notify("event.materials.changed", {"type": type, "instance": inst})
+    return {"type": type, "instance": inst}
+
+
 @rpc_method("project.create_creation_instance")
 def create_creation_instance(ctx: Context, type: str, name: str | None = None) -> dict[str, Any]:
     """Create a new creation instance and return {type, instance}. When `name`

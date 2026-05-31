@@ -31,6 +31,11 @@ class MaterialType:
     display_name_key: str        # i18n key for the type's user-facing label
     description_zh: str = ""     # subtitle in the type-picker dialog (zh)
     description_en: str = ""     # subtitle in the type-picker dialog (en)
+    # True ⇒ the 素材 [+] menu offers [open existing] over [new]. news_video is
+    # single-instance because source/ASR are still project-level (one source per
+    # project; see core/subtitle_pipeline.py TODO(ADR-0005)).
+    single_instance: bool = False
+    default_basename: str = ""   # base for auto-increment when multi-instance
     icon: Optional[str] = None
     # (parent_frame, hub, instance_id) -> sidebar panel object
     sidebar_renderer: Optional[Callable] = None
@@ -40,6 +45,9 @@ class MaterialType:
     # (project, instance_id) -> model object exposing get_artifact(key) etc.
     # Slice Q uses this from creation plugins to resolve material artifacts.
     instance_factory: Optional[Callable] = None
+    # (existing: list[str]) -> str; the plugin's preferred auto-name scheme.
+    # When None, suggest_instance_name() falls back to default_basename / type.
+    suggest_name: Optional[Callable] = None
 
 
 _REGISTRY: dict[str, MaterialType] = {}
@@ -72,3 +80,23 @@ def display_name(type_name: str) -> str:
         return type_name
     from i18n import tr
     return tr(t.display_name_key)
+
+
+def suggest_instance_name(type_name: str, existing: list[str]) -> str:
+    """Suggest the next instance name given the existing ones.
+
+    Delegates to the plugin's own `suggest_name` when provided; otherwise
+    falls back to '<default_basename or type_name>-N' (first unused index).
+    Mirrors creations.suggest_instance_name so the [+] menu is symmetric.
+    """
+    t = get(type_name)
+    if t is not None and t.suggest_name is not None:
+        return t.suggest_name(existing)
+    stem = (t.default_basename if t and t.default_basename else type_name)
+    s = set(existing)
+    n = 1
+    while True:
+        candidate = f"{stem}-{n}"
+        if candidate not in s:
+            return candidate
+        n += 1

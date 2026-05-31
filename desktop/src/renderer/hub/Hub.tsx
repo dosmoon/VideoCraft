@@ -14,10 +14,14 @@ import {
   rpc,
   RpcError,
   type CreationTypeInfo,
+  type MaterialTypeInfo,
   type ProjectBrief,
   type SlotState,
 } from "../ipc/client";
-import { CreationWorkbench } from "../workbenches";
+import { CreationWorkbench, MaterialWorkbench } from "../workbenches";
+
+// What the open workbench is — a creation or a material, plus its identity.
+type OpenWorkbench = { kind: "creation" | "material"; type: string; instance: string };
 
 // Friendly labels for the news_video slots (placeholder — real i18n later).
 const SLOT_LABELS: Record<string, string> = {
@@ -42,8 +46,8 @@ export function Hub() {
   const [readiness, setReadiness] = useState<Readiness>({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  // The open creation workbench (one at a time for this slice), or none.
-  const [workbench, setWorkbench] = useState<{ type: string; instance: string } | null>(null);
+  // The open workbench (one at a time), creation or material, or none.
+  const [workbench, setWorkbench] = useState<OpenWorkbench | null>(null);
 
   // Load a project's material/creation tree + per-instance slot readiness.
   const loadTree = useCallback(async (brief: ProjectBrief) => {
@@ -83,6 +87,44 @@ export function Hub() {
     };
   }, [loadTree]);
 
+  // Live-refresh the tree from sidecar notifications (a workbench job / write in
+  // another view, or a material edit, broadcasts these). materials/creations
+  // .changed = structural (reload lists + readiness); material.changed = one
+  // instance's slots changed (re-read just that one).
+  useEffect(() => {
+    if (!current) return;
+    const unsub = rpc.onNotification((method, params) => {
+      if (method === "event.materials.changed" || method === "event.creations.changed") {
+        void (async () => {
+          const [mats, creas] = await Promise.all([rpc.listMaterials(), rpc.listCreations()]);
+          setMaterials(mats);
+          setCreations(creas);
+          const next: Readiness = {};
+          for (const [t, insts] of Object.entries(mats)) {
+            for (const i of insts) {
+              try {
+                next[`${t}/${i}`] = await rpc.slotReadiness(t, i);
+              } catch {
+                /* best-effort */
+              }
+            }
+          }
+          setReadiness(next);
+        })();
+      } else if (method === "event.material.changed") {
+        const p = params as { type?: string; instance?: string } | null;
+        if (p?.type && p.instance) {
+          const key = `${p.type}/${p.instance}`;
+          void rpc
+            .slotReadiness(p.type, p.instance)
+            .then((r) => setReadiness((prev) => ({ ...prev, [key]: r })))
+            .catch(() => {});
+        }
+      }
+    });
+    return unsub;
+  }, [current]);
+
   const open = useCallback(
     async (folder: string) => {
       setBusy(true);
@@ -121,7 +163,31 @@ export function Hub() {
       try {
         const { instance } = await rpc.createCreationInstance(type);
         setCreations(await rpc.listCreations());
-        setWorkbench({ type, instance });
+        setWorkbench({ kind: "creation", type, instance });
+      } catch (err) {
+        setError(fmt(err));
+      }
+    },
+    [],
+  );
+
+  // Create a new material instance, refresh the tree (+ its slot readiness), and
+  // open its workbench. Single-instance types are guarded at the menu, but the
+  // RPC also rejects a duplicate name defensively.
+  const createMaterial = useCallback(
+    async (type: string) => {
+      setError("");
+      try {
+        const { instance } = await rpc.createMaterialInstance(type);
+        const mats = await rpc.listMaterials();
+        setMaterials(mats);
+        try {
+          const r = await rpc.slotReadiness(type, instance);
+          setReadiness((prev) => ({ ...prev, [`${type}/${instance}`]: r }));
+        } catch {
+          /* readiness is best-effort */
+        }
+        setWorkbench({ kind: "material", type, instance });
       } catch (err) {
         setError(fmt(err));
       }
@@ -142,8 +208,10 @@ export function Hub() {
       readiness={readiness}
       error={error}
       workbench={workbench}
-      onOpenCreation={(type, instance) => setWorkbench({ type, instance })}
+      onOpenCreation={(type, instance) => setWorkbench({ kind: "creation", type, instance })}
+      onOpenMaterial={(type, instance) => setWorkbench({ kind: "material", type, instance })}
       onCreateCreation={(type) => void createCreation(type)}
+      onCreateMaterial={(type) => void createMaterial(type)}
       onCloseWorkbench={() => setWorkbench(null)}
       onClose={close}
     />
@@ -241,9 +309,11 @@ function ProjectView(props: {
   creations: Record<string, string[]>;
   readiness: Readiness;
   error: string;
-  workbench: { type: string; instance: string } | null;
+  workbench: OpenWorkbench | null;
   onOpenCreation: (type: string, instance: string) => void;
+  onOpenMaterial: (type: string, instance: string) => void;
   onCreateCreation: (type: string) => void;
+  onCreateMaterial: (type: string) => void;
   onCloseWorkbench: () => void;
   onClose: () => void;
 }) {
@@ -255,7 +325,9 @@ function ProjectView(props: {
     error,
     workbench,
     onOpenCreation,
+    onOpenMaterial,
     onCreateCreation,
+    onCreateMaterial,
     onCloseWorkbench,
     onClose,
   } = props;
@@ -305,15 +377,29 @@ function ProjectView(props: {
         >
           {error && <p style={{ color: "#ff6b6b" }}>✗ {error}</p>}
 
-          <SectionTitle>素材</SectionTitle>
-          {matTypes.length === 0 && <Empty>无素材</Empty>}
+          <SectionTitleRow title="素材">
+            <CreateMaterialMenu materials={materials} onCreate={onCreateMaterial} onOpen={onOpenMaterial} />
+          </SectionTitleRow>
+          {matTypes.length === 0 && <Empty>无素材 — 用「+」新建</Empty>}
           {matTypes.map(([type, insts]) => (
             <div key={type} style={{ marginBottom: 10 }}>
               <TypeLabel>{type}</TypeLabel>
               {insts.length === 0 && <Empty>（空）</Empty>}
-              {insts.map((inst) => (
-                <MaterialInstance key={inst} name={inst} slots={readiness[`${type}/${inst}`]} />
-              ))}
+              {insts.map((inst) => {
+                const active =
+                  workbench?.kind === "material" &&
+                  workbench.type === type &&
+                  workbench.instance === inst;
+                return (
+                  <MaterialInstance
+                    key={inst}
+                    name={inst}
+                    active={active}
+                    slots={readiness[`${type}/${inst}`]}
+                    onOpen={() => onOpenMaterial(type, inst)}
+                  />
+                );
+              })}
             </div>
           ))}
 
@@ -326,7 +412,10 @@ function ProjectView(props: {
               <TypeLabel>{type}</TypeLabel>
               {insts.length === 0 && <Empty>（空）</Empty>}
               {insts.map((inst) => {
-                const active = workbench?.type === type && workbench?.instance === inst;
+                const active =
+                  workbench?.kind === "creation" &&
+                  workbench.type === type &&
+                  workbench.instance === inst;
                 return (
                   <button
                     key={inst}
@@ -354,14 +443,23 @@ function ProjectView(props: {
 
         <main style={{ flex: 1, overflow: "auto" }}>
           {workbench ? (
-            <CreationWorkbench
-              key={`${workbench.type}/${workbench.instance}`}
-              type={workbench.type}
-              instance={workbench.instance}
-              onClose={onCloseWorkbench}
-            />
+            workbench.kind === "material" ? (
+              <MaterialWorkbench
+                key={`m:${workbench.type}/${workbench.instance}`}
+                type={workbench.type}
+                instance={workbench.instance}
+                onClose={onCloseWorkbench}
+              />
+            ) : (
+              <CreationWorkbench
+                key={`c:${workbench.type}/${workbench.instance}`}
+                type={workbench.type}
+                instance={workbench.instance}
+                onClose={onCloseWorkbench}
+              />
+            )
           ) : (
-            <div style={{ padding: 24, color: "#666" }}>选择一个创作以打开工作台</div>
+            <div style={{ padding: 24, color: "#666" }}>选择一个素材或创作以打开工作台</div>
           )}
         </main>
       </div>
@@ -371,15 +469,34 @@ function ProjectView(props: {
 
 // ── Material sidebar rows ─────────────────────────────────────────────────────
 
-function MaterialInstance(props: { name: string; slots: Record<string, SlotState> | undefined }) {
-  const { name, slots } = props;
+function MaterialInstance(props: {
+  name: string;
+  active: boolean;
+  slots: Record<string, SlotState> | undefined;
+  onOpen: () => void;
+}) {
+  const { name, active, slots, onOpen } = props;
   return (
     <div style={{ marginBottom: 6 }}>
-      <div style={{ padding: "4px 8px", color: "#ddd", fontSize: 13, fontWeight: 500 }}>
+      <button
+        onClick={onOpen}
+        style={{
+          display: "block",
+          width: "100%",
+          textAlign: "left",
+          padding: "4px 8px",
+          color: active ? "#fff" : "#ddd",
+          background: active ? "#2d6cdf" : "transparent",
+          border: "none",
+          borderRadius: 4,
+          fontSize: 13,
+          fontWeight: 500,
+          cursor: "pointer",
+        }}
+      >
         📁 {name}
-      </div>
-      {slots &&
-        Object.values(slots).map((s) => <SlotRow key={s.slot_id} slot={s} />)}
+      </button>
+      {slots && Object.values(slots).map((s) => <SlotRow key={s.slot_id} slot={s} />)}
     </div>
   );
 }
@@ -405,23 +522,6 @@ function SlotRow({ slot }: { slot: SlotState }) {
         {slot.summary}
       </span>
     </div>
-  );
-}
-
-function SectionTitle({ children }: { children: ReactNode }) {
-  return (
-    <h3
-      style={{
-        fontSize: 11,
-        textTransform: "uppercase",
-        letterSpacing: 0.5,
-        color: "#888",
-        margin: "14px 0 6px",
-        fontWeight: 700,
-      }}
-    >
-      {children}
-    </h3>
   );
 }
 
@@ -525,6 +625,108 @@ function CreateCreationMenu({ onCreate }: { onCreate: (type: string) => void }) 
                 {t.description_zh || t.type_name}
               </button>
             ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// [+] menu listing registered material types. For a single-instance type that
+// already has an instance, the item opens it instead of creating a broken 2nd
+// (source/ASR are still project-level — see the news_video single_instance note).
+function CreateMaterialMenu(props: {
+  materials: Record<string, string[]>;
+  onCreate: (type: string) => void;
+  onOpen: (type: string, instance: string) => void;
+}) {
+  const { materials, onCreate, onOpen } = props;
+  const [open, setOpen] = useState(false);
+  const [types, setTypes] = useState<MaterialTypeInfo[] | null>(null);
+
+  const toggle = useCallback(() => {
+    setOpen((o) => !o);
+    if (types === null) {
+      void rpc
+        .listMaterialTypes()
+        .then(setTypes)
+        .catch(() => setTypes([]));
+    }
+  }, [types]);
+
+  return (
+    <div style={{ position: "relative" }}>
+      <button
+        onClick={toggle}
+        title="新建素材"
+        style={{
+          width: 22,
+          height: 20,
+          lineHeight: "18px",
+          padding: 0,
+          background: "#2a2a2e",
+          color: "#ccc",
+          border: "1px solid #3a3a40",
+          borderRadius: 4,
+          fontSize: 14,
+          cursor: "pointer",
+        }}
+      >
+        +
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "100%",
+            right: 0,
+            zIndex: 20,
+            background: "#1f1f23",
+            border: "1px solid #3a3a40",
+            borderRadius: 6,
+            padding: 4,
+            minWidth: 220,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+          }}
+        >
+          {types === null ? (
+            <div style={{ padding: "5px 8px", color: "#888", fontSize: 12 }}>加载中…</div>
+          ) : types.length === 0 ? (
+            <div style={{ padding: "5px 8px", color: "#888", fontSize: 12 }}>无可用类型</div>
+          ) : (
+            types.map((t) => {
+              const existing = materials[t.type_name] ?? [];
+              // Single-instance + already created → offer to open it, not re-create.
+              const openExisting = t.single_instance && existing.length > 0;
+              const label = openExisting
+                ? `打开 ${existing[0]}`
+                : t.description_zh || t.type_name;
+              return (
+                <button
+                  key={t.type_name}
+                  onClick={() => {
+                    setOpen(false);
+                    if (openExisting) onOpen(t.type_name, existing[0]!);
+                    else onCreate(t.type_name);
+                  }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    background: "transparent",
+                    color: "#ddd",
+                    border: "none",
+                    borderRadius: 4,
+                    padding: "5px 8px",
+                    fontSize: 13,
+                    cursor: "pointer",
+                  }}
+                  title={t.description_zh}
+                >
+                  {label}
+                </button>
+              );
+            })
           )}
         </div>
       )}

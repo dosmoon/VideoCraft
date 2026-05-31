@@ -15,6 +15,7 @@ interface VcApi {
   pickVideo(): Promise<string | null>;
   pickImage(): Promise<string | null>;
   pickFolder(): Promise<string | null>;
+  pickSubtitle(): Promise<string | null>;
   rpc: VcRpcApi;
   platform: string;
 }

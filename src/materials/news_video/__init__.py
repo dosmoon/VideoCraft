@@ -59,8 +59,14 @@ register(MaterialType(
     display_name_key="material.news_video",
     description_zh="新闻/演讲/发布会素材：源视频 + 字幕 + 章节 + AI 新闻背景",
     description_en="News / speech / press-briefing material: source video + subtitles + chapters + AI context",
+    # Single-instance: source acquisition + ASR are still project-level (one
+    # source video per project), so a 2nd instance can't get its own source.
+    # The [+] menu offers "open existing" instead of silently creating a broken
+    # 2nd instance. See core/subtitle_pipeline.py TODO(ADR-0005).
+    single_instance=True,
     icon="📺",
     sidebar_renderer=_sidebar_module.render,
     create_handler=_create_handler,
     instance_factory=_instance_factory,
+    suggest_name=_suggest_instance_name,
 ))
