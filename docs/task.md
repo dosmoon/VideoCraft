@@ -562,3 +562,29 @@ news_desk 迁新架构(Electron renderer + sidecar)已走通**绝大部分**,真
 - 续 29-②:导出 tab 点「渲染整源」→进度走完→`output.mp4` 落 instance 目录、有画面+字幕+章节+音频、与预览一致;播放/打开文件夹/删除可用;取消能中断。
 
 **下一步(续28 剩余)= ④ preset RPC(presets.py builtins 绝对-px→分数形)+ Tk news_desk 退役(`component_defs.py` 与 Tk `components/*` 合并单源);非阻塞欠债:字幕双语并排 UI、外部文件导入、`imports.py` 死注释清理(行号已随改动漂移,核查时未见明显死注释)。**
+
+> **续30 已做完 ④(preset RPC + Tk news_desk 退役)**,见下。
+
+---
+
+## ▶ 续 30(2026-05-31,task ④:Tk news_desk 退役 + preset RPC — 用户拍板「现在就退 Tk」)
+
+续28 的 ④ 两半(preset 规范化 + Tk 退役)**强耦合**:presets.py builtins 是 legacy 绝对-px 形**正因为 Tk ffmpeg 渲染路径要它**,直接规范化会炸还在 ship 的 Tk news_desk。用户决策(AskUserQuestion)= **现在就退 Tk news_desk**(最干净 end-state,pre-alpha no-legacy)。分 4 个提交:
+
+**Commit 1 `21c5aa3`...** — 见续29(本节是续30,提交从下面起)。
+
+**Commit `<decouple>`:clip 拿走 Tk 组件框架(解 clip→news_desk 跨插件耦合)** — 共享 Tk-era 框架(`ComponentSpec`/`ImportSource`/`ProjectContext`)原住 `news_desk/components/__init__.py`,被 clip Tk(`style_panel` + `components/{hook_outro,subtitle,watermark}` + `components/__init__`)跨插件 import。news_desk 新架构根本不用它们 → clip(唯一存活 Tk 消费者)本地定义之。纯 dataclass 平移(零行为变更);留 clip 不进 core(Tk 脚手架,随 clip Tk 一起死)。
+
+**Commit `<retire>`:删 Tk news_desk** — 删 `news_desk_tool.py`(NewsDeskApp)+ `components/*` Tk specs + `publish.py`(Tk 期 md 渲染器;新架构 publish 已 defer 到 `tools/news_desk/publish.py`);从 VideoCraftHub 注销 news-desk(TOOL_MAP + 注册 import + project_only);**`component_defs.py` 成为 addable kinds + 默认实例的单一源**(解「双源」债)。退役 legacy Tk-render-path 测试(`test_news_desk_compile`/`test_pr4_timeline_render_e2e`——测已删的 compile→overlay 路径,pr4 本就是 pre-existing 失败)。重写 `test_arch_news_desk`:删 Tk-tool/component-spec/publish 检查,保留存活不变量(注册/新架构 providers 接上/headless-无-tkinter/解耦/core 不 import news_desk),新增「news_desk 全程零 tkinter」强不变量。`test_clip_components` 改用 clip-local 框架。
+
+**Commit `<presets>`:preset RPC + 规范化 builtins** — `_*_component` 工厂改为从 `component_defs.default_instance(kind)` + 样式覆写构建(preset 永不漂离 live 组件形;字号/描边走 canonical 分数 `fontsize_pct`/`stroke_pct`/`text_fontsize_pct`,非绝对 px)。`NewsDeskInstanceConfig` 加 `list/apply/save/delete_preset`(单一所有者;base RPC 泛型解析 ADR-0004;news_desk 无 output 几何 → preset 纯组件列表,apply 整列替换 + kind-based 重 unique id)。core_rpc deferred 测试翻成真覆盖(list/apply/unknown/save+delete 含 builtin 保护,store 重定向 tmp)。
+
+**Commit `<ui>`:StyleTab preset 工具栏** — 镜像 clip preset 工具栏(去掉 output 几何控件):预设下拉 + 应用/另存为/覆盖/删除,builtin 防覆写/删除。apply 替换组件列表 + 清选择 + `preview.reload()`(preset 清 srt_path,缓存 cue 要刷)。
+
+**验证**:Python 全套 `pytest tests/` = **375 passed / 3 failed**(3 全 pre-existing:2 golden CRLF/tmp `claude/` 路径 + `test_clip_config::test_load_full_roundtrip` stale id;**0 新失败**;且退役 dead 测试顺带消掉了 2 个 pre-existing pr4 失败)。news_desk presets + core_rpc 45 测 standalone 全绿。desktop **两 typecheck rc=0 / 128 TS 测 / electron-vite build(84 模块)**。Tk hub `py_compile` 通过;news_desk 包 headless import 通过(`creations.get('news_desk')` 仍注册,新架构 sidecar 经自己 load_plugins 注册不受影响)。
+
+**真机验待用户**:① clip Tk app 仍正常(框架平移后)② news_desk 工作台 preset 下拉应用/另存/删除 → 组件列表换、预览实时变。
+
+**承重决策**:框架 dataclass 落 clip-local 非 core/——它们是 Tk-era 脚手架(新架构用 TS component contract),随 clip Tk 退役一起死,不该进 core 永久层再删一遍(pre-alpha no-legacy + [[feedback_no_universal_standard]] 每插件自持)。这覆盖了「ComponentSpec 搬 core」旧债——前提(两活插件共享)已失效,改判 clip-local。
+
+**news_desk 迁新架构(Electron + sidecar)至此=功能完整**:create/preview/export/imports/detail-lists/chapter-editor/presets 全通,Tk 侧退役。剩非阻塞:字幕双语并排 UI、外部文件导入、逐章 schedule 编辑、`tools/news_desk/publish.py` 新架构 publish(defer)。**clip Tk 仍在**(本轮只退 news_desk Tk);clip Tk→Electron 是独立后续。
