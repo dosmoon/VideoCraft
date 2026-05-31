@@ -27,6 +27,10 @@ const api = {
   pickVideo(): Promise<string | null> {
     return ipcRenderer.invoke("vc:pickVideo");
   },
+  /** Open a file dialog to pick a local image; returns its absolute path or null. */
+  pickImage(): Promise<string | null> {
+    return ipcRenderer.invoke("vc:pickImage");
+  },
   /** Open a folder dialog to pick a project directory; returns its path or null. */
   pickFolder(): Promise<string | null> {
     return ipcRenderer.invoke("vc:pickFolder");

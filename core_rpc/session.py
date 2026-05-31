@@ -108,3 +108,12 @@ class Session:
         owner = owner_cls.load(path)
         self._creations[key] = (owner, path)
         return owner, path
+
+    def invalidate_creation(self, type_name: str, instance_id: str) -> None:
+        """Drop the cached config owner so the next creation_owner() reloads it
+        from disk. Call after a provider (import / render) writes config.json
+        out-of-band: every owner mutation saves immediately, so the cached owner
+        is otherwise stale after such a write — a later owner.save() would
+        clobber the provider's change, and reads (list_components) would miss it.
+        Re-syncing keeps the single-owner invariant ([[project_creation_config_owner]])."""
+        self._creations.pop((type_name, instance_id), None)

@@ -13,6 +13,7 @@ interface VcApi {
   showInFolder(absPath: string): Promise<void>;
   openPath(absPath: string): Promise<string>;
   pickVideo(): Promise<string | null>;
+  pickImage(): Promise<string | null>;
   pickFolder(): Promise<string | null>;
   rpc: VcRpcApi;
   platform: string;

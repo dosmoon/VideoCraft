@@ -21,6 +21,7 @@ import { PropertyPanel } from "../clip/propertyEditor";
 import { NewsDeskPreview, type NewsDeskPreviewHandle } from "./NewsDeskPreview";
 import { useNewsDeskPreview } from "./useNewsDeskPreview";
 import { ChapterProperties } from "./ChapterProperties";
+import { ImageWatermarkProperties } from "./ImageWatermarkProperties";
 import { SubtitleCueList, ChapterScheduleList } from "./ComponentDetail";
 
 // Friendly component labels — the UI must never show the internal kind name
@@ -511,6 +512,7 @@ export function StyleTab(props: {
           <>
             {selected.kind === "subtitle" && (
               <ImportRow
+                key={selected.id}
                 label="字幕来源"
                 options={imports.subtitleLangs}
                 emptyHint="素材无可用字幕(先在素材里跑字幕生成)"
@@ -525,6 +527,7 @@ export function StyleTab(props: {
             )}
             {selected.kind === "chapter" && (
               <ImportRow
+                key={selected.id}
                 label="章节来源"
                 options={imports.analyses}
                 emptyHint="素材无章节分析(先在素材里跑章节分析)"
@@ -540,6 +543,12 @@ export function StyleTab(props: {
             {importErr && <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {importErr}</p>}
             {selected.kind === "chapter" ? (
               <ChapterProperties
+                component={selected}
+                disabled={savingId === selected.id}
+                onPatch={(fields) => onPatch(selected, fields)}
+              />
+            ) : selected.kind === "image_watermark" ? (
+              <ImageWatermarkProperties
                 component={selected}
                 disabled={savingId === selected.id}
                 onPatch={(fields) => onPatch(selected, fields)}

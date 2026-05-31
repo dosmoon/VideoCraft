@@ -20,11 +20,14 @@ export function PropertyPanel(props: {
   onCommit: (key: string, value: unknown) => void;
   /** Fields rendered as a dropdown of fixed choices (e.g. subtitle language). */
   enums?: Record<string, readonly string[]>;
+  /** Extra field keys to omit (e.g. a field a dedicated editor renders itself). */
+  hide?: readonly string[];
 }) {
-  const { component, disabled, onCommit, enums } = props;
+  const { component, disabled, onCommit, enums, hide } = props;
+  const hidden = hide ? new Set([...HIDDEN_FIELDS, ...hide]) : HIDDEN_FIELDS;
   // Only primitive fields are editable here; nested values (if any) are skipped.
   const editable = Object.keys(component).filter((k) => {
-    if (HIDDEN_FIELDS.has(k)) return false;
+    if (hidden.has(k)) return false;
     const t = typeof component[k];
     return t === "string" || t === "number" || t === "boolean";
   });

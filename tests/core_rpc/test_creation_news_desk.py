@@ -365,6 +365,27 @@ def test_import_subtitle_snapshots_and_sets_srt_path(ctx, project_with_bound_new
     assert sub2["srt_path"] == "subtitles/sub2.srt"
 
 
+def test_import_invalidates_owner_cache_so_relist_keeps_srt_path(
+    ctx, project_with_bound_news_desk
+):
+    """Regression: the import provider writes config.json out-of-band, so the
+    session's cached owner went stale — list_components after import (e.g. on
+    switching instances and back) returned the pre-import component and the
+    import appeared to vanish. The cache must be invalidated so a relist reflects
+    the snapshot."""
+    _seed_material_artifacts(project_with_bound_news_desk)
+    _open(ctx, project_with_bound_news_desk)
+    # Caches the owner (mirrors the workbench having loaded components once).
+    before = call(ctx, "creation.list_components", {"type": "news_desk", "instance": "news"})["result"]
+    assert next(c for c in before if c["id"] == "sub2").get("srt_path", "") == ""
+    call(ctx, "creation.import_resource",
+         {"type": "news_desk", "instance": "news", "component_id": "sub2",
+          "params": {"kind": "subtitle", "lang": "zh"}})
+    # Relist — the cache must have been invalidated and reloaded from disk.
+    after = call(ctx, "creation.list_components", {"type": "news_desk", "instance": "news"})["result"]
+    assert next(c for c in after if c["id"] == "sub2")["srt_path"] == "subtitles/sub2.srt"
+
+
 def test_import_chapters_fills_schedule(ctx, project_with_bound_news_desk):
     _seed_material_artifacts(project_with_bound_news_desk)
     _open(ctx, project_with_bound_news_desk)

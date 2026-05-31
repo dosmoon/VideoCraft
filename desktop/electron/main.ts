@@ -167,6 +167,15 @@ ipcMain.handle("vc:pickVideo", async () => {
   return r.canceled ? null : (r.filePaths[0] ?? null);
 });
 
+// Pick a local image file (image-watermark path) to load via vc-media://.
+ipcMain.handle("vc:pickImage", async () => {
+  const r = await dialog.showOpenDialog({
+    properties: ["openFile"],
+    filters: [{ name: "Image", extensions: ["png", "jpg", "jpeg", "webp", "gif", "bmp"] }],
+  });
+  return r.canceled ? null : (r.filePaths[0] ?? null);
+});
+
 // Hub launcher: pick a project folder to open (project.open takes a folder path).
 ipcMain.handle("vc:pickFolder", async () => {
   const r = await dialog.showOpenDialog({ properties: ["openDirectory"] });

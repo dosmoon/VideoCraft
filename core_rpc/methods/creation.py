@@ -82,6 +82,9 @@ def commit_render(
     rendered = _render_provider(type).commit_render(
         ctx.session.project, instance, int(src_idx), int(out_idx), float(duration_sec)
     )
+    # The render provider wrote config.json (rendered[]) out-of-band — re-sync
+    # the cached owner so it isn't stale.
+    ctx.session.invalidate_creation(type, instance)
     ctx.notify("event.creation.changed", {"type": type, "instance": instance})
     return rendered
 
@@ -91,6 +94,7 @@ def delete_render(ctx: Context, type: str, instance: str, out_idx: int) -> list[
     """Delete a rendered output's files and drop it from rendered[]. Returns the
     updated rendered list."""
     rendered = _render_provider(type).delete_render(ctx.session.project, instance, int(out_idx))
+    ctx.session.invalidate_creation(type, instance)  # provider wrote config out-of-band
     ctx.notify("event.creation.changed", {"type": type, "instance": instance})
     return rendered
 
@@ -121,8 +125,14 @@ def import_resource(
     ctx: Context, type: str, instance: str, component_id: str, params: dict[str, Any]
 ) -> dict[str, Any]:
     """Import a material artifact into a component (snapshot SRT / fill chapter
-    schedule), persist via the single owner, broadcast. `params` is provider-
-    defined + opaque here. Returns the updated component dict."""
+    schedule), broadcast. `params` is provider-defined + opaque here. Returns the
+    updated component dict.
+
+    The import provider writes config.json directly (it snapshots files into the
+    instance dir), so it runs OUTSIDE the session's cached owner. Invalidate that
+    cache afterwards or the cached owner stays stale: list_components (e.g. after
+    switching instances and back) would return the pre-import components and the
+    import would appear to vanish; a later owner.save() would clobber it on disk."""
     if not isinstance(params, dict):
         raise RpcError(-32602, "params must be an object")
     try:
@@ -130,6 +140,7 @@ def import_resource(
             ctx.session.project, instance, component_id, params)
     except ValueError as exc:
         raise RpcError(-32602, str(exc)) from exc
+    ctx.session.invalidate_creation(type, instance)
     ctx.notify("event.creation.changed", {"type": type, "instance": instance})
     return component
 
