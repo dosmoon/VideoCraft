@@ -459,7 +459,7 @@ clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"
 
 **问题3(自适应宽度,commit `3bb44c4`)**:`subtitle.compile` 仅当 `ctx.frameAspect` 有值才单行 fit;`buildNewsDeskTimeline` 从没传 → news_desk 字幕不换行。修:装配器加可选 `frameAspect`(全源=源宽高比),`NewsDeskPreview` 传 `srcW/srcH`。
 
-**问题1+2(导入,commit `2a48de2`,用户选「只从素材选」)**:新增 **import_provider**(沿用 preview/render provider 模式,base 层 ADR-0004 泛型派发):
+**问题1+2(导入,与本节同提交 `059127d`——独立 feat 提交因 cwd bug 取消,见下「过程坑」;用户选「只从素材选」)**:新增 **import_provider**(沿用 preview/render provider 模式,base 层 ADR-0004 泛型派发):
 - `CreationType.import_provider` 字段;`creations/news_desk/imports.py`:`list_imports → {subtitleLangs, analyses}`;`import_resource(component_id, params)` 快照进组件 + 单一所有者持久化。`{kind:subtitle,lang}` 把素材 `<lang>.srt` 拷进 `<instance>/subtitles/<id>.srt` 设 srt_path;`{kind:chapters,filename}` 从 analysis.json 填 chapter schedule。忠实 Tk `_import_srt`/`_import_from_analysis`,经 registry 取素材零硬编码名。
 - `core_rpc/methods/creation.py`:`creation.list_imports` + `creation.import_resource`。
 - `ipc/client.ts` 两 stub;`StyleTab.tsx` 在属性面板上方加 `ImportRow`(字幕→语言选择器;章节→分析文件选择器;带已导入/未导入/已导入 N 章状态 + 空态提示)。
