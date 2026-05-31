@@ -52,7 +52,7 @@ export function newsDeskTextWatermarkToInstance(
 ): TextWatermarkInstance {
   return {
     enabled: c.enabled,
-    text: c.text,
+    text: c.text ?? "", // compile does text.trim(); guard against an absent value
     textFontsizePct: c.fontsize_pct,
     textColor: c.color,
     textOpacity: clampOpacity(c.opacity),
@@ -67,7 +67,9 @@ export function newsDeskImageWatermarkToInstance(
 ): ImageWatermarkInstance {
   return {
     enabled: c.enabled,
-    imagePath: c.image_path,
+    // A preset drops image_path (per-project content); the compile treats "" as
+    // "no image" but `undefined.trim()` would throw — default it.
+    imagePath: c.image_path ?? "",
     imageScale: clamp(c.scale_pct / 100, 0.02, 0.5),
     imageOpacity: clampOpacity(c.opacity),
     position: c.position,

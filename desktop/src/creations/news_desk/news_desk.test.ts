@@ -191,23 +191,41 @@ describe("buildNewsDeskTimeline", () => {
     expect(inst.color).toBe("#FFFF00");
   });
 
-  it("tolerates a preset chapter with no schedule (no throw → preview stays live)", () => {
-    // A saved preset drops per-project content, so an applied chapter has no
-    // `schedule`. buildNewsDeskTimeline must not throw — a throw took the whole
-    // timeline (and the preview canvas) down, black-screening on preset apply.
+  it("tolerates content-less preset components (no throw → preview stays live)", () => {
+    // A saved preset drops per-project content, so applied preset components
+    // lack chapter `schedule`, image `image_path`, subtitle `srt_path`. The
+    // build (and the preview) must not throw — a throw black-screened on apply.
     const ch = chapterConfig();
     delete (ch as { schedule?: unknown }).schedule;
+    const img = {
+      kind: "image_watermark",
+      enabled: true,
+      scale_pct: 15,
+      opacity: 100,
+      position: "top-right",
+      margin_x_pct: 2,
+      margin_y_pct: 2,
+    } as unknown as NewsDeskImageWatermarkConfig; // image_path absent (preset-dropped)
     const timeline = buildNewsDeskTimeline({
-      components: [ch],
+      components: [ch, img],
       durationSec: 120,
       cuesBySrtPath: {},
       mediaRef: "source.mp4",
     });
-    // The video + audio tracks always build; the schedule-less chapter just
-    // contributes no overlay clips (its rows get imported per-instance later).
+    // The video + audio tracks always build; the content-less overlays just
+    // contribute nothing (their content gets imported per-instance later).
     expect(timeline.tracks[0]!.kind).toBe("video");
     expect(clipsOf(timeline.tracks[0]!).length).toBe(1);
     expect(resolveAudioSegments(timeline).length).toBe(1);
     expect(validateTimeline(timeline, { sourceDurations: { "source.mp4": 120 } })).toEqual([]);
+  });
+
+  it("image watermark with no image_path maps to an empty path (compile skips it)", () => {
+    const inst = newsDeskImageWatermarkToInstance(
+      { kind: "image_watermark", enabled: true, scale_pct: 15, opacity: 100,
+        position: "top-right", margin_x_pct: 2, margin_y_pct: 2,
+      } as unknown as NewsDeskImageWatermarkConfig,
+    );
+    expect(inst.imagePath).toBe("");
   });
 });
