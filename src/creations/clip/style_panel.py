@@ -58,7 +58,7 @@ from core.composition.preview import CompositionPreview
 from i18n import tr
 
 from creations.clip import components as cc
-from creations.news_desk.components import ProjectContext
+from creations.clip.components import ProjectContext
 
 
 _ENCODE_PRESETS = ["ultrafast", "superfast", "veryfast", "faster",

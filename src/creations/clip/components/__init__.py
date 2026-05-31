@@ -25,7 +25,83 @@ package, each calling register() at import time.
 
 from __future__ import annotations
 
-from creations.news_desk.components import ComponentSpec, ImportSource
+from dataclasses import dataclass, field
+from typing import Callable
+
+
+# ── Component-framework types (clip-local) ──────────────────────────────────
+# These plain dataclasses were the shared Tk-era component framework, formerly
+# imported from news_desk.components. news_desk's new-arch (Electron + headless
+# sidecar) workbench no longer uses them, so clip — the sole remaining Tk
+# consumer — now owns them. They are Tk-era scaffolding and die with clip's Tk
+# workbench; until then they live here (not in core/, which would enshrine
+# soon-dead types in a permanent location).
+
+@dataclass
+class ProjectContext:
+    """Lightweight handle so component code can reach project-level data
+    without coupling to the workbench / Project class details."""
+    project: object                  # core.project.Project (duck-typed)
+    duration: float                  # full source duration in seconds
+    # Per ADR-0003 derivatives own their data; components that snapshot
+    # upstream materials write into <instance_dir>/. Empty string when the
+    # host hasn't established a per-instance directory yet.
+    instance_dir: str = ""
+    # Bound material's model object — the ONLY legitimate handle components
+    # have on upstream material data. None until the host binds.
+    material_model: object = None
+    # Optional preview hook so component panels can drive the WebView preview
+    # (e.g. click-to-seek). None when no preview is mounted; guard before use.
+    seek_to: Callable = None         # (sec: float) -> None
+    # Subtitle track language codes the bound material exposes. clip fills this
+    # from the hotclips SRT pool so the subtitle panel can show a language
+    # picker. Empty when the host doesn't know.
+    subtitle_languages: list = field(default_factory=list)
+
+
+@dataclass
+class ImportSource:
+    """A "[⇩ Import...]" button in the property panel. The handler receives
+    the instance dict + ProjectContext and mutates the instance in place."""
+    label_key: str
+    handler: Callable                # (instance: dict, ctx: ProjectContext) -> None
+
+
+@dataclass
+class ComponentSpec:
+    """Declares one component type. Callable fields hold the per-type
+    behaviour (defaults, UI, render translation, imports)."""
+
+    # Identity
+    kind: str                                  # "subtitle", "hook_outro", ...
+    name_key: str                              # i18n key — display name
+    add_label_key: str                         # i18n key — [+ Add] menu entry
+
+    # Multiplicity. False = singleton; True = user can add many instances.
+    multi_instance: bool = True
+
+    # Default insertion position in the component list (higher = more in front).
+    default_z: int = 50
+
+    # Factory: build a fresh instance dict with sane defaults. duration is the
+    # source video length (seconds) so factories can default full-length data.
+    default_instance: Callable = None          # (duration: float) -> dict
+
+    # Property-panel builder: owns ALL widgets for this component's editor
+    # surface, live-editing the instance dict via Tk var write-traces.
+    build_property_panel: Callable = None      # (parent, instance, ctx, on_change) -> None
+
+    # Render translation: produce the low-level overlay dataclasses the
+    # existing renderer consumes. Returning [] disables the instance.
+    to_overlays: Callable = None               # (instance, ctx) -> list
+
+    # Timeline-IR compile: pure function emitting timeline Elements. Signature:
+    #   (instance: dict, clip_range: ClipRange, ctx: CompileContext) -> list[Element]
+    # Must be pure; Element.kind must be in primitives.KNOWN_KINDS.
+    compile: Callable = None
+
+    # Import options shown in the property panel ([⇩ Import...]).
+    import_sources: list = field(default_factory=list)
 
 
 # ── Clip-local registry ─────────────────────────────────────────────────────
