@@ -116,6 +116,9 @@ export function StyleTab(props: {
   const [presets, setPresets] = useState<PresetList | null>(null);
   const [selectedPreset, setSelectedPreset] = useState("");
   const [presetErr, setPresetErr] = useState("");
+  // Inline save-as input (window.prompt is not supported in the Electron renderer).
+  const [savingAs, setSavingAs] = useState(false);
+  const [newPresetName, setNewPresetName] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -150,17 +153,25 @@ export function StyleTab(props: {
   }, [type, instance, selectedPreset, onComponentsReplaced, onSelect, preview]);
 
   const onSavePresetAs = useCallback(async () => {
-    const name = window.prompt("预设名称：", "");
-    if (!name || !name.trim()) return;
+    const name = newPresetName.trim();
+    if (!name) return;
     setPresetErr("");
     try {
-      const list = await rpc.savePreset(type, instance, name.trim());
+      const list = await rpc.savePreset(type, instance, name);
       setPresets(list);
-      setSelectedPreset(name.trim());
+      setSelectedPreset(name);
+      setSavingAs(false);
+      setNewPresetName("");
     } catch (err) {
       pErr(err);
     }
-  }, [type, instance]);
+  }, [type, instance, newPresetName]);
+
+  const cancelSaveAs = useCallback(() => {
+    setSavingAs(false);
+    setNewPresetName("");
+    setPresetErr("");
+  }, []);
 
   const onOverwritePreset = useCallback(async () => {
     if (!selectedPreset) return;
@@ -262,26 +273,58 @@ export function StyleTab(props: {
             </option>
           ))}
         </select>
-        <button onClick={() => void onApplyPreset()} disabled={!selectedPreset} style={mgrBtn}>
-          应用
-        </button>
-        <button onClick={() => void onSavePresetAs()} style={mgrBtn}>
-          另存为…
-        </button>
-        <button
-          onClick={() => void onOverwritePreset()}
-          disabled={!selectedPreset || (presets?.builtins.includes(selectedPreset) ?? false)}
-          style={mgrBtn}
-        >
-          覆盖
-        </button>
-        <button
-          onClick={() => void onDeletePreset()}
-          disabled={!selectedPreset || (presets?.builtins.includes(selectedPreset) ?? false)}
-          style={mgrBtn}
-        >
-          删除
-        </button>
+        {savingAs ? (
+          <>
+            <input
+              autoFocus
+              value={newPresetName}
+              placeholder="预设名称"
+              onChange={(e) => setNewPresetName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void onSavePresetAs();
+                else if (e.key === "Escape") cancelSaveAs();
+              }}
+              style={{
+                background: "#222",
+                color: "#ddd",
+                border: "1px solid #3a3a40",
+                borderRadius: 4,
+                padding: "3px 6px",
+                fontSize: 12,
+                minWidth: 140,
+              }}
+            />
+            <button onClick={() => void onSavePresetAs()} disabled={!newPresetName.trim()} style={mgrBtn}>
+              确定
+            </button>
+            <button onClick={cancelSaveAs} style={mgrBtn}>
+              取消
+            </button>
+          </>
+        ) : (
+          <>
+            <button onClick={() => void onApplyPreset()} disabled={!selectedPreset} style={mgrBtn}>
+              应用
+            </button>
+            <button onClick={() => setSavingAs(true)} style={mgrBtn}>
+              另存为…
+            </button>
+            <button
+              onClick={() => void onOverwritePreset()}
+              disabled={!selectedPreset || (presets?.builtins.includes(selectedPreset) ?? false)}
+              style={mgrBtn}
+            >
+              覆盖
+            </button>
+            <button
+              onClick={() => void onDeletePreset()}
+              disabled={!selectedPreset || (presets?.builtins.includes(selectedPreset) ?? false)}
+              style={mgrBtn}
+            >
+              删除
+            </button>
+          </>
+        )}
         {presetErr && <span style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {presetErr}</span>}
       </div>
 

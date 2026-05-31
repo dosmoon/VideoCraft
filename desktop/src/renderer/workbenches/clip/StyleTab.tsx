@@ -155,6 +155,9 @@ export function StyleTab(props: {
   const [presets, setPresets] = useState<PresetList | null>(null);
   const [selectedPreset, setSelectedPreset] = useState("");
   const [toolbarErr, setToolbarErr] = useState("");
+  // Inline save-as input (window.prompt is not supported in the Electron renderer).
+  const [savingAs, setSavingAs] = useState(false);
+  const [newPresetName, setNewPresetName] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -202,18 +205,26 @@ export function StyleTab(props: {
   }, [type, instance, selectedPreset, onComponentsReplaced, onSelect, reload]);
 
   const onSavePresetAs = useCallback(async () => {
-    const name = window.prompt("预设名称：", "");
-    if (!name || !name.trim()) return;
+    const name = newPresetName.trim();
+    if (!name) return;
     setToolbarErr("");
     try {
-      const list = await rpc.savePreset(type, instance, name.trim());
+      const list = await rpc.savePreset(type, instance, name);
       setPresets(list);
-      setSelectedPreset(name.trim());
+      setSelectedPreset(name);
+      setSavingAs(false);
+      setNewPresetName("");
       reload();
     } catch (err) {
       tErr(err);
     }
-  }, [type, instance, reload]);
+  }, [type, instance, newPresetName, reload]);
+
+  const cancelSaveAs = useCallback(() => {
+    setSavingAs(false);
+    setNewPresetName("");
+    setToolbarErr("");
+  }, []);
 
   const onOverwritePreset = useCallback(async () => {
     if (!selectedPreset) return;
@@ -367,26 +378,50 @@ export function StyleTab(props: {
             ))}
           </select>
         </label>
-        <button onClick={() => void onApplyPreset()} disabled={!selectedPreset} style={tbBtn}>
-          应用
-        </button>
-        <button onClick={() => void onSavePresetAs()} style={tbBtn}>
-          另存为
-        </button>
-        <button
-          onClick={() => void onOverwritePreset()}
-          disabled={!selectedPreset || (presets?.builtins.includes(selectedPreset) ?? false)}
-          style={tbBtn}
-        >
-          覆盖
-        </button>
-        <button
-          onClick={() => void onDeletePreset()}
-          disabled={!selectedPreset || (presets?.builtins.includes(selectedPreset) ?? false)}
-          style={tbBtn}
-        >
-          删除
-        </button>
+        {savingAs ? (
+          <>
+            <input
+              autoFocus
+              value={newPresetName}
+              placeholder="预设名称"
+              onChange={(e) => setNewPresetName(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void onSavePresetAs();
+                else if (e.key === "Escape") cancelSaveAs();
+              }}
+              style={{ ...selStyle, maxWidth: 200 }}
+            />
+            <button onClick={() => void onSavePresetAs()} disabled={!newPresetName.trim()} style={tbBtn}>
+              确定
+            </button>
+            <button onClick={cancelSaveAs} style={tbBtn}>
+              取消
+            </button>
+          </>
+        ) : (
+          <>
+            <button onClick={() => void onApplyPreset()} disabled={!selectedPreset} style={tbBtn}>
+              应用
+            </button>
+            <button onClick={() => setSavingAs(true)} style={tbBtn}>
+              另存为
+            </button>
+            <button
+              onClick={() => void onOverwritePreset()}
+              disabled={!selectedPreset || (presets?.builtins.includes(selectedPreset) ?? false)}
+              style={tbBtn}
+            >
+              覆盖
+            </button>
+            <button
+              onClick={() => void onDeletePreset()}
+              disabled={!selectedPreset || (presets?.builtins.includes(selectedPreset) ?? false)}
+              style={tbBtn}
+            >
+              删除
+            </button>
+          </>
+        )}
         {toolbarErr && <span style={{ color: "#ff6b6b" }}>✗ {toolbarErr}</span>}
       </div>
 
