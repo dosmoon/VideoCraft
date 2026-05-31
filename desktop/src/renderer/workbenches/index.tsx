@@ -9,11 +9,13 @@
 
 import type { ComponentType } from "react";
 import { ClipWorkbench } from "./clip/ClipWorkbench";
+import { NewsDeskWorkbench } from "./news_desk/NewsDeskWorkbench";
 
 type WorkbenchProps = { type: string; instance: string; onClose: () => void };
 
 const REGISTRY: Record<string, ComponentType<WorkbenchProps>> = {
   clip: ClipWorkbench,
+  news_desk: NewsDeskWorkbench,
 };
 
 export function CreationWorkbench(props: WorkbenchProps) {
