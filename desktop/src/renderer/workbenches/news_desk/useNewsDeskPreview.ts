@@ -43,15 +43,22 @@ export function useNewsDeskPreview(type: string, instance: string) {
   const [message, setMessage] = useState("");
   const [data, setData] = useState<NewsDeskPreviewData | null>(null);
   // Bumped by reload() to re-run the full fetch (source + snapshot SRTs) after a
-  // Style-tab import changes which SRTs a component points at.
+  // Style-tab import / preset apply changes which SRTs a component points at.
   const [token, setToken] = useState(0);
   const reload = useCallback(() => setToken((n) => n + 1), []);
 
+  // Blank to "loading" ONLY when the target (type/instance) changes. A reload()
+  // refreshes data in place (below) without blanking — blanking would drop the
+  // preview out of "ready" and unmount NewsDeskPreview, tearing down and
+  // re-initing the WebGPU backend on the same canvas (which black-screens it).
   useEffect(() => {
-    let disposed = false;
     setStatus("loading");
     setMessage("");
     setData(null);
+  }, [type, instance]);
+
+  useEffect(() => {
+    let disposed = false;
 
     void (async () => {
       try {
