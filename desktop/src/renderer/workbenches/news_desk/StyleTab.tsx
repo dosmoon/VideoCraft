@@ -13,13 +13,15 @@
  * uses — the base layer is creation-agnostic (ADR-0004).
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Component } from "../../ipc/client";
 import { rpc, RpcError } from "../../ipc/client";
+import type { NewsDeskChapterRow } from "@creations/news_desk/types.js";
 import { PropertyPanel } from "../clip/propertyEditor";
-import { NewsDeskPreview } from "./NewsDeskPreview";
+import { NewsDeskPreview, type NewsDeskPreviewHandle } from "./NewsDeskPreview";
 import { useNewsDeskPreview } from "./useNewsDeskPreview";
 import { ChapterProperties } from "./ChapterProperties";
+import { SubtitleCueList, ChapterScheduleList } from "./ComponentDetail";
 
 // Friendly component labels — the UI must never show the internal kind name
 // ([[feedback_user_facing_naming]]). Matches the default_instance names in
@@ -107,6 +109,8 @@ export function StyleTab(props: {
 
   // Full-source composition preview (whole source + overlays; no crop box).
   const preview = useNewsDeskPreview(type, instance);
+  // Drives the preview playhead from the subtitle/chapter detail lists.
+  const previewRef = useRef<NewsDeskPreviewHandle>(null);
 
   const onAdd = useCallback(
     async (kind: string) => {
@@ -164,6 +168,7 @@ export function StyleTab(props: {
           {preview.status === "error" && <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {preview.message}</p>}
           {preview.status === "ready" && preview.data && (
             <NewsDeskPreview
+              controlRef={previewRef}
               srcPath={preview.data.srcPath}
               durationSec={preview.data.durationSec}
               components={components ?? []}
@@ -344,6 +349,24 @@ export function StyleTab(props: {
                 component={selected}
                 disabled={savingId === selected.id}
                 onCommit={(k, v) => onPatch(selected, { [k]: v })}
+              />
+            )}
+
+            {/* Read-only detail list for the selected component, click to seek. */}
+            {selected.kind === "subtitle" && (
+              <SubtitleCueList
+                cues={
+                  typeof selected["srt_path"] === "string"
+                    ? preview.data?.cuesBySrtPath[selected["srt_path"] as string]
+                    : undefined
+                }
+                onSeek={(sec) => previewRef.current?.seek(sec)}
+              />
+            )}
+            {selected.kind === "chapter" && (
+              <ChapterScheduleList
+                schedule={selected["schedule"] as NewsDeskChapterRow[] | undefined}
+                onSeek={(sec) => previewRef.current?.seek(sec)}
               />
             )}
           </>

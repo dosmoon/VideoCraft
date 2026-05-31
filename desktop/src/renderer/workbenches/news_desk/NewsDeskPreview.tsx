@@ -12,7 +12,7 @@
  * timeline rebuilds when the live-edited components change (no GPU re-init).
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { resolveFrameAt } from "@composition/compositor/resolve.js";
 import { resolveAudioSegments } from "@composition/compositor/resolveAudio.js";
 import type { Timeline, Clip } from "@composition/ir.js";
@@ -57,6 +57,14 @@ export interface NewsDeskPreviewProps {
   components: Component[];
   /** Snapshot SRT cues keyed by each subtitle's srt_path. */
   cuesBySrtPath: Record<string, readonly SourceCue[]>;
+  /** Optional handle the parent fills to drive the playhead (detail-list seek). */
+  controlRef?: React.Ref<NewsDeskPreviewHandle>;
+}
+
+/** Imperative handle so the detail lists can drive the preview's playhead. */
+export interface NewsDeskPreviewHandle {
+  /** Pause and jump the playhead to `sec` (clamped to the timeline). */
+  seek(sec: number): void;
 }
 
 /** Paint the overlay layer across the whole frame (no crop box for news_desk). */
@@ -75,7 +83,7 @@ function paintOverlayLayer(
 }
 
 export function NewsDeskPreview(props: NewsDeskPreviewProps) {
-  const { srcPath, durationSec: srcDuration, components, cuesBySrtPath } = props;
+  const { srcPath, durationSec: srcDuration, components, cuesBySrtPath, controlRef } = props;
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
@@ -209,6 +217,25 @@ export function NewsDeskPreview(props: NewsDeskPreviewProps) {
     if (playingRef.current) pausePlayback();
     else startPlayback();
   }, [pausePlayback, startPlayback]);
+
+  // Expose seek to the detail lists (subtitle cue / chapter row → jump playhead).
+  // Mirrors the scrub handler: pause, clamp, sync audio, render the exact frame.
+  useImperativeHandle(
+    controlRef,
+    () => ({
+      seek(sec: number) {
+        const tl = timelineRef.current;
+        if (!tl) return;
+        pausePlayback();
+        const clamped = Math.max(0, Math.min(tl.durationSec, sec));
+        setT(clamped);
+        tRef.current = clamped;
+        audioRef.current?.seek(clamped);
+        void renderAt(clamped);
+      },
+    }),
+    [pausePlayback, renderAt],
+  );
 
   // Open the source once per srcPath. Engine survives component edits.
   useEffect(() => {
