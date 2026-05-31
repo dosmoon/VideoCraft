@@ -75,7 +75,26 @@ def test_load_skips_non_dict_component_entries(tmp_path):
     with open(p, "w", encoding="utf-8") as f:
         json.dump({"components": [{"kind": "ok"}, "junk", 42]}, f)
     cfg = NewsDeskInstanceConfig.load(p)
-    assert cfg.components == [{"kind": "ok"}]
+    # Non-dict entries are dropped; the surviving component gets a stable id
+    # assigned on load (new-arch: the id-based RPCs address each component, so
+    # load() repairs id-less Tk-era components — id falls back to the kind).
+    assert cfg.components == [{"kind": "ok", "id": "ok"}]
+
+
+def test_load_assigns_unique_ids(tmp_path):
+    """Id-less / colliding components from the index-based Tk era are repaired on
+    load so the id-based RPCs can address each one (parallels clip's config)."""
+    p = str(tmp_path / "config.json")
+    with open(p, "w", encoding="utf-8") as f:
+        json.dump({"components": [
+            {"kind": "subtitle", "name": "中文"},
+            {"kind": "subtitle", "name": "英文"},
+            {"id": "subtitle", "kind": "chapter"},  # collides with the first
+        ]}, f)
+    cfg = NewsDeskInstanceConfig.load(p)
+    ids = [c["id"] for c in cfg.components]
+    assert ids == ["subtitle", "subtitle-2", "subtitle-3"]
+    assert len(set(ids)) == len(ids)
 
 
 # ── save() ──────────────────────────────────────────────────────────────────

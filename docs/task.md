@@ -360,3 +360,23 @@ clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"
 验证:**120 测全绿 + 两 typecheck rc=0 + `electron-vite build` 成功**(main/preload/73 renderer 模块)。
 
 **下一步**=续 16 剩余:音频打磨(音量 UI / 多音轨 / 转场,用户暂缓)/ 回主线"substrate → 产品化"(sidecar 写操作面 / 真 UI 壳,见续 7 末四轨)。
+
+---
+
+## ▶ 续 19(2026-05-31,回主线产品化:news_desk 迁新架构 — 第 1 步 Python 业务面)
+
+回主线「substrate → 产品化」。下一大块 = **news_desk 工作台迁新架构**(镜像已完成的 clip),证明公共组件库 + 新架构 RPC 面覆盖多插件。先做**最底、纯可单测、无 GUI 的 Python 业务面**(clip 的完整模板见 `src/creations/clip/{config,component_defs,preview,export,presets}.py`):
+
+**已落地(Python only,零 TS / 零引擎改动)**:
+- `creations/news_desk/config.py` — `NewsDeskInstanceConfig` 补齐单一所有者的 mutation 面(镜像 clip):`_ensure_unique_ids`(load 时修 Tk 时代无 id / 重复 id)+ `apply_patch`(news_desk 只 `preset_name` 可 patch——全源渲染无 reframe 几何)+ `addable_kinds` + `add/remove/move_component`。
+- `creations/news_desk/component_defs.py`(**新,纯 headless**)— addable kinds(chapter 单例 + subtitle/text_wm/image_wm 多例,镜像 components/__init__ 注册序)+ default instances。**一处刻意偏离 Tk specs**:subtitle/text_wm 的字号/描边发 canonical 分数形(`fontsize_pct`/`stroke_pct`,非 Tk 的绝对 px `fontsize:28`),与已合并的 TS 层(`creations/news_desk/types.ts` + `mapping.ts`)对齐;默认值是 1080p 基线换算(28/1080≈0.026),视觉不变。Python 渲染路径不读这些视觉字段(GPU 合成器在 renderer 读),故此形变对 sidecar 透明。
+- `creations/news_desk/__init__.py` — 注册 `config_owner_cls=NewsDeskInstanceConfig`(`preview_provider`/`render_provider` 暂不接,见下)。base RPC 层 ADR-0004 泛型解析,**零硬编码 plugin 名**,所以 component/config 全 RPC 面立即可用。
+- `tests/core_rpc/test_creation_news_desk.py`(**新,13 测**)— load/id 修复/add(canonical 形)/unique id/update/remove/move/addable(chapter 单例)/update_config(preset_name)/**deferred 显式钉死**(presets + preview provider 未接 → 优雅 error 非崩)。
+
+验证:**core_rpc 82 测全绿;news_desk 业务面 25 测(config 9 + creation RPC 16)全绿**。全套 `pytest tests/` = **520 passed / 5 failed**;那 5 个失败**全是先于本改动就存在的**(worktree 比对 HEAD~1 同样 5 failed):tmp 路径 `claude/` 子目录 + CRLF golden + clip 自己的 stale `test_load_full_roundtrip`,均与 news_desk 无关。本改动**净增 11 passing(509→520)、0 新失败**。
+
+**下一步(news_desk 迁移剩余,按依赖序)**:
+1. **preview/render providers**(`preview.py` + `export.py`)——news_desk 是**per-chapter**(clip 是 per-candidate);章节来自 source 的 `analysis.json`(见 [[project_chapters_architecture]]),全源渲染无 reframe。接上后 `preview_data`/`plan_render`/`commit_render`/`delete_render` RPC 立即通。
+2. **preset RPC**——`presets.py` 已存在但 builtins 仍是 legacy 绝对-px 形(`fontsize:28`);要么 canonicalise builtins 成分数形,要么 apply 时转。**当前刻意 deferred**(测试已钉死会 error)。
+3. **TS workbench**(`desktop/src/renderer/workbenches/news_desk/`)——克隆 clip 工作台结构,但:无 per-candidate 裁剪(全源)、加章节编辑 tab、per-chapter 导出;注册进 `workbenches/index.tsx`(现 fallback「尚未迁移」)。
+4. Tk news_desk 退役 → `component_defs.py` 与 `components/*` Tk specs 合并为单一源。

@@ -7,6 +7,7 @@ Importing this package self-registers the CreationType.
 from __future__ import annotations
 
 from creations import CreationType, register
+from creations.news_desk.config import NewsDeskInstanceConfig
 
 register(CreationType(
     type_name="news_desk",
@@ -17,4 +18,8 @@ register(CreationType(
     description_zh="新闻/演讲/发布会成片：双语字幕 + 名牌 + 章节条",
     description_en="News / speech / press-briefing video with bilingual"
                    " subs, lower-third name plates, and topic strip",
+    # New-arch sidecar: single-owner config drives the component/config RPC face
+    # (ADR-0004 resolves it generically). preview_provider / render_provider are
+    # not wired yet — per-chapter preview/render is the next increment.
+    config_owner_cls=NewsDeskInstanceConfig,
 ))

@@ -23,6 +23,28 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _ensure_unique_ids(components: list[dict]) -> None:
+    """Give every component a unique, non-empty `id` (in place).
+
+    The Tk workbench identified components by list index, so its specs did not
+    all carry ids (only subtitle did). The new-arch RPCs address components by
+    id (creation.update_component), so every component needs a stable, unique
+    one — keep the first occurrence's id, rename later collisions to
+    "<id>-2"/"-3"…, and fall back to the kind for a missing/blank id. Faithful
+    to clip/config.py::_ensure_unique_ids.
+    """
+    seen: set[str] = set()
+    for c in components:
+        base = str(c.get("id") or c.get("kind") or "component")
+        new_id = base
+        n = 2
+        while new_id in seen:
+            new_id = f"{base}-{n}"
+            n += 1
+        c["id"] = new_id
+        seen.add(new_id)
+
+
 @dataclass
 class BoundMaterial:
     """ADR-0005: which material instance this creation consumes."""
@@ -75,12 +97,79 @@ class NewsDeskInstanceConfig:
         components = raw.get("components")
         components = ([c for c in components if isinstance(c, dict)]
                        if isinstance(components, list) else [])
+        # Repair any duplicate/missing component ids from the index-based Tk
+        # era so the id-based RPCs can address each component unambiguously.
+        _ensure_unique_ids(components)
 
         return cls(
             bound_material=bm,
             preset_name=str(raw.get("preset_name", "")),
             components=components,
         )
+
+    # ── top-level patch (creation.update_config) ────────────────────────────
+
+    def apply_patch(self, patch: dict) -> None:
+        """Mutate from a wire patch. The single owner owns mutation semantics —
+        only known top-level fields are honored, so the base RPC layer stays
+        creation-agnostic (ADR-0004). news_desk renders the full source at
+        source resolution (no reframe geometry), so the only patchable scalar
+        today is `preset_name`; component edits go through the *_component
+        methods, not here."""
+        if not isinstance(patch, dict):
+            return
+        if "preset_name" in patch:
+            self.preset_name = str(patch["preset_name"])
+
+    # ── component add / remove / reorder (creation.*_component RPCs) ─────────
+    # The single owner owns component-list mutation. The base RPC layer calls
+    # these generically (getattr), so it stays creation-agnostic (ADR-0004).
+    # Faithful to the Tk workbench's add / delete / move-up / move-down, except
+    # add appends (end of list = lowest z) per the new-arch convention — the
+    # user reorders with ↑↓, same as clip.
+
+    @staticmethod
+    def addable_kinds() -> list[dict]:
+        """The component kinds offerable in the [+ Add] menu, in registration
+        order, each with its `multi_instance` flag (single-instance kinds are
+        disabled once present)."""
+        from creations.news_desk import component_defs
+        return [dict(d) for d in component_defs.ADDABLE]
+
+    def _unique_id(self, base: str) -> str:
+        existing = {c.get("id") for c in self.components}
+        if base not in existing:
+            return base
+        n = 2
+        while f"{base}-{n}" in existing:
+            n += 1
+        return f"{base}-{n}"
+
+    def add_component(self, kind: str, duration: float = 0.0) -> dict:
+        """Append a fresh default instance of `kind` (end of list = lowest z).
+        Its id is made unique against the current list. Returns the new dict."""
+        from creations.news_desk import component_defs
+        instance = component_defs.default_instance(kind, duration)
+        instance["id"] = self._unique_id(str(instance.get("id") or kind))
+        self.components.append(instance)
+        return instance
+
+    def remove_component(self, component_id: str) -> None:
+        self.components = [
+            c for c in self.components if c.get("id") != component_id]
+
+    def move_component(self, component_id: str, delta: int) -> None:
+        """Swap the component with the one `delta` positions away (±1). Out-of-
+        range moves are ignored."""
+        idx = next((i for i, c in enumerate(self.components)
+                    if c.get("id") == component_id), None)
+        if idx is None:
+            return
+        target = idx + delta
+        if not (0 <= target < len(self.components)):
+            return
+        comps = self.components
+        comps[idx], comps[target] = comps[target], comps[idx]
 
     def save(self, path: str) -> None:
         """Atomically persist to disk. The single write path for
