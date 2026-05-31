@@ -421,3 +421,18 @@ clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"
 验证:**两 typecheck rc=0;120 TS 测全绿;`electron-vite build` 成功(76 模块,原 73)**。已提交 `9069e94`,推 origin。**真机工作台交互待人验**(`env -u ELECTRON_RUN_AS_NODE pnpm dev`,开 news_desk 创作)。
 
 **下一步**:① **真机验** news_desk 工作台(组件增删改、Export 计划显示)② 真渲染管线(整源合成→编码→写盘,镜像 clip ExportTab)③ preset RPC(presets.py builtins 绝对-px→分数形)④ Tk news_desk 退役。
+
+---
+
+## ▶ 续 23(2026-05-31,补「新建创作」入口 — sidecar 只读缺写操作)
+
+真机验时用户反馈「没有地方新建或者打开」创作。**续 22 我误诊**(以为 Hub 没渲染工作台)——其实 Hub 一直渲染工作台、也把已有创作实例列成可点按钮,**「打开」本就能用**。真因:新架构 sidecar 只暴露**只读** project RPC,**没有 `create_creation_instance`**,故全新项目「创作」区只显示「无创作」、无可点项,也无处新建。
+
+修(端到端):
+- **后端** `core_rpc/methods/project.py`:`project.list_creation_types`(返回注册类型 + 用户向描述,不露 type_name [[feedback_user_facing_naming]])+ `project.create_creation_instance(type, name?)`(name 省略=自动编号 `suggest_instance_name`;写空 config.json,单一所有者首次编辑时填;发 `event.creations.changed`;经 registry 解析零硬编码名 ADR-0004)。
+- **前端** `ipc/client.ts` 加两个 stub + `CreationTypeInfo`;`hub/Hub.tsx` 在「创作」标题旁加 `[+]` 菜单(按描述列类型,选中即建+开工作台),空态改「无创作 — 用「+」新建」。
+- **测试** `tests/core_rpc/test_dispatch.py` +5(列类型/自动命名+事件/显式名写 config/未知类型/重名)。
+
+验证:test_dispatch standalone **21 passed**;core_rpc **77 passed**;app+node typecheck rc=0;120 TS 测;`electron-vite build` 77 模块。**真机点击流程仍待用户验**。
+
+**真机重验步骤**:重启 dev(`desktop/dev.ps1`)→ 开项目 → 「创作」标题旁点 `[+]` → 选「新闻/演讲/发布会成片…」→ 应建出 news-1 并自动打开两-tab 工作台 → 测组件增删改 + 导出计划显示。
