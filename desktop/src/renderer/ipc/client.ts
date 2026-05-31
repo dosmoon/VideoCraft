@@ -101,6 +101,12 @@ export interface RenderedClip {
   rendered_at: string;
 }
 
+/** One preset language for the ASR/translate/import picker (system.list_languages). */
+export interface KnownLanguage {
+  iso: string;
+  display: string; // "en — English (英语)"
+}
+
 /** A registered material type for the 素材 [+] menu (project.list_material_types_info). */
 export interface MaterialTypeInfo {
   type_name: string;
@@ -200,6 +206,8 @@ export const rpc = {
   ping: () =>
     rpcCall<{ ok: boolean; protocol: number; has_project: boolean }>("system.ping"),
   echo: (params: Record<string, unknown>) => rpcCall<Record<string, unknown>>("system.echo", params),
+  // Preset language catalog for the ASR/translate/import combobox pickers.
+  listLanguages: () => rpcCall<KnownLanguage[]>("system.list_languages"),
 
   recentList: () => rpcCall<ProjectBrief[]>("project.recent_list"),
   openProject: (folder: string) => rpcCall<ProjectBrief>("project.open", { folder }),

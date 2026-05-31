@@ -79,6 +79,16 @@ def _terminal(emit):
     return jobs[-1]
 
 
+# ── language catalog (ASR/translate/import picker) ───────────────────────────
+
+def test_list_languages(ctx):
+    langs = call(ctx, "system.list_languages")["result"]
+    assert len(langs) > 50
+    assert [l["iso"] for l in langs[:6]] == ["ar", "zh", "en", "fr", "ru", "es"]  # UN-6 first
+    en = next(l for l in langs if l["iso"] == "en")
+    assert "English" in en["display"] and "—" in en["display"]
+
+
 # ── create instance + type listing (M0) ──────────────────────────────────────
 
 def test_list_material_types_info(ctx, tmp_project):

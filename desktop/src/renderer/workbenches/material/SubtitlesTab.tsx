@@ -10,18 +10,21 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { rpc, RpcError, type AnalysisArtifact } from "../../ipc/client";
+import { rpc, RpcError, type AnalysisArtifact, type KnownLanguage } from "../../ipc/client";
 import { useJob } from "../../ipc/runJob";
 import type { MaterialTabProps } from "./SourceTab";
 import { ChapterScheduleEditor } from "./ChapterScheduleEditor";
 import { SubtitleViewer } from "./SubtitleViewer";
 import { AnalysisTextViewer } from "./AnalysisTextViewer";
+import { LanguagePicker } from "./LanguagePicker";
 
-// The four registered analysis kinds (core.subtitle_analysis.ANALYSIS_TYPES).
+// The user-facing generate kinds. The engine registry (ANALYSIS_TYPES / RUNNERS)
+// also defines transcript + chapter_transcript, but the material UI never offered
+// generating them — the Tk menu hides them (node_panes._show_analysis_menu:
+// hidden={transcript, chapter_transcript}); they exist only for internal use
+// (news_desk export/publish). We mirror that curated menu, not the engine catalog.
 const ANALYSIS_KINDS: { kind: string; label: string }[] = [
   { kind: "analysis", label: "标题与章节" },
-  { kind: "transcript", label: "全文文字稿" },
-  { kind: "chapter_transcript", label: "分章节全文" },
   { kind: "hotclips", label: "热点片段" },
 ];
 
@@ -30,15 +33,6 @@ type Inspect =
   | { mode: "chapters"; filename: string; lang: string }
   | { mode: "text"; lang: string; kind: string; title: string };
 
-const INPUT: React.CSSProperties = {
-  padding: "4px 8px",
-  background: "#1a1a1e",
-  color: "#ddd",
-  border: "1px solid #333",
-  borderRadius: 4,
-  fontSize: 13,
-  width: 130,
-};
 const BTN: React.CSSProperties = {
   padding: "5px 12px",
   background: "#2d6cdf",
@@ -52,6 +46,7 @@ const BTN_GHOST: React.CSSProperties = { ...BTN, background: "#2a2a2e", color: "
 
 export function SubtitlesTab({ type, instance, refreshKey, onChanged }: MaterialTabProps) {
   const [langs, setLangs] = useState<string[]>([]);
+  const [knownLangs, setKnownLangs] = useState<KnownLanguage[]>([]);
   const [artifacts, setArtifacts] = useState<Record<string, AnalysisArtifact[]>>({});
   const [asrLang, setAsrLang] = useState("");
   const [transLang, setTransLang] = useState("");
@@ -59,6 +54,18 @@ export function SubtitlesTab({ type, instance, refreshKey, onChanged }: Material
   const [inspect, setInspect] = useState<Inspect | null>(null);
   const [loadErr, setLoadErr] = useState("");
   const job = useJob();
+
+  // Preset language catalog for the pickers (loaded once).
+  useEffect(() => {
+    let alive = true;
+    void rpc
+      .listLanguages()
+      .then((ls) => alive && setKnownLangs(ls))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const reload = useCallback(async () => {
     setLoadErr("");
@@ -170,13 +177,28 @@ export function SubtitlesTab({ type, instance, refreshKey, onChanged }: Material
       {/* ASR + import */}
       <Section title="语音转写 / 导入">
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
-          <input value={asrLang} placeholder="语言 (留空=自动)" disabled={busy} onChange={(e) => setAsrLang(e.target.value)} style={INPUT} />
+          <LanguagePicker
+            value={asrLang}
+            onChange={setAsrLang}
+            languages={knownLangs}
+            allowAuto
+            placeholder="语言 (留空=自动)"
+            disabled={busy}
+            width={200}
+          />
           <button onClick={() => void runAsr()} disabled={busy} style={BTN}>
             生成字幕 (ASR)
           </button>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input value={importLang} placeholder="语言 (如 en)" disabled={busy} onChange={(e) => setImportLang(e.target.value)} style={INPUT} />
+          <LanguagePicker
+            value={importLang}
+            onChange={setImportLang}
+            languages={knownLangs}
+            placeholder="语言 (如 en)"
+            disabled={busy}
+            width={200}
+          />
           <button onClick={() => void importExternal()} disabled={busy || !importLang.trim()} style={BTN_GHOST}>
             导入外部 SRT…
           </button>
@@ -200,7 +222,14 @@ export function SubtitlesTab({ type, instance, refreshKey, onChanged }: Material
           </div>
         )}
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <input value={transLang} placeholder="翻译目标语言 (如 en)" disabled={busy} onChange={(e) => setTransLang(e.target.value)} style={INPUT} />
+          <LanguagePicker
+            value={transLang}
+            onChange={setTransLang}
+            languages={knownLangs}
+            placeholder="翻译目标语言 (如 en)"
+            disabled={busy}
+            width={200}
+          />
           <button onClick={() => void runTranslate()} disabled={busy || !transLang.trim()} style={BTN_GHOST}>
             翻译
           </button>

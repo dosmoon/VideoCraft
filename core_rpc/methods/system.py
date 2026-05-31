@@ -33,6 +33,17 @@ def echo(ctx: Context, **params: Any) -> dict[str, Any]:
     return params
 
 
+@rpc_method("system.list_languages")
+def list_languages(ctx: Context) -> list[dict[str, str]]:
+    """The known-language catalog for the ASR / translate / import pickers
+    (core.lang_names.WHISPER_LANG_CHOICES): UN-6 first then alphabetical, with a
+    locale-agnostic `iso — English (中文)` display. The renderer's combobox filters
+    these so manual typing snaps to a preset code (display → iso)."""
+    from core.lang_names import WHISPER_LANG_CHOICES
+
+    return [{"iso": iso, "display": display} for iso, display in WHISPER_LANG_CHOICES]
+
+
 @rpc_method("system.demo_job")
 def demo_job(ctx: Context, steps: int = 5, delay_ms: int = 50) -> dict[str, Any]:
     """Start a fake long task that emits `progress.demo` then `event.job`.

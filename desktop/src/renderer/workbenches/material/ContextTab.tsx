@@ -35,7 +35,7 @@ const EMPTY_SEED: SourceBasicInfo = {
 type FieldKey = keyof SourceContext;
 const GROUPS: { title: string; fields: { key: FieldKey; label: string; rows?: number }[] }[] = [
   {
-    title: "锚点（AI 校正后的权威写法）",
+    title: "锚点 · AI 核对①线索后的权威写法",
     fields: [
       { key: "host", label: "主讲人" },
       { key: "host_bio", label: "身份" },
@@ -45,24 +45,24 @@ const GROUPS: { title: string; fields: { key: FieldKey; label: string; rows?: nu
     ],
   },
   {
-    title: "人物",
+    title: "人物 · AI 推导",
     fields: [
       { key: "host_affiliation", label: "所属机构" },
       { key: "guests", label: "嘉宾/在场" },
     ],
   },
-  { title: "时间", fields: [{ key: "event_time", label: "事件时间" }] },
+  { title: "时间 · AI 推导", fields: [{ key: "event_time", label: "事件时间" }] },
   {
-    title: "事件",
+    title: "事件 · AI 推导",
     fields: [
       { key: "show_type", label: "节目类型" },
       { key: "event_summary", label: "事件概述", rows: 3 },
       { key: "key_points", label: "核心要点", rows: 4 },
     ],
   },
-  { title: "背景", fields: [{ key: "background", label: "背景", rows: 5 }] },
+  { title: "背景 · AI 推导", fields: [{ key: "background", label: "背景", rows: 5 }] },
   {
-    title: "制作",
+    title: "制作 · AI 推导",
     fields: [
       { key: "audience", label: "观众" },
       { key: "platform_tone", label: "发布平台" },
@@ -100,7 +100,6 @@ export function ContextTab(props: MaterialTabProps) {
   const { type, instance, refreshKey, onChanged } = props;
   const [ctx, setCtx] = useState<SourceContext | null>(null);
   const [seed, setSeed] = useState<SourceBasicInfo>(EMPTY_SEED);
-  const [showSeed, setShowSeed] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const fillJob = useJob();
@@ -192,14 +191,39 @@ export function ContextTab(props: MaterialTabProps) {
         {error && <span style={{ fontSize: 11, color: "#ff6b6b" }}>✗ {error}</span>}
       </div>
 
-      {/* AI fill: 5-field seed → AI web-search → replaces the whole context */}
-      <div style={{ padding: "10px 12px", background: "#1c1c20", borderRadius: 6, border: "1px solid #2a2a2e", marginBottom: 14 }}>
+      {/* How this page works */}
+      <p style={{ color: "#9aa", fontSize: 12, margin: "0 0 12px", lineHeight: 1.6 }}>
+        用法:① 填几条你知道的<b style={{ color: "#cdd" }}>线索</b>(可选) → ② 点 <b style={{ color: "#b89af0" }}>AI 填充</b> 联网检索生成 →
+        ③ AI 产出的 <b style={{ color: "#cdd" }}>15 字段新闻背景</b>(下游唯一数据源,可手动校正)。
+      </p>
+
+      {/* Step ① — user hints (input to AI; never read downstream) */}
+      <StepCard step="① 线索" subtitle="你提供 · AI 的输入提示(可不准/留空)">
+        <p style={{ color: "#888", fontSize: 11, margin: "0 0 6px" }}>
+          填你知道的就行。AI 会联网核对、纠正、补全成下面 ③ 的权威写法。线索本身不进下游渲染。
+        </p>
+        {SEED_FIELDS.map((f) => (
+          <TextRow
+            key={f.key}
+            label={f.label}
+            value={seed[f.key] ?? ""}
+            disabled={fillJob.running}
+            labelWidth={96}
+            inputMaxWidth={360}
+            onCommit={(v) => void commitSeed(f.key, v)}
+          />
+        ))}
+      </StepCard>
+
+      {/* Step ② — AI fill (replacement) */}
+      <StepCard step="② AI 填充" subtitle="用①线索联网检索,生成/覆盖③新闻背景">
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <button onClick={() => void runFill()} disabled={fillJob.running} style={{ padding: "6px 14px", background: "#7a4fd6", color: "#fff", border: "none", borderRadius: 5, fontSize: 13, cursor: "pointer" }}>
+          <button
+            onClick={() => void runFill()}
+            disabled={fillJob.running}
+            style={{ padding: "6px 14px", background: "#7a4fd6", color: "#fff", border: "none", borderRadius: 5, fontSize: 13, cursor: "pointer" }}
+          >
             ✨ AI 填充
-          </button>
-          <button onClick={() => setShowSeed((s) => !s)} style={{ padding: "5px 10px", background: "transparent", color: "#9aa", border: "none", fontSize: 12, cursor: "pointer" }}>
-            {showSeed ? "收起线索" : "编辑线索（5 项）"}
           </button>
           {fillJob.running && (
             <span style={{ fontSize: 12, color: "#4a9eff" }}>
@@ -212,27 +236,19 @@ export function ContextTab(props: MaterialTabProps) {
           {fillJob.error && <span style={{ fontSize: 11, color: "#ff6b6b" }}>✗ {fillJob.error}</span>}
         </div>
         <p style={{ color: "#d9a441", fontSize: 11, margin: "6px 0 0" }}>
-          ⚠ AI 填充会用联网检索结果整体覆盖现有新闻背景。
+          ⚠ 会用联网检索结果整体覆盖现有 ③ 新闻背景。
         </p>
-        {showSeed && (
-          <div style={{ marginTop: 8 }}>
-            <p style={{ color: "#888", fontSize: 11, margin: "0 0 4px" }}>
-              线索只是 AI 的输入提示（可不准），下游不读取。
-            </p>
-            {SEED_FIELDS.map((f) => (
-              <TextRow
-                key={f.key}
-                label={f.label}
-                value={seed[f.key] ?? ""}
-                disabled={fillJob.running}
-                labelWidth={96}
-                inputMaxWidth={360}
-                onCommit={(v) => void commitSeed(f.key, v)}
-              />
-            ))}
-          </div>
-        )}
+      </StepCard>
+
+      {/* Step ③ — AI-generated background (the downstream source of truth; editable) */}
+      <div style={{ fontSize: 12, color: "#cdd", fontWeight: 700, margin: "16px 0 2px" }}>
+        ③ 新闻背景 · AI 生成 · 下游唯一数据源 · 可手动校正
       </div>
+      {filled === 0 && (
+        <p style={{ color: "#888", fontSize: 11, margin: "0 0 6px" }}>
+          还没有内容 —— 点上面「✨ AI 填充」生成,或直接在下面手动填写。
+        </p>
+      )}
 
       {GROUPS.map((g) => (
         <div key={g.title}>
@@ -262,6 +278,19 @@ export function ContextTab(props: MaterialTabProps) {
           )}
         </div>
       ))}
+    </div>
+  );
+}
+
+// A bordered "step" card with a numbered heading + subtitle.
+function StepCard(props: { step: string; subtitle: string; children: React.ReactNode }) {
+  return (
+    <div style={{ padding: "10px 12px", background: "#1c1c20", borderRadius: 6, border: "1px solid #2a2a2e", marginBottom: 10 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 12, fontWeight: 700, color: "#cdd" }}>{props.step}</span>
+        <span style={{ fontSize: 11, color: "#888" }}>{props.subtitle}</span>
+      </div>
+      {props.children}
     </div>
   );
 }
