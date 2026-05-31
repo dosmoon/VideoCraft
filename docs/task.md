@@ -536,3 +536,29 @@ news_desk 迁新架构(Electron renderer + sidecar)已走通**绝大部分**,真
 - 外部文件导入(磁盘选 SRT,非素材)未做。
 
 **下一轮建议顺序**:① 字幕+章节详情列表(功能完整性,ROI 高)→ ② 导出渲染按钮(端到端可用)→ ③ 系统核查快照约定 → ④ preset / Tk 退役。
+
+> **续29 已做完 ①②③**,见下。
+
+---
+
+## ▶ 续 29(2026-05-31,续28 三项缺口 ①②③ 一次性收口)
+
+接续 28 推荐序,把用户指出的三项缺口前三个做完(Python 零改动,纯 `desktop/` renderer + 一处 hook)。
+
+**① 字幕 + 章节详情列表(commit `21c5aa3`)**:Style tab 通用 `PropertyPanel` 渲不了 legacy Tk 的 cue 列表 / 章节 schedule。新增 `ComponentDetail.tsx`(`SubtitleCueList` + `ChapterScheduleList`)——选中字幕组件显示其快照 SRT 的 cue(start·text,key 取自 live 预览的 `cuesBySrtPath`);选中章节显示导入的 schedule 行(start·title)。两者**点击行 seek 预览**:news_desk 全源(identity time map),cue/章节的源时间起点≡输出时间位置,直接 seek 即对。`NewsDeskPreview` 经 `useImperativeHandle` + 可选 `controlRef` prop 暴露 `seek(sec)`(保留 plain function 形,不引 forwardRef 致全 body 重缩进)。逐章编辑仍 deferred(续28 只要求只读+seek)。
+
+**② 全源导出真渲染(commit `25f48af`)**:导出 tab 之前只读(plan + rendered[])。镜像 clip ExportTab 渲染循环,但单全源输出:`plan_render → 开源+Backend/ClipReader → buildNewsDeskTimeline → exportTimelineToMp4(GPU/WebCodecs + 源音频混流)→ vc:writeFile → commit_render`。target=源尺寸(取偶)、无 reframe 裁剪、out_idx 恒 1。与 Style tab 预览**同一 compositor**(buildNewsDeskTimeline→resolveFrameAt),导出 mp4≡预览。带进度%/取消/单输出 播放·打开文件夹·删除。`useNewsDeskPreview` 加 `reload()`(全量重取)让导出 tab 在 Style tab 导入后刷新源+快照 cue;`NewsDeskWorkbench` 现把 live `components` 传给导出 tab。
+
+**③ 快照 vs 引用约定系统核查(无代码改动,结论:全合规)**:通读 `imports.py` / `preview.py` / `export.py` / renderer `ExportTab` 全链路——
+- `imports.py`:字幕 `shutil.copyfile` 进 `<inst>/subtitles/<id>.srt` 设相对 `srt_path`;章节 `read_analysis` 一次性拷进 `component["schedule"]`。**均快照,无回引**。
+- `preview.py` / `export.py`:**唯二的 material 引用 = 源视频路径(`model.source_video_path`)+ 源时长 meta**——这是**输入媒介**(不是可快照的决策,多 GB 视频本就不入快照),正确保留为引用。字幕走 inst_dir 相对解析(快照),章节 schedule 随 config(快照),无决策性数据在渲染期回引素材。
+- renderer `ExportTab`:`srcPath` 经 `material.get_artifact("source")`(源媒介引用)、`cuesBySrtPath` 经 `creation.preview_data`(实例快照 SRT)、`components` 来自 config(快照)。timeline 全在 renderer 建,无 material 直引决策。
+- **结论:符合 ADR-0003 / [[project_snapshot_principle]]——决策性上游创建期快照,原始媒介保持引用。零违规,无需修。**
+
+验证(每步):**两 typecheck rc=0;128 TS 测;`electron-vite build` 成功(83 模块)**。
+
+**真机验待用户**(GPU 预览 seek + 真导出 mp4,headless 覆盖不到):
+- 续 29-①:选字幕组件→底部出 cue 列表;选章节→出 schedule 列表;点行→预览跳到该时间。
+- 续 29-②:导出 tab 点「渲染整源」→进度走完→`output.mp4` 落 instance 目录、有画面+字幕+章节+音频、与预览一致;播放/打开文件夹/删除可用;取消能中断。
+
+**下一步(续28 剩余)= ④ preset RPC(presets.py builtins 绝对-px→分数形)+ Tk news_desk 退役(`component_defs.py` 与 Tk `components/*` 合并单源);非阻塞欠债:字幕双语并排 UI、外部文件导入、`imports.py` 死注释清理(行号已随改动漂移,核查时未见明显死注释)。**
