@@ -107,6 +107,58 @@ def test_list_materials_empty_project(ctx, tmp_project):
     assert isinstance(resp["result"], dict)
 
 
+# ── Creation lifecycle: list types + create instance (the 创作 [+] surface) ─────
+
+def test_list_creation_types(ctx, tmp_project):
+    methods.load_plugins()  # registers clip + news_desk CreationTypes
+    open_project_in(ctx, tmp_project)
+    types = call(ctx, "project.list_creation_types")["result"]
+    by_name = {t["type_name"]: t for t in types}
+    assert "clip" in by_name and "news_desk" in by_name
+    # User-facing description present; never expects the renderer to show type_name.
+    assert by_name["news_desk"]["description_zh"]
+    assert by_name["news_desk"]["single_instance"] is False
+
+
+def test_create_creation_instance_autonames_and_emits(ctx, tmp_project, emit):
+    methods.load_plugins()
+    open_project_in(ctx, tmp_project)
+    # First create → auto-named news-1; second → news-2 (suggest_instance_name).
+    r1 = call(ctx, "project.create_creation_instance", {"type": "news_desk"})["result"]
+    assert r1 == {"type": "news_desk", "instance": "news-1"}
+    r2 = call(ctx, "project.create_creation_instance", {"type": "news_desk"})["result"]
+    assert r2["instance"] == "news-2"
+    assert "event.creations.changed" in emit.methods()
+    # It now shows up in list_creations.
+    creations = call(ctx, "project.list_creations")["result"]
+    assert sorted(creations.get("news_desk", [])) == ["news-1", "news-2"]
+
+
+def test_create_creation_instance_explicit_name(ctx, tmp_project):
+    methods.load_plugins()
+    open_project_in(ctx, tmp_project)
+    r = call(ctx, "project.create_creation_instance", {"type": "news_desk", "name": "briefing"})["result"]
+    assert r["instance"] == "briefing"
+    # An empty config.json was written (the single owner fills it on first edit).
+    cfg = os.path.join(tmp_project.creation_instance_dir("news_desk", "briefing"), "config.json")
+    assert os.path.isfile(cfg)
+
+
+def test_create_creation_instance_unknown_type(ctx, tmp_project):
+    methods.load_plugins()
+    open_project_in(ctx, tmp_project)
+    resp = call(ctx, "project.create_creation_instance", {"type": "no_such"})
+    assert resp["error"]["code"] == -32602
+
+
+def test_create_creation_instance_duplicate_name(ctx, tmp_project):
+    methods.load_plugins()
+    open_project_in(ctx, tmp_project)
+    call(ctx, "project.create_creation_instance", {"type": "news_desk", "name": "dup"})
+    resp = call(ctx, "project.create_creation_instance", {"type": "news_desk", "name": "dup"})
+    assert resp["error"]["code"] == -32602
+
+
 # ── Material domain (requires the news_video plugin registered) ───────────────
 
 @pytest.fixture

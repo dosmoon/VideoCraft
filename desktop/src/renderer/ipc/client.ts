@@ -42,6 +42,14 @@ export interface ProjectBrief {
   meta?: Record<string, unknown> | null;
 }
 
+/** A registered creation type for the 创作 [+] menu (project.list_creation_types). */
+export interface CreationTypeInfo {
+  type_name: string;
+  single_instance: boolean;
+  description_zh: string;
+  description_en: string;
+}
+
 export interface SlotState {
   slot_id: string;
   is_locked: boolean;
@@ -106,6 +114,17 @@ export const rpc = {
   currentProject: () => rpcCall<ProjectBrief | null>("project.current"),
   listMaterials: () => rpcCall<Record<string, string[]>>("project.list_materials"),
   listCreations: () => rpcCall<Record<string, string[]>>("project.list_creations"),
+  // Registered creation types for the 创作 [+] menu (user-facing descriptions —
+  // the renderer must not show the raw type_name).
+  listCreationTypes: () =>
+    rpcCall<CreationTypeInfo[]>("project.list_creation_types"),
+  // Create a new creation instance; name omitted → auto-numbered. Returns the
+  // created {type, instance}.
+  createCreationInstance: (type: string, name?: string) =>
+    rpcCall<{ type: string; instance: string }>("project.create_creation_instance", {
+      type,
+      ...(name ? { name } : {}),
+    }),
 
   slotReadiness: (type: string, instance: string) =>
     rpcCall<Record<string, SlotState>>("material.slot_readiness", { type, instance }),

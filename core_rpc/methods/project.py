@@ -89,3 +89,47 @@ def list_materials(ctx: Context) -> dict[str, list[str]]:
 @rpc_method("project.list_creations")
 def list_creations(ctx: Context) -> dict[str, list[str]]:
     return ctx.session.project.list_creations()
+
+
+@rpc_method("project.list_creation_types")
+def list_creation_types(ctx: Context) -> list[dict[str, Any]]:
+    """Registered creation types for the 创作 [+] menu, in registration order.
+    Returns user-facing descriptions — `display_name_key` is an i18n key not
+    resolvable headless, so the renderer shows description_zh/_en, never the raw
+    type_name ([[feedback_user_facing_naming]])."""
+    import creations
+
+    return [
+        {
+            "type_name": t.type_name,
+            "single_instance": t.single_instance,
+            "description_zh": t.description_zh,
+            "description_en": t.description_en,
+        }
+        for t in creations.all_types()
+    ]
+
+
+@rpc_method("project.create_creation_instance")
+def create_creation_instance(ctx: Context, type: str, name: str | None = None) -> dict[str, Any]:
+    """Create a new creation instance and return {type, instance}. When `name`
+    is omitted the next auto-numbered name is used (suggest_instance_name). The
+    instance starts with an empty config.json (the single owner fills it on first
+    edit). Emits event.creations.changed so any open view refreshes."""
+    import creations
+
+    if creations.get(type) is None:
+        raise RpcError(-32602, f"unknown creation type: {type!r}")
+    proj = ctx.session.project
+    existing = proj.list_creation_instances(type)
+    inst = (name or "").strip() or creations.suggest_instance_name(type, existing)
+    if inst in existing:
+        raise RpcError(-32602, f"creation instance already exists: {inst!r}")
+    try:
+        proj.create_creation_instance(type, inst, initial_config={})
+    except FileExistsError as exc:
+        raise RpcError(-32602, f"creation instance already exists: {inst!r}") from exc
+    except ValueError as exc:
+        raise RpcError(-32602, str(exc)) from exc
+    ctx.notify("event.creations.changed", {"type": type, "instance": inst})
+    return {"type": type, "instance": inst}

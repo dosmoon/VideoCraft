@@ -10,7 +10,13 @@
  */
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { rpc, RpcError, type ProjectBrief, type SlotState } from "../ipc/client";
+import {
+  rpc,
+  RpcError,
+  type CreationTypeInfo,
+  type ProjectBrief,
+  type SlotState,
+} from "../ipc/client";
 import { CreationWorkbench } from "../workbenches";
 
 // Friendly labels for the news_video slots (placeholder — real i18n later).
@@ -108,6 +114,21 @@ export function Hub() {
     setWorkbench(null);
   }, []);
 
+  // Create a new creation instance, refresh the tree, and open its workbench.
+  const createCreation = useCallback(
+    async (type: string) => {
+      setError("");
+      try {
+        const { instance } = await rpc.createCreationInstance(type);
+        setCreations(await rpc.listCreations());
+        setWorkbench({ type, instance });
+      } catch (err) {
+        setError(fmt(err));
+      }
+    },
+    [],
+  );
+
   if (!current) {
     return (
       <Launcher recents={recents} busy={busy} error={error} onOpen={open} onPick={pickAndOpen} />
@@ -122,6 +143,7 @@ export function Hub() {
       error={error}
       workbench={workbench}
       onOpenCreation={(type, instance) => setWorkbench({ type, instance })}
+      onCreateCreation={(type) => void createCreation(type)}
       onCloseWorkbench={() => setWorkbench(null)}
       onClose={close}
     />
@@ -221,6 +243,7 @@ function ProjectView(props: {
   error: string;
   workbench: { type: string; instance: string } | null;
   onOpenCreation: (type: string, instance: string) => void;
+  onCreateCreation: (type: string) => void;
   onCloseWorkbench: () => void;
   onClose: () => void;
 }) {
@@ -232,6 +255,7 @@ function ProjectView(props: {
     error,
     workbench,
     onOpenCreation,
+    onCreateCreation,
     onCloseWorkbench,
     onClose,
   } = props;
@@ -293,8 +317,10 @@ function ProjectView(props: {
             </div>
           ))}
 
-          <SectionTitle>创作</SectionTitle>
-          {creaTypes.length === 0 && <Empty>无创作</Empty>}
+          <SectionTitleRow title="创作">
+            <CreateCreationMenu onCreate={onCreateCreation} />
+          </SectionTitleRow>
+          {creaTypes.length === 0 && <Empty>无创作 — 用「+」新建</Empty>}
           {creaTypes.map(([type, insts]) => (
             <div key={type} style={{ marginBottom: 10 }}>
               <TypeLabel>{type}</TypeLabel>
@@ -396,6 +422,113 @@ function SectionTitle({ children }: { children: ReactNode }) {
     >
       {children}
     </h3>
+  );
+}
+
+// A section title with trailing controls on the same row (e.g. the 创作 [+]).
+function SectionTitleRow({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", margin: "14px 0 6px" }}>
+      <h3
+        style={{
+          fontSize: 11,
+          textTransform: "uppercase",
+          letterSpacing: 0.5,
+          color: "#888",
+          margin: 0,
+          fontWeight: 700,
+        }}
+      >
+        {title}
+      </h3>
+      <div style={{ marginLeft: "auto" }}>{children}</div>
+    </div>
+  );
+}
+
+// [+] menu listing registered creation types (descriptions, never type_name).
+function CreateCreationMenu({ onCreate }: { onCreate: (type: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [types, setTypes] = useState<CreationTypeInfo[] | null>(null);
+
+  const toggle = useCallback(() => {
+    setOpen((o) => !o);
+    if (types === null) {
+      void rpc
+        .listCreationTypes()
+        .then(setTypes)
+        .catch(() => setTypes([]));
+    }
+  }, [types]);
+
+  return (
+    <div style={{ position: "relative" }}>
+      <button
+        onClick={toggle}
+        title="新建创作"
+        style={{
+          width: 22,
+          height: 20,
+          lineHeight: "18px",
+          padding: 0,
+          background: "#2a2a2e",
+          color: "#ccc",
+          border: "1px solid #3a3a40",
+          borderRadius: 4,
+          fontSize: 14,
+          cursor: "pointer",
+        }}
+      >
+        +
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "100%",
+            right: 0,
+            zIndex: 20,
+            background: "#1f1f23",
+            border: "1px solid #3a3a40",
+            borderRadius: 6,
+            padding: 4,
+            minWidth: 200,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+          }}
+        >
+          {types === null ? (
+            <div style={{ padding: "5px 8px", color: "#888", fontSize: 12 }}>加载中…</div>
+          ) : types.length === 0 ? (
+            <div style={{ padding: "5px 8px", color: "#888", fontSize: 12 }}>无可用类型</div>
+          ) : (
+            types.map((t) => (
+              <button
+                key={t.type_name}
+                onClick={() => {
+                  setOpen(false);
+                  onCreate(t.type_name);
+                }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  background: "transparent",
+                  color: "#ddd",
+                  border: "none",
+                  borderRadius: 4,
+                  padding: "5px 8px",
+                  fontSize: 13,
+                  cursor: "pointer",
+                }}
+                title={t.description_zh}
+              >
+                {t.description_zh || t.type_name}
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
