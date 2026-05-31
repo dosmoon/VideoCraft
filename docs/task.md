@@ -485,3 +485,20 @@ clip 第二轮 dogfood 走完（2026-05-23/24）。功能"基本能用，可用"
 > 过程:首次 Edit canvas2d.ts 没匹配上(我臆想了文件结构,实际它已有 OVERLAY_KINDS 且 drawOverlayClip 单函数),silently 失败 → 测试反而帮我暴露真因(data-key 不匹配)。
 
 **下一步**:① 真机验章节条/卡 ② 导出渲染按钮 ③ preset RPC ④ Tk 退役。
+
+---
+
+## ▶ 续 27(2026-05-31,章节属性编辑器 — 嵌套 modes + style)
+
+用户:章节条/卡都显示了,但**章节属性面板只有 name**,真正设置看不到。真因:章节 config 是嵌套(`modes`/`style.top_strip`/`style.start_card`/`schedule`),通用 `PropertyPanel` 只渲染 primitive 字段,全跳过了。
+
+修(commit `a9f7c79`):
+- `ChapterProperties.tsx`(新)——专用编辑器:两层开关(顶部章节条/起始大卡片)+ 各启用层的样式字段(条:背景/文字色 + 字号;卡:标题/正文色+字号、背景色+不透明度、强调色、持续秒数)。中文标签,不露内部名。
+- `chapterPatch.ts`(+测 4)——纯 patch 构造器。`update_component` 是 shallow-merge,故编辑一个嵌套字段要**重发整个嵌套对象**(`patchStrip` 保 start_card、`patchCard` 保 top_strip、`patchMode` 保另一 mode);partial/空 style 用默认补全。钉死 shallow-merge 丢 sibling 陷阱。
+- `StyleTab.tsx`:章节渲 `ChapterProperties`,其它组件仍用 `PropertyPanel`。
+
+排期(逐章 rows)仍来自 analysis.json 导入(ImportRow);逐章编辑待后续。
+
+验证:app typecheck rc=0;**128 TS 测**(124+4);build 83 模块。**真机编辑待用户验**。
+
+**下一步**:① 真机验章节属性编辑(开关层、改色/字号→预览实时变)② 导出渲染按钮 ③ preset RPC ④ Tk 退役。
