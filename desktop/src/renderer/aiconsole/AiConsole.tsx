@@ -471,9 +471,11 @@ function ProviderEditor({
 }
 
 // Model picker — "Fetch all" pulls the provider's full API model list; the user
-// ticks which to enable. Currently-selected models stay checked even if the API
-// doesn't return them; a manual-add row covers models the API omits. Mirrors the
-// Tk picker (which replaced the old flat comma-separated dump).
+// ticks which to ENABLE. The displayed list (`pool`) is a stable universe: once a
+// model is shown (initial models ∪ fetched ∪ manually added) it stays shown.
+// Ticking/unticking only changes the enabled set (`selected`) — unchecking keeps
+// the row visible (you can re-check it), it does NOT remove it from the list.
+// Mirrors the Tk picker (which replaced the old flat comma-separated dump).
 function ModelPicker({
   provider: p,
   selected,
@@ -483,30 +485,30 @@ function ModelPicker({
   selected: string[];
   onChange: (next: string[]) => void;
 }) {
-  const [apiModels, setApiModels] = useState<string[]>([]);
+  // Stable display pool, seeded from the provider's current models; "Fetch all"
+  // and manual-add grow it. Never shrinks on uncheck (that only edits `selected`).
+  const [pool, setPool] = useState<string[]>(p.models);
   const [search, setSearch] = useState("");
   const [manual, setManual] = useState("");
   const fetch = useNetAction();
   // Live fetch is LLM-only and not ClaudeCode (its model set is fixed locally).
   const canFetch = p.category === "llm" && p.type !== "claude_code";
 
-  // Candidate order: API models first, then any selected the API didn't return.
-  const candidates: string[] = [];
-  const seen = new Set<string>();
-  for (const m of [...apiModels, ...selected]) {
-    if (!seen.has(m)) {
-      seen.add(m);
-      candidates.push(m);
-    }
-  }
-  const q = search.trim().toLowerCase();
-  const shown = q ? candidates.filter((m) => m.toLowerCase().includes(q)) : candidates;
+  const mergePool = (extra: string[]) =>
+    setPool((cur) => [...cur, ...extra.filter((m) => !cur.includes(m))]);
 
+  const q = search.trim().toLowerCase();
+  const shown = q ? pool.filter((m) => m.toLowerCase().includes(q)) : pool;
+
+  // Toggle changes only the enabled set — the row stays in `pool` either way.
   const toggle = (m: string) =>
     onChange(selected.includes(m) ? selected.filter((x) => x !== m) : [...selected, m]);
   const addManual = () => {
     const m = manual.trim();
-    if (m && !selected.includes(m)) onChange([...selected, m]);
+    if (m) {
+      mergePool([m]);
+      if (!selected.includes(m)) onChange([...selected, m]);
+    }
     setManual("");
   };
 
@@ -517,7 +519,7 @@ function ModelPicker({
         <span style={{ fontSize: 12, color: "#888" }}>
           {tr("ai.providers.models_selected", { n: selected.length })}
         </span>
-        {candidates.length > 6 && (
+        {pool.length > 6 && (
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -531,7 +533,7 @@ function ModelPicker({
               fetch.run<{ models: string[] }>(
                 () => rpc.aiRefreshModels(p.name, p.category),
                 (r) => {
-                  setApiModels(r.models);
+                  mergePool(r.models);
                   return tr("ai.providers.fetched", { n: r.models.length });
                 },
               )
@@ -560,7 +562,7 @@ function ModelPicker({
       >
         {shown.length === 0 ? (
           <div style={{ fontSize: 12, color: "#777", padding: "6px 2px" }}>
-            {candidates.length === 0 ? tr("ai.providers.pick_empty") : tr("ai.providers.pick_none")}
+            {pool.length === 0 ? tr("ai.providers.pick_empty") : tr("ai.providers.pick_none")}
           </div>
         ) : (
           shown.map((m) => (
