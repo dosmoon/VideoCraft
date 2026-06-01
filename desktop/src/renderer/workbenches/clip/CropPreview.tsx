@@ -408,6 +408,19 @@ export function CropPreview(props: CropPreviewProps) {
     void renderAt(tRef.current);
   }, [cropRect, status, mode, aspect.aw, aspect.ah, renderAt]);
 
+  // Reset the playback clock to 0 whenever the preview WINDOW changes — i.e.
+  // switching candidates or nudging start/end. A stale position would overflow a
+  // shorter clip's duration (the slider value exceeds its max). Style / hook /
+  // crop edits keep their position because they don't change the window key.
+  const windowKey = fullSource
+    ? "full"
+    : `${candidate.start}|${candidate.end}|${override?.start_sec ?? ""}|${override?.end_sec ?? ""}`;
+  useEffect(() => {
+    pausePlayback();
+    tRef.current = 0;
+    setT(0);
+  }, [windowKey, pausePlayback]);
+
   // Rebuild the timeline whenever the source, candidate, override, or live-edited
   // components change. Cards/text come from the candidate; the window from
   // fullSource ([0,duration]) or the candidate/override timestamps.
