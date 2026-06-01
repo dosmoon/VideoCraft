@@ -20,6 +20,7 @@
 import { realFs } from "../../renderer/ipc/fs";
 import { rpcCall } from "../../renderer/ipc/client";
 import type {
+  AcquireSource,
   AnalysisSummary,
   ProjectBrief,
   SourceBasicInfo,
@@ -27,6 +28,8 @@ import type {
   SubtitleCheck,
 } from "../../renderer/ipc/client";
 import { NewsVideoModel } from "./model";
+import { readPlatformMetadata } from "./schema";
+import { NEWS_CONTEXT_SCHEMA, NEWS_CONTEXT_TASK, buildContextPrompt } from "./aiFill";
 
 async function loadModel(instance: string): Promise<NewsVideoModel> {
   const dir = await rpcCall<string>("project.material_instance_dir", {
@@ -147,8 +150,37 @@ export const materialBackend = {
     });
   },
 
-  // ── Analysis job (B3.2b — no project-meta coupling) ───────────────────────
-  // Thin forward to capability.analyze (returns {job_id}; runJob consumes it).
+  // ── Jobs (B3.2b — thin forwards to capability.*; return {job_id}) ──────────
+  // capability.* touches no project meta, so the caller (the tab, on job success)
+  // persists the source descriptor / detected language via the project.* meta RPCs.
+
+  startSetSource: async (instance: string, source: AcquireSource): Promise<{ job_id: string }> => {
+    const m = await loadModel(instance);
+    return rpcCall<{ job_id: string }>("capability.acquire_source", {
+      source,
+      video_path: m.sourceVideoPath,
+      meta_path: m.sourceMetaPath,
+    });
+  },
+
+  startRunAsr: async (instance: string, sourceLang?: string): Promise<{ job_id: string }> => {
+    const m = await loadModel(instance);
+    return rpcCall<{ job_id: string }>("capability.asr", {
+      source_video_path: m.sourceVideoPath,
+      subtitles_dir: m.subtitlesDir,
+      ...(sourceLang ? { source_lang: sourceLang } : {}),
+    });
+  },
+
+  startRunTranslate: async (instance: string, targetLang: string): Promise<{ job_id: string }> => {
+    const m = await loadModel(instance);
+    return rpcCall<{ job_id: string }>("capability.translate", {
+      subtitles_dir: m.subtitlesDir,
+      source_lang: await projectSourceLang(),
+      target_lang: targetLang,
+    });
+  },
+
   startRunAnalysis: async (
     instance: string,
     lang: string,
@@ -160,6 +192,20 @@ export const materialBackend = {
       srt_path: m.subtitlePath(lang),
       subtitles_dir: m.subtitlesDir,
       lang,
+    });
+  },
+
+  // ai_fill recomposition: build the news prompt (plugin-owned) + start the generic
+  // capability.llm_extract job. It returns the raw 15-field dict (it does NOT write
+  // context.json — the plugin owns that), so the tab persists it via writeContext.
+  startAiFill: async (instance: string): Promise<{ job_id: string }> => {
+    const m = await loadModel(instance);
+    const basic = await m.readBasicInfo();
+    const platform = await readPlatformMetadata(realFs, m.sourceDir);
+    return rpcCall<{ job_id: string }>("capability.llm_extract", {
+      prompt: buildContextPrompt(basic, platform),
+      schema: NEWS_CONTEXT_SCHEMA,
+      task: NEWS_CONTEXT_TASK,
     });
   },
 };

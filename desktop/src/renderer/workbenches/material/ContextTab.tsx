@@ -152,6 +152,10 @@ export function ContextTab(props: MaterialTabProps) {
   const runFill = useCallback(async () => {
     const res = await fillJob.run<SourceContext>(() => rpc.startAiFillContext(type, instance));
     if (res !== undefined) {
+      // news_video runs the generic capability.llm_extract, which returns the raw
+      // 15-field dict but does NOT write context.json (the plugin owns that), so
+      // persist it here (replacement semantics). The Python path already wrote it.
+      if (type === "news_video") await rpc.writeContext(type, instance, res);
       await loadContext();
       onChanged();
     }

@@ -116,8 +116,20 @@ export function SourceTab({ type, instance, refreshKey, onChanged }: MaterialTab
 
   const acquire = useCallback(
     async (source: AcquireSource) => {
-      const res = await job.run<{ title?: string }>(() => rpc.startSetSource(type, instance, source));
+      const res = await job.run<{ title?: string; duration_sec?: number; width?: number; height?: number }>(
+        () => rpc.startSetSource(type, instance, source),
+      );
       if (res !== undefined) {
+        // capability.acquire_source is plugin-agnostic and stamps no project meta,
+        // so persist the source descriptor + probe values here (ADR-0008 B3.2b).
+        if (type === "news_video") {
+          await rpc.commitSource(source, {
+            ...(res.title !== undefined ? { title: res.title } : {}),
+            ...(res.duration_sec !== undefined ? { durationSec: res.duration_sec } : {}),
+            ...(res.width !== undefined ? { width: res.width } : {}),
+            ...(res.height !== undefined ? { height: res.height } : {}),
+          });
+        }
         setReimport(false);
         onChanged();
         await reload();

@@ -100,12 +100,19 @@ export function SubtitlesTab({ type, instance, refreshKey, onChanged }: Material
   );
 
   const runAsr = useCallback(async () => {
-    await afterJob(await job.run(() => rpc.startRunAsr(type, instance, asrLang.trim() || undefined)));
+    const res = await job.run<{ lang_iso?: string }>(() => rpc.startRunAsr(type, instance, asrLang.trim() || undefined));
+    // capability.asr stamps no project meta; persist the detected source language
+    // (ADR-0008 B3.2b). Other material types still go through the Python job.
+    if (res?.lang_iso && type === "news_video") await rpc.setSourceLanguage(res.lang_iso);
+    await afterJob(res);
   }, [afterJob, job, type, instance, asrLang]);
 
   const runTranslate = useCallback(async () => {
-    if (!transLang.trim()) return;
-    await afterJob(await job.run(() => rpc.startRunTranslate(type, instance, transLang.trim())));
+    const target = transLang.trim();
+    if (!target) return;
+    const res = await job.run(() => rpc.startRunTranslate(type, instance, target));
+    if (res !== undefined && type === "news_video") await rpc.addTranslatedLanguage(target);
+    await afterJob(res);
   }, [afterJob, job, type, instance, transLang]);
 
   const runAnalysis = useCallback(

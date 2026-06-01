@@ -758,15 +758,21 @@ export const rpc = {
   // Long-running material jobs (sidecar threads). Each returns {job_id}
   // immediately; consume progress/terminal via runJob (ipc/runJob.ts).
   startSetSource: (type: string, instance: string, source: AcquireSource) =>
-    rpcCall<{ job_id: string }>("material.set_source", { type, instance, source }),
+    type === "news_video"
+      ? materialBackend.startSetSource(instance, source)
+      : rpcCall<{ job_id: string }>("material.set_source", { type, instance, source }),
   startRunAsr: (type: string, instance: string, sourceLang?: string) =>
-    rpcCall<{ job_id: string }>("material.run_asr", {
-      type,
-      instance,
-      ...(sourceLang ? { source_lang: sourceLang } : {}),
-    }),
+    type === "news_video"
+      ? materialBackend.startRunAsr(instance, sourceLang)
+      : rpcCall<{ job_id: string }>("material.run_asr", {
+          type,
+          instance,
+          ...(sourceLang ? { source_lang: sourceLang } : {}),
+        }),
   startRunTranslate: (type: string, instance: string, targetLang: string) =>
-    rpcCall<{ job_id: string }>("material.run_translate", { type, instance, target_lang: targetLang }),
+    type === "news_video"
+      ? materialBackend.startRunTranslate(instance, targetLang)
+      : rpcCall<{ job_id: string }>("material.run_translate", { type, instance, target_lang: targetLang }),
   startRunAnalysis: (type: string, instance: string, lang: string, analysisKind: string) =>
     type === "news_video"
       ? materialBackend.startRunAnalysis(instance, lang, analysisKind)
@@ -776,8 +782,13 @@ export const rpc = {
           lang,
           analysis_kind: analysisKind,
         }),
+  // news_video → generic capability.llm_extract (plugin builds the prompt); the
+  // job result is the raw 15-field dict, which the caller persists via writeContext
+  // (capability does not write context.json). Other types → the Python job (writes).
   startAiFillContext: (type: string, instance: string) =>
-    rpcCall<{ job_id: string }>("material.ai_fill_context", { type, instance }),
+    type === "news_video"
+      ? materialBackend.startAiFill(instance)
+      : rpcCall<{ job_id: string }>("material.ai_fill_context", { type, instance }),
 
   // Cancel a running job by id (shared with the creation side; system.py).
   cancelJob: (jobId: string) => rpcCall<{ cancelled: boolean }>("job.cancel", { job_id: jobId }),
