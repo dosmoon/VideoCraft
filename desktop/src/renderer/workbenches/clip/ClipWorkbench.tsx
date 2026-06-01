@@ -49,6 +49,12 @@ export function ClipWorkbench(props: { type: string; instance: string; onClose: 
     setTab(t);
     setVisited((v) => (v.has(t) ? v : new Set(v).add(t)));
   }, []);
+  // Shared binding refresh key: bumped when the Style tab's binding bar (re-)binds
+  // a material. Threaded into every tab's useClipPreview so all three reload the
+  // source/candidates — not just the Style tab where the bar lives. (Mirrors
+  // MaterialWorkbench's shared refreshKey.)
+  const [bindRefreshKey, setBindRefreshKey] = useState(0);
+  const onMaterialBound = useCallback(() => setBindRefreshKey((k) => k + 1), []);
 
   useEffect(() => {
     let alive = true;
@@ -153,6 +159,8 @@ export function ClipWorkbench(props: { type: string; instance: string; onClose: 
               components={components}
               selectedId={selectedId}
               savingId={savingId}
+              refreshKey={bindRefreshKey}
+              onMaterialBound={onMaterialBound}
               onSelect={setSelectedId}
               onPatch={(c, f) => void patch(c, f)}
               onComponentsReplaced={setComponents}
@@ -161,12 +169,18 @@ export function ClipWorkbench(props: { type: string; instance: string; onClose: 
         )}
         {visited.has("clips") && (
           <div style={{ display: tab === "clips" ? "contents" : "none" }}>
-            <ClipsTab type={type} instance={instance} components={components} />
+            <ClipsTab type={type} instance={instance} components={components} refreshKey={bindRefreshKey} />
           </div>
         )}
         {visited.has("export") && (
           <div style={{ display: tab === "export" ? "contents" : "none" }}>
-            <ExportTab type={type} instance={instance} components={components} active={tab === "export"} />
+            <ExportTab
+              type={type}
+              instance={instance}
+              components={components}
+              active={tab === "export"}
+              refreshKey={bindRefreshKey}
+            />
           </div>
         )}
       </div>

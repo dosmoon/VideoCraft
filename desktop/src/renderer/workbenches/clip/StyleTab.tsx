@@ -82,12 +82,16 @@ export function StyleTab(props: {
   components: Component[] | null;
   selectedId: string | null;
   savingId: string | null;
+  /** Shared binding refresh key (owned by ClipWorkbench, shared across tabs). */
+  refreshKey: number;
+  /** Bump the shared key after (re-)binding so every tab's preview reloads. */
+  onMaterialBound: () => void;
   onSelect: (id: string | null) => void;
   onPatch: (comp: Component, fields: Record<string, unknown>) => void;
   /** Replace the whole component list (add / remove / reorder returns a new list). */
   onComponentsReplaced: (list: Component[]) => void;
 }) {
-  const { type, instance, components, selectedId, savingId, onSelect, onPatch, onComponentsReplaced } =
+  const { type, instance, components, selectedId, savingId, refreshKey, onMaterialBound, onSelect, onPatch, onComponentsReplaced } =
     props;
   const selected = components?.find((c) => c.id === selectedId) ?? null;
 
@@ -155,13 +159,11 @@ export function StyleTab(props: {
     [type, instance, selectedId, onComponentsReplaced],
   );
 
-  // Material binding (ADR-0005). Bumping this forces a full preview reload
-  // (nobind → ready) since binding changes the source + candidates, not just
-  // config geometry that the lightweight reload() handles.
-  const [bindRefreshKey, setBindRefreshKey] = useState(0);
-  const onMaterialBound = useCallback(() => setBindRefreshKey((k) => k + 1), []);
-
-  const { status, message, data, reload } = useClipPreview(type, instance, bindRefreshKey);
+  // Material binding (ADR-0005). The shared refreshKey (from ClipWorkbench) forces
+  // a full preview reload (nobind → ready) across ALL tabs when a material is
+  // (re-)bound — binding changes the source + candidates, which the lightweight
+  // reload() doesn't re-fetch.
+  const { status, message, data, reload } = useClipPreview(type, instance, refreshKey);
 
   // ── toolbar (aspect / short-edge / mode / encode / presets) ─────────────────
   const [presets, setPresets] = useState<PresetList | null>(null);
@@ -442,7 +444,7 @@ export function StyleTab(props: {
       <MaterialBindingBar
         type={type}
         instance={instance}
-        refreshKey={bindRefreshKey}
+        refreshKey={refreshKey}
         onBound={onMaterialBound}
       />
 

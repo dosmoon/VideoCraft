@@ -29,9 +29,15 @@ function scoreColor(score: number): string {
   return "#888";
 }
 
-export function ClipsTab(props: { type: string; instance: string; components: Component[] | null }) {
-  const { type, instance, components } = props;
-  const { status, message, data, reload } = useClipPreview(type, instance);
+export function ClipsTab(props: {
+  type: string;
+  instance: string;
+  components: Component[] | null;
+  /** Shared binding refresh key — reload source/candidates when (re-)bound. */
+  refreshKey: number;
+}) {
+  const { type, instance, components, refreshKey } = props;
+  const { status, message, data, reload } = useClipPreview(type, instance, refreshKey);
 
   // Batch selection (selected_clip_indices) — local truth, mirrored to the
   // sidecar. Detail panel index — which candidate's editor is open.

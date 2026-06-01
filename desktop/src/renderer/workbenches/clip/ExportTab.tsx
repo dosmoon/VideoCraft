@@ -48,9 +48,11 @@ export function ExportTab(props: {
   components: Component[] | null;
   /** True when this tab is the visible one (tabs are kept mounted/hidden). */
   active: boolean;
+  /** Shared binding refresh key — reload source/candidates when (re-)bound. */
+  refreshKey: number;
 }) {
-  const { type, instance, components, active } = props;
-  const { status, message, data, reload } = useClipPreview(type, instance);
+  const { type, instance, components, active, refreshKey } = props;
+  const { status, message, data, reload } = useClipPreview(type, instance, refreshKey);
 
   const [plan, setPlan] = useState<RenderPlan | null>(null);
   const [rows, setRows] = useState<Row[]>([]);
