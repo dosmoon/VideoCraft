@@ -10,8 +10,17 @@
  */
 
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from "electron";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import {
+  copyFile,
+  mkdir,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Sidecar, SidecarError } from "./sidecar";
 
@@ -24,6 +33,39 @@ const repoRoot = resolve(here, "../../../");
 // Single Python sidecar for the whole app (migration doc §2.3: one in-memory
 // owner of project/material state; disk is the source of truth).
 const sidecar = new Sidecar({ repoRoot });
+
+// ── Generic file I/O for the renderer (ADR-0008 architecture pivot) ──────────
+// Plugins are moving to pure TS: their config/preset/data files are read+written
+// by the renderer through these handlers (Node fs in the main process), instead
+// of through per-plugin Python. `assertInProject` is the security boundary — a
+// renderer-supplied absolute path is only honoured if it resolves inside the
+// open project root or <userData>/presets (the global preset store). The project
+// root is learned by snooping proxied project.open/close in the vc:rpc handler
+// (single source of truth; no duplicate state).
+let currentProjectRoot: string | null = null;
+
+function assertInProject(absPath: string): string {
+  const resolved = resolve(absPath);
+  const roots = [
+    ...(currentProjectRoot ? [currentProjectRoot] : []),
+    join(app.getPath("userData"), "presets"),
+  ].map((r) => resolve(r));
+  // Windows paths are case-insensitive; compare normalized. Use a trailing sep
+  // so "/proj" doesn't match "/project2".
+  const norm = (p: string) => (process.platform === "win32" ? p.toLowerCase() : p);
+  const target = norm(resolved);
+  const ok = roots.some((root) => {
+    const r = norm(root);
+    return target === r || target.startsWith(r + sep);
+  });
+  if (!ok) {
+    throw new Error(`vc:fs path outside allowed roots: ${absPath}`);
+  }
+  return resolved;
+}
+
+const isENOENT = (err: unknown): boolean =>
+  (err as NodeJS.ErrnoException)?.code === "ENOENT";
 
 // Portable data (project rule [[feedback_portable_data]]): keep all app state
 // inside the repo, never %APPDATA%. Also gives a fresh GPU shader cache, which
@@ -199,6 +241,80 @@ ipcMain.handle("vc:writeFile", async (_e, absPath: string, bytes: Uint8Array) =>
   return absPath;
 });
 
+// ── vc:fs:* — generic project-scoped file I/O (ADR-0008) ─────────────────────
+// readJson/readText/list/stat degrade to null/[]/{exists:false} on a missing
+// path (a clean "not there yet" signal for TS owners). writeJson/writeText are
+// atomic (.tmp + rename, mkdir -p) and match Python *.save() byte-for-byte:
+// 2-space indent, no trailing newline, non-ASCII kept raw (JSON.stringify ==
+// json.dump(ensure_ascii=False, indent=2)).
+ipcMain.handle("vc:fs:readJson", async (_e, absPath: string) => {
+  const p = assertInProject(absPath);
+  try {
+    return JSON.parse(await readFile(p, "utf-8"));
+  } catch (err) {
+    if (isENOENT(err)) return null;
+    throw err;
+  }
+});
+ipcMain.handle("vc:fs:writeJson", async (_e, absPath: string, value: unknown) => {
+  const p = assertInProject(absPath);
+  await mkdir(dirname(p), { recursive: true });
+  const tmp = p + ".tmp";
+  await writeFile(tmp, JSON.stringify(value, null, 2), { encoding: "utf-8" });
+  await rename(tmp, p);
+  return p;
+});
+ipcMain.handle("vc:fs:readText", async (_e, absPath: string) => {
+  const p = assertInProject(absPath);
+  try {
+    return await readFile(p, "utf-8");
+  } catch (err) {
+    if (isENOENT(err)) return null;
+    throw err;
+  }
+});
+ipcMain.handle("vc:fs:writeText", async (_e, absPath: string, text: string) => {
+  const p = assertInProject(absPath);
+  await mkdir(dirname(p), { recursive: true });
+  const tmp = p + ".tmp";
+  await writeFile(tmp, text, { encoding: "utf-8" });
+  await rename(tmp, p);
+  return p;
+});
+ipcMain.handle("vc:fs:list", async (_e, absDir: string) => {
+  const p = assertInProject(absDir);
+  try {
+    const entries = await readdir(p, { withFileTypes: true });
+    return entries.map((e) => ({ name: e.name, isDir: e.isDirectory() }));
+  } catch (err) {
+    if (isENOENT(err)) return [];
+    throw err;
+  }
+});
+// copy: snapshot a file INTO the project (ADR-0003 — copy, not reference). Only
+// the destination is constrained; the source may be a user-picked external file
+// (e.g. an imported SRT) or a material file, and is read-only.
+ipcMain.handle("vc:fs:copy", async (_e, srcAbs: string, destAbs: string) => {
+  const dest = assertInProject(destAbs);
+  await mkdir(dirname(dest), { recursive: true });
+  await copyFile(resolve(srcAbs), dest);
+  return dest;
+});
+ipcMain.handle("vc:fs:remove", async (_e, absPath: string) => {
+  const p = assertInProject(absPath);
+  await rm(p, { recursive: true, force: true });
+});
+ipcMain.handle("vc:fs:stat", async (_e, absPath: string) => {
+  const p = assertInProject(absPath);
+  try {
+    const s = await stat(p);
+    return { exists: true, isDir: s.isDirectory(), size: s.size, mtimeMs: s.mtimeMs };
+  } catch (err) {
+    if (isENOENT(err)) return { exists: false };
+    throw err;
+  }
+});
+
 // OS integration for the Export tab's row actions.
 ipcMain.handle("vc:showInFolder", async (_e, absPath: string) => {
   shell.showItemInFolder(absPath);
@@ -224,6 +340,13 @@ ipcMain.handle(
   async (_e, method: string, params?: Record<string, unknown>): Promise<RpcReply> => {
     try {
       const result = await sidecar.call(method, params);
+      // Snoop project lifecycle so assertInProject knows the active root
+      // (single source of truth — the renderer already drives these).
+      if (method === "project.open" && typeof params?.["folder"] === "string") {
+        currentProjectRoot = resolve(params["folder"] as string);
+      } else if (method === "project.close") {
+        currentProjectRoot = null;
+      }
       return { ok: true, result };
     } catch (err) {
       if (err instanceof SidecarError) {

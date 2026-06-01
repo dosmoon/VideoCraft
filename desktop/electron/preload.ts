@@ -43,6 +43,35 @@ const api = {
   pickSubtitle(): Promise<string | null> {
     return ipcRenderer.invoke("vc:pickSubtitle");
   },
+  /** Generic project-scoped file I/O (ADR-0008: TS plugins own their files).
+   *  Paths are absolute; main-process assertInProject rejects anything outside
+   *  the open project or <userData>/presets. */
+  fs: {
+    readJson(absPath: string): Promise<unknown> {
+      return ipcRenderer.invoke("vc:fs:readJson", absPath);
+    },
+    writeJson(absPath: string, value: unknown): Promise<string> {
+      return ipcRenderer.invoke("vc:fs:writeJson", absPath, value);
+    },
+    readText(absPath: string): Promise<string | null> {
+      return ipcRenderer.invoke("vc:fs:readText", absPath);
+    },
+    writeText(absPath: string, text: string): Promise<string> {
+      return ipcRenderer.invoke("vc:fs:writeText", absPath, text);
+    },
+    list(absDir: string): Promise<{ name: string; isDir: boolean }[]> {
+      return ipcRenderer.invoke("vc:fs:list", absDir);
+    },
+    copy(srcAbs: string, destAbs: string): Promise<string> {
+      return ipcRenderer.invoke("vc:fs:copy", srcAbs, destAbs);
+    },
+    remove(absPath: string): Promise<void> {
+      return ipcRenderer.invoke("vc:fs:remove", absPath);
+    },
+    stat(absPath: string): Promise<{ exists: boolean; isDir?: boolean; size?: number; mtimeMs?: number }> {
+      return ipcRenderer.invoke("vc:fs:stat", absPath);
+    },
+  },
   /** Business RPC to the Python sidecar. Returns the tagged reply from main;
    *  the renderer's ipc client (src/renderer/ipc/) unwraps it. */
   rpc: {
