@@ -26,13 +26,14 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from core.ai.cancellation import CancellationToken
-# TODO(ADR-0005): core/ should not import from a specific material plugin.
-# Cleanest fix: parameterize run_asr / run_translate so callers (which
-# know the material instance) inject source_video_path / subtitles_dir
-# rather than have us look them up from the project's "first" material
-# instance. Documented wart until a second material type forces the
-# abstraction.
-from materials.news_video import paths as _nv_paths
+
+# ADR-0005/0008 note: the path-based core below (run_asr_paths / run_translate_paths)
+# is plugin-free — callers inject source_video_path / subtitles_dir and update
+# project.meta themselves. The legacy (project) shims at the bottom still resolve
+# paths via materials.news_video.paths (lazy import inside the shim, NOT at module
+# scope) and stamp project.meta; they survive only until the Tk app + NewsVideoModel
+# retire. Keeping the import shim-local is what removes the top-level cross-plugin
+# dependency that the old TODO(ADR-0005) flagged.
 
 
 @dataclass
@@ -48,18 +49,23 @@ ProgressCb = Optional[Callable[[ProgressInfo], None]]
 
 # ── ASR ──────────────────────────────────────────────────────────────────────
 
-def run_asr(
-    project,
+def run_asr_paths(
     *,
+    source_video_path: str,
+    subtitles_dir: str,
     source_lang_iso: str | None = None,
     provider: str | None = None,
     progress_cb: ProgressCb = None,
     cancel_token: CancellationToken | None = None,
 ) -> dict:
-    """Transcribe _nv_paths.source_video_path(project) → subtitles/<lang>.srt.
+    """Transcribe `source_video_path` → `subtitles_dir`/<lang>.srt. Plugin-free:
+    the caller injects the resolved paths and is responsible for updating
+    project.meta.language.source from the returned `lang_iso`.
 
     Args:
-        project: a Project instance (must have source_status() == "ready").
+        source_video_path: absolute path to the source video (must be a
+            non-empty file).
+        subtitles_dir: absolute directory the SRT is written into.
         source_lang_iso: ISO code ("en", "zh", ...) or None for auto-detect.
         provider: optional ASR provider override. None = AI Console routing.
 
@@ -76,19 +82,15 @@ def run_asr(
     """
     from core import asr as core_asr
 
-    if _nv_paths.source_status(project) != "ready":
-        raise FileNotFoundError(
-            f"Source video missing at {_nv_paths.source_video_path(project)}"
-        )
+    if not (os.path.isfile(source_video_path) and os.path.getsize(source_video_path) > 0):
+        raise FileNotFoundError(f"Source video missing at {source_video_path}")
 
-    os.makedirs(_nv_paths.subtitles_dir(project), exist_ok=True)
+    os.makedirs(subtitles_dir, exist_ok=True)
 
     # Provisional output name; transcribe_audio may rewrite the suffix
     # when the detected language differs from what was requested.
     provisional_lang = source_lang_iso or "auto"
-    output_srt_path = os.path.join(
-        _nv_paths.subtitles_dir(project), f"{provisional_lang}.srt"
-    )
+    output_srt_path = os.path.join(subtitles_dir, f"{provisional_lang}.srt")
 
     _emit(progress_cb, ProgressInfo(
         phase="preparing", percent=None,
@@ -180,7 +182,7 @@ def run_asr(
         ))
 
     result = core_asr.transcribe_audio(
-        _nv_paths.source_video_path(project),
+        source_video_path,
         output_srt_path,
         expected_lang_iso=source_lang_iso,
         language=source_lang_iso,
@@ -199,7 +201,7 @@ def run_asr(
 
     final_path = raw_srt
     if final_lang:
-        canonical_srt = os.path.join(_nv_paths.subtitles_dir(project), f"{final_lang}.srt")
+        canonical_srt = os.path.join(subtitles_dir, f"{final_lang}.srt")
         if os.path.abspath(raw_srt) != os.path.abspath(canonical_srt):
             try:
                 if os.path.exists(canonical_srt):
@@ -212,8 +214,7 @@ def run_asr(
                 pass
         # Same rename for the sibling JSON.
         if raw_json and os.path.isfile(raw_json):
-            canonical_json = os.path.join(
-                _nv_paths.subtitles_dir(project), f"{final_lang}.json")
+            canonical_json = os.path.join(subtitles_dir, f"{final_lang}.json")
             if os.path.abspath(raw_json) != os.path.abspath(canonical_json):
                 try:
                     if os.path.exists(canonical_json):
@@ -221,12 +222,6 @@ def run_asr(
                     os.rename(raw_json, canonical_json)
                 except OSError:
                     pass
-
-    # Update project meta language.source.
-    meta = project.meta
-    if final_lang:
-        meta.language.source = final_lang
-    project.update_meta(meta)
 
     _emit(progress_cb, ProgressInfo(
         phase="transcribing", percent=100.0,
@@ -240,40 +235,69 @@ def run_asr(
     }
 
 
-# ── Translate ────────────────────────────────────────────────────────────────
-
-def run_translate(
+def run_asr(
     project,
     *,
+    source_lang_iso: str | None = None,
+    provider: str | None = None,
+    progress_cb: ProgressCb = None,
+    cancel_token: CancellationToken | None = None,
+) -> dict:
+    """Legacy (project)-based shim over run_asr_paths (transitional — kept until
+    the Tk app + NewsVideoModel retire). Resolves the news_video instance paths
+    and stamps project.meta.language.source from the ASR result."""
+    from materials.news_video import paths as _nv_paths
+
+    result = run_asr_paths(
+        source_video_path=_nv_paths.source_video_path(project),
+        subtitles_dir=_nv_paths.subtitles_dir(project),
+        source_lang_iso=source_lang_iso,
+        provider=provider,
+        progress_cb=progress_cb,
+        cancel_token=cancel_token,
+    )
+    meta = project.meta
+    if result["lang_iso"]:
+        meta.language.source = result["lang_iso"]
+    project.update_meta(meta)
+    return result
+
+
+# ── Translate ────────────────────────────────────────────────────────────────
+
+def run_translate_paths(
+    *,
+    subtitles_dir: str,
+    source_lang_iso: str,
     target_lang_iso: str,
     progress_cb: ProgressCb = None,
     cancel_token: CancellationToken | None = None,
 ) -> dict:
-    """Translate the project's source-language SRT into <target>.srt.
+    """Translate `subtitles_dir`/<source>.srt → <target>.srt. Plugin-free: the
+    caller injects the resolved subtitles dir + the source language, and is
+    responsible for adding target_lang_iso to project.meta.language.translated_to.
 
     Args:
-        project: Project with project.meta.language.source set and an
-                 existing <source>.srt in subtitles/.
+        subtitles_dir: absolute dir holding <source>.srt; output lands here too.
+        source_lang_iso: ISO code of the existing source SRT (caller resolves it,
+            e.g. from project.meta.language.source).
         target_lang_iso: ISO code of the desired output language.
 
     Returns:
-        {
-          "lang_iso": target_lang_iso,
-          "srt_path": absolute path to the written SRT,
-        }
+        {"lang_iso": target_lang_iso, "srt_path": absolute path written}
 
     Raises:
         FileNotFoundError if the source SRT is absent.
-        ValueError if project.meta.language.source is unset.
+        ValueError if source_lang_iso is empty or equals the target.
         AIError on provider failure (including CANCELLED).
     """
     from core import translate as core_translate
 
-    src_lang = project.meta.language.source
+    src_lang = source_lang_iso
     if not src_lang:
-        raise ValueError("project.meta.language.source is unset; run ASR first")
+        raise ValueError("source_lang_iso is unset; run ASR first")
 
-    src_path = os.path.join(_nv_paths.subtitles_dir(project), f"{src_lang}.srt")
+    src_path = os.path.join(subtitles_dir, f"{src_lang}.srt")
     if not os.path.isfile(src_path):
         raise FileNotFoundError(f"Source SRT missing: {src_path}")
 
@@ -307,7 +331,7 @@ def run_translate(
 
     # Normalize the output name to <iso>.srt next to the source. core.translate
     # names it after target language's English name; we want ISO consistency.
-    final_path = os.path.join(_nv_paths.subtitles_dir(project), f"{target_lang_iso}.srt")
+    final_path = os.path.join(subtitles_dir, f"{target_lang_iso}.srt")
     if os.path.abspath(written_path) != os.path.abspath(final_path):
         try:
             if os.path.exists(final_path):
@@ -316,12 +340,6 @@ def run_translate(
         except OSError:
             # If rename fails, accept whatever core.translate wrote.
             final_path = written_path
-
-    # Update project meta.language.translated_to.
-    meta = project.meta
-    if target_lang_iso not in meta.language.translated_to:
-        meta.language.translated_to = list(meta.language.translated_to) + [target_lang_iso]
-    project.update_meta(meta)
 
     _emit(progress_cb, ProgressInfo(
         phase="translating", percent=100.0,
@@ -332,6 +350,32 @@ def run_translate(
         "lang_iso": target_lang_iso,
         "srt_path": final_path,
     }
+
+
+def run_translate(
+    project,
+    *,
+    target_lang_iso: str,
+    progress_cb: ProgressCb = None,
+    cancel_token: CancellationToken | None = None,
+) -> dict:
+    """Legacy (project)-based shim over run_translate_paths (transitional — kept
+    until the Tk app + NewsVideoModel retire). Resolves the news_video instance
+    paths + source language and stamps project.meta.language.translated_to."""
+    from materials.news_video import paths as _nv_paths
+
+    result = run_translate_paths(
+        subtitles_dir=_nv_paths.subtitles_dir(project),
+        source_lang_iso=project.meta.language.source,
+        target_lang_iso=target_lang_iso,
+        progress_cb=progress_cb,
+        cancel_token=cancel_token,
+    )
+    meta = project.meta
+    if target_lang_iso not in meta.language.translated_to:
+        meta.language.translated_to = list(meta.language.translated_to) + [target_lang_iso]
+    project.update_meta(meta)
+    return result
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
