@@ -137,8 +137,10 @@ news_desk 与 clip 走同一套契约,正面验证「公共组件库 + provider 
 - **renderer**:`workbenches/shared/ComponentEditor.tsx`(元数据驱动,clip+news_desk 共用,标签恒走 `tr()`)+ `fieldControls.tsx`(抽出的 number 步进/text/`ColorSwatchPicker`)+ `nestedPatch.ts`(嵌套 read/patch,整子对象重发抗浅合并,6 单测)。两 StyleTab 恒用 `<ComponentEditor>`。删 `PropertyPanel`/`ImageWatermarkProperties`/`ChapterProperties`/`chapterPatch`。
 - **news_desk wire 归一**:`component_defs.py`/`types.ts`/`mapping.ts` 整数百分比→分数 + 规范名(`scale_pct→image_scale` 等);clamp 留 `mapping.ts`(ADR-0006 单点),FieldSpec min/max 仅 UX 提示。**顺带修潜在 bug**:news_desk 文字水印 mapping 读的是 Python 早已改名前的 stale key。
 - **颜色控件**:`@uiw/react-color` Sketch(饱和度方块+色相条+HEX/RGB+预设)+ Chromium EyeDropper 屏幕吸管;关 alpha(不透明度是独立字段);关闭弹窗时提交(不每帧 RPC)。
+- **显示单位 `FieldSpec.display`**(`{factor,step,decimals?,suffix?}`):存储恒规范,编辑器 UI 边界换算——字号/描边/卡片内边距显示 **px@1080**、边距/块边距/图片缩放显示 **%**、不透明度 %、时长 s。还原 Tk 直觉单位 + 统一观感(字幕分数 fontsize 与章节 px fontsize 都显示成 px)。clamp 仍只在 mapping,`display.min/max` 仅提示。
 - **候选预览**:切候选/nudge 起止点时按 window-key 暂停+进度归零(防旧位置越界短 clip)。
-- **欠真机肉眼验**:各控件小数输入/步进/anchor 下拉/中文标签/chapter mode 门控+嵌套改值不丢兄弟/取色器+吸管。
+- **文字水印 draw-key 修(潜在 bug)**:`drawOverlayClip` 原把所有非字幕文字按卡片 key 读(`color`/`size_pct`),但文字水印 emit `text_color`/`text_fontsize_pct`/`text_opacity` → 颜色/字号永远默认、透明度没生效、还误描边。改为按 kind 选 key + `text_opacity` 作 fill alpha + 不描边。
+- **欠真机肉眼验**:各控件小数输入/步进/**显示单位(px/%)**/anchor 下拉/中文标签/chapter mode 门控+嵌套改值不丢兄弟/**取色器+吸管**/**文字水印颜色·字号·透明度生效**。
 
 ### 与本文档正文不同的关键实现决策
 
