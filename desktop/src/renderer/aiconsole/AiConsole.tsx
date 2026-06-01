@@ -387,9 +387,11 @@ function ProviderRow({ provider: p, apply }: { provider: AiProvider; apply: Appl
   );
 }
 
-// Per-provider Edit panel: API key + Base URL (openai_compatible) + active models
-// + per-provider settings (timeouts / executable). Mirrors the Tk Edit dialog;
-// "Refresh from API" model-fetch + Test connection are deferred (network → jobs).
+// Per-provider Edit panel: API key + Base URL (openai_compatible) + a model picker
+// (fetch the full API list → tick which to enable, + search + manual add) + per-
+// provider settings (timeouts / executable). Mirrors the Tk Edit dialog + picker.
+const lbl: React.CSSProperties = { fontSize: 12, color: "#bbb", width: 96, flexShrink: 0 };
+
 function ProviderEditor({
   provider: p,
   apply,
@@ -401,20 +403,17 @@ function ProviderEditor({
 }) {
   const [keyVal, setKeyVal] = useState("");
   const [baseUrl, setBaseUrl] = useState(p.base_url);
-  const [models, setModels] = useState(p.models.join(", "));
+  const [selected, setSelected] = useState<string[]>(p.models);
   const [settings, setSettings] = useState<Record<string, string>>(
     Object.fromEntries(Object.entries(p.settings).map(([k, v]) => [k, String(v)])),
   );
-  const refresh = useNetAction();
   const showBaseUrl = p.type === "openai_compatible";
   const showModels = p.category === "llm" || p.category === "asr";
-  // Live model fetch is LLM-only and not for ClaudeCode (no remote model endpoint).
-  const canRefreshModels = p.category === "llm" && p.type !== "claude_code";
 
   const save = () => {
     const patch: Record<string, unknown> = {};
     if (showBaseUrl) patch.base_url = baseUrl.trim();
-    if (showModels) patch.models = models.split(",").map((m) => m.trim()).filter(Boolean);
+    if (showModels) patch.models = selected;
     for (const [k, v] of Object.entries(settings)) {
       patch[k] = typeof p.settings[k] === "number" ? Number(v) : v;
     }
@@ -428,9 +427,8 @@ function ProviderEditor({
     onDone();
   };
 
-  const lbl: React.CSSProperties = { fontSize: 12, color: "#bbb", width: 96, flexShrink: 0 };
   return (
-    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #2a2a2e", display: "grid", gap: 6 }}>
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #2a2a2e", display: "grid", gap: 8 }}>
       {p.needs_key && (
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={lbl}>{tr("ai.providers.api_key")}</span>
@@ -449,39 +447,7 @@ function ProviderEditor({
           <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} style={{ ...INPUT, flex: 1 }} />
         </div>
       )}
-      {showModels && (
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={lbl}>{tr("ai.providers.models")}</span>
-          <input
-            value={models}
-            onChange={(e) => setModels(e.target.value)}
-            placeholder={tr("ai.providers.models_hint")}
-            style={{ ...INPUT, flex: 1 }}
-          />
-          {canRefreshModels && (
-            <button
-              onClick={() =>
-                refresh.run<{ models: string[] }>(
-                  () => rpc.aiRefreshModels(p.name, p.category),
-                  (r) => {
-                    setModels(r.models.join(", "));
-                    return tr("ai.providers.fetched", { n: r.models.length });
-                  },
-                )
-              }
-              disabled={refresh.running}
-              style={BTN}
-            >
-              {refresh.running ? tr("ai.test.running") : tr("ai.providers.refresh_models")}
-            </button>
-          )}
-        </div>
-      )}
-      {refresh.msg && (
-        <div style={{ fontSize: 11, color: refresh.msg.startsWith("✗") ? "#d98b8b" : "#7fd17f", marginLeft: 104 }}>
-          {refresh.msg}
-        </div>
-      )}
+      {showModels && <ModelPicker provider={p} selected={selected} onChange={setSelected} />}
       {Object.keys(settings).map((k) => (
         <div key={k} style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={lbl}>{tr(`ai.settings.${k}`)}</span>
@@ -498,6 +464,126 @@ function ProviderEditor({
         </button>
         <button onClick={onDone} style={BTN}>
           {tr("common.cancel")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Model picker — "Fetch all" pulls the provider's full API model list; the user
+// ticks which to enable. Currently-selected models stay checked even if the API
+// doesn't return them; a manual-add row covers models the API omits. Mirrors the
+// Tk picker (which replaced the old flat comma-separated dump).
+function ModelPicker({
+  provider: p,
+  selected,
+  onChange,
+}: {
+  provider: AiProvider;
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [apiModels, setApiModels] = useState<string[]>([]);
+  const [search, setSearch] = useState("");
+  const [manual, setManual] = useState("");
+  const fetch = useNetAction();
+  // Live fetch is LLM-only and not ClaudeCode (its model set is fixed locally).
+  const canFetch = p.category === "llm" && p.type !== "claude_code";
+
+  // Candidate order: API models first, then any selected the API didn't return.
+  const candidates: string[] = [];
+  const seen = new Set<string>();
+  for (const m of [...apiModels, ...selected]) {
+    if (!seen.has(m)) {
+      seen.add(m);
+      candidates.push(m);
+    }
+  }
+  const q = search.trim().toLowerCase();
+  const shown = q ? candidates.filter((m) => m.toLowerCase().includes(q)) : candidates;
+
+  const toggle = (m: string) =>
+    onChange(selected.includes(m) ? selected.filter((x) => x !== m) : [...selected, m]);
+  const addManual = () => {
+    const m = manual.trim();
+    if (m && !selected.includes(m)) onChange([...selected, m]);
+    setManual("");
+  };
+
+  return (
+    <div style={{ display: "grid", gap: 6 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={lbl}>{tr("ai.providers.models")}</span>
+        <span style={{ fontSize: 12, color: "#888" }}>
+          {tr("ai.providers.models_selected", { n: selected.length })}
+        </span>
+        {candidates.length > 6 && (
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={tr("ai.providers.pick_search")}
+            style={{ ...INPUT, width: 140, marginLeft: 8 }}
+          />
+        )}
+        {canFetch && (
+          <button
+            onClick={() =>
+              fetch.run<{ models: string[] }>(
+                () => rpc.aiRefreshModels(p.name, p.category),
+                (r) => {
+                  setApiModels(r.models);
+                  return tr("ai.providers.fetched", { n: r.models.length });
+                },
+              )
+            }
+            disabled={fetch.running}
+            style={{ ...BTN, marginLeft: "auto" }}
+          >
+            {fetch.running ? tr("ai.test.running") : tr("ai.providers.fetch_all")}
+          </button>
+        )}
+      </div>
+      {fetch.msg && (
+        <div style={{ fontSize: 11, color: fetch.msg.startsWith("✗") ? "#d98b8b" : "#7fd17f", marginLeft: 104 }}>
+          {fetch.msg}
+        </div>
+      )}
+      <div
+        style={{
+          marginLeft: 104,
+          maxHeight: 180,
+          overflowY: "auto",
+          border: "1px solid #2a2a2e",
+          borderRadius: 4,
+          padding: "4px 8px",
+        }}
+      >
+        {shown.length === 0 ? (
+          <div style={{ fontSize: 12, color: "#777", padding: "6px 2px" }}>
+            {candidates.length === 0 ? tr("ai.providers.pick_empty") : tr("ai.providers.pick_none")}
+          </div>
+        ) : (
+          shown.map((m) => (
+            <label
+              key={m}
+              style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0", fontSize: 12, color: "#ddd" }}
+            >
+              <input type="checkbox" checked={selected.includes(m)} onChange={() => toggle(m)} />
+              {m}
+            </label>
+          ))
+        )}
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 104 }}>
+        <input
+          value={manual}
+          onChange={(e) => setManual(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && addManual()}
+          placeholder={tr("ai.providers.pick_manual")}
+          style={{ ...INPUT, flex: 1 }}
+        />
+        <button onClick={addManual} disabled={!manual.trim()} style={BTN}>
+          {tr("ai.providers.pick_add")}
         </button>
       </div>
     </div>

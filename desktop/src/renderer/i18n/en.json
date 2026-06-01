@@ -397,5 +397,12 @@
   "env.component.Pillow": "Pillow",
   "env.source.system": "System",
   "env.source.managed": "Managed",
-  "env.source.pip": "pip"
+  "env.source.pip": "pip",
+  "ai.providers.models_selected": "{n} selected",
+  "ai.providers.fetch_all": "Fetch all",
+  "ai.providers.pick_search": "Filter",
+  "ai.providers.pick_none": "No matches",
+  "ai.providers.pick_empty": "Click \"Fetch all\" or add manually",
+  "ai.providers.pick_manual": "Add a model manually",
+  "ai.providers.pick_add": "Add"
 }

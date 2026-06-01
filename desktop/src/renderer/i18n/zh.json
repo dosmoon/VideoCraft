@@ -397,5 +397,12 @@
   "env.component.Pillow": "Pillow",
   "env.source.system": "系统",
   "env.source.managed": "内置",
-  "env.source.pip": "pip"
+  "env.source.pip": "pip",
+  "ai.providers.models_selected": "已选 {n}",
+  "ai.providers.fetch_all": "拉取全部",
+  "ai.providers.pick_search": "搜索",
+  "ai.providers.pick_none": "无匹配",
+  "ai.providers.pick_empty": "点「拉取全部」或手动添加",
+  "ai.providers.pick_manual": "手动添加模型",
+  "ai.providers.pick_add": "添加"
 }
