@@ -34,9 +34,11 @@
   - [x] **A3b**:`clip/hotclipsRepo.ts`(port `candidates.py`,copy-once 快照,经注入式 `MaterialBridge`——Phase-A 桥 RPC 形状推到 A4 接线再定,**不预先钉 ADR-0004 边界**)+ `clip/render.ts`(port `export.py`:`clip_NNN[_hook]` 命名 + `_eff_*` override-wins + stale 清理 + rendered[] + publish.md/index.md 接线)+ 两个 test(hotclipsRepo 5 含"上游变更不影响快照";render 5:plan override-wins / commit sidecar+docs+persist / stale 清理 / delete 重建 index)
   - **deviation 记录**:`MaterialBridge` 接口注入(`subtitlesDir()`)——Phase A 桥 RPC 选型(ADR-0004 合规)留到 **A4 接线**;render 函数收 `(owner, fs, candidates, projectTitle, langIso)`,候选由工作台经 repo 解析后传入。
 
-- [ ] **A4 — ⚠️GATE 接线 clip 工作台**(前提:P0/P1 真机验)
-  - [ ] `workbenches/clip/*` 把所有 `rpc.{loadConfig,updateConfig,update/add/remove/moveComponent,*Preset,bindMaterial,previewData,*Render,*import}` 换成本地 TS owner
-  - [ ] 真机:clip 端到端导出一次(mp4 + sidecar + publish.md + index.md,override-wins 命名 + 源语言本地化)
+- [~] **A4 — ⚠️GATE 接线 clip 工作台**(原子改动,需真机 GUI 对等验)
+  - [x] **A4.1 foundation**(commit `916a4ae`):**决策 Option C** —— Phase A 保留 Python `creation.preview_data` 拿候选(`render.ts` 收候选入参,不依赖 hotclipsRepo),故 **A4 零素材 bridge RPC**;`hotclipsRepo`/`MaterialBridge` 推到 Phase B。新增**唯一**通用框架 RPC `project.creation_instance_dir`(plugin-agnostic,ADR-0004 合规)+ client.ts + pytest。
+  - [ ] **A4.2 原子重写工作台**(GUI-gated,**全 6 文件一次切**避免读写来源不一致):`useClipPreview` 改用 TS owner 读 config;`ClipWorkbench`(组件列表/updateComponent)、`StyleTab`(add/remove/move/updateConfig/presets)、`ClipsTab`(selected)、`ClipDetailPanel`(overrides)、`ExportTab`(plan/commit/delete → `render.ts`,候选来自 previewData)全部改走本地 owner + `render.ts`;保留 `previewData`/`getArtifact`。
+  - [ ] 真机:clip 端到端(样式编辑/候选选择/导出 mp4 + sidecar + publish.md + index.md)与现状行为一致。
+  - **保留 Python**(A6 删):config/presets/component_defs/export/publish；**`preview.py` 留到 B4**(候选解析依赖素材模型)。
 
 - [ ] **A5 — news_desk 同 A2–A4**(+ `imports.ts` 镜像 `news_desk/imports.py`;⚠️GATE 接线同 A4)
 
