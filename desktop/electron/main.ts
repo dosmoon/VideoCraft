@@ -314,6 +314,8 @@ ipcMain.handle("vc:fs:stat", async (_e, absPath: string) => {
     throw err;
   }
 });
+// The global preset store dir (cross-project), the second allowed fs root.
+ipcMain.handle("vc:fs:presetsDir", () => join(app.getPath("userData"), "presets"));
 
 // OS integration for the Export tab's row actions.
 ipcMain.handle("vc:showInFolder", async (_e, absPath: string) => {

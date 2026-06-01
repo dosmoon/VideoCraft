@@ -22,11 +22,12 @@
   - [x] `preload.ts` fs 命名空间 + `global.d.ts` 镜像 + `renderer/ipc/fs.ts`(`Fs` 注入 seam + `realFs`)
   - [x] build-green(typecheck + build + 132 vitest)
 
-- [ ] **A2 — clip 所有者 + presets + 组件**
-  - [ ] `creations/shared/{configOwner,markdownFmt}.ts`(共享基类 + `t/fmtDur/fmtHashtags/isZh`)
-  - [ ] `creations/clip/configOwner.ts`:镜像 `clip/config.py`(applyPatch 白名单 + `clips_overrides_merge` None-删 deep-merge、组件 add/remove/move + id 唯一/repair、bindMaterial、addableKinds、rendered[]、preset_name);经 `Fs` 持久化、写串行化
-  - [ ] `creations/clip/presets.ts`:镜像 `clip/presets.py`(builtin 懒构造、list/get/upsert/delete、last_used、builtin 保护)
-  - [ ] vitest:configOwner(load/save、applyPatch、CRUD+id 唯一、stale-id 修复、bind)+ presets(builtin 重注入、排序、upsert/delete、保护)
+- [x] **A2 — clip 所有者 + presets + 组件**(commit pending below)
+  - [x] `creations/clip/componentDefs.ts`:**新增**(port `component_defs.py`)。**纠正 C3**:per-plugin **wire** 默认(snake_case `clip_subtitle` dicts + ADDABLE)只在 `component_defs.py`,TS 没有——`composition/components/*` 的 camelCase 默认是另一层(canonical,喂 compile)。所以 clip 港要带这个文件。
+  - [x] `creations/clip/configOwner.ts`:镜像 `clip/config.py`(applyPatch 白名单 + `clips_overrides_merge` None-删 deep-merge + 空-drop、add/remove/move + id 唯一/repair、bindMaterial、addableKinds、rendered[]、preset_name);持 `Fs`+path,`save()`/preset 方法经 `Fs`
+  - [x] `creations/clip/presets.ts`:镜像 `clip/presets.py`(builtin 懒构造、list/get/upsert/delete、last_used、builtin 保护);经 `Fs` 写 `<presetsDir>/clip_preset.json`(新增 `vc.fs.presetsDir()`)
+  - [x] vitest `configOwner.test.ts`(10 测,内存 Fs fake:load/save round-trip、stale-id 修复、applyPatch 白名单 + overrides None-删/空-drop、CRUD+id 唯一+语言继承、bind、presets 排序/apply/save/delete/builtin 保护)
+  - **deviation**:`creations/shared/{configOwner 基类,markdownFmt}` **推迟到 A5**(news_desk 给第二个数据点再抽,避免从单例造抽象);`markdownFmt` 归 A3(publish 才用)。
 
 - [ ] **A3 — clip preview/render/publish**
   - [ ] `creations/clip/hotclipsRepo.ts`:镜像 `candidates.py`(copy-once 快照 via `fs.copy`+`fs.stat`)

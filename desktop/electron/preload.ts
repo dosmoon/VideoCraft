@@ -71,6 +71,9 @@ const api = {
     stat(absPath: string): Promise<{ exists: boolean; isDir?: boolean; size?: number; mtimeMs?: number }> {
       return ipcRenderer.invoke("vc:fs:stat", absPath);
     },
+    presetsDir(): Promise<string> {
+      return ipcRenderer.invoke("vc:fs:presetsDir");
+    },
   },
   /** Business RPC to the Python sidecar. Returns the tagged reply from main;
    *  the renderer's ipc client (src/renderer/ipc/) unwraps it. */

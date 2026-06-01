@@ -16,6 +16,7 @@ interface VcFsApi {
   copy(srcAbs: string, destAbs: string): Promise<string>;
   remove(absPath: string): Promise<void>;
   stat(absPath: string): Promise<{ exists: boolean; isDir?: boolean; size?: number; mtimeMs?: number }>;
+  presetsDir(): Promise<string>;
 }
 
 interface VcApi {

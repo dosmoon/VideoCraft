@@ -38,6 +38,8 @@ export interface Fs {
   copy(srcAbs: string, destAbs: string): Promise<string>;
   remove(absPath: string): Promise<void>;
   stat(absPath: string): Promise<FsStat>;
+  /** Absolute path of the global (cross-project) preset store dir. */
+  presetsDir(): Promise<string>;
 }
 
 export const realFs: Fs = {
@@ -64,5 +66,8 @@ export const realFs: Fs = {
   },
   stat(absPath: string): Promise<FsStat> {
     return window.vc.fs.stat(absPath);
+  },
+  presetsDir(): Promise<string> {
+    return window.vc.fs.presetsDir();
   },
 };
