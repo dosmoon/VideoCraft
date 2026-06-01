@@ -260,17 +260,25 @@ export function drawOverlayClip(ctx: Ctx2D, clip: Clip, w: number, h: number): b
 
   const style = clip.style;
   const isSub = clip.kind === "subtitle_cue";
+  // The text watermark emits its own style keys (text_color / text_fontsize_pct
+  // / text_opacity) and no stroke/bg — distinct from the card keys (size_pct /
+  // color / box_padding_pct) used by hook_text / outro_text. Pick per kind so
+  // the watermark's colour, size and opacity actually take effect.
+  const isTextWm = clip.kind === "text_watermark";
 
-  const fontPx = Math.max(8, num(style, isSub ? "fontsize_pct" : "size_pct", 0.05) * h);
+  const sizeKey = isSub ? "fontsize_pct" : isTextWm ? "text_fontsize_pct" : "size_pct";
+  const fontPx = Math.max(8, num(style, sizeKey, 0.05) * h);
   const bold = bool(style, "bold", false);
   const fontName = isSub
     ? bool(style, "is_chinese", false)
       ? "Microsoft YaHei"
       : "Arial"
     : str(style, "font", "Microsoft YaHei");
-  const color = str(style, "color", "#FFFFFF");
+  const color = str(style, isTextWm ? "text_color" : "color", "#FFFFFF");
+  const textAlpha = isTextWm ? num(style, "text_opacity", 100) / 100 : 1;
   const strokeColor = str(style, "stroke_color", "#000000");
-  const strokeW = num(style, "stroke_pct", isSub ? 0.002 : 0.003) * h;
+  // Text watermark carries no stroke; cards/subtitles do.
+  const strokeW = isTextWm ? 0 : num(style, "stroke_pct", isSub ? 0.002 : 0.003) * h;
   const bgColor = str(style, "bg_color", "#000000");
   const bgOpacity = num(style, "bg_opacity", 0) / 100;
   const padPx = num(style, isSub ? "bg_padding_x_pct" : "box_padding_pct", 0.012) * h;
@@ -310,7 +318,7 @@ export function drawOverlayClip(ctx: Ctx2D, clip: Clip, w: number, h: number): b
       ctx.lineJoin = "round";
       ctx.strokeText(line, x, ly);
     }
-    ctx.fillStyle = color;
+    ctx.fillStyle = textAlpha < 1 ? rgba(color, textAlpha) : color;
     ctx.fillText(line, x, ly);
   });
   return true;
