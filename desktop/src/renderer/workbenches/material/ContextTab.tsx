@@ -155,7 +155,13 @@ export function ContextTab(props: MaterialTabProps) {
       // news_video runs the generic capability.llm_extract, which returns the raw
       // 15-field dict but does NOT write context.json (the plugin owns that), so
       // persist it here (replacement semantics). The Python path already wrote it.
-      if (type === "news_video") await rpc.writeContext(type, instance, res);
+      if (type === "news_video") {
+        try {
+          await rpc.writeContext(type, instance, res);
+        } catch (err) {
+          setError(fmt(err));
+        }
+      }
       await loadContext();
       onChanged();
     }

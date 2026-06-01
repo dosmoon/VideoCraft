@@ -99,21 +99,30 @@ export function SubtitlesTab({ type, instance, refreshKey, onChanged }: Material
     [onChanged, reload],
   );
 
+  // The detected/target language is persisted to project meta after the job
+  // (capability.* stamps none). Non-fatal: the SRT is already on disk, so a
+  // meta-write failure must not hide the produced subtitle — surface it instead.
+  const persistMeta = useCallback(async (fn: () => Promise<unknown>) => {
+    try {
+      await fn();
+    } catch (err) {
+      setLoadErr(err instanceof RpcError ? `[${err.code}] ${err.message}` : String(err));
+    }
+  }, []);
+
   const runAsr = useCallback(async () => {
     const res = await job.run<{ lang_iso?: string }>(() => rpc.startRunAsr(type, instance, asrLang.trim() || undefined));
-    // capability.asr stamps no project meta; persist the detected source language
-    // (ADR-0008 B3.2b). Other material types still go through the Python job.
-    if (res?.lang_iso && type === "news_video") await rpc.setSourceLanguage(res.lang_iso);
+    if (res?.lang_iso && type === "news_video") await persistMeta(() => rpc.setSourceLanguage(res.lang_iso!));
     await afterJob(res);
-  }, [afterJob, job, type, instance, asrLang]);
+  }, [afterJob, persistMeta, job, type, instance, asrLang]);
 
   const runTranslate = useCallback(async () => {
     const target = transLang.trim();
     if (!target) return;
     const res = await job.run(() => rpc.startRunTranslate(type, instance, target));
-    if (res !== undefined && type === "news_video") await rpc.addTranslatedLanguage(target);
+    if (res !== undefined && type === "news_video") await persistMeta(() => rpc.addTranslatedLanguage(target));
     await afterJob(res);
-  }, [afterJob, job, type, instance, transLang]);
+  }, [afterJob, persistMeta, job, type, instance, transLang]);
 
   const runAnalysis = useCallback(
     async (lang: string, kind: string) => {

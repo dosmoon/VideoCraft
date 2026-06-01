@@ -122,13 +122,20 @@ export function SourceTab({ type, instance, refreshKey, onChanged }: MaterialTab
       if (res !== undefined) {
         // capability.acquire_source is plugin-agnostic and stamps no project meta,
         // so persist the source descriptor + probe values here (ADR-0008 B3.2b).
+        // Non-fatal: the file is already on disk, so the source must still show
+        // (and the picker must reset) even if the meta stamp fails — otherwise a
+        // commit error would make the just-downloaded video "disappear".
         if (type === "news_video") {
-          await rpc.commitSource(source, {
-            ...(res.title !== undefined ? { title: res.title } : {}),
-            ...(res.duration_sec !== undefined ? { durationSec: res.duration_sec } : {}),
-            ...(res.width !== undefined ? { width: res.width } : {}),
-            ...(res.height !== undefined ? { height: res.height } : {}),
-          });
+          try {
+            await rpc.commitSource(source, {
+              ...(res.title !== undefined ? { title: res.title } : {}),
+              ...(res.duration_sec !== undefined ? { durationSec: res.duration_sec } : {}),
+              ...(res.width !== undefined ? { width: res.width } : {}),
+              ...(res.height !== undefined ? { height: res.height } : {}),
+            });
+          } catch (err) {
+            setLoadErr(err instanceof RpcError ? `[${err.code}] ${err.message}` : String(err));
+          }
         }
         setReimport(false);
         onChanged();
