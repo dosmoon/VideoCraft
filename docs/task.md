@@ -9,7 +9,7 @@
 
 **clip + news_desk + 素材(material)侧均已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现;Tk news_desk 已退役。** 续29~31 收口 news_desk;**续 32 把素材侧整块迁过来(M0~M6 + gap A~D)**,**续 33 真机复核后修了三处**(预置语言选择器 / 新闻背景页用法澄清 / 分析 kind 精选)。**两笔已落 `main`:`fd2cffb`(素材迁移)+ `9aeb9bd`(三处修正),均未 push。**
 
-**✅ renderer 双语(i18n)改造 + 热切换已完成(续 34,⚠️ 未提交)。** 整个 renderer(Hub + clip/news_desk/material 工作台)硬编码中文已抽成 `tr()` key;轻量自建 i18n(`desktop/src/renderer/i18n/` + 新 RPC `system.get_locale`/`set_locale` 读写同一 `user_data/settings.json`,与 Tk 锁步),zh/en 290 对严格对称。**中/EN 切换是热的**(`tr()` 每帧求值 + `useSyncExternalStore` reactive,`LanguageToggle` 放 Launcher + 项目顶栏,点即翻 + 持久化回 settings.json);区别于 Tk 重启制。typecheck + 130 vitest + build(98 模块)+ 114 sidecar 测全绿。细节见 `electron-migration-design.md`「renderer i18n」节。
+**✅ renderer 双语(i18n)改造 + 热切换已完成(续 34,已落 main `a3b53af` 并 push)。** 整个 renderer(Hub + clip/news_desk/material 工作台)硬编码中文已抽成 `tr()` key;轻量自建 i18n(`desktop/src/renderer/i18n/` + 新 RPC `system.get_locale`/`set_locale` 读写同一 `user_data/settings.json`,与 Tk 锁步),zh/en 290 对严格对称。**中/EN 切换是热的**(`tr()` 每帧求值 + `useSyncExternalStore` reactive,`LanguageToggle` 放 Launcher + 项目顶栏,点即翻 + 持久化回 settings.json);区别于 Tk 重启制。typecheck + 130 vitest + build(98 模块)+ 114 sidecar 测全绿。细节见 `electron-migration-design.md`「renderer i18n」节。
 
 **▶ 下一大任务 = 真机肉眼验(两件 headless 盲区都欠)**:① **i18n 热切换**——点项目顶栏/Launcher 的 中/EN 看整树即时翻 + 重启后保持;② **素材侧端到端**——`env -u ELECTRON_RUN_AS_NODE pnpm dev` 跑一遍建实例→导源(本地+yt-dlp)→ASR→质检→章节(seek)→context→AI 填充,逐项肉眼确认。改 Python 必整重启 sidecar(`desktop/dev.ps1`,Ctrl+R 只重载 renderer)。
 
@@ -42,7 +42,7 @@
 
 ---
 
-## ▶ 续 34(2026-06-01,Electron renderer 双语 i18n 改造 — ✅ 已完成,⚠️ 未提交)
+## ▶ 续 34(2026-06-01,Electron renderer 双语 i18n 改造 — ✅ 已完成,已落 main `a3b53af`+push)
 
 **做法**:轻量自建 i18n(否决 i18next)。`desktop/src/renderer/i18n/{tr.ts,zh.json,en.json,LanguageToggle.tsx}`——`tr(key, vars?)`(fallback 链 当前→en→raw;`{name}` 插值)+ `getLang/setLang/useLang`;zh/en 290 对**严格对称**。语言来源 = 新 RPC `system.get_locale`/`set_locale` 读写同一 `user_data/settings.json`(与 Tk 锁步,默认 en);`main.tsx` boot `await getLocale` 后 `setLang` 早于首帧。Hub + 三工作台全部硬编码中文 → `tr("<域>.<key>")`(域前缀 hub/clip/news_desk/material/common/workbench);静态数组改 key-map + render 时求值;RPC 的 description_zh/en 按 getLang 选。**代码注释不动**。三工作台抽取经并行子代理完成,JSON 由脚本核对(字面 key 全命中、zh/en 对称、残留中文仅 JSDoc)。**热切换**:`tr()` 每帧求值 + `tr.ts` reactive(`useSyncExternalStore`,`setLang` 通知);`Shell` 顶层 `useLang()` 订阅 → 整树重渲染(无 memo 边界,工作台 state 不丢);`LanguageToggle`(中/EN)放 Launcher 右上 + 项目顶栏,点即翻 + `rpc.setLocale` 持久化(best-effort)。**验证**:typecheck 干净 + 130 vitest + build(98 模块,JSON 入包)+ 114 sidecar 测(+`get_locale`/`set_locale` round-trip + reject,monkeypatch SETTINGS_FILE 防污染)全绿。细节见 `electron-migration-design.md`「renderer i18n」节。**欠**:真机肉眼验热切换;sidecar `RpcError.message`(Python 文案)双语化是单独决策(本轮只做 renderer 自有硬编码)。
 
