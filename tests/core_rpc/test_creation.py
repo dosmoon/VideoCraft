@@ -511,6 +511,14 @@ def test_delete_render_rebuilds_index(ctx, project_with_bound_clip):
     assert "clip_001_H1.mp4" not in index  # rebuilt without the deleted clip
 
 
+def test_creation_instance_dir_rpc(ctx, project_with_bound_clip):
+    """The generic framework dir resolver the TS config owner uses (ADR-0008)."""
+    _open(ctx, project_with_bound_clip)
+    d = call(ctx, "project.creation_instance_dir", {"type": "clip", "instance": "clip-1"})["result"]
+    assert d == project_with_bound_clip.creation_instance_dir("clip", "clip-1")
+    assert d.replace("\\", "/").endswith("clip/clip-1")
+
+
 def test_preview_data_no_provider(ctx, project_with_clip):
     _open(ctx, project_with_clip)
     resp = call(ctx, "creation.preview_data", {"type": "news_video", "instance": "x"})

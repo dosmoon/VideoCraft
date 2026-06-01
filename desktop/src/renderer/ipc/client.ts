@@ -400,6 +400,10 @@ export const rpc = {
   currentProject: () => rpcCall<ProjectBrief | null>("project.current"),
   listMaterials: () => rpcCall<Record<string, string[]>>("project.list_materials"),
   listCreations: () => rpcCall<Record<string, string[]>>("project.list_creations"),
+  // Abs path of a creation instance dir — the TS config owner needs it to
+  // read/write config.json + render outputs via window.vc.fs (ADR-0008).
+  creationInstanceDir: (type: string, instance: string) =>
+    rpcCall<string>("project.creation_instance_dir", { type, instance }),
   // Registered creation types for the 创作 [+] menu (user-facing descriptions —
   // the renderer must not show the raw type_name).
   listCreationTypes: () =>
