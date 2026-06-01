@@ -106,10 +106,6 @@
   "news_desk.style.chapter_imported_count": "{count} chapters imported",
   "news_desk.style.import_btn": "Import",
   "news_desk.style.select_component_hint": "Select a component to edit its properties",
-  "news_desk.style.material_label": "Material",
-  "news_desk.style.material_none": "No materials in this project — create one in the Materials area first",
-  "news_desk.style.material_bind": "Bind",
-  "news_desk.style.material_rebind": "Change",
   "clip.kind.subtitle": "Subtitle",
   "clip.kind.text_watermark": "Text watermark",
   "clip.kind.image_watermark": "Image watermark",
@@ -418,5 +414,9 @@
   "models.gpu.install": "Install CUDA runtime (~1.5GB)",
   "models.gpu.uninstall": "Uninstall CUDA runtime",
   "models.gpu.installing": "Installing…",
-  "models.gpu.uninstalling": "Uninstalling…"
+  "models.gpu.uninstalling": "Uninstalling…",
+  "bind.label": "Material",
+  "bind.none": "No materials in this project — create one in the Materials area first",
+  "bind.bind": "Bind",
+  "bind.rebind": "Change"
 }

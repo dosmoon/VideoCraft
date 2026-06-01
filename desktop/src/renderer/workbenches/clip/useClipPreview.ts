@@ -82,7 +82,7 @@ function parseOverrides(raw: unknown): Record<number, ClipOverride> {
   return out;
 }
 
-export function useClipPreview(type: string, instance: string) {
+export function useClipPreview(type: string, instance: string, refreshKey = 0) {
   const [status, setStatus] = useState<PreviewStatus>("loading");
   const [message, setMessage] = useState("");
   const [data, setData] = useState<ClipPreviewData | null>(null);
@@ -190,7 +190,8 @@ export function useClipPreview(type: string, instance: string) {
     return () => {
       disposed = true;
     };
-  }, [type, instance]);
+    // refreshKey forces a full reload (binding a material flips nobind → ready).
+  }, [type, instance, refreshKey]);
 
   return { status, message, data, reload };
 }

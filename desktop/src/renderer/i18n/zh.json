@@ -106,10 +106,6 @@
   "news_desk.style.chapter_imported_count": "已导入 {count} 章",
   "news_desk.style.import_btn": "导入",
   "news_desk.style.select_component_hint": "选择一个组件以编辑其属性",
-  "news_desk.style.material_label": "素材",
-  "news_desk.style.material_none": "项目里还没有素材;先在「素材」区新建并导入源视频",
-  "news_desk.style.material_bind": "绑定",
-  "news_desk.style.material_rebind": "换绑",
   "clip.kind.subtitle": "字幕",
   "clip.kind.text_watermark": "文字水印",
   "clip.kind.image_watermark": "图片水印",
@@ -418,5 +414,9 @@
   "models.gpu.install": "安装 CUDA 运行时 (~1.5GB)",
   "models.gpu.uninstall": "卸载 CUDA 运行时",
   "models.gpu.installing": "安装中…",
-  "models.gpu.uninstalling": "卸载中…"
+  "models.gpu.uninstalling": "卸载中…",
+  "bind.label": "素材",
+  "bind.none": "项目里还没有素材;先在「素材」区新建并导入源视频",
+  "bind.bind": "绑定",
+  "bind.rebind": "换绑"
 }

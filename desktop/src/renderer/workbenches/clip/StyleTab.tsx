@@ -21,6 +21,7 @@ import { tr } from "../../i18n/tr";
 import type { Component, PresetList } from "../../ipc/client";
 import { rpc, RpcError } from "../../ipc/client";
 import { PropertyPanel } from "./propertyEditor";
+import { MaterialBindingBar } from "../shared/MaterialBindingBar";
 import { CropPreview } from "./CropPreview";
 import { useClipPreview } from "./useClipPreview";
 import { centerCropRect, type CropRect } from "./cropEditor";
@@ -154,7 +155,13 @@ export function StyleTab(props: {
     [type, instance, selectedId, onComponentsReplaced],
   );
 
-  const { status, message, data, reload } = useClipPreview(type, instance);
+  // Material binding (ADR-0005). Bumping this forces a full preview reload
+  // (nobind → ready) since binding changes the source + candidates, not just
+  // config geometry that the lightweight reload() handles.
+  const [bindRefreshKey, setBindRefreshKey] = useState(0);
+  const onMaterialBound = useCallback(() => setBindRefreshKey((k) => k + 1), []);
+
+  const { status, message, data, reload } = useClipPreview(type, instance, bindRefreshKey);
 
   // ── toolbar (aspect / short-edge / mode / encode / presets) ─────────────────
   const [presets, setPresets] = useState<PresetList | null>(null);
@@ -429,6 +436,15 @@ export function StyleTab(props: {
         )}
         {toolbarErr && <span style={{ color: "#ff6b6b" }}>✗ {toolbarErr}</span>}
       </div>
+
+      {/* Material binding — persistent setting; bind here to enable the preview,
+          candidates and export (a new-arch clip is created unbound). */}
+      <MaterialBindingBar
+        type={type}
+        instance={instance}
+        refreshKey={bindRefreshKey}
+        onBound={onMaterialBound}
+      />
 
       <div style={{ display: "flex", gap: 16, padding: 16, alignItems: "flex-start", flex: 1, overflow: "auto" }}>
         {/* Left: source preview + staging crop + component checkbox list */}
