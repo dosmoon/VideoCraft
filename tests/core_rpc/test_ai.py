@@ -72,3 +72,76 @@ def test_ai_stats_shape(ctx):
     assert isinstance(stats, dict)
     for entry in stats.values():
         assert "calls" in entry and "errors" in entry
+
+
+# ── Write ops (all guarded so no real config / key files are touched) ─────────
+
+
+def test_ai_set_key(ctx, tmp_path, monkeypatch):
+    from core.ai import console_view
+
+    # Redirect keys/ to tmp so both the write and the key_status read hit tmp.
+    monkeypatch.setattr(console_view._cfg, "keys_dir", lambda: str(tmp_path))
+    snap = call(
+        ctx, "ai.set_key", {"provider": "Gemini", "category": "llm", "key": "abcd1234efgh"}
+    )["result"]
+    g = next(p for p in snap["providers"]["llm"] if p["name"] == "Gemini")
+    assert g["key_status"] == {"state": "ok", "masked": "abcd****efgh"}
+    # A keyless provider is rejected.
+    resp = call(ctx, "ai.set_key", {"provider": "LlamaCpp", "category": "llm", "key": "x"})
+    assert "error" in resp
+
+
+def test_ai_set_routing(ctx, monkeypatch):
+    from core.ai.router import router
+
+    monkeypatch.setattr(router, "_persist", lambda: None)
+    orig = router.get_task_routing()["translate"]
+    snap = call(
+        ctx, "ai.set_routing", {"task": "translate", "provider": "Gemini", "model": "gemini-2.5-flash"}
+    )["result"]
+    assert snap["task_routing"]["translate"] == {"provider": "Gemini", "model": "gemini-2.5-flash"}
+    call(ctx, "ai.set_routing", {"task": "translate", **orig})  # restore in-memory
+
+
+def test_ai_set_tier_pref(ctx, monkeypatch):
+    from core.ai.router import router
+
+    monkeypatch.setattr(router, "_persist", lambda: None)
+    snap = call(
+        ctx,
+        "ai.set_tier_pref",
+        {"task": "translate", "tier": "cloud", "provider": "DeepSeek", "model": "deepseek-chat"},
+    )["result"]
+    assert snap["task_tier_prefs"]["translate"]["cloud"] == {
+        "provider": "DeepSeek",
+        "model": "deepseek-chat",
+    }
+
+
+def test_ai_set_provider_enabled(ctx, monkeypatch):
+    from core.ai.router import router
+
+    monkeypatch.setattr(router, "_persist", lambda: None)
+    snap = call(
+        ctx, "ai.set_provider_enabled", {"provider": "DeepSeek", "category": "llm", "enabled": False}
+    )["result"]
+    ds = next(p for p in snap["providers"]["llm"] if p["name"] == "DeepSeek")
+    assert ds["enabled"] is False
+    call(ctx, "ai.set_provider_enabled", {"provider": "DeepSeek", "category": "llm", "enabled": True})
+
+
+def test_ai_set_aistack_gateway(ctx, monkeypatch):
+    from core.ai.router import router
+
+    monkeypatch.setattr(router, "_persist", lambda: None)
+    orig = router.get_aistack_gateway()
+    snap = call(
+        ctx, "ai.set_aistack_gateway", {"base_url": "http://127.0.0.1:9999/v1", "enabled": False}
+    )["result"]
+    assert snap["aistack"] == {
+        "base_url": "http://127.0.0.1:9999/v1",
+        "enabled": False,
+        "models_cache": snap["aistack"]["models_cache"],
+    }
+    call(ctx, "ai.set_aistack_gateway", {"base_url": orig["base_url"], "enabled": orig["enabled"]})

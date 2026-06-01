@@ -139,3 +139,66 @@ def stats() -> dict:
     """Per-provider call counters for the Stats tab —
     {provider: {calls, errors, last_used, ...}} (in-memory, deep-copied)."""
     return router.get_stats()
+
+
+# ── Write side (config edits; each persists via the router) ───────────────────
+# Network actions (LLM test, aistack test & refresh) are NOT here — they block on
+# I/O and must run as jobs, not on the dispatch thread.
+
+_CATEGORY_REGISTRY = {
+    "llm": "_providers",
+    "asr": "_asr_providers",
+    "tts": "_tts_providers",
+}
+
+
+def _find_cfg(provider: str, category: str) -> dict | None:
+    attr = _CATEGORY_REGISTRY.get(category)
+    if not attr:
+        return None
+    return getattr(router, attr).get(provider)
+
+
+def set_key(provider: str, category: str, key: str) -> None:
+    """Write a cloud provider's API key to keys/<key_file> (plain text, matching
+    the Tk console). Raises if the provider is unknown or takes no key."""
+    cfg = _find_cfg(provider, category)
+    if cfg is None:
+        raise ValueError(f"unknown provider {provider!r} in category {category!r}")
+    key_file = cfg.get("key_file", "")
+    if not key_file:
+        raise ValueError(f"provider {provider!r} takes no API key")
+    kd = _cfg.keys_dir()
+    os.makedirs(kd, exist_ok=True)
+    with open(os.path.join(kd, key_file), "w", encoding="utf-8") as f:
+        f.write(key.strip())
+
+
+def set_provider_enabled(provider: str, category: str, enabled: bool) -> None:
+    """Enable/disable a provider (the per-row checkbox). Routes to the right
+    registry by category; the router persists."""
+    if category == "llm":
+        router.set_provider_enabled(provider, enabled)
+    elif category == "asr":
+        router.set_asr_provider_enabled(provider, enabled)
+    elif category == "tts":
+        router.set_tts_provider_enabled(provider, enabled)
+    else:
+        raise ValueError(f"unknown category {category!r}")
+
+
+def set_routing(task: str, provider: str, model: str) -> None:
+    """Set a task's ACTIVE routing (the tier radio). Empty provider = Auto."""
+    router.set_task_routing(task, provider, model)
+
+
+def set_tier_pref(task: str, tier: str, provider: str, model: str) -> None:
+    """Set a task's per-tier sticky pick (a dropdown change that doesn't move the
+    active radio)."""
+    router.set_task_tier_pref(task, tier, provider, model)
+
+
+def set_aistack_gateway(base_url: str, enabled: bool) -> None:
+    """Set the aistack gateway URL + enabled (one logical entry across LLM/ASR/
+    TTS; the router keeps the three registry copies in sync)."""
+    router.set_aistack_gateway(base_url, enabled)
