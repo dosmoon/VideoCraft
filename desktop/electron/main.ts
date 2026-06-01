@@ -206,6 +206,10 @@ ipcMain.handle("vc:showInFolder", async (_e, absPath: string) => {
 ipcMain.handle("vc:openPath", async (_e, absPath: string) => {
   return shell.openPath(absPath); // "" on success, else an error string
 });
+ipcMain.handle("vc:openExternal", async (_e, url: string) => {
+  // Only http(s) — never let the renderer hand an arbitrary scheme to the OS.
+  if (/^https?:\/\//i.test(url)) void shell.openExternal(url);
+});
 
 // Business RPC bridge: renderer → Python sidecar. We return a tagged result
 // rather than throwing, because ipcMain.handle's error serialization drops the

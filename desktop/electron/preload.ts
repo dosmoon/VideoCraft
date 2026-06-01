@@ -23,6 +23,10 @@ const api = {
   openPath(absPath: string): Promise<string> {
     return ipcRenderer.invoke("vc:openPath", absPath);
   },
+  /** Open an http(s) URL in the default browser (install guide links). */
+  openExternal(url: string): Promise<void> {
+    return ipcRenderer.invoke("vc:openExternal", url);
+  },
   /** Open a file dialog to pick a local video; returns its absolute path or null. */
   pickVideo(): Promise<string | null> {
     return ipcRenderer.invoke("vc:pickVideo");

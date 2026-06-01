@@ -13,6 +13,7 @@ from __future__ import annotations
 # Domain handler modules (order irrelevant; each self-registers).
 from . import ai as ai  # noqa: F401
 from . import creation as creation  # noqa: F401
+from . import env as env  # noqa: F401
 from . import material as material  # noqa: F401
 from . import models as models  # noqa: F401
 from . import project as project  # noqa: F401

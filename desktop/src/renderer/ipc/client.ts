@@ -198,6 +198,25 @@ export interface ModelJob {
   error: string;
 }
 
+// ── Environment dashboard (env.* domain) ──────────────────────────────────────
+
+/** A managed external dependency (env.components — metadata only). */
+export interface EnvComponentMeta {
+  id: string;
+  category: string; // binary | python
+  installable: boolean;
+  info_url: string | null;
+}
+
+/** Detection result for one component (env.detect / env.detect_all). */
+export interface EnvDetect {
+  id: string;
+  available: boolean;
+  version: string | null;
+  source: string | null; // system | managed | pip
+  path: string | null;
+}
+
 /** A registered material type for the 素材 [+] menu (project.list_material_types_info). */
 export interface MaterialTypeInfo {
   type_name: string;
@@ -348,6 +367,13 @@ export const rpc = {
     rpcCall<{ job_id: string }>("models.download", { model_id: modelId }),
   modelsCancel: (jobId: string) => rpcCall<{ ok: boolean }>("models.cancel", { job_id: jobId }),
   modelsRemove: (modelId: string) => rpcCall<{ freed: number }>("models.remove", { model_id: modelId }),
+
+  // ── Environment dashboard (env.* domain) ────────────────────────────────────
+  // Component metadata (sync) + detection/install jobs (subprocess/pip → off-thread).
+  envComponents: () => rpcCall<EnvComponentMeta[]>("env.components"),
+  envDetectAll: () => rpcCall<{ job_id: string }>("env.detect_all"),
+  envDetect: (componentId: string) => rpcCall<{ job_id: string }>("env.detect", { component_id: componentId }),
+  envInstall: (componentId: string) => rpcCall<{ job_id: string }>("env.install", { component_id: componentId }),
 
   recentList: () => rpcCall<ProjectBrief[]>("project.recent_list"),
   openProject: (folder: string) => rpcCall<ProjectBrief>("project.open", { folder }),

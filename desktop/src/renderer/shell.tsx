@@ -10,15 +10,8 @@ import { Hub } from "./hub/Hub";
 import { ActivityBar, type AppView } from "./app/ActivityBar";
 import { AiConsole } from "./aiconsole/AiConsole";
 import { ModelManager } from "./models/ModelManager";
-import { useLang, tr } from "./i18n/tr";
-
-function Placeholder({ titleKey }: { titleKey: string }) {
-  return (
-    <div style={{ flex: 1, display: "grid", placeItems: "center", color: "#666", fontSize: 14 }}>
-      {tr(titleKey)}
-    </div>
-  );
-}
+import { Settings } from "./settings/Settings";
+import { useLang } from "./i18n/tr";
 
 export function Shell() {
   // Subscribe the whole tree to language changes so a hot switch re-renders
@@ -51,7 +44,11 @@ export function Shell() {
           <ModelManager />
         </div>
       )}
-      {view === "settings" && <Placeholder titleKey="shell.settings_soon" />}
+      {view === "settings" && (
+        <div style={{ flex: 1, minWidth: 0, overflow: "auto" }}>
+          <Settings />
+        </div>
+      )}
     </div>
   );
 }

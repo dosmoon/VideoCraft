@@ -12,6 +12,7 @@ interface VcApi {
   writeFile(absPath: string, bytes: Uint8Array): Promise<string>;
   showInFolder(absPath: string): Promise<void>;
   openPath(absPath: string): Promise<string>;
+  openExternal(url: string): Promise<void>;
   pickVideo(): Promise<string | null>;
   pickImage(): Promise<string | null>;
   pickFolder(): Promise<string | null>;

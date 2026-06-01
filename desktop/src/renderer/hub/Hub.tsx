@@ -20,7 +20,6 @@ import {
 } from "../ipc/client";
 import { CreationWorkbench, MaterialWorkbench } from "../workbenches";
 import { tr, getLang } from "../i18n/tr";
-import { LanguageToggle } from "../i18n/LanguageToggle";
 
 // What the open workbench is — a creation or a material, plus its identity.
 type OpenWorkbench = { kind: "creation" | "material"; type: string; instance: string };
@@ -237,9 +236,6 @@ function Launcher(props: {
   const { recents, busy, error, onOpen, onPick } = props;
   return (
     <div style={{ maxWidth: 560, margin: "0 auto", padding: "40px 24px" }}>
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
-        <LanguageToggle />
-      </div>
       <h2 style={{ fontWeight: 600, margin: "0 0 4px" }}>VideoCraft</h2>
       <p style={{ color: "#888", margin: "0 0 24px", fontSize: 13 }}>{tr("hub.launcher.subtitle")}</p>
 
@@ -359,12 +355,10 @@ function ProjectView(props: {
         <span style={{ color: "#777", fontSize: 11 }} title={current.folder}>
           {current.folder}
         </span>
-        <div style={{ marginLeft: "auto" }}>
-          <LanguageToggle />
-        </div>
         <button
           onClick={onClose}
           style={{
+            marginLeft: "auto",
             padding: "4px 10px",
             background: "#2a2a2e",
             color: "#ddd",
