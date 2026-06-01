@@ -213,6 +213,65 @@ def material_instance_dir(ctx: Context, type: str, instance: str) -> str:
     return ctx.session.project.material_instance_dir(type, instance)
 
 
+@rpc_method("project.commit_source")
+def commit_source(
+    ctx: Context,
+    source: dict[str, Any],
+    title: str | None = None,
+    duration_sec: float | None = None,
+    width: int | None = None,
+    height: int | None = None,
+) -> dict[str, Any]:
+    """Stamp project.meta.source after a TS-driven source acquisition (ADR-0008
+    B3.2). capability.acquire_source is plugin-agnostic and does NOT touch project
+    meta, so the renderer persists the descriptor + probe values here (mirrors the
+    retired model.commit_source). Returns the stored source dict."""
+    if not isinstance(source, dict):
+        raise RpcError(-32602, "source must be an object")
+    from core.project_schema import Source
+
+    proj = ctx.session.project
+    meta = proj.meta
+    meta.source = Source.from_dict(source)
+    if title:
+        meta.source.title = title
+    if duration_sec is not None:
+        meta.source.duration_sec = duration_sec
+    if width is not None:
+        meta.source.width = width
+    if height is not None:
+        meta.source.height = height
+    proj.update_meta(meta)
+    return meta.source.to_dict()
+
+
+@rpc_method("project.set_source_language")
+def set_source_language(ctx: Context, lang: str) -> dict[str, Any]:
+    """Persist project.meta.language.source (the renderer calls this after a
+    capability.asr job detects the language — capability touches no project meta)."""
+    if not lang:
+        raise RpcError(-32602, "lang is required")
+    proj = ctx.session.project
+    meta = proj.meta
+    meta.language.source = lang
+    proj.update_meta(meta)
+    return {"source": meta.language.source}
+
+
+@rpc_method("project.add_translated_language")
+def add_translated_language(ctx: Context, lang: str) -> dict[str, Any]:
+    """Add a language to project.meta.language.translated_to (idempotent; called
+    after a capability.translate job). Returns the full list."""
+    if not lang:
+        raise RpcError(-32602, "lang is required")
+    proj = ctx.session.project
+    meta = proj.meta
+    if lang not in meta.language.translated_to:
+        meta.language.translated_to = list(meta.language.translated_to) + [lang]
+    proj.update_meta(meta)
+    return {"translated_to": list(meta.language.translated_to)}
+
+
 @rpc_method("project.rename_instance")
 def rename_instance(ctx: Context, kind: str, type: str, instance: str, new_name: str) -> dict[str, Any]:
     """Rename a material/creation instance directory. kind ∈ {material, creation}.

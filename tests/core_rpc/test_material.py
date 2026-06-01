@@ -152,6 +152,32 @@ def test_material_instance_dir_rpc(ctx, tmp_project):
     assert d.replace("\\", "/").endswith("materials/news_video/news-1")
 
 
+def test_project_source_meta_writes(ctx, tmp_project):
+    """The project-meta write RPCs the TS material backend calls after capability
+    jobs (which touch no project meta): commit_source / set_source_language /
+    add_translated_language (ADR-0008 B3.2)."""
+    _open(ctx, tmp_project)
+    src = call(ctx, "project.commit_source", {
+        "source": {"origin": "link", "url": "http://x"},
+        "title": "Briefing", "duration_sec": 90.0, "width": 1920, "height": 1080,
+    })["result"]
+    assert src["title"] == "Briefing" and src["width"] == 1920
+    # Persisted: project.current reflects the session project's live meta.
+    meta = call(ctx, "project.current")["result"]["meta"]
+    assert meta["source"]["title"] == "Briefing"
+
+    assert call(ctx, "project.set_source_language", {"lang": "en"})["result"] == {"source": "en"}
+    assert call(ctx, "project.current")["result"]["meta"]["language"]["source"] == "en"
+
+    call(ctx, "project.add_translated_language", {"lang": "zh"})
+    again = call(ctx, "project.add_translated_language", {"lang": "zh"})["result"]  # idempotent
+    assert again == {"translated_to": ["zh"]}
+    assert call(ctx, "project.add_translated_language", {"lang": "ja"})["result"]["translated_to"] == ["zh", "ja"]
+
+    # validation
+    assert "error" in call(ctx, "project.set_source_language", {"lang": ""})
+
+
 def test_create_material_instance_autonumbers(ctx, tmp_project):
     _open(ctx, tmp_project)
     call(ctx, "project.create_material_instance", {"type": "news_video"})

@@ -739,6 +739,22 @@ export const rpc = {
           lang,
         }),
 
+  // Project-meta writes the TS material backend calls after capability jobs
+  // (which are plugin-agnostic and touch no project meta): persist the acquired
+  // source descriptor + the ASR-detected / translated languages (ADR-0008 B3.2).
+  commitSource: (source: AcquireSource, probe: { title?: string; durationSec?: number; width?: number; height?: number }) =>
+    rpcCall<SourceMeta>("project.commit_source", {
+      source,
+      ...(probe.title ? { title: probe.title } : {}),
+      ...(probe.durationSec != null ? { duration_sec: probe.durationSec } : {}),
+      ...(probe.width != null ? { width: probe.width } : {}),
+      ...(probe.height != null ? { height: probe.height } : {}),
+    }),
+  setSourceLanguage: (lang: string) =>
+    rpcCall<{ source: string }>("project.set_source_language", { lang }),
+  addTranslatedLanguage: (lang: string) =>
+    rpcCall<{ translated_to: string[] }>("project.add_translated_language", { lang }),
+
   // Long-running material jobs (sidecar threads). Each returns {job_id}
   // immediately; consume progress/terminal via runJob (ipc/runJob.ts).
   startSetSource: (type: string, instance: string, source: AcquireSource) =>
@@ -752,12 +768,14 @@ export const rpc = {
   startRunTranslate: (type: string, instance: string, targetLang: string) =>
     rpcCall<{ job_id: string }>("material.run_translate", { type, instance, target_lang: targetLang }),
   startRunAnalysis: (type: string, instance: string, lang: string, analysisKind: string) =>
-    rpcCall<{ job_id: string }>("material.run_analysis", {
-      type,
-      instance,
-      lang,
-      analysis_kind: analysisKind,
-    }),
+    type === "news_video"
+      ? materialBackend.startRunAnalysis(instance, lang, analysisKind)
+      : rpcCall<{ job_id: string }>("material.run_analysis", {
+          type,
+          instance,
+          lang,
+          analysis_kind: analysisKind,
+        }),
   startAiFillContext: (type: string, instance: string) =>
     rpcCall<{ job_id: string }>("material.ai_fill_context", { type, instance }),
 

@@ -18,7 +18,7 @@
  */
 
 import { realFs } from "../../renderer/ipc/fs";
-import { emitLocal, rpcCall } from "../../renderer/ipc/client";
+import { rpcCall } from "../../renderer/ipc/client";
 import type {
   AnalysisSummary,
   ProjectBrief,
@@ -34,12 +34,6 @@ async function loadModel(instance: string): Promise<NewsVideoModel> {
     instance,
   });
   return new NewsVideoModel(realFs, dir);
-}
-
-/** Fire the change signal the Python sidecar used to emit, so the Hub sidebar
- * refreshes its slot badges after a TS-side mutation (capability.* emits none). */
-function notifyChanged(instance: string): void {
-  emitLocal("event.material.changed", { type: "news_video", instance });
 }
 
 /** The project's source language (for the subtitle-check reference). Read from
@@ -105,21 +99,16 @@ export const materialBackend = {
     return { text };
   },
 
-  // ── Writes + sync QC (B3.2b.1) ────────────────────────────────────────────
-  // Each mutating op fires notifyChanged so the Hub sidebar refreshes (the
-  // capability.* sync calls + model writes emit no domain event themselves).
+  // ── Writes + sync QC (B3.2b) ──────────────────────────────────────────────
+  // Hub-sidebar refresh after a mutation rides the workbench's onChanged →
+  // emitLocal("event.material.changed") path (MaterialWorkbench), the single
+  // mechanism that also covers async jobs; capability.* emits no domain events.
 
-  writeContext: async (instance: string, context: SourceContext): Promise<SourceContext> => {
-    const stored = await (await loadModel(instance)).writeContextDict(context);
-    notifyChanged(instance);
-    return stored as SourceContext;
-  },
+  writeContext: async (instance: string, context: SourceContext): Promise<SourceContext> =>
+    (await (await loadModel(instance)).writeContextDict(context)) as SourceContext,
 
-  writeBasicInfo: async (instance: string, basicInfo: SourceBasicInfo): Promise<SourceBasicInfo> => {
-    const stored = await (await loadModel(instance)).writeBasicInfoDict(basicInfo);
-    notifyChanged(instance);
-    return stored as SourceBasicInfo;
-  },
+  writeBasicInfo: async (instance: string, basicInfo: SourceBasicInfo): Promise<SourceBasicInfo> =>
+    (await (await loadModel(instance)).writeBasicInfoDict(basicInfo)) as SourceBasicInfo,
 
   checkSubtitle: async (instance: string, lang: string): Promise<SubtitleCheck> => {
     const m = await loadModel(instance);
@@ -137,12 +126,10 @@ export const materialBackend = {
 
   quickFixSubtitle: async (instance: string, lang: string): Promise<SubtitleCheck> => {
     const m = await loadModel(instance);
-    const res = await rpcCall<SubtitleCheck>("capability.subtitle_quick_fix", {
+    return rpcCall<SubtitleCheck>("capability.subtitle_quick_fix", {
       srt_path: m.subtitlePath(lang),
       expected_lang: lang,
     });
-    notifyChanged(instance);
-    return res;
   },
 
   saveChapters: async (
@@ -152,13 +139,27 @@ export const materialBackend = {
     lang: string,
   ): Promise<Record<string, unknown>> => {
     const m = await loadModel(instance);
-    const env = await rpcCall<Record<string, unknown>>("capability.save_chapters", {
+    return rpcCall<Record<string, unknown>>("capability.save_chapters", {
       analysis_path: `${m.subtitlesDir}/${filename}`,
       chapters,
       srt_path: m.subtitlePath(lang),
       lang,
     });
-    notifyChanged(instance);
-    return env;
+  },
+
+  // ── Analysis job (B3.2b — no project-meta coupling) ───────────────────────
+  // Thin forward to capability.analyze (returns {job_id}; runJob consumes it).
+  startRunAnalysis: async (
+    instance: string,
+    lang: string,
+    analysisKind: string,
+  ): Promise<{ job_id: string }> => {
+    const m = await loadModel(instance);
+    return rpcCall<{ job_id: string }>("capability.analyze", {
+      kind: analysisKind,
+      srt_path: m.subtitlePath(lang),
+      subtitles_dir: m.subtitlesDir,
+      lang,
+    });
   },
 };

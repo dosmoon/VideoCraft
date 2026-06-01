@@ -12,7 +12,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { rpc, RpcError, type SlotState } from "../../ipc/client";
+import { emitLocal, rpc, RpcError, type SlotState } from "../../ipc/client";
 import { tr } from "../../i18n/tr";
 import { SourceTab } from "./SourceTab";
 import { SubtitlesTab } from "./SubtitlesTab";
@@ -38,8 +38,13 @@ export function MaterialWorkbench(props: { type: string; instance: string; onClo
   const [tab, setTab] = useState<Tab>("source");
   const [visited, setVisited] = useState<Set<Tab>>(() => new Set<Tab>(["source"]));
   // Bumped whenever a tab mutates the instance; tabs + the gate re-read on change.
+  // Also fire the local change bus so the Hub sidebar's own readiness refreshes —
+  // TS mutations / capability jobs emit no sidecar event (ADR-0008 B3.2b).
   const [refreshKey, setRefreshKey] = useState(0);
-  const onChanged = useCallback(() => setRefreshKey((k) => k + 1), []);
+  const onChanged = useCallback(() => {
+    setRefreshKey((k) => k + 1);
+    emitLocal("event.material.changed", { type, instance });
+  }, [type, instance]);
 
   const showTab = useCallback((t: Tab) => {
     setTab(t);
