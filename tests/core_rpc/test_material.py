@@ -149,6 +149,37 @@ def test_create_material_instance_autonumbers(ctx, tmp_project):
     assert second["instance"] == "news-2"
 
 
+def test_rename_and_delete_material_instance(ctx, tmp_project, emit):
+    _open(ctx, tmp_project)
+    call(ctx, "project.create_material_instance", {"type": "news_video"})  # news-1
+    # rename → dir moves, tree reflects it, change event fires
+    res = call(ctx, "project.rename_instance",
+               {"kind": "material", "type": "news_video", "instance": "news-1", "new_name": "renamed"})["result"]
+    assert res == {"type": "news_video", "instance": "renamed"}
+    assert call(ctx, "project.list_materials")["result"]["news_video"] == ["renamed"]
+    assert not os.path.isdir(tmp_project.material_instance_dir("news_video", "news-1"))
+    assert os.path.isdir(tmp_project.material_instance_dir("news_video", "renamed"))
+    assert ("event.materials.changed", {"type": "news_video", "instance": "renamed"}) in emit.events
+    # collision rejected
+    call(ctx, "project.create_material_instance", {"type": "news_video", "name": "other"})
+    assert "error" in call(ctx, "project.rename_instance",
+                           {"kind": "material", "type": "news_video", "instance": "other", "new_name": "renamed"})
+    # delete → gone from disk + tree
+    assert call(ctx, "project.delete_instance",
+                {"kind": "material", "type": "news_video", "instance": "renamed"})["result"] == {"ok": True}
+    assert "renamed" not in call(ctx, "project.list_materials")["result"].get("news_video", [])
+    assert not os.path.isdir(tmp_project.material_instance_dir("news_video", "renamed"))
+
+
+def test_rename_instance_rejects_bad_name_and_unknown_kind(ctx, tmp_project):
+    _open(ctx, tmp_project)
+    call(ctx, "project.create_material_instance", {"type": "news_video"})
+    assert "error" in call(ctx, "project.rename_instance",
+                           {"kind": "material", "type": "news_video", "instance": "news-1", "new_name": "bad/name"})
+    assert "error" in call(ctx, "project.delete_instance",
+                           {"kind": "nope", "type": "news_video", "instance": "news-1"})
+
+
 def test_create_material_instance_duplicate_name_rejected(ctx, tmp_project):
     _open(ctx, tmp_project)
     call(ctx, "project.create_material_instance", {"type": "news_video", "name": "news-1"})

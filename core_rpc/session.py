@@ -109,6 +109,11 @@ class Session:
         self._creations[key] = (owner, path)
         return owner, path
 
+    def invalidate_material(self, type_name: str, instance_id: str) -> None:
+        """Drop the cached material model handle (call after the instance is
+        renamed/deleted out from under it)."""
+        self._models.pop((type_name, instance_id), None)
+
     def invalidate_creation(self, type_name: str, instance_id: str) -> None:
         """Drop the cached config owner so the next creation_owner() reloads it
         from disk. Call after a provider (import / render) writes config.json

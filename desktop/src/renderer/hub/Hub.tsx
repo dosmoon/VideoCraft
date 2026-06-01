@@ -201,6 +201,44 @@ export function Hub() {
     [],
   );
 
+  // Rename / delete an instance. The sidebar tree refreshes via the changed event
+  // the sidecar emits; here we only fix up the open workbench (follow a rename, or
+  // close it on delete).
+  const renameInst = useCallback(
+    async (kind: "material" | "creation", type: string, instance: string) => {
+      const next = window.prompt(tr("hub.rename_prompt"), instance);
+      if (!next || next.trim() === instance) return;
+      setError("");
+      try {
+        const res = await rpc.renameInstance(kind, type, instance, next.trim());
+        setWorkbench((w) =>
+          w && w.kind === kind && w.type === type && w.instance === instance
+            ? { ...w, instance: res.instance }
+            : w,
+        );
+      } catch (err) {
+        setError(fmt(err));
+      }
+    },
+    [],
+  );
+
+  const deleteInst = useCallback(
+    async (kind: "material" | "creation", type: string, instance: string) => {
+      if (!window.confirm(tr("hub.delete_confirm", { name: instance }))) return;
+      setError("");
+      try {
+        await rpc.deleteInstance(kind, type, instance);
+        setWorkbench((w) =>
+          w && w.kind === kind && w.type === type && w.instance === instance ? null : w,
+        );
+      } catch (err) {
+        setError(fmt(err));
+      }
+    },
+    [],
+  );
+
   if (!current) {
     return (
       <Launcher recents={recents} busy={busy} error={error} onOpen={open} onPick={pickAndOpen} />
@@ -218,9 +256,75 @@ export function Hub() {
       onOpenMaterial={(type, instance) => setWorkbench({ kind: "material", type, instance })}
       onCreateCreation={(type) => void createCreation(type)}
       onCreateMaterial={(type) => void createMaterial(type)}
+      onRenameInstance={(kind, type, instance) => void renameInst(kind, type, instance)}
+      onDeleteInstance={(kind, type, instance) => void deleteInst(kind, type, instance)}
       onCloseWorkbench={() => setWorkbench(null)}
       onClose={close}
     />
+  );
+}
+
+// Per-instance ⋯ menu (rename / delete) used by both material and creation rows.
+function InstanceActions({ onRename, onDelete }: { onRename: () => void; onDelete: () => void }) {
+  const [open, setOpen] = useState(false);
+  const item: React.CSSProperties = {
+    display: "block",
+    width: "100%",
+    textAlign: "left",
+    background: "transparent",
+    color: "#ddd",
+    border: "none",
+    padding: "5px 10px",
+    fontSize: 12,
+    cursor: "pointer",
+  };
+  return (
+    <div style={{ position: "relative", flexShrink: 0 }}>
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((o) => !o);
+        }}
+        title={tr("hub.instance_actions")}
+        style={{
+          width: 20,
+          height: 20,
+          lineHeight: "16px",
+          padding: 0,
+          background: "transparent",
+          color: "#888",
+          border: "none",
+          borderRadius: 4,
+          fontSize: 15,
+          cursor: "pointer",
+        }}
+      >
+        ⋯
+      </button>
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            top: "100%",
+            right: 0,
+            zIndex: 30,
+            background: "#1f1f23",
+            border: "1px solid #3a3a40",
+            borderRadius: 6,
+            padding: 4,
+            minWidth: 110,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+          }}
+        >
+          <button style={item} onClick={() => { setOpen(false); onRename(); }}>
+            {tr("hub.rename")}
+          </button>
+          <button style={{ ...item, color: "#e08a8a" }} onClick={() => { setOpen(false); onDelete(); }}>
+            {tr("hub.delete")}
+          </button>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -320,6 +424,8 @@ function ProjectView(props: {
   onOpenMaterial: (type: string, instance: string) => void;
   onCreateCreation: (type: string) => void;
   onCreateMaterial: (type: string) => void;
+  onRenameInstance: (kind: "material" | "creation", type: string, instance: string) => void;
+  onDeleteInstance: (kind: "material" | "creation", type: string, instance: string) => void;
   onCloseWorkbench: () => void;
   onClose: () => void;
 }) {
@@ -334,6 +440,8 @@ function ProjectView(props: {
     onOpenMaterial,
     onCreateCreation,
     onCreateMaterial,
+    onRenameInstance,
+    onDeleteInstance,
     onCloseWorkbench,
     onClose,
   } = props;
@@ -403,6 +511,8 @@ function ProjectView(props: {
                     active={active}
                     slots={readiness[`${type}/${inst}`]}
                     onOpen={() => onOpenMaterial(type, inst)}
+                    onRename={() => onRenameInstance("material", type, inst)}
+                    onDelete={() => onDeleteInstance("material", type, inst)}
                   />
                 );
               })}
@@ -423,24 +533,29 @@ function ProjectView(props: {
                   workbench.type === type &&
                   workbench.instance === inst;
                 return (
-                  <button
-                    key={inst}
-                    onClick={() => onOpenCreation(type, inst)}
-                    style={{
-                      display: "block",
-                      width: "100%",
-                      textAlign: "left",
-                      padding: "4px 8px",
-                      color: active ? "#fff" : "#ccc",
-                      background: active ? "#2d6cdf" : "transparent",
-                      border: "none",
-                      borderRadius: 4,
-                      fontSize: 13,
-                      cursor: "pointer",
-                    }}
-                  >
-                    ◆ {inst}
-                  </button>
+                  <div key={inst} style={{ display: "flex", alignItems: "center", gap: 2 }}>
+                    <button
+                      onClick={() => onOpenCreation(type, inst)}
+                      style={{
+                        flex: 1,
+                        minWidth: 0,
+                        textAlign: "left",
+                        padding: "4px 8px",
+                        color: active ? "#fff" : "#ccc",
+                        background: active ? "#2d6cdf" : "transparent",
+                        border: "none",
+                        borderRadius: 4,
+                        fontSize: 13,
+                        cursor: "pointer",
+                      }}
+                    >
+                      ◆ {inst}
+                    </button>
+                    <InstanceActions
+                      onRename={() => onRenameInstance("creation", type, inst)}
+                      onDelete={() => onDeleteInstance("creation", type, inst)}
+                    />
+                  </div>
                 );
               })}
             </div>
@@ -480,28 +595,33 @@ function MaterialInstance(props: {
   active: boolean;
   slots: Record<string, SlotState> | undefined;
   onOpen: () => void;
+  onRename: () => void;
+  onDelete: () => void;
 }) {
-  const { name, active, slots, onOpen } = props;
+  const { name, active, slots, onOpen, onRename, onDelete } = props;
   return (
     <div style={{ marginBottom: 6 }}>
-      <button
-        onClick={onOpen}
-        style={{
-          display: "block",
-          width: "100%",
-          textAlign: "left",
-          padding: "4px 8px",
-          color: active ? "#fff" : "#ddd",
-          background: active ? "#2d6cdf" : "transparent",
-          border: "none",
-          borderRadius: 4,
-          fontSize: 13,
-          fontWeight: 500,
-          cursor: "pointer",
-        }}
-      >
-        📁 {name}
-      </button>
+      <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+        <button
+          onClick={onOpen}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            textAlign: "left",
+            padding: "4px 8px",
+            color: active ? "#fff" : "#ddd",
+            background: active ? "#2d6cdf" : "transparent",
+            border: "none",
+            borderRadius: 4,
+            fontSize: 13,
+            fontWeight: 500,
+            cursor: "pointer",
+          }}
+        >
+          📁 {name}
+        </button>
+        <InstanceActions onRename={onRename} onDelete={onDelete} />
+      </div>
       {slots && Object.values(slots).map((s) => <SlotRow key={s.slot_id} slot={s} />)}
     </div>
   );

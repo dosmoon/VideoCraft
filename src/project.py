@@ -30,6 +30,36 @@ from core.project_schema import ProjectMeta, Source, ClipRange, now_iso
 BACKGROUND_FILENAME = "background.json"
 
 
+def _validate_instance_name(name: str) -> None:
+    """Filesystem-safe instance name (it becomes a directory name). Raises
+    ValueError on a bad name."""
+    if (not name or name != name.strip()
+            or any(c in name for c in r'\/:*?"<>|') or name.startswith(".")):
+        raise ValueError(f"Invalid instance name: {name!r}")
+    if len(name) > 64:
+        raise ValueError(f"Instance name too long: {len(name)} > 64")
+
+
+def _rename_instance_dir(src: str, dst: str, new_name: str) -> str:
+    """Rename an instance directory (the dir name IS the instance name, so a
+    rename is just os.rename — no internal references to update)."""
+    _validate_instance_name(new_name)
+    if not os.path.isdir(src):
+        raise FileNotFoundError(f"Instance directory not found: {src}")
+    if os.path.exists(dst):
+        raise FileExistsError(f"Instance directory already exists: {dst}")
+    os.rename(src, dst)
+    return dst
+
+
+def _delete_instance_dir(inst_dir: str) -> None:
+    if not os.path.isdir(inst_dir):
+        raise FileNotFoundError(f"Instance directory not found: {inst_dir}")
+    import shutil
+
+    shutil.rmtree(inst_dir)
+
+
 def _create_instance(inst_dir: str, instance_name: str,
                      initial_config: dict | None,
                      config_filename: str) -> str:
@@ -39,13 +69,7 @@ def _create_instance(inst_dir: str, instance_name: str,
     FileExistsError if the directory already exists, ValueError on
     bad name. Returns the absolute path to the new instance folder.
     """
-    if (not instance_name
-            or instance_name != instance_name.strip()
-            or any(c in instance_name for c in r'\/:*?"<>|')
-            or instance_name.startswith(".")):
-        raise ValueError(f"Invalid instance name: {instance_name!r}")
-    if len(instance_name) > 64:
-        raise ValueError(f"Instance name too long: {len(instance_name)} > 64")
+    _validate_instance_name(instance_name)
     if os.path.exists(inst_dir):
         raise FileExistsError(f"Instance directory already exists: {inst_dir}")
     os.makedirs(inst_dir, exist_ok=True)
@@ -232,6 +256,15 @@ class Project:
             instance_name, initial_config, config_filename,
         )
 
+    def rename_material_instance(self, type_name: str, old: str, new: str) -> str:
+        return _rename_instance_dir(
+            self.material_instance_dir(type_name, old),
+            self.material_instance_dir(type_name, new), new,
+        )
+
+    def delete_material_instance(self, type_name: str, name: str) -> None:
+        _delete_instance_dir(self.material_instance_dir(type_name, name))
+
     # ── Creations (plugin instance container; renamed from derivatives) ───────
 
     @property
@@ -282,6 +315,15 @@ class Project:
             self.creation_instance_dir(type_name, instance_name),
             instance_name, initial_config, config_filename,
         )
+
+    def rename_creation_instance(self, type_name: str, old: str, new: str) -> str:
+        return _rename_instance_dir(
+            self.creation_instance_dir(type_name, old),
+            self.creation_instance_dir(type_name, new), new,
+        )
+
+    def delete_creation_instance(self, type_name: str, name: str) -> None:
+        _delete_instance_dir(self.creation_instance_dir(type_name, name))
 
     # -- 文件列表 ---------------------------------------------------------------
 

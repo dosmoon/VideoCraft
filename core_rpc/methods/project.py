@@ -190,3 +190,49 @@ def create_creation_instance(ctx: Context, type: str, name: str | None = None) -
         raise RpcError(-32602, str(exc)) from exc
     ctx.notify("event.creations.changed", {"type": type, "instance": inst})
     return {"type": type, "instance": inst}
+
+
+@rpc_method("project.rename_instance")
+def rename_instance(ctx: Context, kind: str, type: str, instance: str, new_name: str) -> dict[str, Any]:
+    """Rename a material/creation instance directory. kind ∈ {material, creation}.
+    A binding to a renamed material is NOT chased (matches Tk) — it dangles and the
+    bound creation falls back to nobind. Emits the matching changed event."""
+    proj = ctx.session.project
+    new = (new_name or "").strip()
+    try:
+        if kind == "material":
+            proj.rename_material_instance(type, instance, new)
+            ctx.session.invalidate_material(type, instance)
+            ctx.notify("event.materials.changed", {"type": type, "instance": new})
+        elif kind == "creation":
+            proj.rename_creation_instance(type, instance, new)
+            ctx.session.invalidate_creation(type, instance)
+            ctx.notify("event.creations.changed", {"type": type, "instance": new})
+        else:
+            raise RpcError(-32602, f"unknown kind: {kind!r}")
+    except FileExistsError as exc:
+        raise RpcError(-32602, f"instance already exists: {new!r}") from exc
+    except (ValueError, FileNotFoundError) as exc:
+        raise RpcError(-32602, str(exc)) from exc
+    return {"type": type, "instance": new}
+
+
+@rpc_method("project.delete_instance")
+def delete_instance(ctx: Context, kind: str, type: str, instance: str) -> dict[str, Any]:
+    """Delete a material/creation instance directory. kind ∈ {material, creation}.
+    Emits the matching changed event so the sidebar refreshes."""
+    proj = ctx.session.project
+    try:
+        if kind == "material":
+            proj.delete_material_instance(type, instance)
+            ctx.session.invalidate_material(type, instance)
+            ctx.notify("event.materials.changed", {"type": type, "instance": instance})
+        elif kind == "creation":
+            proj.delete_creation_instance(type, instance)
+            ctx.session.invalidate_creation(type, instance)
+            ctx.notify("event.creations.changed", {"type": type, "instance": instance})
+        else:
+            raise RpcError(-32602, f"unknown kind: {kind!r}")
+    except FileNotFoundError as exc:
+        raise RpcError(-32602, str(exc)) from exc
+    return {"ok": True}

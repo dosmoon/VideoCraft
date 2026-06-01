@@ -412,6 +412,17 @@ export const rpc = {
       ...(name ? { name } : {}),
     }),
 
+  // Rename / delete a material|creation instance (the dir is the instance name).
+  renameInstance: (kind: "material" | "creation", type: string, instance: string, newName: string) =>
+    rpcCall<{ type: string; instance: string }>("project.rename_instance", {
+      kind,
+      type,
+      instance,
+      new_name: newName,
+    }),
+  deleteInstance: (kind: "material" | "creation", type: string, instance: string) =>
+    rpcCall<{ ok: boolean }>("project.delete_instance", { kind, type, instance }),
+
   slotReadiness: (type: string, instance: string) =>
     rpcCall<Record<string, SlotState>>("material.slot_readiness", { type, instance }),
   getArtifact: (type: string, instance: string, key: string) =>
