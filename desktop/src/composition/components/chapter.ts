@@ -146,14 +146,14 @@ export const chapterFields: readonly FieldSpec[] = [
   // Top strip
   { key: "style.top_strip.bg_color", path: ["style", "top_strip", "bg_color"], control: "color", labelKey: "news_desk.chapter.bg_color", section: "news_desk.chapter.strip_style_section", visibleWhen: stripOn },
   { key: "style.top_strip.text_color", path: ["style", "top_strip", "text_color"], control: "color", labelKey: "news_desk.chapter.text_color", visibleWhen: stripOn },
-  { key: "style.top_strip.fontsize", path: ["style", "top_strip", "fontsize"], control: "number", labelKey: "news_desk.chapter.fontsize", step: 1, min: 1, visibleWhen: stripOn },
+  { key: "style.top_strip.fontsize", path: ["style", "top_strip", "fontsize"], control: "number", labelKey: "news_desk.chapter.fontsize", min: 1, visibleWhen: stripOn, display: { factor: 1, step: 1, suffix: "px" } },
   // Start card
   { key: "style.start_card.title_color", path: ["style", "start_card", "title_color"], control: "color", labelKey: "news_desk.chapter.title_color", section: "news_desk.chapter.card_style_section", visibleWhen: cardOn },
-  { key: "style.start_card.title_fontsize", path: ["style", "start_card", "title_fontsize"], control: "number", labelKey: "news_desk.chapter.title_fontsize", step: 1, min: 1, visibleWhen: cardOn },
+  { key: "style.start_card.title_fontsize", path: ["style", "start_card", "title_fontsize"], control: "number", labelKey: "news_desk.chapter.title_fontsize", min: 1, visibleWhen: cardOn, display: { factor: 1, step: 1, suffix: "px" } },
   { key: "style.start_card.body_color", path: ["style", "start_card", "body_color"], control: "color", labelKey: "news_desk.chapter.body_color", visibleWhen: cardOn },
-  { key: "style.start_card.body_fontsize", path: ["style", "start_card", "body_fontsize"], control: "number", labelKey: "news_desk.chapter.body_fontsize", step: 1, min: 1, visibleWhen: cardOn },
+  { key: "style.start_card.body_fontsize", path: ["style", "start_card", "body_fontsize"], control: "number", labelKey: "news_desk.chapter.body_fontsize", min: 1, visibleWhen: cardOn, display: { factor: 1, step: 1, suffix: "px" } },
   { key: "style.start_card.bg_color", path: ["style", "start_card", "bg_color"], control: "color", labelKey: "news_desk.chapter.card_bg_color", visibleWhen: cardOn },
-  { key: "style.start_card.bg_opacity", path: ["style", "start_card", "bg_opacity"], control: "number", labelKey: "news_desk.chapter.bg_opacity", step: 1, min: 0, max: 100, visibleWhen: cardOn },
+  { key: "style.start_card.bg_opacity", path: ["style", "start_card", "bg_opacity"], control: "number", labelKey: "news_desk.chapter.bg_opacity", min: 0, max: 100, visibleWhen: cardOn, display: { factor: 1, step: 1, suffix: "%" } },
   { key: "style.start_card.accent_color", path: ["style", "start_card", "accent_color"], control: "color", labelKey: "news_desk.chapter.accent_color", visibleWhen: cardOn },
-  { key: "style.start_card.duration_sec", path: ["style", "start_card", "duration_sec"], control: "number", labelKey: "news_desk.chapter.duration_sec", step: 1, min: 1, max: 30, visibleWhen: cardOn },
+  { key: "style.start_card.duration_sec", path: ["style", "start_card", "duration_sec"], control: "number", labelKey: "news_desk.chapter.duration_sec", min: 1, max: 30, visibleWhen: cardOn, display: { factor: 1, step: 1, suffix: "s" } },
 ];

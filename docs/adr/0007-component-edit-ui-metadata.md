@@ -44,4 +44,5 @@ workbench"。
   news_desk 有 bg_enabled）。编辑器只渲染该实例上实际存在的字段（取交集）。
 - **嵌套字段（chapter）**用 `FieldSpec.path` + `visibleWhen`；提交经
   `shared/nestedPatch.ts` 整子对象重发以对抗浅合并。
+- **显示单位 `FieldSpec.display`**：存储恒规范（分数 / px@1080），编辑器在 UI 边界换算显示——`显示值 = stored * factor`（round 到 decimals）+ `suffix`，步进按显示单位，提交存回 `显示值 / factor`。还原 Tk 直觉单位（字号 px@1080、边距/缩放 %），并统一跨组件观感（字幕分数 fontsize 与章节 px fontsize 都显示成 px）。clamp 仍只在 mapping；只改"读给人看的样子"，存储单位不变。
 - 新组件务必在 `fieldSpec.ts` 注册表登记；未登记的 kind 编辑器显示"无字段"。

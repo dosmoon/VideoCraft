@@ -35,10 +35,10 @@ const positionField: FieldSpec = {
   options: ANCHOR_OPTIONS,
   optionLabelKeys: ANCHOR_LABEL_KEYS,
 };
-// Margins are fractions of the frame; step 0.005 (~0.5%), hint-bounded [0, 0.2].
+// Margins are fractions of the frame; shown as % (Tk convention), hint-bounded [0, 0.2].
 const marginFields: FieldSpec[] = [
-  { key: "margin_x_pct", control: "number", labelKey: "watermark.margin_x", step: 0.005, min: 0, max: 0.2 },
-  { key: "margin_y_pct", control: "number", labelKey: "watermark.margin_y", step: 0.005, min: 0, max: 0.2 },
+  { key: "margin_x_pct", control: "number", labelKey: "watermark.margin_x", min: 0, max: 0.2, display: { factor: 100, step: 0.5, suffix: "%" } },
+  { key: "margin_y_pct", control: "number", labelKey: "watermark.margin_y", min: 0, max: 0.2, display: { factor: 100, step: 0.5, suffix: "%" } },
 ];
 
 // ── Text watermark ─────────────────────────────────────────────────────────
@@ -93,9 +93,9 @@ export const textWatermark: VideoComponent<TextWatermarkInstance> = {
 export const textWatermarkFields: readonly FieldSpec[] = [
   { key: "name", control: "text", labelKey: "watermark.name" },
   { key: "text", control: "text", labelKey: "watermark.text" },
-  { key: "text_fontsize_pct", control: "number", labelKey: "watermark.fontsize", step: 0.005, min: 0, max: 0.5 },
+  { key: "text_fontsize_pct", control: "number", labelKey: "watermark.fontsize", min: 0, max: 0.5, display: { factor: 1080, step: 1, suffix: "px" } },
   { key: "text_color", control: "color", labelKey: "watermark.color" },
-  { key: "text_opacity", control: "number", labelKey: "watermark.opacity", step: 1, min: 0, max: 100 },
+  { key: "text_opacity", control: "number", labelKey: "watermark.opacity", min: 0, max: 100, display: { factor: 1, step: 1, suffix: "%" } },
   positionField,
   ...marginFields,
 ];
@@ -149,8 +149,8 @@ export const imageWatermark: VideoComponent<ImageWatermarkInstance> = {
 export const imageWatermarkFields: readonly FieldSpec[] = [
   { key: "name", control: "text", labelKey: "watermark.name" },
   { key: "image_path", control: "image", labelKey: "watermark.image_file" },
-  { key: "image_scale", control: "number", labelKey: "watermark.scale", step: 0.01, min: 0.02, max: 0.5 },
-  { key: "image_opacity", control: "number", labelKey: "watermark.opacity", step: 1, min: 0, max: 100 },
+  { key: "image_scale", control: "number", labelKey: "watermark.scale", min: 0.02, max: 0.5, display: { factor: 100, step: 1, suffix: "%" } },
+  { key: "image_opacity", control: "number", labelKey: "watermark.opacity", min: 0, max: 100, display: { factor: 1, step: 1, suffix: "%" } },
   positionField,
   ...marginFields,
 ];

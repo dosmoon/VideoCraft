@@ -117,15 +117,15 @@ export const outroCard: VideoComponent<CardInstance> = {
  */
 export const cardFields: readonly FieldSpec[] = [
   { key: "name", control: "text", labelKey: "card.name" },
-  { key: "duration_sec", control: "number", labelKey: "card.duration", step: 1, min: 1, max: 30 },
+  { key: "duration_sec", control: "number", labelKey: "card.duration", min: 1, max: 30, display: { factor: 1, step: 1, suffix: "s" } },
   { key: "font", control: "text", labelKey: "card.font" },
-  { key: "size_pct", control: "number", labelKey: "card.fontsize", step: 0.005, min: 0, max: 0.5 },
+  { key: "size_pct", control: "number", labelKey: "card.fontsize", min: 0, max: 0.5, display: { factor: 1080, step: 1, suffix: "px" } },
   { key: "color", control: "color", labelKey: "card.color" },
   { key: "stroke_color", control: "color", labelKey: "card.stroke_color" },
-  { key: "stroke_pct", control: "number", labelKey: "card.stroke_width", step: 0.001, min: 0, max: 0.02 },
+  { key: "stroke_pct", control: "number", labelKey: "card.stroke_width", min: 0, max: 0.02, display: { factor: 1080, step: 1, suffix: "px" } },
   { key: "bg_color", control: "color", labelKey: "card.bg_color" },
-  { key: "bg_opacity", control: "number", labelKey: "card.bg_opacity", step: 1, min: 0, max: 100 },
-  { key: "box_padding_pct", control: "number", labelKey: "card.box_padding", step: 0.005, min: 0, max: 0.2 },
+  { key: "bg_opacity", control: "number", labelKey: "card.bg_opacity", min: 0, max: 100, display: { factor: 1, step: 1, suffix: "%" } },
+  { key: "box_padding_pct", control: "number", labelKey: "card.box_padding", min: 0, max: 0.2, display: { factor: 1080, step: 1, suffix: "px" } },
   {
     key: "position",
     control: "select",

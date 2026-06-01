@@ -40,6 +40,16 @@ export interface FieldSpec {
   step?: number;
   min?: number;
   max?: number;
+  /**
+   * Optional UI-unit conversion for a number field. The editor SHOWS
+   * `stored * factor` (rounded to `decimals`) with `suffix`, steps by `step` in
+   * those display units, and stores back `displayValue / factor`. Lets a
+   * canonical fraction read as px@1080 or % — restoring the Tk panels' intuitive
+   * units while storage stays canonical (and unifies display across components,
+   * e.g. subtitle fraction-fontsize and chapter px-fontsize both shown as px).
+   * When set, `display.step` supersedes the top-level `step`.
+   */
+  display?: { factor: number; step: number; decimals?: number; suffix?: string };
   /** select: option values (raw, e.g. "top-right"). */
   options?: readonly string[];
   /** select: per-option i18n keys, parallel to `options`; missing → raw value. */

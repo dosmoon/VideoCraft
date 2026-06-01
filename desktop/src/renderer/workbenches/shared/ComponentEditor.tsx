@@ -99,18 +99,30 @@ function FieldControlRow(props: {
           />
         </>
       );
-    case "number":
+    case "number": {
+      const stored = typeof value === "number" ? value : Number(value) || 0;
+      const d = spec.display;
+      if (d) {
+        const dec = d.decimals ?? (d.step < 1 ? 1 : 0);
+        const pow = 10 ** dec;
+        const shown = Math.round(stored * d.factor * pow) / pow;
+        return (
+          <>
+            {label}
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <NumberInput value={shown} step={d.step} disabled={disabled} onCommit={(v) => onCommit(v / d.factor)} />
+              {d.suffix && <span style={{ color: "#888", fontSize: 12 }}>{d.suffix}</span>}
+            </span>
+          </>
+        );
+      }
       return (
         <>
           {label}
-          <NumberInput
-            value={typeof value === "number" ? value : Number(value) || 0}
-            step={spec.step ?? 1}
-            disabled={disabled}
-            onCommit={onCommit}
-          />
+          <NumberInput value={stored} step={spec.step ?? 1} disabled={disabled} onCommit={onCommit} />
         </>
       );
+    }
     case "select": {
       const cur = value == null ? "" : String(value);
       // Host-supplied dynamic options (e.g. subtitle language) override static.
