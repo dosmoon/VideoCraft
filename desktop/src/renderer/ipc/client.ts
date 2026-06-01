@@ -44,6 +44,23 @@ export async function rpcCall<T = unknown>(
   throw new RpcError(reply.code, reply.message, reply.data);
 }
 
+// Renderer-local notification bus (ADR-0008 B3.2). TS-side material mutations go
+// through capability.*, which emits NO domain events (it is plugin-agnostic), so
+// the TS owner fires the same `event.material.changed` the Python sidecar used to
+// emit. `onNotification` below merges this local stream with the server stream, so
+// existing subscribers (the Hub sidebar) receive both with zero change.
+const localListeners = new Set<(method: string, params: unknown) => void>();
+
+export function emitLocal(method: string, params: unknown): void {
+  for (const cb of [...localListeners]) {
+    try {
+      cb(method, params);
+    } catch {
+      /* a listener error must not break the bus */
+    }
+  }
+}
+
 // ── Typed payloads (kept in step with core_rpc/methods/*) ─────────────────────
 
 export interface ProjectBrief {
@@ -646,11 +663,15 @@ export const rpc = {
       ? materialBackend.readContext(instance)
       : rpcCall<SourceContext>("material.read_context", { type, instance }),
   writeContext: (type: string, instance: string, context: SourceContext) =>
-    rpcCall<SourceContext>("material.write_context", { type, instance, context }),
+    type === "news_video"
+      ? materialBackend.writeContext(instance, context)
+      : rpcCall<SourceContext>("material.write_context", { type, instance, context }),
   readBasicInfo: (type: string, instance: string) =>
     rpcCall<SourceBasicInfo>("material.read_basic_info", { type, instance }),
   writeBasicInfo: (type: string, instance: string, basicInfo: SourceBasicInfo) =>
-    rpcCall<SourceBasicInfo>("material.write_basic_info", { type, instance, basic_info: basicInfo }),
+    type === "news_video"
+      ? materialBackend.writeBasicInfo(instance, basicInfo)
+      : rpcCall<SourceBasicInfo>("material.write_basic_info", { type, instance, basic_info: basicInfo }),
   contextCompletion: (type: string, instance: string) =>
     type === "news_video"
       ? materialBackend.contextCompletion(instance)
@@ -669,9 +690,13 @@ export const rpc = {
       ? materialBackend.readSubtitle(instance, lang)
       : rpcCall<{ text: string }>("material.read_subtitle", { type, instance, lang }),
   checkSubtitle: (type: string, instance: string, lang: string) =>
-    rpcCall<SubtitleCheck>("material.check_subtitle", { type, instance, lang }),
+    type === "news_video"
+      ? materialBackend.checkSubtitle(instance, lang)
+      : rpcCall<SubtitleCheck>("material.check_subtitle", { type, instance, lang }),
   quickFixSubtitle: (type: string, instance: string, lang: string) =>
-    rpcCall<SubtitleCheck>("material.quick_fix_subtitle", { type, instance, lang }),
+    type === "news_video"
+      ? materialBackend.quickFixSubtitle(instance, lang)
+      : rpcCall<SubtitleCheck>("material.quick_fix_subtitle", { type, instance, lang }),
   // Import an external .srt from disk (path from window.vc.pickSubtitle).
   importSubtitle: (type: string, instance: string, path: string, lang: string) =>
     rpcCall<{ lang: string }>("material.import_subtitle", { type, instance, path, lang }),
@@ -704,13 +729,15 @@ export const rpc = {
     chapters: Record<string, unknown>[],
     lang: string,
   ) =>
-    rpcCall<Record<string, unknown>>("material.save_chapters", {
-      type,
-      instance,
-      filename,
-      chapters,
-      lang,
-    }),
+    type === "news_video"
+      ? materialBackend.saveChapters(instance, filename, chapters, lang)
+      : rpcCall<Record<string, unknown>>("material.save_chapters", {
+          type,
+          instance,
+          filename,
+          chapters,
+          lang,
+        }),
 
   // Long-running material jobs (sidecar threads). Each returns {job_id}
   // immediately; consume progress/terminal via runJob (ipc/runJob.ts).
@@ -737,7 +764,15 @@ export const rpc = {
   // Cancel a running job by id (shared with the creation side; system.py).
   cancelJob: (jobId: string) => rpcCall<{ cancelled: boolean }>("job.cancel", { job_id: jobId }),
 
-  /** Subscribe to server→client notifications; returns an unsubscribe fn. */
-  onNotification: (cb: (method: string, params: unknown) => void): (() => void) =>
-    window.vc.rpc.onNotification(cb),
+  /** Subscribe to notifications; returns an unsubscribe fn. Merges the server
+   * stream with the renderer-local bus (emitLocal) so TS-side material mutations
+   * reach existing subscribers (e.g. the Hub sidebar) without any extra wiring. */
+  onNotification: (cb: (method: string, params: unknown) => void): (() => void) => {
+    const offServer = window.vc.rpc.onNotification(cb);
+    localListeners.add(cb);
+    return () => {
+      offServer();
+      localListeners.delete(cb);
+    };
+  },
 };

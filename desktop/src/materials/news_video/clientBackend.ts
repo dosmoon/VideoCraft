@@ -18,8 +18,14 @@
  */
 
 import { realFs } from "../../renderer/ipc/fs";
-import { rpcCall } from "../../renderer/ipc/client";
-import type { AnalysisSummary, SourceContext } from "../../renderer/ipc/client";
+import { emitLocal, rpcCall } from "../../renderer/ipc/client";
+import type {
+  AnalysisSummary,
+  ProjectBrief,
+  SourceBasicInfo,
+  SourceContext,
+  SubtitleCheck,
+} from "../../renderer/ipc/client";
 import { NewsVideoModel } from "./model";
 
 async function loadModel(instance: string): Promise<NewsVideoModel> {
@@ -28,6 +34,24 @@ async function loadModel(instance: string): Promise<NewsVideoModel> {
     instance,
   });
   return new NewsVideoModel(realFs, dir);
+}
+
+/** Fire the change signal the Python sidecar used to emit, so the Hub sidebar
+ * refreshes its slot badges after a TS-side mutation (capability.* emits none). */
+function notifyChanged(instance: string): void {
+  emitLocal("event.material.changed", { type: "news_video", instance });
+}
+
+/** The project's source language (for the subtitle-check reference). Read from
+ * project meta — the data layer doesn't carry it. "" when unset. */
+async function projectSourceLang(): Promise<string> {
+  const cur = await rpcCall<ProjectBrief | null>("project.current");
+  const meta = (cur?.meta ?? {}) as { language?: { source?: string } };
+  return meta.language?.source ?? "";
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  return (await realFs.stat(path)).exists;
 }
 
 /** Map the model's camelCase AnalysisSummary back to the snake_case wire shape the
@@ -79,5 +103,62 @@ export const materialBackend = {
     const text = await realFs.readText(path);
     if (text === null) throw new Error(`analysis artifact missing: ${lang}.${kind}`);
     return { text };
+  },
+
+  // ── Writes + sync QC (B3.2b.1) ────────────────────────────────────────────
+  // Each mutating op fires notifyChanged so the Hub sidebar refreshes (the
+  // capability.* sync calls + model writes emit no domain event themselves).
+
+  writeContext: async (instance: string, context: SourceContext): Promise<SourceContext> => {
+    const stored = await (await loadModel(instance)).writeContextDict(context);
+    notifyChanged(instance);
+    return stored as SourceContext;
+  },
+
+  writeBasicInfo: async (instance: string, basicInfo: SourceBasicInfo): Promise<SourceBasicInfo> => {
+    const stored = await (await loadModel(instance)).writeBasicInfoDict(basicInfo);
+    notifyChanged(instance);
+    return stored as SourceBasicInfo;
+  },
+
+  checkSubtitle: async (instance: string, lang: string): Promise<SubtitleCheck> => {
+    const m = await loadModel(instance);
+    // Reference = the project source-language SRT (cue-count parity), when it
+    // exists and differs from the checked language — mirrors model.check_subtitle.
+    const src = await projectSourceLang();
+    const refPath = src && src !== lang ? m.subtitlePath(src) : null;
+    const reference = refPath && (await fileExists(refPath)) ? refPath : undefined;
+    return rpcCall<SubtitleCheck>("capability.subtitle_check", {
+      srt_path: m.subtitlePath(lang),
+      expected_lang: lang,
+      ...(reference ? { reference_srt_path: reference } : {}),
+    });
+  },
+
+  quickFixSubtitle: async (instance: string, lang: string): Promise<SubtitleCheck> => {
+    const m = await loadModel(instance);
+    const res = await rpcCall<SubtitleCheck>("capability.subtitle_quick_fix", {
+      srt_path: m.subtitlePath(lang),
+      expected_lang: lang,
+    });
+    notifyChanged(instance);
+    return res;
+  },
+
+  saveChapters: async (
+    instance: string,
+    filename: string,
+    chapters: Record<string, unknown>[],
+    lang: string,
+  ): Promise<Record<string, unknown>> => {
+    const m = await loadModel(instance);
+    const env = await rpcCall<Record<string, unknown>>("capability.save_chapters", {
+      analysis_path: `${m.subtitlesDir}/${filename}`,
+      chapters,
+      srt_path: m.subtitlePath(lang),
+      lang,
+    });
+    notifyChanged(instance);
+    return env;
   },
 };
