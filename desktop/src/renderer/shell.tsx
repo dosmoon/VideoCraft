@@ -1,20 +1,52 @@
 /**
- * Shell — top-level renderer mount. Renders the Hub (the product UI). The
- * WebGPU spike harness it used to sit beside has been retired now that the clip
- * workbench covers the same engine paths end-to-end; the harness's headless test
- * fixtures (src/renderer/harness/*.ts) live on for unit tests.
+ * Shell — top-level renderer mount. A left activity bar (项目 / AI / 模型 / 设置)
+ * switches the main view between the project Hub and the framework services. The
+ * Hub stays mounted (display toggle) so an open workbench survives a detour into
+ * the AI console or settings; the lighter framework views mount on demand.
  */
 
+import { useState } from "react";
 import { Hub } from "./hub/Hub";
-import { useLang } from "./i18n/tr";
+import { ActivityBar, type AppView } from "./app/ActivityBar";
+import { AiConsole } from "./aiconsole/AiConsole";
+import { useLang, tr } from "./i18n/tr";
+
+function Placeholder({ titleKey }: { titleKey: string }) {
+  return (
+    <div style={{ flex: 1, display: "grid", placeItems: "center", color: "#666", fontSize: 14 }}>
+      {tr(titleKey)}
+    </div>
+  );
+}
 
 export function Shell() {
   // Subscribe the whole tree to language changes so a hot switch re-renders
-  // every tr() call below (no React.memo boundaries gate the workbenches).
+  // every tr() call below (no React.memo boundaries gate the views).
   useLang();
+  const [view, setView] = useState<AppView>("project");
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
-      <Hub />
+    <div style={{ display: "flex", height: "100vh" }}>
+      <ActivityBar view={view} onSelect={setView} />
+      {/* Hub is always mounted (display toggle) to preserve project/workbench state. */}
+      <div
+        style={{
+          flex: 1,
+          minWidth: 0,
+          display: view === "project" ? "flex" : "none",
+          flexDirection: "column",
+        }}
+      >
+        <Hub />
+      </div>
+      {/* Framework views mount on demand (cheap; their writes persist immediately). */}
+      {view === "ai" && (
+        <div style={{ flex: 1, minWidth: 0, overflow: "auto" }}>
+          <AiConsole />
+        </div>
+      )}
+      {view === "models" && <Placeholder titleKey="shell.models_soon" />}
+      {view === "settings" && <Placeholder titleKey="shell.settings_soon" />}
     </div>
   );
 }

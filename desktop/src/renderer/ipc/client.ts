@@ -107,6 +107,64 @@ export interface KnownLanguage {
   display: string; // "en — English (英语)"
 }
 
+// ── AI console (ai.* domain) ──────────────────────────────────────────────────
+
+export type AiDeployTier = "local" | "free_online" | "aistack" | "cloud";
+export type AiCategory = "llm" | "asr" | "tts";
+export type AiKeyState = "cli" | "no_key_needed" | "not_configured" | "empty" | "ok";
+
+export interface AiKeyStatus {
+  state: AiKeyState;
+  masked: string | null;
+}
+
+/** One provider row, normalized by core.ai.console_view (UI-free enums). */
+export interface AiProvider {
+  name: string;
+  category: AiCategory;
+  deploy_tier: AiDeployTier;
+  type: string;
+  enabled: boolean;
+  needs_key: boolean;
+  has_auth: boolean;
+  key_status: AiKeyStatus;
+  models: string[];
+}
+
+/** A routing-matrix row (task). label is "中文 / English" from the engine. */
+export interface AiTask {
+  id: string;
+  category: AiCategory;
+  label: string;
+}
+
+export interface AiRoutingCell {
+  provider: string;
+  model: string;
+}
+
+/** Full read-only AI console state (ai.snapshot). */
+export interface AiSnapshot {
+  tasks: AiTask[];
+  routing_tiers: { llm: string[]; non_llm: string[] };
+  task_routing: Record<string, AiRoutingCell>;
+  task_tier_prefs: Record<string, Record<string, AiRoutingCell>>;
+  providers: { llm: AiProvider[]; asr: AiProvider[]; tts: AiProvider[] };
+  aistack: {
+    base_url: string;
+    enabled: boolean;
+    models_cache: { llm: string[]; asr: string[]; tts: string[] };
+  };
+}
+
+/** Per-provider call counters (ai.stats / Stats tab). */
+export interface AiStatsEntry {
+  calls: number;
+  errors: number;
+  last_used?: string | null;
+  last_error?: string | null;
+}
+
 /** A registered material type for the 素材 [+] menu (project.list_material_types_info). */
 export interface MaterialTypeInfo {
   type_name: string;
@@ -214,6 +272,22 @@ export const rpc = {
   // Persist the UI language back to settings.json (the renderer switches hot on
   // its own; this keeps it across restart and in sync with the Tk app).
   setLocale: (lang: string) => rpcCall<{ lang: string }>("system.set_locale", { lang }),
+
+  // ── AI console (ai.* domain) ───────────────────────────────────────────────
+  // Read: full console state + per-provider call stats (refreshed separately).
+  aiSnapshot: () => rpcCall<AiSnapshot>("ai.snapshot"),
+  aiStats: () => rpcCall<Record<string, AiStatsEntry>>("ai.stats"),
+  // Writes: each persists (sidecar) and returns a fresh snapshot to re-sync.
+  aiSetKey: (provider: string, category: AiCategory, key: string) =>
+    rpcCall<AiSnapshot>("ai.set_key", { provider, category, key }),
+  aiSetProviderEnabled: (provider: string, category: AiCategory, enabled: boolean) =>
+    rpcCall<AiSnapshot>("ai.set_provider_enabled", { provider, category, enabled }),
+  aiSetRouting: (task: string, provider: string, model: string) =>
+    rpcCall<AiSnapshot>("ai.set_routing", { task, provider, model }),
+  aiSetTierPref: (task: string, tier: string, provider: string, model: string) =>
+    rpcCall<AiSnapshot>("ai.set_tier_pref", { task, tier, provider, model }),
+  aiSetAistackGateway: (baseUrl: string, enabled: boolean) =>
+    rpcCall<AiSnapshot>("ai.set_aistack_gateway", { base_url: baseUrl, enabled }),
 
   recentList: () => rpcCall<ProjectBrief[]>("project.recent_list"),
   openProject: (folder: string) => rpcCall<ProjectBrief>("project.open", { folder }),
