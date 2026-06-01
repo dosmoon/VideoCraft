@@ -419,7 +419,6 @@
   "bind.none": "项目里还没有素材;先在「素材」区新建并导入源视频",
   "bind.bind": "绑定",
   "bind.rebind": "换绑",
-  "clip.style.tb_candidate_lang": "候选语言",
   "hub.instance_actions": "操作",
   "hub.rename": "重命名",
   "hub.delete": "删除",

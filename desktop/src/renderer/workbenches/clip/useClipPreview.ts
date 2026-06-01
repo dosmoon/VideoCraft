@@ -47,9 +47,6 @@ export interface ClipPreviewData {
   presetName: string;
   /** Subtitle (SRT) languages — the subtitle component's language dropdown. */
   subtitleLangs: string[];
-  /** Hotclip/candidate languages — the Style toolbar's candidate-language picker
-   * (distinct from subtitleLangs). Switching writes cfg.source_subtitle. */
-  availableLangs: string[];
 }
 
 /** Shape returned by the clip preview_provider (Python). */
@@ -180,7 +177,6 @@ export function useClipPreview(type: string, instance: string, refreshKey = 0) {
           encodePreset: String(cfg["encode_preset"] ?? "medium"),
           presetName: String(cfg["preset_name"] ?? ""),
           subtitleLangs: Array.isArray(pd.subtitleLangs) ? pd.subtitleLangs : [],
-          availableLangs: Array.isArray(pd.availableLangs) ? pd.availableLangs : [],
         });
         setStatus("ready");
       } catch (err) {

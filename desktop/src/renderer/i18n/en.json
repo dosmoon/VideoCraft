@@ -419,7 +419,6 @@
   "bind.none": "No materials in this project — create one in the Materials area first",
   "bind.bind": "Bind",
   "bind.rebind": "Change",
-  "clip.style.tb_candidate_lang": "Candidate lang",
   "hub.instance_actions": "Actions",
   "hub.rename": "Rename",
   "hub.delete": "Delete",
