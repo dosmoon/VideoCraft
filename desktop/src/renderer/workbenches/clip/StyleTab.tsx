@@ -205,6 +205,22 @@ export function StyleTab(props: {
     [type, instance, reload],
   );
 
+  // Candidate (hotclips) language picker — switching writes cfg.source_subtitle
+  // and forces a FULL reload (the candidate set changes with the language, which
+  // the lightweight reload() doesn't re-fetch). Mirrors style_panel.py's combobox.
+  const changeLang = useCallback(
+    async (lang: string) => {
+      setToolbarErr("");
+      try {
+        await rpc.updateConfig(type, instance, { source_subtitle: lang });
+        onMaterialBound();
+      } catch (err) {
+        tErr(err);
+      }
+    },
+    [type, instance, onMaterialBound],
+  );
+
   const onApplyPreset = useCallback(async () => {
     if (!selectedPreset) return;
     setToolbarErr("");
@@ -318,6 +334,18 @@ export function StyleTab(props: {
           color: "#999",
         }}
       >
+        {data && data.availableLangs.length > 1 && (
+          <label>
+            {tr("clip.style.tb_candidate_lang")}{" "}
+            <select value={data.lang} onChange={(e) => void changeLang(e.target.value)} style={selStyle}>
+              {data.availableLangs.map((l) => (
+                <option key={l} value={l}>
+                  {l}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         <label>
           {tr("clip.style.tb_aspect")}{" "}
           <select
