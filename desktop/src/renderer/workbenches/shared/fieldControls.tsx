@@ -39,6 +39,46 @@ export function TextInput(props: { value: string; disabled: boolean; onCommit: (
   );
 }
 
+export function ColorInput(props: { value: string; disabled: boolean; onCommit: (v: string) => void }) {
+  const { value, disabled, onCommit } = props;
+  const [v, setV] = useState(value);
+  useEffect(() => setV(value), [value]);
+  const isColor = /^#[0-9a-fA-F]{6}$/.test(v);
+  return (
+    <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+      <input
+        value={v}
+        disabled={disabled}
+        onChange={(e) => setV(e.target.value)}
+        onBlur={() => v !== value && onCommit(v)}
+        onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+        style={INPUT_STYLE}
+      />
+      {/* Native OS color picker — click the swatch to open it; commits on pick. */}
+      <input
+        type="color"
+        disabled={disabled}
+        value={isColor ? v.toLowerCase() : "#000000"}
+        onChange={(e) => {
+          const hex = e.target.value.toUpperCase();
+          setV(hex);
+          if (hex !== value) onCommit(hex);
+        }}
+        style={{
+          width: 22,
+          height: 18,
+          padding: 0,
+          border: "1px solid #444",
+          borderRadius: 3,
+          background: "transparent",
+          cursor: disabled ? "default" : "pointer",
+          flex: "0 0 auto",
+        }}
+      />
+    </span>
+  );
+}
+
 export function NumberInput(props: {
   value: number;
   step: number;

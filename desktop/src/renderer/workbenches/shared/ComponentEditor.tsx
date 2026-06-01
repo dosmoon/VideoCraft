@@ -13,7 +13,7 @@ import { Fragment } from "react";
 import { tr } from "../../i18n/tr";
 import type { Component } from "../../ipc/client";
 import { fieldsForKind, type FieldSpec } from "@composition/components/fieldSpec.js";
-import { INPUT_STYLE, NumberInput, TextInput } from "./fieldControls";
+import { INPUT_STYLE, ColorInput, NumberInput, TextInput } from "./fieldControls";
 import { readValue, fieldPresent, buildPatch } from "./nestedPatch";
 
 export function ComponentEditor(props: {
@@ -153,6 +153,12 @@ function FieldControlRow(props: {
       );
     }
     case "color":
+      return (
+        <>
+          {label}
+          <ColorInput value={String(value ?? "")} disabled={disabled} onCommit={onCommit} />
+        </>
+      );
     case "text":
     default:
       return (
