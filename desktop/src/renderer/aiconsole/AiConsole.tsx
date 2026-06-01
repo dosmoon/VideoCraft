@@ -392,6 +392,12 @@ function ProviderRow({ provider: p, apply }: { provider: AiProvider; apply: Appl
 // provider settings (timeouts / executable). Mirrors the Tk Edit dialog + picker.
 const lbl: React.CSSProperties = { fontSize: 12, color: "#bbb", width: 96, flexShrink: 0 };
 
+// Session cache of fetched API model lists, keyed by provider name. Saving keeps
+// only the enabled subset in config (routing should offer just your picks), but
+// reopening the editor should still show the full browsable list without a
+// re-fetch — so we stash the last fetched list here. Cleared on renderer reload.
+const _fetchedModelCache = new Map<string, string[]>();
+
 function ProviderEditor({
   provider: p,
   apply,
@@ -485,9 +491,14 @@ function ModelPicker({
   selected: string[];
   onChange: (next: string[]) => void;
 }) {
-  // Stable display pool, seeded from the provider's current models; "Fetch all"
-  // and manual-add grow it. Never shrinks on uncheck (that only edits `selected`).
-  const [pool, setPool] = useState<string[]>(p.models);
+  // Stable display pool, seeded from the provider's current models PLUS any list
+  // fetched earlier this session (so reopening shows the full browsable set, not
+  // just the saved picks). "Fetch all" and manual-add grow it; it never shrinks
+  // on uncheck (that only edits `selected`).
+  const [pool, setPool] = useState<string[]>(() => {
+    const cached = _fetchedModelCache.get(p.name) ?? [];
+    return [...p.models, ...cached.filter((m) => !p.models.includes(m))];
+  });
   const [search, setSearch] = useState("");
   const [manual, setManual] = useState("");
   const fetch = useNetAction();
@@ -533,6 +544,7 @@ function ModelPicker({
               fetch.run<{ models: string[] }>(
                 () => rpc.aiRefreshModels(p.name, p.category),
                 (r) => {
+                  _fetchedModelCache.set(p.name, r.models);
                   mergePool(r.models);
                   return tr("ai.providers.fetched", { n: r.models.length });
                 },
