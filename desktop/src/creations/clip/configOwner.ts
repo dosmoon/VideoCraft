@@ -181,6 +181,15 @@ export class ClipConfigOwner {
     return instance;
   }
 
+  /** Shallow-merge a patch into one component dict (faithful to the base RPC
+   *  layer's creation.update_component). Returns the updated component or null. */
+  updateComponent(componentId: string, patch: Record<string, unknown>): ComponentDict | null {
+    const c = this.components.find((x) => x["id"] === componentId);
+    if (!c) return null;
+    Object.assign(c, patch);
+    return c;
+  }
+
   removeComponent(componentId: string): void {
     this.components = this.components.filter((c) => c["id"] !== componentId);
   }

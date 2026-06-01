@@ -6,7 +6,15 @@
  * tagged reply main forwards (`{ok:true,result}` | `{ok:false,...}`) back into
  * a resolved value or a thrown RpcError, and exposes typed method stubs for
  * the bound RPC surface.
+ *
+ * ADR-0008 (Phase A4): clip config/preset/render is now owned by TS. The
+ * creation.* methods below dispatch `type === "clip"` to `clipBackend` (which
+ * loads the TS ClipConfigOwner + render.ts and persists via window.vc.fs);
+ * news_desk stays on the Python sidecar until A5. This whole dispatch goes away
+ * at A6 when the generic creation.* RPCs are retired.
  */
+
+import { clipBackend } from "@creations/clip/clientBackend.js";
 
 /** Mirrors the Python sidecar's JSON-RPC error (code + message + optional data). */
 export class RpcError extends Error {
@@ -433,7 +441,9 @@ export const rpc = {
     rpcCall<string | null>("material.get_artifact", { type, instance, key }),
 
   loadConfig: (type: string, instance: string) =>
-    rpcCall<Record<string, unknown>>("creation.load_config", { type, instance }),
+    type === "clip"
+      ? clipBackend.loadConfig(instance)
+      : rpcCall<Record<string, unknown>>("creation.load_config", { type, instance }),
   // Bind a material instance to the creation (ADR-0005). A new-arch creation is
   // created unbound; this is how it gets its source. Returns the updated config.
   bindMaterial: (
@@ -442,30 +452,38 @@ export const rpc = {
     materialType: string,
     materialInstance: string,
   ) =>
-    rpcCall<Record<string, unknown>>("creation.bind_material", {
-      type,
-      instance,
-      material_type: materialType,
-      material_instance: materialInstance,
-    }),
+    type === "clip"
+      ? clipBackend.bindMaterial(instance, materialType, materialInstance)
+      : rpcCall<Record<string, unknown>>("creation.bind_material", {
+          type,
+          instance,
+          material_type: materialType,
+          material_instance: materialInstance,
+        }),
   listComponents: (type: string, instance: string) =>
-    rpcCall<Component[]>("creation.list_components", { type, instance }),
+    type === "clip"
+      ? clipBackend.listComponents(instance)
+      : rpcCall<Component[]>("creation.list_components", { type, instance }),
   updateComponent: (
     type: string,
     instance: string,
     componentId: string,
     patch: Record<string, unknown>,
   ) =>
-    rpcCall<Component>("creation.update_component", {
-      type,
-      instance,
-      component_id: componentId,
-      patch,
-    }),
+    type === "clip"
+      ? clipBackend.updateComponent(instance, componentId, patch)
+      : rpcCall<Component>("creation.update_component", {
+          type,
+          instance,
+          component_id: componentId,
+          patch,
+        }),
   // Patch top-level config fields (output geometry, selection, per-candidate
   // overrides via clips_overrides_merge). Returns the updated config dict.
   updateConfig: (type: string, instance: string, patch: Record<string, unknown>) =>
-    rpcCall<Record<string, unknown>>("creation.update_config", { type, instance, patch }),
+    type === "clip"
+      ? clipBackend.updateConfig(instance, patch)
+      : rpcCall<Record<string, unknown>>("creation.update_config", { type, instance, patch }),
   // Per-creation preview inputs; the shape is owned by the matching TS assembler
   // (clip → ClipPreviewData), so it's opaque here.
   previewData: (type: string, instance: string) =>
@@ -474,21 +492,29 @@ export const rpc = {
   // Component list management ([+ Add] menu / remove / reorder). add/remove/move
   // return the updated component list (list order = z-order).
   listAddableComponents: (type: string, instance: string) =>
-    rpcCall<{ kind: string; multi_instance: boolean }[]>("creation.list_addable_components", {
-      type,
-      instance,
-    }),
+    type === "clip"
+      ? clipBackend.listAddableComponents()
+      : rpcCall<{ kind: string; multi_instance: boolean }[]>("creation.list_addable_components", {
+          type,
+          instance,
+        }),
   addComponent: (type: string, instance: string, kind: string) =>
-    rpcCall<Component[]>("creation.add_component", { type, instance, kind }),
+    type === "clip"
+      ? clipBackend.addComponent(instance, kind)
+      : rpcCall<Component[]>("creation.add_component", { type, instance, kind }),
   removeComponent: (type: string, instance: string, componentId: string) =>
-    rpcCall<Component[]>("creation.remove_component", { type, instance, component_id: componentId }),
+    type === "clip"
+      ? clipBackend.removeComponent(instance, componentId)
+      : rpcCall<Component[]>("creation.remove_component", { type, instance, component_id: componentId }),
   moveComponent: (type: string, instance: string, componentId: string, delta: number) =>
-    rpcCall<Component[]>("creation.move_component", {
-      type,
-      instance,
-      component_id: componentId,
-      delta,
-    }),
+    type === "clip"
+      ? clipBackend.moveComponent(instance, componentId, delta)
+      : rpcCall<Component[]>("creation.move_component", {
+          type,
+          instance,
+          component_id: componentId,
+          delta,
+        }),
 
   // Material-artifact imports (provider-defined shape). list_imports reports what
   // the bound material offers; import_resource snapshots one into a component and
@@ -515,7 +541,9 @@ export const rpc = {
   // selected candidates; the renderer encodes each to outputPath, writes it via
   // window.vc.writeFile, then commit_render records it (sidecar JSON + rendered[]).
   planRender: (type: string, instance: string) =>
-    rpcCall<RenderPlan>("creation.plan_render", { type, instance }),
+    type === "clip"
+      ? clipBackend.planRender(instance)
+      : rpcCall<RenderPlan>("creation.plan_render", { type, instance }),
   commitRender: (
     type: string,
     instance: string,
@@ -523,26 +551,38 @@ export const rpc = {
     outIdx: number,
     durationSec: number,
   ) =>
-    rpcCall<RenderedClip[]>("creation.commit_render", {
-      type,
-      instance,
-      src_idx: srcIdx,
-      out_idx: outIdx,
-      duration_sec: durationSec,
-    }),
+    type === "clip"
+      ? clipBackend.commitRender(instance, srcIdx, outIdx, durationSec)
+      : rpcCall<RenderedClip[]>("creation.commit_render", {
+          type,
+          instance,
+          src_idx: srcIdx,
+          out_idx: outIdx,
+          duration_sec: durationSec,
+        }),
   deleteRender: (type: string, instance: string, outIdx: number) =>
-    rpcCall<RenderedClip[]>("creation.delete_render", { type, instance, out_idx: outIdx }),
+    type === "clip"
+      ? clipBackend.deleteRender(instance, outIdx)
+      : rpcCall<RenderedClip[]>("creation.delete_render", { type, instance, out_idx: outIdx }),
 
   // Presets (Style-tab toolbar). apply returns the updated config; save/delete
   // return the updated preset list.
   listPresets: (type: string, instance: string) =>
-    rpcCall<PresetList>("creation.list_presets", { type, instance }),
+    type === "clip"
+      ? clipBackend.listPresets(instance)
+      : rpcCall<PresetList>("creation.list_presets", { type, instance }),
   applyPreset: (type: string, instance: string, name: string) =>
-    rpcCall<Record<string, unknown>>("creation.apply_preset", { type, instance, name }),
+    type === "clip"
+      ? clipBackend.applyPreset(instance, name)
+      : rpcCall<Record<string, unknown>>("creation.apply_preset", { type, instance, name }),
   savePreset: (type: string, instance: string, name: string) =>
-    rpcCall<PresetList>("creation.save_preset", { type, instance, name }),
+    type === "clip"
+      ? clipBackend.savePreset(instance, name)
+      : rpcCall<PresetList>("creation.save_preset", { type, instance, name }),
   deletePreset: (type: string, instance: string, name: string) =>
-    rpcCall<PresetList>("creation.delete_preset", { type, instance, name }),
+    type === "clip"
+      ? clipBackend.deletePreset(instance, name)
+      : rpcCall<PresetList>("creation.delete_preset", { type, instance, name }),
 
   // ── Material side (素材) ───────────────────────────────────────────────────
   // Registered material types for the 素材 [+] menu (descriptions, never the raw

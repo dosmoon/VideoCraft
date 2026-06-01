@@ -36,8 +36,8 @@
 
 - [~] **A4 — ⚠️GATE 接线 clip 工作台**(原子改动,需真机 GUI 对等验)
   - [x] **A4.1 foundation**(commit `916a4ae`):**决策 Option C** —— Phase A 保留 Python `creation.preview_data` 拿候选(`render.ts` 收候选入参,不依赖 hotclipsRepo),故 **A4 零素材 bridge RPC**;`hotclipsRepo`/`MaterialBridge` 推到 Phase B。新增**唯一**通用框架 RPC `project.creation_instance_dir`(plugin-agnostic,ADR-0004 合规)+ client.ts + pytest。
-  - [ ] **A4.2 原子重写工作台**(GUI-gated,**全 6 文件一次切**避免读写来源不一致):`useClipPreview` 改用 TS owner 读 config;`ClipWorkbench`(组件列表/updateComponent)、`StyleTab`(add/remove/move/updateConfig/presets)、`ClipsTab`(selected)、`ClipDetailPanel`(overrides)、`ExportTab`(plan/commit/delete → `render.ts`,候选来自 previewData)全部改走本地 owner + `render.ts`;保留 `previewData`/`getArtifact`。
-  - [ ] 真机:clip 端到端(样式编辑/候选选择/导出 mp4 + sidecar + publish.md + index.md)与现状行为一致。
+  - [x] **A4.2 代码已落**(commit 见下;**比原计划低风险**):没有重写 6 个 .tsx,而是**在 `client.ts` 按 `type==="clip"` 分发到 TS owner 后端**(`creations/clip/clientBackend.ts`)。tabs **零改动**(字节不变),只是 config/preset/render 不再走 Python sidecar 而走 `ClipConfigOwner` + `render.ts`,经 `vc.fs` 落盘。news_desk 仍走 Python(A5)。后端**无状态 load-mutate-save**(每次 op 从盘加载→改→存,disk 即真相,无内存缓存一致性问题);候选/源仍来自 Python `creation.preview_data`/`material.get_artifact`(Phase A 桥)。`ClipConfigOwner` 加 `updateComponent`(shallow-merge)。typecheck + 160 vitest + build 全绿。
+  - [ ] **⚠️ 真机 GUI 对等验(待用户)**:启 desktop,clip 工作台逐项验与现状一致——样式编辑(组件增删排序/属性/预设 应用·另存·覆盖·删除/比例·短边·编码·模式 切换/apply-crop-to-all)、候选(勾选/详情覆盖/start-end nudge)、导出(plan→encode→mp4 + sidecar + **publish.md + index.md** + 删除/重渲)。news_desk 不受影响(应仍正常)。
   - **保留 Python**(A6 删):config/presets/component_defs/export/publish；**`preview.py` 留到 B4**(候选解析依赖素材模型)。
 
 - [ ] **A5 — news_desk 同 A2–A4**(+ `imports.ts` 镜像 `news_desk/imports.py`;⚠️GATE 接线同 A4)
