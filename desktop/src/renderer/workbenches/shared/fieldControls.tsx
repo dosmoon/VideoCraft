@@ -4,7 +4,10 @@
  * RPC write per character, and re-syncs when its `value` prop changes.
  */
 
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { HexColorPicker } from "react-colorful";
+
+const HEX6 = /^#[0-9a-fA-F]{6}$/;
 
 export const INPUT_STYLE: CSSProperties = {
   width: "100%",
@@ -43,7 +46,6 @@ export function ColorInput(props: { value: string; disabled: boolean; onCommit: 
   const { value, disabled, onCommit } = props;
   const [v, setV] = useState(value);
   useEffect(() => setV(value), [value]);
-  const isColor = /^#[0-9a-fA-F]{6}$/.test(v);
   return (
     <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
       <input
@@ -54,27 +56,90 @@ export function ColorInput(props: { value: string; disabled: boolean; onCommit: 
         onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
         style={INPUT_STYLE}
       />
-      {/* Native OS color picker — click the swatch to open it; commits on pick. */}
-      <input
-        type="color"
+      <ColorSwatchPicker value={value} disabled={disabled} onCommit={onCommit} />
+    </span>
+  );
+}
+
+/**
+ * Clickable color swatch that opens a react-colorful popover (saturation square
+ * + hue bar + hex field). Electron exposes no native color dialog, and the
+ * Chromium <input type="color"> picker is bare-bones — this is the standard
+ * lightweight in-app picker. Commits on close (popover dismiss) to avoid an RPC
+ * write per drag frame; the swatch shows the live draft while open.
+ */
+export function ColorSwatchPicker(props: { value: string; disabled: boolean; onCommit: (v: string) => void }) {
+  const { value, disabled, onCommit } = props;
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const ref = useRef<HTMLSpanElement>(null);
+
+  // Re-seed the draft from the committed value whenever the popover is closed.
+  useEffect(() => {
+    if (!open) setDraft(value);
+  }, [value, open]);
+
+  const close = () => {
+    setOpen(false);
+    const hex = draft.toUpperCase();
+    if (HEX6.test(hex) && hex !== value) onCommit(hex);
+  };
+
+  // Outside-click closes (and commits). Re-subscribe on draft change so the
+  // handler's closure commits the latest draft.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) close();
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, draft, value]);
+
+  const shown = open && HEX6.test(draft) ? draft : HEX6.test(value) ? value : "#000000";
+  return (
+    <span ref={ref} style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
+      <button
+        type="button"
         disabled={disabled}
-        value={isColor ? v.toLowerCase() : "#000000"}
-        onChange={(e) => {
-          const hex = e.target.value.toUpperCase();
-          setV(hex);
-          if (hex !== value) onCommit(hex);
-        }}
+        title={value}
+        onClick={() => (disabled ? undefined : open ? close() : setOpen(true))}
         style={{
-          width: 22,
+          width: 20,
           height: 18,
           padding: 0,
           border: "1px solid #444",
           borderRadius: 3,
-          background: "transparent",
+          background: shown,
           cursor: disabled ? "default" : "pointer",
-          flex: "0 0 auto",
         }}
       />
+      {open && (
+        <div
+          style={{
+            position: "absolute",
+            zIndex: 100,
+            top: "100%",
+            right: 0,
+            marginTop: 6,
+            padding: 8,
+            background: "#1e1e22",
+            border: "1px solid #444",
+            borderRadius: 8,
+            boxShadow: "0 6px 20px rgba(0,0,0,0.5)",
+          }}
+        >
+          <HexColorPicker color={HEX6.test(draft) ? draft : "#000000"} onChange={(c) => setDraft(c.toUpperCase())} />
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && close()}
+            spellCheck={false}
+            style={{ ...INPUT_STYLE, width: 200, maxWidth: 200, marginTop: 8 }}
+          />
+        </div>
+      )}
     </span>
   );
 }

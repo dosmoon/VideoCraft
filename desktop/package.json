@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "mp4-muxer": "^5.2.2",
-    "mp4box": "^2.3.0"
+    "mp4box": "^2.3.0",
+    "react-colorful": "^5.7.0"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

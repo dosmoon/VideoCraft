@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState } from "react";
+import { ColorSwatchPicker } from "./fieldControls";
 
 const LABEL: React.CSSProperties = { color: "#999", fontSize: 12, flexShrink: 0 };
 const INPUT: React.CSSProperties = {
@@ -135,7 +136,6 @@ export function ColorRow(props: {
 }) {
   const [v, setV] = useState(props.value);
   useEffect(() => setV(props.value), [props.value]);
-  const isColor = /^#[0-9a-fA-F]{6}$/.test(v);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 0" }}>
       <span style={{ ...LABEL, width: props.labelWidth ?? 86 }}>{props.label}</span>
@@ -147,27 +147,7 @@ export function ColorRow(props: {
         onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
         style={{ ...INPUT, maxWidth: 110 }}
       />
-      {/* Native OS color picker — click the swatch to open it; commits on pick. */}
-      <input
-        type="color"
-        disabled={props.disabled}
-        value={isColor ? v.toLowerCase() : "#000000"}
-        onChange={(e) => {
-          const hex = e.target.value.toUpperCase();
-          setV(hex);
-          if (hex !== props.value) props.onCommit(hex);
-        }}
-        style={{
-          width: 22,
-          height: 18,
-          padding: 0,
-          border: "1px solid #444",
-          borderRadius: 3,
-          background: "transparent",
-          cursor: props.disabled ? "default" : "pointer",
-          flexShrink: 0,
-        }}
-      />
+      <ColorSwatchPicker value={props.value} disabled={props.disabled} onCommit={props.onCommit} />
     </div>
   );
 }
