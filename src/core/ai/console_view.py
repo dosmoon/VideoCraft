@@ -242,3 +242,47 @@ def update_provider(provider: str, category: str, patch: dict) -> None:
         router.update_asr_provider(provider, **clean)
     else:  # tts
         router.update_tts_provider(provider, **clean)
+
+
+# ── Network actions (run inside jobs — they block on I/O) ─────────────────────
+
+
+def test_provider(provider: str, model: str | None = None) -> dict:
+    """Send a 1-word probe completion to an LLM provider and report the reply.
+    LLM only (the Tk console disables Test for ASR/TTS — they need sample input).
+    Raises on auth / network failure (→ job failed)."""
+    import core.ai as ai
+
+    reply = ai.complete(
+        "Please reply with the single word OK and nothing else.",
+        provider=provider,
+        model=model or None,
+    )
+    return {"ok": True, "reply": reply.strip()[:200]}
+
+
+def test_aistack(base_url: str) -> dict:
+    """Hit the aistack gateway's /v1/models, bucket by capability, and (on
+    success only) persist the URL + refresh the model cache so the routing tab's
+    aistack model dropdowns fill. Mirrors the Tk 'Test & Refresh' action."""
+    from core.ai.providers import aistack as _aistack
+
+    bare = base_url.rstrip("/")
+    if bare.endswith("/v1"):
+        bare = bare[:-3]
+    pairs = _aistack.list_models_with_capabilities(bare)
+    buckets: dict[str, list[str]] = {"llm": [], "asr": [], "tts": []}
+    for mid, caps in pairs:
+        for cap in caps:
+            if cap in buckets:
+                buckets[cap].append(mid)
+    enabled = router.get_aistack_gateway()["enabled"]
+    router.set_aistack_gateway(base_url, enabled)
+    router.set_aistack_models_cache(buckets)
+    return {"buckets": buckets, "total": sum(len(v) for v in buckets.values())}
+
+
+def refresh_models(provider: str) -> dict:
+    """Fetch the live model list from an LLM provider's API (does not persist —
+    the caller picks + saves via update_provider). LLM only."""
+    return {"models": router.list_models(provider)}

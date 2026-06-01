@@ -7,6 +7,7 @@ does (without touching real key files).
 
 from __future__ import annotations
 
+import time
 from typing import Any, Optional
 
 import core_rpc.methods  # noqa: F401  (registers handlers)
@@ -172,3 +173,56 @@ def test_ai_set_aistack_gateway(ctx, monkeypatch):
         "models_cache": snap["aistack"]["models_cache"],
     }
     call(ctx, "ai.set_aistack_gateway", {"base_url": orig["base_url"], "enabled": orig["enabled"]})
+
+
+# ── Network actions (jobs) — guarded; network monkeypatched, never hit live ───
+
+
+def _wait(predicate, timeout=2.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return False
+
+
+def test_ai_test_provider_job(ctx, emit, monkeypatch):
+    import core.ai as ai
+
+    monkeypatch.setattr(ai, "complete", lambda *a, **k: "OK")
+    jid = call(ctx, "ai.test_provider", {"provider": "Gemini", "category": "llm"})["result"]["job_id"]
+    assert _wait(lambda: emit.of("event.job"))
+    term = emit.of("event.job")[-1]
+    assert term["job_id"] == jid and term["status"] == "succeeded"
+    assert term["result"] == {"ok": True, "reply": "OK"}
+
+
+def test_ai_test_provider_rejects_non_llm(ctx):
+    resp = call(ctx, "ai.test_provider", {"provider": "lemonfox", "category": "asr"})
+    assert "error" in resp  # guarded before any job starts
+
+
+def test_ai_refresh_models_job(ctx, emit, monkeypatch):
+    from core.ai.router import router
+
+    monkeypatch.setattr(router, "list_models", lambda provider: ["a", "b", "c"])
+    call(ctx, "ai.refresh_models", {"provider": "Gemini", "category": "llm"})
+    assert _wait(lambda: emit.of("event.job"))
+    assert emit.of("event.job")[-1]["result"] == {"models": ["a", "b", "c"]}
+
+
+def test_ai_test_aistack_job(ctx, emit, monkeypatch):
+    from core.ai.router import router
+    from core.ai.providers import aistack as _aistack
+
+    monkeypatch.setattr(router, "_persist", lambda: None)
+    monkeypatch.setattr(
+        _aistack, "list_models_with_capabilities", lambda url: [("m-llm", ["llm"]), ("m-asr", ["asr"])]
+    )
+    call(ctx, "ai.test_aistack", {"base_url": "http://127.0.0.1:11500/v1"})
+    assert _wait(lambda: emit.of("event.job"))
+    term = emit.of("event.job")[-1]
+    assert term["status"] == "succeeded"
+    assert term["result"]["total"] == 2
+    assert term["result"]["buckets"]["llm"] == ["m-llm"]

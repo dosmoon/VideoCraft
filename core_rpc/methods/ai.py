@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..protocol import INVALID_PARAMS, RpcError
 from ..registry import Context, rpc_method
 
 
@@ -104,3 +105,54 @@ def update_provider(
 
     console_view.update_provider(provider, category, patch)
     return console_view.snapshot()
+
+
+# ── Network actions (jobs — they block on I/O; consume via runJob) ────────────
+# Each returns {job_id} immediately; the terminal event.job carries the result.
+
+
+@rpc_method("ai.test_provider")
+def test_provider(
+    ctx: Context, provider: str, category: str, model: str | None = None
+) -> dict[str, Any]:
+    """Probe an LLM provider with a 1-word completion (LLM only). Returns a
+    job_id; the terminal event carries {ok, reply} or a failure message."""
+    if category != "llm":
+        raise RpcError(INVALID_PARAMS, "connection test is only supported for LLM providers")
+
+    def work(_job: Any) -> dict[str, Any]:
+        from core.ai import console_view
+
+        return console_view.test_provider(provider, model)
+
+    return {"job_id": ctx.jobs.start("ai.test_provider", work)}
+
+
+@rpc_method("ai.test_aistack")
+def test_aistack(ctx: Context, base_url: str) -> dict[str, Any]:
+    """Test & refresh the aistack gateway (hits /v1/models). On success persists
+    the URL + model cache (so routing dropdowns fill). Returns a job_id; the
+    terminal event carries {buckets, total}."""
+
+    def work(_job: Any) -> dict[str, Any]:
+        from core.ai import console_view
+
+        return console_view.test_aistack(base_url)
+
+    return {"job_id": ctx.jobs.start("ai.test_aistack", work)}
+
+
+@rpc_method("ai.refresh_models")
+def refresh_models(ctx: Context, provider: str, category: str) -> dict[str, Any]:
+    """Fetch an LLM provider's live model list from its API (LLM only). Returns a
+    job_id; the terminal event carries {models} (the caller saves via
+    ai.update_provider)."""
+    if category != "llm":
+        raise RpcError(INVALID_PARAMS, "model refresh is only supported for LLM providers")
+
+    def work(_job: Any) -> dict[str, Any]:
+        from core.ai import console_view
+
+        return console_view.refresh_models(provider)
+
+    return {"job_id": ctx.jobs.start("ai.refresh_models", work)}

@@ -344,5 +344,13 @@
   "ai.settings.timeout_sec": "Timeout (s)",
   "ai.settings.connect_timeout_sec": "Connect timeout (s)",
   "ai.settings.read_timeout_sec": "Read timeout (s)",
-  "ai.settings.max_retries": "Max retries"
+  "ai.settings.max_retries": "Max retries",
+  "ai.test.btn": "Test",
+  "ai.test.running": "Running…",
+  "ai.providers.refresh_models": "Refresh models",
+  "ai.providers.fetched": "Fetched {n} models",
+  "ai.aistack.test_refresh": "Test & refresh",
+  "ai.aistack.models_found": "{n} models found",
+  "ai.aistack.cached": "{n} models cached",
+  "ai.aistack.no_cache": "No cached models — click \"Test & refresh\""
 }

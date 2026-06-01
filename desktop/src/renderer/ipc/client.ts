@@ -295,6 +295,19 @@ export const rpc = {
   // only (server-side); the API key has its own path (aiSetKey).
   aiUpdateProvider: (provider: string, category: AiCategory, patch: Record<string, unknown>) =>
     rpcCall<AiSnapshot>("ai.update_provider", { provider, category, patch }),
+  // Network actions — jobs (consume via runJob). The terminal event carries the
+  // result: test_provider → {ok, reply}; test_aistack → {buckets, total};
+  // refresh_models → {models}.
+  aiTestProvider: (provider: string, category: AiCategory, model?: string) =>
+    rpcCall<{ job_id: string }>("ai.test_provider", {
+      provider,
+      category,
+      ...(model ? { model } : {}),
+    }),
+  aiTestAistack: (baseUrl: string) =>
+    rpcCall<{ job_id: string }>("ai.test_aistack", { base_url: baseUrl }),
+  aiRefreshModels: (provider: string, category: AiCategory) =>
+    rpcCall<{ job_id: string }>("ai.refresh_models", { provider, category }),
 
   recentList: () => rpcCall<ProjectBrief[]>("project.recent_list"),
   openProject: (folder: string) => rpcCall<ProjectBrief>("project.open", { folder }),

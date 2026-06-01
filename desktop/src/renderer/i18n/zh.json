@@ -344,5 +344,13 @@
   "ai.settings.timeout_sec": "超时(秒)",
   "ai.settings.connect_timeout_sec": "连接超时(秒)",
   "ai.settings.read_timeout_sec": "读取超时(秒)",
-  "ai.settings.max_retries": "最大重试"
+  "ai.settings.max_retries": "最大重试",
+  "ai.test.btn": "测试",
+  "ai.test.running": "进行中…",
+  "ai.providers.refresh_models": "刷新模型",
+  "ai.providers.fetched": "拉取到 {n} 个模型",
+  "ai.aistack.test_refresh": "测试并刷新",
+  "ai.aistack.models_found": "发现 {n} 个模型",
+  "ai.aistack.cached": "已缓存 {n} 个模型",
+  "ai.aistack.no_cache": "未缓存模型 — 点「测试并刷新」"
 }

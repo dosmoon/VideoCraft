@@ -21,7 +21,33 @@ import {
   type AiKeyStatus,
   type AiStatsEntry,
 } from "../ipc/client";
+import { runJob } from "../ipc/runJob";
 import { tr } from "../i18n/tr";
+
+// Run a sidecar network job (test / refresh) and surface running + a result line.
+function useNetAction() {
+  const [running, setRunning] = useState(false);
+  const [msg, setMsg] = useState("");
+  const run = useCallback(
+    async <T,>(start: () => Promise<{ job_id: string }>, onOk: (r: T) => string): Promise<T | undefined> => {
+      setRunning(true);
+      setMsg("");
+      try {
+        const h = await runJob<T>(start);
+        const r = await h.promise;
+        setMsg(onOk(r));
+        return r;
+      } catch (e) {
+        setMsg(`✗ ${e instanceof Error ? e.message : String(e)}`);
+        return undefined;
+      } finally {
+        setRunning(false);
+      }
+    },
+    [],
+  );
+  return { running, msg, run };
+}
 
 type TabId = "routing" | "embedded" | "cloud" | "aistack" | "tts" | "stats";
 const TABS: { id: TabId; key: string }[] = [
@@ -309,6 +335,9 @@ function ProvidersTab({
 
 function ProviderRow({ provider: p, apply }: { provider: AiProvider; apply: ApplyFn }) {
   const [open, setOpen] = useState(false);
+  const test = useNetAction();
+  // Test connection is LLM-only (ASR/TTS need sample input) and needs auth.
+  const canTest = p.category === "llm" && p.has_auth;
   return (
     <div style={CARD}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -330,10 +359,29 @@ function ProviderRow({ provider: p, apply }: { provider: AiProvider; apply: Appl
           />
           {tr("ai.providers.enabled")}
         </label>
+        {canTest && (
+          <button
+            onClick={() =>
+              test.run<{ ok: boolean; reply: string }>(
+                () => rpc.aiTestProvider(p.name, p.category),
+                (r) => (r.ok ? `✓ ${r.reply}` : "✗"),
+              )
+            }
+            disabled={test.running}
+            style={BTN}
+          >
+            {test.running ? tr("ai.test.running") : tr("ai.test.btn")}
+          </button>
+        )}
         <button onClick={() => setOpen((o) => !o)} style={BTN}>
           {open ? tr("ai.providers.edit_close") : tr("ai.providers.edit")}
         </button>
       </div>
+      {test.msg && (
+        <div style={{ fontSize: 12, color: test.msg.startsWith("✓") ? "#7fd17f" : "#d98b8b", marginTop: 6 }}>
+          {test.msg}
+        </div>
+      )}
       {open && <ProviderEditor provider={p} apply={apply} onDone={() => setOpen(false)} />}
     </div>
   );
@@ -357,8 +405,11 @@ function ProviderEditor({
   const [settings, setSettings] = useState<Record<string, string>>(
     Object.fromEntries(Object.entries(p.settings).map(([k, v]) => [k, String(v)])),
   );
+  const refresh = useNetAction();
   const showBaseUrl = p.type === "openai_compatible";
   const showModels = p.category === "llm" || p.category === "asr";
+  // Live model fetch is LLM-only and not for ClaudeCode (no remote model endpoint).
+  const canRefreshModels = p.category === "llm" && p.type !== "claude_code";
 
   const save = () => {
     const patch: Record<string, unknown> = {};
@@ -407,6 +458,28 @@ function ProviderEditor({
             placeholder={tr("ai.providers.models_hint")}
             style={{ ...INPUT, flex: 1 }}
           />
+          {canRefreshModels && (
+            <button
+              onClick={() =>
+                refresh.run<{ models: string[] }>(
+                  () => rpc.aiRefreshModels(p.name, p.category),
+                  (r) => {
+                    setModels(r.models.join(", "));
+                    return tr("ai.providers.fetched", { n: r.models.length });
+                  },
+                )
+              }
+              disabled={refresh.running}
+              style={BTN}
+            >
+              {refresh.running ? tr("ai.test.running") : tr("ai.providers.refresh_models")}
+            </button>
+          )}
+        </div>
+      )}
+      {refresh.msg && (
+        <div style={{ fontSize: 11, color: refresh.msg.startsWith("✗") ? "#d98b8b" : "#7fd17f", marginLeft: 104 }}>
+          {refresh.msg}
         </div>
       )}
       {Object.keys(settings).map((k) => (
@@ -435,6 +508,9 @@ function ProviderEditor({
 function AistackTab({ snap, apply }: { snap: AiSnapshot; apply: ApplyFn }) {
   const [url, setUrl] = useState(snap.aistack.base_url);
   useEffect(() => setUrl(snap.aistack.base_url), [snap.aistack.base_url]);
+  const test = useNetAction();
+  const cache = snap.aistack.models_cache;
+  const cached = cache.llm.length + cache.asr.length + cache.tts.length;
   return (
     <div style={CARD}>
       <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>{tr("ai.aistack.title")}</div>
@@ -446,6 +522,20 @@ function AistackTab({ snap, apply }: { snap: AiSnapshot; apply: ApplyFn }) {
           onBlur={() => url !== snap.aistack.base_url && apply(rpc.aiSetAistackGateway(url, snap.aistack.enabled))}
           style={{ ...INPUT, flex: 1 }}
         />
+        <button
+          onClick={() =>
+            test
+              .run<{ total: number }>(
+                () => rpc.aiTestAistack(url),
+                (r) => `✓ ${tr("ai.aistack.models_found", { n: r.total })}`,
+              )
+              .then((r) => r !== undefined && apply(rpc.aiSnapshot()))
+          }
+          disabled={test.running}
+          style={BTN}
+        >
+          {test.running ? tr("ai.test.running") : tr("ai.aistack.test_refresh")}
+        </button>
       </div>
       <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "#ccc" }}>
         <input
@@ -455,7 +545,15 @@ function AistackTab({ snap, apply }: { snap: AiSnapshot; apply: ApplyFn }) {
         />
         {tr("ai.aistack.enable")}
       </label>
-      <p style={{ fontSize: 11, color: "#777", marginTop: 8 }}>{tr("ai.aistack.test_deferred")}</p>
+      {test.msg ? (
+        <div style={{ fontSize: 12, color: test.msg.startsWith("✓") ? "#7fd17f" : "#d98b8b", marginTop: 8 }}>
+          {test.msg}
+        </div>
+      ) : (
+        <p style={{ fontSize: 11, color: "#777", marginTop: 8 }}>
+          {cached > 0 ? tr("ai.aistack.cached", { n: cached }) : tr("ai.aistack.no_cache")}
+        </p>
+      )}
     </div>
   );
 }
