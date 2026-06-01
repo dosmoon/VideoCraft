@@ -96,9 +96,10 @@ dogfood 抓出 news_desk 在新架构导出时 **publish.md 机制丢失**。根
 
 - **恢复**:① 纯模板 `creations/news_desk/publish.py`(从 dist 冻结版 `render_news_desk_publish` 捞回,纯函数、与 clip 的 publish.py 同位;import `core.markdown_fmt.t`);② `export.py` `commit_render` 末尾 best-effort 调 `_write_publish_md`(数据全从实例状态 + 绑定素材 `context.json` 取,ADR-0003 快照原则;**语言跟源不跟 UI** [[project_publish_sidecar]]——subtitle.is_chinese→zh/en,无字幕回退 `project.meta.language.source`);③ `delete_render` 连 publish.md 一并清。renderer **零改动**(commit_render 本就在 `exportTimelineToMp4 → vc:writeFile → commit_render` 末尾被调)。
 - **仍 deferred**(Tk 时代两个 default-off opt-in):transcript.md + 按章节切 mp4(后者是 publish 侧 ffmpeg stream-copy,非 GPU 渲染)。Tk 的导出选项对话框(publish/transcript/chapter_videos 三勾)也没还原——publish.md 按 Tk default(恒开)生成。
-- **验证**:`tests/core_rpc/test_creation_news_desk.py` +3 测(commit 写 publish.md+内容断言 / 无 context 降级仍写 / delete 清 publish.md),全过;import smoke 干净。**2 个 baseline stale 失败**(`test_add_component_appends_and_persists` 断言旧 `scale_pct`、`test_added_subtitle_...` 断言整数 `block_margin_pct`)是**续 35 归一化漏更新的测试**,与本任务无关(`git stash` 验过 clean HEAD 也失败)。
-- **⚠️ clip 同病**:新架构 clip `export.py` `commit_render` 也没写 publish.md/index.md(只 Tk `clip_tool.py` 写)——clip 现在 Tk/新架构双跑,Tk 退役(P2)前不阻塞,但退役时要把 `render_clip_publish`/`render_clip_index` 接进 clip 的 commit_render(注意 index.md 需全 sidecar,commit_render 每候选调一次)。
-- **欠**:真机导出一次确认 publish.md 落盘(commit_render 本体已被单测覆盖,真机只是确认渲染流程真能走到它)。
+- **clip 同病一并修**(commit 2):新架构 clip `export.py` `commit_render` 也只写了 JSON sidecar、丢了 `clip_NNN[_hook].md`(X/TikTok caption 复制)+ `index.md`(全切片总览表)——只 Tk `clip_tool.py` 在写。接 `render_clip_publish`/`render_clip_index`/`collect_clip_sidecars` 进 clip 的 `commit_render`(每候选写自己的 .md + rescan 全 sidecar 重建 index.md)+ `delete_render` 删后重建 index.md(stale-cleanup 的 keep set 早含 `.md`,本就预留)。
+- **顺手修 2 个 stale 测试**(commit 2):`test_add_component_appends_and_persists`(`scale_pct`→`image_scale==0.15`)、`test_added_subtitle_...`(`block_margin_pct` 整数 9→分数 0.09)——续 35 归一化漏更新,与 publish 无关但同文件,一并对齐。
+- **验证**:news_desk +3 测、clip +2 测(commit 写 .md/index + 内容断言、delete 重建 index)全过;**`tests/core_rpc/` 全套 146 测全绿**(原 2 个 stale 失败已消)。
+- **欠**:真机各导出一次确认 publish.md / clip_NNN.md+index.md 落盘(commit_render 本体已被单测覆盖,真机只是确认渲染流程真能走到它)。
 
 ---
 

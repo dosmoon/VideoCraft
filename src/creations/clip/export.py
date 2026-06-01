@@ -18,6 +18,7 @@ Faithful to clip_tool.py's Export tab: _clip_basename / _sanitize_filename_part
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from datetime import datetime, timezone
@@ -25,6 +26,8 @@ from typing import Any, Optional
 
 from creations.clip.candidates import HotclipsRepo
 from creations.clip.config import ClipInstanceConfig
+
+logger = logging.getLogger(__name__)
 
 _TS_RE = re.compile(r"^(?:(\d{1,2}):)?(\d{1,2}):(\d{2})(?:\.(\d+))?$")
 
@@ -151,6 +154,45 @@ def _resolve(project, instance: str):
     return cfg, inst_dir, lang, candidates
 
 
+# ── publish docs (faithful to Tk clip_tool._write_publish_sidecar) ───────────
+
+def _publish_meta(project) -> tuple[Optional[str], str]:
+    """(project_title, lang_iso) for the publish docs. Content language follows
+    the SOURCE, not the UI ([[project_publish_sidecar]])."""
+    try:
+        return project.meta.source.title, (project.meta.language.source or "zh")
+    except AttributeError:
+        return None, "zh"
+
+
+def _rebuild_clip_index(project, instance: str, inst_dir: str) -> None:
+    """Rewrite the instance index.md by rescanning every clip_*.json, so
+    deleted / re-rendered clips stay in sync without bespoke state."""
+    from creations.clip.publish import collect_clip_sidecars, render_clip_index
+    project_title, lang_iso = _publish_meta(project)
+    index_md = render_clip_index(
+        project_title=project_title,
+        instance_name=instance,
+        sidecars=collect_clip_sidecars(inst_dir),
+        rendered_at=datetime.now().strftime("%Y-%m-%d %H:%M"),
+        lang_iso=lang_iso,
+    )
+    with open(os.path.join(inst_dir, "index.md"), "w", encoding="utf-8", newline="\n") as f:
+        f.write(index_md)
+
+
+def _write_clip_publish(project, instance: str, inst_dir: str, base: str,
+                        sidecar: dict) -> None:
+    """Per-clip clip_NNN[_hook].md (the X / TikTok caption copy) + a rebuilt
+    instance index.md. The mp4 + JSON are already on disk; this is nice-to-have."""
+    from creations.clip.publish import render_clip_publish
+    project_title, lang_iso = _publish_meta(project)
+    md = render_clip_publish(project_title=project_title, sidecar=sidecar, lang_iso=lang_iso)
+    with open(os.path.join(inst_dir, base + ".md"), "w", encoding="utf-8", newline="\n") as f:
+        f.write(md)
+    _rebuild_clip_index(project, instance, inst_dir)
+
+
 # ── provider API ─────────────────────────────────────────────────────────────
 
 def plan_render(project, instance: str) -> dict[str, Any]:
@@ -239,6 +281,13 @@ def commit_render(project, instance: str, src_idx: int, out_idx: int,
     })
     cfg.rendered = rendered
     cfg.save(os.path.join(inst_dir, "config.json"))
+
+    # Publish docs — best-effort, never blocks the render. [[project_publish_sidecar]]
+    try:
+        _write_clip_publish(project, instance, inst_dir, base, sidecar)
+    except Exception as e:  # noqa: BLE001 — publish docs are nice-to-have
+        logger.warning(f"clip publish.md write skipped: {e}")
+
     return rendered
 
 
@@ -254,4 +303,12 @@ def delete_render(project, instance: str, out_idx: int) -> list[dict]:
     cfg.rendered = [r for r in cfg.rendered
                     if int(r.get("output_index") or -1) != out_idx]
     cfg.save(os.path.join(inst_dir, "config.json"))
+
+    # Rebuild index.md so the deleted clip drops out (per-clip .md was removed
+    # above via _existing_clip_files). Best-effort.
+    try:
+        _rebuild_clip_index(project, instance, inst_dir)
+    except Exception as e:  # noqa: BLE001 — index.md is nice-to-have
+        logger.warning(f"clip index.md rebuild skipped: {e}")
+
     return cfg.rendered

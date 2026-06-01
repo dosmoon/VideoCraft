@@ -79,7 +79,7 @@ def test_add_component_appends_and_persists(ctx, project_with_news_desk, emit):
     )["result"]
     added = comps[-1]
     assert added["kind"] == "image_watermark"
-    assert added["scale_pct"] == 15  # canonical default shape (int percent)
+    assert added["image_scale"] == 0.15  # canonical fraction shape (cont.35 normalization)
     assert ("event.creation.changed", {"type": "news_desk", "instance": "news"}) in emit.events
     # Persisted on disk.
     path = os.path.join(
@@ -111,8 +111,8 @@ def test_added_subtitle_has_canonical_fraction_shape(ctx, project_with_news_desk
     comp = comps[-1]
     assert comp["fontsize_pct"] == 0.026
     assert comp["stroke_pct"] == 0.002
-    assert comp["block_margin_pct"] == 9   # int kept (TS normalises /100)
-    assert "fontsize" not in comp          # no absolute-px field
+    assert comp["block_margin_pct"] == 0.09  # fraction of target_h (cont.35 normalization)
+    assert "fontsize" not in comp            # no absolute-px field
 
 
 def test_update_component_merges_patch(ctx, project_with_news_desk):

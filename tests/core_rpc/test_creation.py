@@ -476,6 +476,41 @@ def test_delete_render_unlinks_and_drops(ctx, project_with_bound_clip):
     assert not os.path.exists(os.path.join(inst_dir, "clip_001_H1.json"))
 
 
+# ── publish docs (regression: clip's new-arch export also dropped them) ───────
+
+def test_commit_render_writes_publish_docs(ctx, project_with_bound_clip):
+    """commit_render writes the per-clip clip_NNN[_hook].md caption copy and an
+    instance index.md. Regression guard: clip's new-arch export emitted only the
+    JSON sidecar; the Tk clip_tool wrote the .md docs, so the new shell lost them.
+    """
+    _open(ctx, project_with_bound_clip)
+    call(ctx, "creation.commit_render",
+         {"type": "clip", "instance": "clip-1", "src_idx": 1, "out_idx": 1, "duration_sec": 20.0})
+
+    inst_dir = project_with_bound_clip.creation_instance_dir("clip", "clip-1")
+    md_path = os.path.join(inst_dir, "clip_001_H1.md")  # hook in basename
+    assert os.path.isfile(md_path)
+    assert "H1" in open(md_path, encoding="utf-8").read()  # hook section
+    index = os.path.join(inst_dir, "index.md")
+    assert os.path.isfile(index)
+    assert "clip_001_H1.mp4" in open(index, encoding="utf-8").read()  # listed in table
+
+
+def test_delete_render_rebuilds_index(ctx, project_with_bound_clip):
+    """Deleting a clip removes its per-clip .md (via _existing_clip_files) and
+    rebuilds index.md so the dropped clip no longer appears."""
+    _open(ctx, project_with_bound_clip)
+    inst_dir = project_with_bound_clip.creation_instance_dir("clip", "clip-1")
+    call(ctx, "creation.commit_render",
+         {"type": "clip", "instance": "clip-1", "src_idx": 1, "out_idx": 1, "duration_sec": 20.0})
+    assert os.path.isfile(os.path.join(inst_dir, "clip_001_H1.md"))
+
+    call(ctx, "creation.delete_render", {"type": "clip", "instance": "clip-1", "out_idx": 1})
+    assert not os.path.exists(os.path.join(inst_dir, "clip_001_H1.md"))
+    index = open(os.path.join(inst_dir, "index.md"), encoding="utf-8").read()
+    assert "clip_001_H1.mp4" not in index  # rebuilt without the deleted clip
+
+
 def test_preview_data_no_provider(ctx, project_with_clip):
     _open(ctx, project_with_clip)
     resp = call(ctx, "creation.preview_data", {"type": "news_video", "instance": "x"})
