@@ -9,6 +9,8 @@
 
 ## ★ 实现进度 / Implementation Status(2026-05-31,新会话从这读起)
 
+> **🚩 2026-06-01 架构转向(权威,先读下方「架构转向」节):三个本体(clip / news_desk 创作 + news_video 素材)收敛为纯 TS 插件;Python 退成 plugin-agnostic 能力网关。** 这 supersede 本文档里"Python 留 per-plugin 业务面 + provider dispatch"的旧口径(ADR-0004 的 provider 部分退役)。下面凡标 ~~删除线/⛔已废口径~~ 的段落即被它取代。**实施前提 = 先完成 P2 Tk 退役**(clip Tk 仍依赖 `clip/config.py` 等)。
+>
 > **clip + news_desk 两个创作工作台均已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现并真机验过**(均含导出渲染;news_desk 含 preset + 素材绑定 + 详情列表 + 章节属性编辑;Tk news_desk 已退役)。本节是后续工作的**接力入口**;实现细节集中在此(task.md 只保留接力指针 + 逐次进展「续 N」,不堆架构细节)。下面"实际实现"凡与本文档正文不同的,以本节为准(正文写于迁移启动期,部分已被实现推翻——另见 §0.5)。
 >
 > **✅ 素材(material)侧已迁新架构(2026-05-31,M0~M6 完整,见本节末「素材侧」)。** 新架构里现在能从零造出可用 news_video 素材(建实例 → 导源视频本地/yt-dlp → ASR/翻译/章节分析 job → 编辑 15 字段新闻背景 + AI 填充)。clip + news_desk + 素材三大本体均已迁 + renderer i18n(双语热切换)已实装;Tk 仍 ship clip 工作台 + 素材 sidebar(待退役)。**剩余工作有序计划见本节末「剩余工作计划」**(P0 真机验 → P1 框架服务/AI console → P2 Tk 退役 → P3 打包 → P4+ 打磨)。
@@ -16,6 +18,40 @@
 > **✅ 统一组件编辑器(引擎独占 FieldSpec 元数据)已实装(2026-06-01,见下「统一组件编辑器」节 + ADR-0007)。** 落地 §4.5 的编辑 UI ①:clip+news_desk 共用一个元数据驱动 `<ComponentEditor>`,全组件(水印/字幕/卡片/chapter 嵌套)迁完,news_desk wire 单位归一,颜色控件升级 Sketch+吸管。`PropertyPanel`/`ImageWatermarkProperties`/`ChapterProperties` 已删。**当前唯一阻塞收口 = 真机肉眼验**(编辑控件 + 各工作台预览 + i18n 热切换 + AI console/模型/环境 P1 的 headless 盲区),验完即可进 P2 Tk 退役。
 >
 > 已提交基线:见 `git log`(clip 工作台系列 commit,最新含导出/预设/双语)。
+
+### 🚩 架构转向(2026-06-01):插件全 TS,Python = 能力网关 —— 权威,预定 ADR-0008
+
+> **问题**:迁移把三个本体(clip / news_desk 创作 + news_video 素材)做成了**双语插件**——每个横跨 Electron renderer(TS,≈1900 行/插件) 和 Python sidecar(per-plugin 业务面 ≈1200 行/插件),读懂一个插件要翻两种语言。**长期跨 Python+TS 的功能模块不可维护**(用户结论 2026-06-01)。这一节取代下面各「Python 业务面」节、§2-3 的 provider 口径、§0.5 的"Python 留 project/material/analysis/AI"口径。
+
+**目标**:三个插件变成**纯 Electron/TS、零插件专属 Python**。Python 退成 **plugin-agnostic 能力网关**(按文件路径+参数调用的通用 job)+ 保留 *框架目录生命周期* + *管理 Python 自身运行时* 的服务(AI console / models / env / gpu,不动)。**Python 不再认识 clip/news_desk/news_video 是什么。**
+
+**为什么能做**:探查证实 per-plugin 的 Python 几乎全是纯 JSON/dict/markdown 逻辑、**零重依赖**(config 所有者 / presets / component_defs / preview / export / import / publish);TS 侧**已有 ~85% 目标**(mapping / assemble / 组件库含默认值 / fieldSpec / 工作台 UI)。插件里唯一真正绑 Python 的是**能力**:ASR(faster-whisper)、翻译·分析·AI填充(LLM)、源获取(yt-dlp)、ffmpeg —— 这些无 JS 等价物,保留为能力网关。
+
+**三项确认决策**:
+1. **能力底线**:ASR/翻译/分析/AI填充/源获取/ffmpeg/字幕质检 留 Python,但改成**按路径**的通用 job。
+2. **文件 I/O → Electron 主进程 Node fs**:所有项目/实例/数据文件读写(config.json / presets / context.json / SRT 快照 / analysis.json / 渲染 mp4)走 Electron main 的 Node fs(扩展现有 `vc:writeFile` / `vc-media://`)。Python 只在能力 job 内部碰文件。
+3. **分阶段**:Phase A = 创作(clip+news_desk)先(~90% 已在 TS、无重能力);Phase B = news_video 素材后(含真正 Python 能力 + 最大工作量)。**实施前提 = P2 Tk 退役已完成**(clip Tk 仍依赖 `clip/config.py`)。
+
+**跨阶段地基(C1–C7)**:
+- **C1 通用路径受限 fs IPC**:`vc:writeFile` 泛化成 `window.vc.fs.{readJson,writeJson,readText,writeText,list,copy,remove,stat}`(handlers `electron/main.ts`、stubs `preload.ts`、类型化 `renderer/ipc/fs.ts`)。`writeJson` 原子(`.tmp`+`rename`、`mkdir -p`、`newline:"\n"`、indent 2)精确复刻 Python `*.save()`。**`assertInProject(absPath)`** 只放行 项目根 + `<userData>/presets`(拒 `..`/盘符逃逸,Windows 大小写不敏感);项目根从 `main.ts` 的 `vc:rpc` handler 嗅探代理过的 `project.open/close` 回复(单一真相源)。
+- **C2 TS 内存 config 所有者** `creations/{clip,news_desk}/configOwner.ts`(共享 `creations/shared/configOwner.ts`):逐字段镜像 Python dataclass(`apply_patch` 字段白名单 + `clips_overrides_merge` None-删 deep-merge、组件 add/remove/move + id 唯一/repair、bindMaterial、addableKinds、rendered[]、preset_name)。住 renderer,工作台按实例生命周期持有,经 `vc.fs.writeJson` 持久化,写串行化。跨进程 `event.creation.changed` 不再需要(TS 独写)。
+- **C3 组件默认值/FieldSpec 已在 TS**(`composition/components/*` + `fieldSpec.ts`)→ 删 `component_defs.py`。
+- **C4 Presets 在 TS**(`{clip,news_desk}/presets.ts`):builtin 懒构造、list/get/upsert/delete、last_used、builtin 保护;store 仍 `<userData>/presets/*.json`。
+- **C5 preview/render/publish/imports 在 TS**:`candidates.py`→`hotclipsRepo.ts`(copy-once 快照)、`export.py`→`render.ts`(`clip_NNN[_hook]` 命名 + override-wins + stale 清理 + rendered[])、`publish.py`+`core/markdown_fmt.py`→`publish.ts`+`shared/markdownFmt.ts`、`news_desk/imports.py`→`imports.ts`。每个 port 取注入式 `fs` 接口供 vitest 用内存 fake。
+- **C6** publish 源语言取自 `project.current().meta`(renderer 已有)。
+- **C7 创作访问素材**:Phase A 期间保留通用 `material.get_artifact/list_subtitle_languages/list_analyses/read_analysis` 作桥;Phase B 后改走 TS `materials/news_video/{paths,model}.ts`,桥 RPC 退役。
+
+**Phase A(clip+news_desk 纯 TS,素材仍 Python,每步 build-green)**:A1 fs 地基 → A2 clip 所有者+presets+组件 → A3 clip preview/render/publish → A4 接线 clip 工作台(换掉所有 `rpc.{loadConfig,updateConfig,update/add/remove/moveComponent,*Preset,bindMaterial,previewData,*Render,*import}`)→ A5 news_desk 同上 → **A6 退役创作 Python**(删 `creations/{clip,news_desk}/{config,presets,component_defs,preview,export,publish,...}.py`、清 `__init__.py` provider 注册、删 `core_rpc/methods/creation.py` 的 14 个 provider-delegating 方法 + `CreationType` provider 字段 + `Session.creation_owner/invalidate_creation`、删 `test_creation*.py`)。创作侧 core_rpc 只剩 `project.{list_creations,list_creation_types,create_creation_instance,rename,delete}_instance`(框架目录操作)。
+
+**Phase B(news_video 纯 TS + 能力网关)**:B1 TS 素材模型(`materials/news_video/{schema,paths,model}.ts` 对 `vc.fs.*`)→ **B2 能力网关** 新建 `core_rpc/methods/capability.py`(路径式 job:`acquire_source/asr/translate/analyze/ai_fill/probe/subtitle_check/subtitle_quick_fix/save_chapters`,复用 `_jobs_util.py` 桥;配套给 `core/subtitle_pipeline.py` 加 `run_asr_paths/run_translate_paths` 消除 line 29-35 `TODO(ADR-0005)` 的 `core/`→`materials.news_video` 越界,`ai_fill.extract` 移进 `core/` 成 dict-in/dict-out)→ B3 接线素材工作台经 `runJob.ts` 调 `capability.*` → B4 创作改走 TS 素材路径(收口 C7)→ **B5 退役素材 Python**(删 `materials/news_video/{model,schema,paths,ai_fill}.py`、去 `instance_factory`、删 `core_rpc/methods/material.py` + `Session.material_model`、删 `test_material.py` 加 `test_capability.py`)。
+
+**Cutover**:Phase A 可独立 ship(素材仍 Python 经桥)。**TS 替代 wire+测好前,绝不删对应 Python 方法**;`vc-media://` 全程不动,`vc.fs.*` 是增量。
+
+**ADR / 文档影响**:本节 = **预定 ADR-0008「插件逻辑入 TS;Python = 能力网关」** 的正文来源(数据模型已在 ADR-0006;0008 固化 渲染引擎 + IPC 拓扑 + 插件语言边界)。0008 **supersede** ADR-0004 的 provider-dispatch 部分 + `design/01-architecture.md`;ADR-0003/0005 保持 Active(快照"拷贝"移 TS,原则不变)。
+
+**验证**:删 `test_creation*.py`/`test_material.py`,新 `test_capability.py` + 新 vitest(configOwner/presets/render/publish/hotclipsRepo/imports + 素材 schema/model/paths,对注入 fs fake,1:1 行为替换);手动 e2e(Phase A 真导出 clip+news_desk → mp4+sidecar+publish.md+index.md;Phase B `capability.asr/ai_fill/acquire_source`)。
+
+> **下面「已实现(代码位置)」起的各节是转向前的现状记录**;凡涉及 per-plugin「Python 业务面」的描述均被本节取代(Phase A/B 落地后删),保留作迁移考古。
 
 ### 已实现(代码位置)
 
@@ -34,7 +70,7 @@
 - 候选 tab `ClipsTab` + `ClipDetailPanel`:列表(行格式/score 着色/☑多选→selected_clip_indices/全选-全不选/计数/点行开详情)+ 详情(per-candidate 裁剪框、start/end ±0.5 微调+clamp、hook/outro/title/tags 覆盖、SRT cue 列表、恢复 AI 文本)。
 - 导出 tab `ExportTab`:状态表 + 批量渲染(plan→encode→writeFile→commit)+ 进度/取消 + 行操作(播放/打开文件夹/重渲/删除/错误详情)。
 
-**Python 业务面**(`src/creations/clip/`,均 headless 无 tkinter):
+**Python 业务面**(`src/creations/clip/`,均 headless 无 tkinter)— ⛔ **被「架构转向」节取代**(Phase A6 删,移成 TS configOwner/render/publish):
 - `config.py ClipInstanceConfig` 单一所有者:`apply_patch`/组件 `add/remove/move_component`(+ load 去重历史冲突 id)/预设 `list/apply/save/delete_preset`/`addable_kinds`。
 - `component_defs.py`(纯,新):addable kinds + default instances —— Tk specs(`components/*`,tkinter 耦合)的 new-arch 双胞胎,Tk 退役时合并。
 - `export.py`(render_provider):`plan_render`(命名 `clip_NNN[_hook]`/out_idx/crop 默认/路径)/`commit_render`(sidecar JSON + stale 清理 + rendered[])/`delete_render`。
@@ -48,7 +84,7 @@
 
 news_desk 与 clip 走同一套契约,正面验证「公共组件库 + provider 模式覆盖多插件」。**关键差异:全源模型**——无候选切片、无 reframe 裁剪、单全源输出。真机逐项验过(画面 + 双语字幕 + 自适应宽度 + 文字/图片水印 + 章节条 + 章节卡 + 音画同步)。
 
-**Python 业务面**(`src/creations/news_desk/`,headless):
+**Python 业务面**(`src/creations/news_desk/`,headless)— ⛔ **被「架构转向」节取代**(Phase A6 删,移成 TS):
 - `config.py NewsDeskInstanceConfig` 单一所有者:`apply_patch`(只 `preset_name`,全源无 reframe 几何)+ `add/remove/move_component`(+ load `_ensure_unique_ids` 修 Tk 时代无/重 id)+ `addable_kinds` + `rendered[]` 字段。
 - `component_defs.py`(纯,新):addable kinds(chapter 单例 + subtitle/text_wm/image_wm 多例)+ default instances。**一处刻意偏离 Tk specs**:subtitle/text_wm 字号/描边发 canonical 分数形(`fontsize_pct`/`stroke_pct`),非 Tk 绝对 px,与已合并的 TS 层对齐;默认值=1080 基线换算。
 - `preview.py`(preview_provider):全源 `mediaRef` + `durationSec`(读 source meta,**不跑 ffprobe**)+ 各 subtitle 组件 srt_path 的快照 SRT 绝对路径(`subtitlePaths`)。**章节不返回**——schedule 已快照进 config。
@@ -81,7 +117,7 @@ news_desk 与 clip 走同一套契约,正面验证「公共组件库 + provider 
 
 **第三个迁入新架构的产品本体**(继 clip + news_desk)。新架构里现在能**从零造出可用的 news_video 素材**:建实例 → 导源视频(本地/yt-dlp)→ ASR/翻译/章节分析(sidecar job)→ 编辑 15 字段新闻背景(+ AI 填充)。**用户决策:忠实照搬 project-level 单源行为**(不修 per-instance 地基;`subtitle_pipeline.run_asr/translate(project)` 仍走 `default_instance`;RPC 带 `instance` 参数前向兼容;`single_instance=True` 让 [+] 菜单「打开已有」不静默建坏 2nd 实例)。**Python 业务一行未重写**——薄 RPC + job 包既有 `NewsVideoModel`/`core.source_acquire`/`subtitle_pipeline`/`chapters_io`。
 
-**Python 业务面/注册表**:
+**Python 业务面/注册表** — ⛔ **被「架构转向」节取代**(Phase B5 删,移成 TS `materials/news_video/{schema,paths,model}.ts` + 路径式能力网关):
 - `src/materials/__init__.py` `MaterialType` 扩 `single_instance`/`suggest_name`/`description_*` + 模块 `suggest_instance_name`(镜像 creations);`news_video/__init__.py` `single_instance=True` + `suggest_name`。
 - `src/materials/news_video/model.py` 加 `write_context_dict`/`write_basic_info_dict`(sidecar 传 dict,base 层零插件名 ADR-0004)。**修了一处 dead-but-broken bug**:`ai_fill_context` 旧代码 `extract(..., progress_cb=...)` 但 `extract` 无该参数 → 必 TypeError;无 Tk 调用方(Tk 直接调 `extract`),改为不转发 progress_cb。
 
@@ -189,6 +225,11 @@ TS:`pnpm typecheck` + `pnpm test`(132,含 ir/timemap/components/clip/news_desk/c
 - clip 工作台退役 → `creations/clip/component_defs` 与 `components/*` Tk specs 合并单一源(news_desk 已退)。
 - 素材 Tk sidebar 退役;`src/ui/` tkinter 工作台/预览大幅瘦身删除。
 
+**P2.5 — 插件全 TS / Python = 能力网关**(权威细节见顶部「🚩 架构转向」节;前提 = P2 已退役 Tk,因 clip Tk 仍依赖 `clip/config.py`):
+- **Phase A**:clip+news_desk 创作的 per-plugin Python(config/presets/component_defs/preview/export/import/publish)全 port 成 TS;新增 `vc.fs.*` 主进程持久化;退役 `core_rpc/methods/creation.py` provider dispatch + `Session.creation_owner`。
+- **Phase B**:news_video 素材模型 port 成 TS(`materials/news_video/{schema,paths,model}.ts`);新建路径式 `core_rpc/methods/capability.py`(asr/translate/analyze/ai_fill/acquire_source/probe/subtitle_check/save_chapters);顺手消除 `core/subtitle_pipeline.py:29-34` 的 `TODO(ADR-0005)` 越界(P4 那条 wart 在此一并解掉)。
+- 产物:三插件零 Python;Python 仅剩框架目录生命周期 + 能力网关 + AI/models/env/gpu 框架服务。
+
 **P3 — 打包 / 分发**(§7.3 待决,全未触及,目前纯 dev 模式无分发产物):
 - sidecar:PyInstaller onedir(推荐)bundle `core_rpc.server` + myenv 依赖。
 - Electron:electron-builder 出 Win 安装包;userData repo-local([[feedback_portable_data]]);Win11 26200 sandbox 兜底已在 `main.ts`。
@@ -204,7 +245,7 @@ TS:`pnpm typecheck` + `pnpm test`(132,含 ir/timemap/components/clip/news_desk/c
 - 转场(crossfade / dip_to_black):IR `Transition` + `resolveFrameAt` 重叠区双 active 已就位,缺 GPU per-layer alpha blend + 创作产出 + UI;用户决定暂不做(当前两形态语义上不需段间转场)。
 - 录播自动剪辑(新创作形态;OTIO 多段装配的真实需求来源,[[project_recorded_autoedit]])——它会反过来驱动转场。
 
-**P6 — 文档治理**:升 **ADR-0008**(数据模型 + 渲染引擎 + IPC 拓扑;固化 foundation/migration 两稿已落决策;supersede `01-architecture.md`)。**注:ADR-0007 已被「组件编辑 UI = FieldSpec 元数据」占用**(2026-06-01 本轮落地),故 foundation 大稿顺延到 0008。
+**P6 — 文档治理**:升 **ADR-0008「插件逻辑入 TS;Python = 能力网关」**(正文来源 = 顶部「🚩 架构转向」节;固化 渲染引擎 + IPC 拓扑 + 插件语言边界;数据模型已在 ADR-0006)。0008 supersede ADR-0004 的 provider-dispatch 部分 + `01-architecture.md`。**注:ADR-0007 已被「组件编辑 UI = FieldSpec 元数据」占用**(2026-06-01);foundation 大稿的数据模型部分已由 ADR-0006 承载,0008 聚焦 拓扑 + 插件边界这次转向。
 
 ---
 
@@ -312,6 +353,8 @@ VideoCraft = Tier1 框架 + **素材模块** + **创作模块** 两条插件轴(
 
 ### 2.2 能力清单(RPC 方法面)
 
+> ⛔ **creation/material 域被「架构转向」节取代**:这些 per-plugin RPC(load_config/update_component/plan_render/preview_data/material.* …)Phase A/B 后退役——创作/素材逻辑移入 TS,持久化走 `vc.fs.*`(Electron 主进程),Python 仅保留 *框架目录操作*(project.* 的 list/create/rename/delete instance)+ *路径式能力网关*(`capability.asr/translate/analyze/ai_fill/acquire_source/...`)。下表的 project/system/ai/models/env 域仍有效;creation/material 域作迁移考古。
+
 按域组织。**每个方法都映射到已存在的 core API**——这张表同时是"迁移时哪些代码被 IPC 包一层"的清单。
 
 #### Project 域(映射 `src/project.py` + `Project` 类)
@@ -375,6 +418,8 @@ VideoCraft = Tier1 框架 + **素材模块** + **创作模块** 两条插件轴(
 > **关键**:`preview.set_timeline()` 现在做的事 = 把 timeline IR 翻译成 `setOverlays/setCues/setExtraWatermarks/setClipMeta` 一串 JS 调用。迁移时:**JSON 翻译逻辑留 Python**(它依赖 `wrap_subtitle_elements` / `wrap_hook_outro` 等引擎纯函数,绝不能在 JS 重抄——见 ADR-0006 不变量 #6);**翻译结果(payload)经 `preview.compile` RPC 一次性返回给 renderer**;renderer 的 canvas 消费这些 payload。`web_preview.py` / `web_preview_host.py` 的 SetParent + AttachThreadInput + stdin 桥 **整体删除**。
 
 ### 2.3 状态所有权:磁盘即真相源(单 app 运行)
+
+> ⛔ **「★ 内存所有者在 sidecar」被「架构转向」节取代**:Tk 退役后只剩 Electron 一个客户端,creation/material 的单一内存所有者**移到 renderer(TS)**,经 `vc.fs.*`(Electron 主进程)独写落盘;Python 不再持创作/素材内存态(`Session.creation_owner/material_model` 退役)。"磁盘即真相源 + 单 app" 的核心原则不变,仅所有者换进程。
 
 **不引入运行时同步/广播层。** VideoCraft 状态全部落盘,任一时刻只运行一个 app(Tk 或 Electron,见 §1 承诺 3)。因此:
 
