@@ -38,8 +38,10 @@ export function ImageWatermarkProperties(props: {
   component: Component;
   disabled: boolean;
   onPatch: (fields: Record<string, unknown>) => void;
+  /** Dropdown-field choices (e.g. position anchors) forwarded to PropertyPanel. */
+  enums?: Record<string, readonly string[]>;
 }) {
-  const { component, disabled, onPatch } = props;
+  const { component, disabled, onPatch, enums } = props;
   const path = typeof component["image_path"] === "string" ? (component["image_path"] as string) : "";
 
   const browse = async () => {
@@ -69,6 +71,7 @@ export function ImageWatermarkProperties(props: {
         component={component}
         disabled={disabled}
         hide={["image_path"]}
+        {...(enums ? { enums } : {})}
         onCommit={(k, v) => onPatch({ [k]: v })}
       />
     </div>

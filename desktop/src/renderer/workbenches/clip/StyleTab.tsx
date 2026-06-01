@@ -44,6 +44,26 @@ function kindLabel(kind: string): string {
 
 const EMPTY_CANDIDATE: HotclipCandidate = { start: "00:00:00.000", end: "00:00:00.000" };
 
+// Per-kind position vocab — an anchor, not free text — so `position` renders as
+// a dropdown. Mirrors the Tk specs' choices verbatim (creations/clip/components:
+// subtitle top/bottom, watermark 4 corners, hook/outro upper/center/lower-third).
+const POSITION_OPTIONS: Record<string, readonly string[]> = {
+  clip_subtitle: ["top", "bottom"],
+  clip_text_watermark: ["top-left", "top-right", "bottom-left", "bottom-right"],
+  clip_image_watermark: ["top-left", "top-right", "bottom-left", "bottom-right"],
+  clip_hook_card: ["upper-third", "center", "lower-third"],
+  clip_outro_card: ["upper-third", "center", "lower-third"],
+};
+
+// Build the dropdown-field map for a component: its position anchors (if any)
+// plus the subtitle language list.
+function propertyEnums(kind: string, subtitleLangs: readonly string[]): Record<string, readonly string[]> {
+  const enums: Record<string, readonly string[]> = {};
+  if (POSITION_OPTIONS[kind]) enums.position = POSITION_OPTIONS[kind];
+  if (kind === "clip_subtitle") enums.language = subtitleLangs;
+  return enums;
+}
+
 // Mirrors style_panel.py::_ASPECTS / _ENCODE_PRESETS.
 const ASPECTS = ["9:16", "1:1", "16:9", "4:5"];
 const ENCODE_PRESETS = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower"];
@@ -634,15 +654,14 @@ export function StyleTab(props: {
               component={selected}
               disabled={savingId === selected.id}
               onPatch={(fields) => onPatch(selected, fields)}
+              enums={propertyEnums(selected.kind, data?.subtitleLangs ?? [])}
             />
           ) : (
             <PropertyPanel
               component={selected}
               disabled={savingId === selected.id}
               onCommit={(k, v) => onPatch(selected, { [k]: v })}
-              {...(selected.kind === "clip_subtitle"
-                ? { enums: { language: data?.subtitleLangs ?? [] } }
-                : {})}
+              enums={propertyEnums(selected.kind, data?.subtitleLangs ?? [])}
             />
           )
         ) : (
