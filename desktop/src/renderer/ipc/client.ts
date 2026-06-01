@@ -15,6 +15,7 @@
  */
 
 import { clipBackend } from "@creations/clip/clientBackend.js";
+import { newsDeskBackend } from "@creations/news_desk/clientBackend.js";
 
 /** Mirrors the Python sidecar's JSON-RPC error (code + message + optional data). */
 export class RpcError extends Error {
@@ -443,7 +444,9 @@ export const rpc = {
   loadConfig: (type: string, instance: string) =>
     type === "clip"
       ? clipBackend.loadConfig(instance)
-      : rpcCall<Record<string, unknown>>("creation.load_config", { type, instance }),
+      : type === "news_desk"
+        ? newsDeskBackend.loadConfig(instance)
+        : rpcCall<Record<string, unknown>>("creation.load_config", { type, instance }),
   // Bind a material instance to the creation (ADR-0005). A new-arch creation is
   // created unbound; this is how it gets its source. Returns the updated config.
   bindMaterial: (
@@ -454,16 +457,20 @@ export const rpc = {
   ) =>
     type === "clip"
       ? clipBackend.bindMaterial(instance, materialType, materialInstance)
-      : rpcCall<Record<string, unknown>>("creation.bind_material", {
-          type,
-          instance,
-          material_type: materialType,
-          material_instance: materialInstance,
-        }),
+      : type === "news_desk"
+        ? newsDeskBackend.bindMaterial(instance, materialType, materialInstance)
+        : rpcCall<Record<string, unknown>>("creation.bind_material", {
+            type,
+            instance,
+            material_type: materialType,
+            material_instance: materialInstance,
+          }),
   listComponents: (type: string, instance: string) =>
     type === "clip"
       ? clipBackend.listComponents(instance)
-      : rpcCall<Component[]>("creation.list_components", { type, instance }),
+      : type === "news_desk"
+        ? newsDeskBackend.listComponents(instance)
+        : rpcCall<Component[]>("creation.list_components", { type, instance }),
   updateComponent: (
     type: string,
     instance: string,
@@ -472,18 +479,22 @@ export const rpc = {
   ) =>
     type === "clip"
       ? clipBackend.updateComponent(instance, componentId, patch)
-      : rpcCall<Component>("creation.update_component", {
-          type,
-          instance,
-          component_id: componentId,
-          patch,
-        }),
+      : type === "news_desk"
+        ? newsDeskBackend.updateComponent(instance, componentId, patch)
+        : rpcCall<Component>("creation.update_component", {
+            type,
+            instance,
+            component_id: componentId,
+            patch,
+          }),
   // Patch top-level config fields (output geometry, selection, per-candidate
   // overrides via clips_overrides_merge). Returns the updated config dict.
   updateConfig: (type: string, instance: string, patch: Record<string, unknown>) =>
     type === "clip"
       ? clipBackend.updateConfig(instance, patch)
-      : rpcCall<Record<string, unknown>>("creation.update_config", { type, instance, patch }),
+      : type === "news_desk"
+        ? newsDeskBackend.updateConfig(instance, patch)
+        : rpcCall<Record<string, unknown>>("creation.update_config", { type, instance, patch }),
   // Per-creation preview inputs; the shape is owned by the matching TS assembler
   // (clip → ClipPreviewData), so it's opaque here.
   previewData: (type: string, instance: string) =>
@@ -494,27 +505,35 @@ export const rpc = {
   listAddableComponents: (type: string, instance: string) =>
     type === "clip"
       ? clipBackend.listAddableComponents()
-      : rpcCall<{ kind: string; multi_instance: boolean }[]>("creation.list_addable_components", {
-          type,
-          instance,
-        }),
+      : type === "news_desk"
+        ? newsDeskBackend.listAddableComponents()
+        : rpcCall<{ kind: string; multi_instance: boolean }[]>("creation.list_addable_components", {
+            type,
+            instance,
+          }),
   addComponent: (type: string, instance: string, kind: string) =>
     type === "clip"
       ? clipBackend.addComponent(instance, kind)
-      : rpcCall<Component[]>("creation.add_component", { type, instance, kind }),
+      : type === "news_desk"
+        ? newsDeskBackend.addComponent(instance, kind)
+        : rpcCall<Component[]>("creation.add_component", { type, instance, kind }),
   removeComponent: (type: string, instance: string, componentId: string) =>
     type === "clip"
       ? clipBackend.removeComponent(instance, componentId)
-      : rpcCall<Component[]>("creation.remove_component", { type, instance, component_id: componentId }),
+      : type === "news_desk"
+        ? newsDeskBackend.removeComponent(instance, componentId)
+        : rpcCall<Component[]>("creation.remove_component", { type, instance, component_id: componentId }),
   moveComponent: (type: string, instance: string, componentId: string, delta: number) =>
     type === "clip"
       ? clipBackend.moveComponent(instance, componentId, delta)
-      : rpcCall<Component[]>("creation.move_component", {
-          type,
-          instance,
-          component_id: componentId,
-          delta,
-        }),
+      : type === "news_desk"
+        ? newsDeskBackend.moveComponent(instance, componentId, delta)
+        : rpcCall<Component[]>("creation.move_component", {
+            type,
+            instance,
+            component_id: componentId,
+            delta,
+          }),
 
   // Material-artifact imports (provider-defined shape). list_imports reports what
   // the bound material offers; import_resource snapshots one into a component and
@@ -543,7 +562,9 @@ export const rpc = {
   planRender: (type: string, instance: string) =>
     type === "clip"
       ? clipBackend.planRender(instance)
-      : rpcCall<RenderPlan>("creation.plan_render", { type, instance }),
+      : type === "news_desk"
+        ? newsDeskBackend.planRender(instance)
+        : rpcCall<RenderPlan>("creation.plan_render", { type, instance }),
   commitRender: (
     type: string,
     instance: string,
@@ -553,36 +574,48 @@ export const rpc = {
   ) =>
     type === "clip"
       ? clipBackend.commitRender(instance, srcIdx, outIdx, durationSec)
-      : rpcCall<RenderedClip[]>("creation.commit_render", {
-          type,
-          instance,
-          src_idx: srcIdx,
-          out_idx: outIdx,
-          duration_sec: durationSec,
-        }),
+      : type === "news_desk"
+        ? newsDeskBackend.commitRender(instance, srcIdx, outIdx, durationSec)
+        : rpcCall<RenderedClip[]>("creation.commit_render", {
+            type,
+            instance,
+            src_idx: srcIdx,
+            out_idx: outIdx,
+            duration_sec: durationSec,
+          }),
   deleteRender: (type: string, instance: string, outIdx: number) =>
     type === "clip"
       ? clipBackend.deleteRender(instance, outIdx)
-      : rpcCall<RenderedClip[]>("creation.delete_render", { type, instance, out_idx: outIdx }),
+      : type === "news_desk"
+        ? newsDeskBackend.deleteRender(instance, outIdx)
+        : rpcCall<RenderedClip[]>("creation.delete_render", { type, instance, out_idx: outIdx }),
 
   // Presets (Style-tab toolbar). apply returns the updated config; save/delete
   // return the updated preset list.
   listPresets: (type: string, instance: string) =>
     type === "clip"
       ? clipBackend.listPresets(instance)
-      : rpcCall<PresetList>("creation.list_presets", { type, instance }),
+      : type === "news_desk"
+        ? newsDeskBackend.listPresets(instance)
+        : rpcCall<PresetList>("creation.list_presets", { type, instance }),
   applyPreset: (type: string, instance: string, name: string) =>
     type === "clip"
       ? clipBackend.applyPreset(instance, name)
-      : rpcCall<Record<string, unknown>>("creation.apply_preset", { type, instance, name }),
+      : type === "news_desk"
+        ? newsDeskBackend.applyPreset(instance, name)
+        : rpcCall<Record<string, unknown>>("creation.apply_preset", { type, instance, name }),
   savePreset: (type: string, instance: string, name: string) =>
     type === "clip"
       ? clipBackend.savePreset(instance, name)
-      : rpcCall<PresetList>("creation.save_preset", { type, instance, name }),
+      : type === "news_desk"
+        ? newsDeskBackend.savePreset(instance, name)
+        : rpcCall<PresetList>("creation.save_preset", { type, instance, name }),
   deletePreset: (type: string, instance: string, name: string) =>
     type === "clip"
       ? clipBackend.deletePreset(instance, name)
-      : rpcCall<PresetList>("creation.delete_preset", { type, instance, name }),
+      : type === "news_desk"
+        ? newsDeskBackend.deletePreset(instance, name)
+        : rpcCall<PresetList>("creation.delete_preset", { type, instance, name }),
 
   // ── Material side (素材) ───────────────────────────────────────────────────
   // Registered material types for the 素材 [+] menu (descriptions, never the raw

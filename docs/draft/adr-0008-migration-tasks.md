@@ -40,7 +40,10 @@
   - [x] **✅ 真机 GUI 对等验通过**(2026-06-01,用户确认"正常"):clip 工作台样式/候选/导出全部与现状一致;news_desk 不受影响。**A4 完成——clip 是第一个端到端迁到纯 TS 路径并验证的插件。**
   - **保留 Python**(A6 删):config/presets/component_defs/export/publish；**`preview.py` 留到 B4**(候选解析依赖素材模型)。
 
-- [ ] **A5 — news_desk 同 A2–A4**(+ `imports.ts` 镜像 `news_desk/imports.py`;⚠️GATE 接线同 A4)
+- [~] **A5 — news_desk 同 A2–A4**(代码已落,待 GUI 验)
+  - [x] port:`creations/news_desk/{componentDefs,presets,configOwner,publish,render,clientBackend}.ts`(config/preset/render 全 TS;presets 含 builtin 模板 + project-content 剥离;render 单全源输出 + publish.md 读 context 经 `material.read_context` 桥 + 章节详情转写经 fs 读 SRT 解析)+ `newsDesk.test.ts`(5 测)。client.ts 加 `type==="news_desk"` 分发。typecheck + 165 vitest + build 全绿。
+  - **保留 Python(Phase A)**:`preview_data`(媒体/SRT)+ **`imports.py`**(import_resource 快照素材 SRT/章节,需素材文件访问 → 跟 clip hotclipsRepo 一样 defer 到 Phase B);故 `imports.ts` 暂不做。
+  - [ ] **⚠️ news_desk 工作台 GUI 对等验(待用户)**:样式(组件/属性/预设 应用·另存·覆盖·删除)、素材绑定、导入(字幕/章节,仍走 Python)、导出(全源 mp4 + output.json + **publish.md** + 删除)。
 
 - [ ] **A6 — ⚠️GATE 退役创作 Python**(前提:P2 Tk clip 退役 + A4/A5 真机验过)
   - [ ] 删 `creations/{clip,news_desk}/{config,presets,component_defs,preview,export,publish,...}.py`
