@@ -24,7 +24,7 @@ function subtitleConfig(over: Partial<NewsDeskSubtitleConfig> = {}): NewsDeskSub
     enabled: true,
     srt_path: "source-subtitles.en.srt",
     position: "bottom",
-    block_margin_pct: 9,
+    block_margin_pct: 0.09,
     fontsize_pct: 0.026,
     color: "#FFFF00",
     is_chinese: true,
@@ -66,8 +66,8 @@ function chapterConfig(over: Partial<NewsDeskChapterConfig> = {}): NewsDeskChapt
 // --- conversions: the int% -> fraction normalisation ----------------------
 
 describe("news_desk conversions onto the shared canonical schema", () => {
-  it("subtitle: integer block_margin_pct becomes a fraction; bg_enabled folds into opacity", () => {
-    const inst = newsDeskSubtitleToInstance(subtitleConfig({ block_margin_pct: 9 }));
+  it("subtitle: block_margin_pct passes through as a fraction; bg_enabled folds into opacity", () => {
+    const inst = newsDeskSubtitleToInstance(subtitleConfig({ block_margin_pct: 0.09 }));
     expect(inst.blockMarginPct).toBeCloseTo(0.09);
     expect(inst.bgOpacity).toBe(55);
     // canonical-only fields news_desk doesn't expose get neutral defaults
@@ -78,21 +78,21 @@ describe("news_desk conversions onto the shared canonical schema", () => {
     expect(off.bgOpacity).toBe(0);
   });
 
-  it("image watermark: scale_pct/100 clamps to [0.02, 0.50]", () => {
+  it("image watermark: image_scale clamps to [0.02, 0.50]; margins pass through", () => {
     const cfg = (scale: number): NewsDeskImageWatermarkConfig => ({
       kind: "image_watermark",
       enabled: true,
       image_path: "logo.png",
-      scale_pct: scale,
-      opacity: 100,
+      image_scale: scale,
+      image_opacity: 100,
       position: "top-right",
-      margin_x_pct: 2,
-      margin_y_pct: 2,
+      margin_x_pct: 0.02,
+      margin_y_pct: 0.02,
     });
-    expect(newsDeskImageWatermarkToInstance(cfg(15)).imageScale).toBeCloseTo(0.15);
-    expect(newsDeskImageWatermarkToInstance(cfg(80)).imageScale).toBe(0.5); // clamped
-    expect(newsDeskImageWatermarkToInstance(cfg(1)).imageScale).toBe(0.02); // clamped
-    expect(newsDeskImageWatermarkToInstance(cfg(15)).marginXPct).toBeCloseTo(0.02);
+    expect(newsDeskImageWatermarkToInstance(cfg(0.15)).imageScale).toBeCloseTo(0.15);
+    expect(newsDeskImageWatermarkToInstance(cfg(0.8)).imageScale).toBe(0.5); // clamped
+    expect(newsDeskImageWatermarkToInstance(cfg(0.01)).imageScale).toBe(0.02); // clamped
+    expect(newsDeskImageWatermarkToInstance(cfg(0.15)).marginXPct).toBeCloseTo(0.02);
   });
 
   it("chapter: schedule + nested style map onto the canonical instance", () => {
@@ -200,11 +200,11 @@ describe("buildNewsDeskTimeline", () => {
     const img = {
       kind: "image_watermark",
       enabled: true,
-      scale_pct: 15,
-      opacity: 100,
+      image_scale: 0.15,
+      image_opacity: 100,
       position: "top-right",
-      margin_x_pct: 2,
-      margin_y_pct: 2,
+      margin_x_pct: 0.02,
+      margin_y_pct: 0.02,
     } as unknown as NewsDeskImageWatermarkConfig; // image_path absent (preset-dropped)
     const timeline = buildNewsDeskTimeline({
       components: [ch, img],
@@ -222,8 +222,8 @@ describe("buildNewsDeskTimeline", () => {
 
   it("image watermark with no image_path maps to an empty path (compile skips it)", () => {
     const inst = newsDeskImageWatermarkToInstance(
-      { kind: "image_watermark", enabled: true, scale_pct: 15, opacity: 100,
-        position: "top-right", margin_x_pct: 2, margin_y_pct: 2,
+      { kind: "image_watermark", enabled: true, image_scale: 0.15, image_opacity: 100,
+        position: "top-right", margin_x_pct: 0.02, margin_y_pct: 0.02,
       } as unknown as NewsDeskImageWatermarkConfig,
     );
     expect(inst.imagePath).toBe("");

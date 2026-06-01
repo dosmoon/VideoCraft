@@ -14,8 +14,32 @@
 import { clip, type Track } from "../ir.js";
 import { packOverlaySegments } from "../assemble.js";
 import type { CompileContext, VideoComponent } from "./contract.js";
+import type { FieldSpec } from "./fieldSpec.js";
 
 export type WatermarkPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+
+// ── Shared edit-UI bits (anchor dropdown + margins) ─────────────────────────
+
+const ANCHOR_OPTIONS = ["top-left", "top-right", "bottom-left", "bottom-right"] as const;
+const ANCHOR_LABEL_KEYS: Record<string, string> = {
+  "top-left": "watermark.anchor.top_left",
+  "top-right": "watermark.anchor.top_right",
+  "bottom-left": "watermark.anchor.bottom_left",
+  "bottom-right": "watermark.anchor.bottom_right",
+};
+
+const positionField: FieldSpec = {
+  key: "position",
+  control: "select",
+  labelKey: "watermark.anchor",
+  options: ANCHOR_OPTIONS,
+  optionLabelKeys: ANCHOR_LABEL_KEYS,
+};
+// Margins are fractions of the frame; step 0.005 (~0.5%), hint-bounded [0, 0.2].
+const marginFields: FieldSpec[] = [
+  { key: "margin_x_pct", control: "number", labelKey: "watermark.margin_x", step: 0.005, min: 0, max: 0.2 },
+  { key: "margin_y_pct", control: "number", labelKey: "watermark.margin_y", step: 0.005, min: 0, max: 0.2 },
+];
 
 // ── Text watermark ─────────────────────────────────────────────────────────
 
@@ -65,6 +89,17 @@ export const textWatermark: VideoComponent<TextWatermarkInstance> = {
   },
 };
 
+/** Edit-UI fields (wire snake keys; both plugins share these post-normalisation). */
+export const textWatermarkFields: readonly FieldSpec[] = [
+  { key: "name", control: "text", labelKey: "watermark.name" },
+  { key: "text", control: "text", labelKey: "watermark.text" },
+  { key: "text_fontsize_pct", control: "number", labelKey: "watermark.fontsize", step: 0.005, min: 0, max: 0.5 },
+  { key: "text_color", control: "color", labelKey: "watermark.color" },
+  { key: "text_opacity", control: "number", labelKey: "watermark.opacity", step: 1, min: 0, max: 100 },
+  positionField,
+  ...marginFields,
+];
+
 // ── Image watermark ──────────────────────────────────────────────────────────
 
 export interface ImageWatermarkInstance {
@@ -109,3 +144,13 @@ export const imageWatermark: VideoComponent<ImageWatermarkInstance> = {
     return [packOverlaySegments([{ startSec: 0, endSec: ctx.durationSec, clip: c }])];
   },
 };
+
+/** Edit-UI fields (wire snake keys; both plugins share these post-normalisation). */
+export const imageWatermarkFields: readonly FieldSpec[] = [
+  { key: "name", control: "text", labelKey: "watermark.name" },
+  { key: "image_path", control: "image", labelKey: "watermark.image_file" },
+  { key: "image_scale", control: "number", labelKey: "watermark.scale", step: 0.01, min: 0.02, max: 0.5 },
+  { key: "image_opacity", control: "number", labelKey: "watermark.opacity", step: 1, min: 0, max: 100 },
+  positionField,
+  ...marginFields,
+];

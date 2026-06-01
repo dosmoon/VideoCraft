@@ -423,5 +423,18 @@
   "watermark.image_file": "Image file",
   "watermark.no_file": "Not selected",
   "watermark.browse": "Browse…",
-  "watermark.clear": "Clear"
+  "watermark.clear": "Clear",
+  "watermark.name": "Name",
+  "watermark.text": "Text",
+  "watermark.fontsize": "Font size",
+  "watermark.color": "Color",
+  "watermark.scale": "Scale",
+  "watermark.opacity": "Opacity",
+  "watermark.anchor": "Anchor",
+  "watermark.margin_x": "X margin",
+  "watermark.margin_y": "Y margin",
+  "watermark.anchor.top_left": "Top-left",
+  "watermark.anchor.top_right": "Top-right",
+  "watermark.anchor.bottom_left": "Bottom-left",
+  "watermark.anchor.bottom_right": "Bottom-right"
 }

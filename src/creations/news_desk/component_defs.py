@@ -6,17 +6,18 @@ The SINGLE source of news_desk's addable-kind list (registration order +
 specs (`creations/news_desk/components/*`) that used to be the parallel twin were
 retired with the Tk workbench — this module absorbed their `_default_instance`.
 
-Shape note — the engine is resolution-independent: every visual size is a
-fraction of target height (the dogfood invariant "所有视觉尺寸量归一化为 pct of
-target_h"). So subtitle/text-watermark font + stroke sizes are emitted as
-CANONICAL fractions (`fontsize_pct`/`stroke_pct`, and `text_fontsize_pct`/
-`text_color`/`text_opacity` for the text watermark — matching the TS layer at
-desktop/src/creations/news_desk/types.ts + mapping.ts). Defaults are the
-1080p-baseline values (28/1080 ≈ 0.026, 2/1080 ≈ 0.002). Fields news_desk keeps
-as integers on purpose (block_margin_pct, bg_opacity, scale_pct, margins,
-chapter strip fontsize) stay integers — the TS mapping normalises those. The
-Python render path never reads these visual fields (the GPU compositor in the
-renderer does); the sidecar just stores/forwards the dicts.
+Shape note — the engine is resolution-independent: every visual size/offset is a
+fraction (of target height/width; the dogfood invariant "所有视觉尺寸量归一化为
+pct of target_h/w"). news_desk now uses the SAME canonical wire shape as clip
+and the TS components (one shared edit-UI + mapping): all `*_pct` are float
+fractions (`fontsize_pct`/`stroke_pct`/`text_fontsize_pct`/`block_margin_pct`/
+`margin_*_pct`), the image watermark uses `image_scale`/`image_opacity` (not the
+old `scale_pct`/`opacity`). Defaults are the 1080p-baseline values (28/1080 ≈
+0.026, 2/1080 ≈ 0.002, 9% margin = 0.09). Only genuinely-integer fields stay
+ints: `bg_opacity`/`text_opacity`/`image_opacity` (0–100) and the chapter strip
+fontsizes (absolute px @ 1080 baseline, scaled at the TS layer). The Python
+render path never reads these visual fields (the GPU compositor in the renderer
+does); the sidecar just stores/forwards the dicts.
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ def _subtitle(_duration: float) -> dict:
         "enabled": True,
         "srt_path": "",
         "position": "bottom",
-        "block_margin_pct": 9,       # int percent of target_h (TS /100)
+        "block_margin_pct": 0.09,    # fraction of target_h (9%)
         "fontsize_pct": 0.026,       # fraction of target_h (28px @ 1080)
         "color": "#FFFF00",
         "is_chinese": True,
@@ -55,8 +56,8 @@ def _text_watermark(_duration: float) -> dict:
         "text_color": "#FFFFFF",
         "text_opacity": 70,          # int 0–100
         "position": "top-right",
-        "margin_x_pct": 2.5,         # int-ish percent (TS /100)
-        "margin_y_pct": 2.5,
+        "margin_x_pct": 0.025,       # fraction of target_w (2.5%)
+        "margin_y_pct": 0.025,       # fraction of target_h
     }
 
 
@@ -66,11 +67,11 @@ def _image_watermark(_duration: float) -> dict:
         "name": "图片水印",
         "enabled": True,
         "image_path": "",
-        "scale_pct": 15,             # int percent (TS /100)
-        "opacity": 100,              # int 0–100
+        "image_scale": 0.15,         # fraction of target_w (15%)
+        "image_opacity": 100,        # int 0–100
         "position": "top-right",
-        "margin_x_pct": 2.5,
-        "margin_y_pct": 2.5,
+        "margin_x_pct": 0.025,       # fraction of target_w
+        "margin_y_pct": 0.025,       # fraction of target_h
     }
 
 

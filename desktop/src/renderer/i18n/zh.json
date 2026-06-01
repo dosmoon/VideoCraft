@@ -423,5 +423,18 @@
   "watermark.image_file": "图片文件",
   "watermark.no_file": "未选择",
   "watermark.browse": "浏览…",
-  "watermark.clear": "清除"
+  "watermark.clear": "清除",
+  "watermark.name": "名称",
+  "watermark.text": "文本",
+  "watermark.fontsize": "字号",
+  "watermark.color": "颜色",
+  "watermark.scale": "缩放",
+  "watermark.opacity": "不透明",
+  "watermark.anchor": "锚点",
+  "watermark.margin_x": "X 边距",
+  "watermark.margin_y": "Y 边距",
+  "watermark.anchor.top_left": "左上",
+  "watermark.anchor.top_right": "右上",
+  "watermark.anchor.bottom_left": "左下",
+  "watermark.anchor.bottom_right": "右下"
 }

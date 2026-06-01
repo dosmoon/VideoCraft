@@ -4,10 +4,12 @@
  * same target components, a different adapter. Together they prove the shared
  * library covers more than one plugin (foundation doc §4.5).
  *
- * news_desk's conventions diverge from canonical and are normalised here,
- * exactly mirroring the legacy compile() conversions:
- *   - block_margin_pct / margin_*_pct / scale_pct: integer percent → fraction.
- *   - margins clamp to [0, 0.20]; image scale clamps to [0.02, 0.50].
+ * news_desk's wire shape is now canonical (float fractions, canonical field
+ * names) — same as clip — so this is a near-pure snake→camel rename. What it
+ * still does:
+ *   - margins clamp to [0, 0.20]; image scale clamps to [0.02, 0.50]. Clamping
+ *     lives ONLY here (ADR-0006 one normalisation site): presets / AI imports
+ *     bypass the editor, so the editor's FieldSpec min/max are mere UX hints.
  *   - bg_enabled flag folds into bg_opacity (disabled → 0).
  *   - canonical-only fields news_desk doesn't expose (bold, bgPaddingXPct,
  *     subtitle language) take neutral defaults.
@@ -43,7 +45,7 @@ export function newsDeskSubtitleToInstance(c: NewsDeskSubtitleConfig): SubtitleI
     strokeColor: c.stroke_color,
     strokePct: c.stroke_pct,
     position: c.position,
-    blockMarginPct: c.block_margin_pct / 100,
+    blockMarginPct: c.block_margin_pct,
   };
 }
 
@@ -53,12 +55,12 @@ export function newsDeskTextWatermarkToInstance(
   return {
     enabled: c.enabled,
     text: c.text ?? "", // compile does text.trim(); guard against an absent value
-    textFontsizePct: c.fontsize_pct,
-    textColor: c.color,
-    textOpacity: clampOpacity(c.opacity),
+    textFontsizePct: c.text_fontsize_pct,
+    textColor: c.text_color,
+    textOpacity: clampOpacity(c.text_opacity),
     position: c.position,
-    marginXPct: clamp(c.margin_x_pct / 100, 0, 0.2),
-    marginYPct: clamp(c.margin_y_pct / 100, 0, 0.2),
+    marginXPct: clamp(c.margin_x_pct, 0, 0.2),
+    marginYPct: clamp(c.margin_y_pct, 0, 0.2),
   };
 }
 
@@ -70,11 +72,11 @@ export function newsDeskImageWatermarkToInstance(
     // A preset drops image_path (per-project content); the compile treats "" as
     // "no image" but `undefined.trim()` would throw — default it.
     imagePath: c.image_path ?? "",
-    imageScale: clamp(c.scale_pct / 100, 0.02, 0.5),
-    imageOpacity: clampOpacity(c.opacity),
+    imageScale: clamp(c.image_scale, 0.02, 0.5),
+    imageOpacity: clampOpacity(c.image_opacity),
     position: c.position,
-    marginXPct: clamp(c.margin_x_pct / 100, 0, 0.2),
-    marginYPct: clamp(c.margin_y_pct / 100, 0, 0.2),
+    marginXPct: clamp(c.margin_x_pct, 0, 0.2),
+    marginYPct: clamp(c.margin_y_pct, 0, 0.2),
   };
 }
 

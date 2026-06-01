@@ -2,10 +2,11 @@
  * News-desk creation — wire shapes.
  *
  * TypeScript mirrors of the real Python config the news_desk plugin produces
- * (creations/news_desk/components/*.py default_instance + config.py). These
- * deliberately differ from clip's shapes — different field names and unit
- * conventions (int% vs float fraction, bg_enabled flag) — which is exactly what
- * the per-plugin mapping layer absorbs so the *shared* components stay shared.
+ * (creations/news_desk/component_defs.py + config.py). Post-normalisation these
+ * use the SAME canonical wire shape as clip (float-fraction *_pct, canonical
+ * field names), so the one shared FieldSpec/ComponentEditor + mapping serves
+ * both plugins. The only news_desk-specific wire fields left are `bg_enabled`
+ * (subtitle) and the chapter nesting; the mapping absorbs those.
  */
 
 export type SubtitlePosition = "top" | "bottom";
@@ -17,7 +18,7 @@ export interface NewsDeskSubtitleConfig {
   /** Snapshot-relative SRT path; the cue source key. */
   srt_path: string;
   position: SubtitlePosition;
-  block_margin_pct: number; // INTEGER percent (e.g. 9), not a fraction
+  block_margin_pct: number; // float fraction of target_h (e.g. 0.09)
   fontsize_pct: number; // float fraction
   color: string;
   is_chinese: boolean;
@@ -32,23 +33,23 @@ export interface NewsDeskTextWatermarkConfig {
   kind: "text_watermark";
   enabled: boolean;
   text: string;
-  fontsize_pct: number; // float fraction (note: not text_fontsize_pct)
-  color: string;
-  opacity: number; // 0..100 (note: not text_opacity)
+  text_fontsize_pct: number; // float fraction of target_h
+  text_color: string;
+  text_opacity: number; // 0..100
   position: WatermarkCorner;
-  margin_x_pct: number; // INTEGER percent
-  margin_y_pct: number; // INTEGER percent
+  margin_x_pct: number; // float fraction of target_w
+  margin_y_pct: number; // float fraction of target_h
 }
 
 export interface NewsDeskImageWatermarkConfig {
   kind: "image_watermark";
   enabled: boolean;
   image_path: string;
-  scale_pct: number; // INTEGER percent (note: not image_scale)
-  opacity: number; // 0..100
+  image_scale: number; // float fraction of target_w
+  image_opacity: number; // 0..100
   position: WatermarkCorner;
-  margin_x_pct: number; // INTEGER percent
-  margin_y_pct: number; // INTEGER percent
+  margin_x_pct: number; // float fraction of target_w
+  margin_y_pct: number; // float fraction of target_h
 }
 
 export interface NewsDeskChapterRow {

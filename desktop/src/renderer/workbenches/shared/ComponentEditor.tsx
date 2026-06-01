@@ -1,0 +1,188 @@
+/**
+ * ComponentEditor — the metadata-driven property panel (contract.ts ① realised).
+ * Reads a component's engine-owned FieldSpec[] (composition/components/fieldSpec)
+ * and renders one control per field, committing through the same
+ * onPatch → creation.update_component path the workbenches already use. One
+ * editor serves every plugin: after the wire normalisation, clip + news_desk
+ * share one wire shape per component, so one FieldSpec list drives both.
+ *
+ * Labels are always tr(spec.labelKey) — never the raw internal key.
+ */
+
+import { tr } from "../../i18n/tr";
+import type { Component } from "../../ipc/client";
+import { fieldsForKind, type FieldSpec } from "@composition/components/fieldSpec.js";
+import { INPUT_STYLE, NumberInput, TextInput } from "./fieldControls";
+
+/** Read the value a FieldSpec addresses (flat key or nested path). */
+function readValue(component: Record<string, unknown>, spec: FieldSpec): unknown {
+  if (!spec.path) return component[spec.key];
+  let cur: unknown = component;
+  for (const seg of spec.path) {
+    if (cur == null || typeof cur !== "object") return undefined;
+    cur = (cur as Record<string, unknown>)[seg];
+  }
+  return cur;
+}
+
+/** Whether the value a FieldSpec addresses exists on this instance. */
+function fieldPresent(component: Record<string, unknown>, spec: FieldSpec): boolean {
+  if (!spec.path) return spec.key in component;
+  let cur: unknown = component;
+  for (const seg of spec.path) {
+    if (cur == null || typeof cur !== "object" || !(seg in (cur as object))) return false;
+    cur = (cur as Record<string, unknown>)[seg];
+  }
+  return true;
+}
+
+/**
+ * Build the patch for a nested field. update_component shallow-merges, so we
+ * re-send the WHOLE top-level sub-object (path[0]) with the leaf replaced,
+ * cloning each level so siblings survive. Flat fields just patch their key.
+ */
+function buildPatch(component: Record<string, unknown>, spec: FieldSpec, value: unknown): Record<string, unknown> {
+  if (!spec.path) return { [spec.key]: value };
+  const [head, ...rest] = spec.path;
+  const root = { ...((component[head!] as Record<string, unknown> | undefined) ?? {}) };
+  let cursor = root;
+  for (let i = 0; i < rest.length - 1; i++) {
+    const seg = rest[i]!;
+    cursor[seg] = { ...((cursor[seg] as Record<string, unknown> | undefined) ?? {}) };
+    cursor = cursor[seg] as Record<string, unknown>;
+  }
+  cursor[rest[rest.length - 1]!] = value;
+  return { [head!]: root };
+}
+
+export function ComponentEditor(props: {
+  component: Component;
+  disabled: boolean;
+  onPatch: (fields: Record<string, unknown>) => void;
+}) {
+  const { component, disabled, onPatch } = props;
+  const specs = (fieldsForKind(component.kind) ?? []).filter((s) => {
+    if (!fieldPresent(component, s)) return false;
+    if (s.visibleWhen && !s.visibleWhen(component)) return false;
+    return true;
+  });
+  return (
+    <div
+      style={{
+        padding: "4px 8px 10px 4px",
+        display: "grid",
+        gridTemplateColumns: "auto 1fr",
+        gap: "6px 10px",
+        alignItems: "center",
+      }}
+    >
+      {specs.length === 0 && <span style={{ color: "#666", fontSize: 12 }}>{tr("clip.property.no_fields")}</span>}
+      {specs.map((spec) => (
+        <FieldControlRow
+          key={spec.path ? spec.path.join(".") : spec.key}
+          spec={spec}
+          value={readValue(component, spec)}
+          disabled={disabled}
+          onCommit={(v) => onPatch(buildPatch(component, spec, v))}
+        />
+      ))}
+    </div>
+  );
+}
+
+function FieldControlRow(props: {
+  spec: FieldSpec;
+  value: unknown;
+  disabled: boolean;
+  onCommit: (value: unknown) => void;
+}) {
+  const { spec, value, disabled, onCommit } = props;
+  const label = <label style={{ color: "#999", fontSize: 12 }}>{tr(spec.labelKey)}</label>;
+
+  switch (spec.control) {
+    case "checkbox":
+      return (
+        <>
+          {label}
+          <input
+            type="checkbox"
+            checked={Boolean(value)}
+            disabled={disabled}
+            onChange={(e) => onCommit(e.target.checked)}
+          />
+        </>
+      );
+    case "number":
+      return (
+        <>
+          {label}
+          <NumberInput
+            value={typeof value === "number" ? value : Number(value) || 0}
+            step={spec.step ?? 1}
+            disabled={disabled}
+            onCommit={onCommit}
+          />
+        </>
+      );
+    case "select": {
+      const cur = value == null ? "" : String(value);
+      const opts = spec.options ?? [];
+      const list = opts.includes(cur) ? opts : [cur, ...opts];
+      return (
+        <>
+          {label}
+          <select value={cur} disabled={disabled} onChange={(e) => onCommit(e.target.value)} style={INPUT_STYLE}>
+            {list.map((o) => (
+              <option key={o} value={o}>
+                {spec.optionLabelKeys?.[o] ? tr(spec.optionLabelKeys[o]!) : o || tr("clip.property.unset")}
+              </option>
+            ))}
+          </select>
+        </>
+      );
+    }
+    case "image": {
+      const path = typeof value === "string" ? value : "";
+      const browse = async () => {
+        const p = await window.vc.pickImage();
+        if (p) onCommit(p);
+      };
+      return (
+        <>
+          {label}
+          <span style={{ display: "flex", gap: 6, alignItems: "center" }}>
+            <input value={path} readOnly placeholder={tr("watermark.no_file")} title={path} style={INPUT_STYLE} />
+            <button onClick={() => void browse()} disabled={disabled} style={BTN}>
+              {tr("watermark.browse")}
+            </button>
+            {path && (
+              <button onClick={() => onCommit("")} disabled={disabled} style={BTN}>
+                {tr("watermark.clear")}
+              </button>
+            )}
+          </span>
+        </>
+      );
+    }
+    case "color":
+    case "text":
+    default:
+      return (
+        <>
+          {label}
+          <TextInput value={String(value ?? "")} disabled={disabled} onCommit={onCommit} />
+        </>
+      );
+  }
+}
+
+const BTN: React.CSSProperties = {
+  background: "#2a2a2e",
+  color: "#ccc",
+  border: "1px solid #3a3a40",
+  borderRadius: 4,
+  padding: "2px 10px",
+  fontSize: 12,
+  cursor: "pointer",
+  flex: "0 0 auto",
+};

@@ -22,7 +22,8 @@ import type { Component, PresetList } from "../../ipc/client";
 import { rpc, RpcError } from "../../ipc/client";
 import { PropertyPanel } from "./propertyEditor";
 import { MaterialBindingBar } from "../shared/MaterialBindingBar";
-import { ImageWatermarkProperties } from "../shared/ImageWatermarkProperties";
+import { ComponentEditor } from "../shared/ComponentEditor";
+import { fieldsForKind } from "@composition/components/fieldSpec.js";
 import { CropPreview } from "./CropPreview";
 import { useClipPreview } from "./useClipPreview";
 import { centerCropRect, type CropRect } from "./cropEditor";
@@ -649,12 +650,11 @@ export function StyleTab(props: {
           {tr("clip.style.properties_label")}
         </div>
         {selected ? (
-          selected.kind === "clip_image_watermark" ? (
-            <ImageWatermarkProperties
+          fieldsForKind(selected.kind) ? (
+            <ComponentEditor
               component={selected}
               disabled={savingId === selected.id}
               onPatch={(fields) => onPatch(selected, fields)}
-              enums={propertyEnums(selected.kind, data?.subtitleLangs ?? [])}
             />
           ) : (
             <PropertyPanel

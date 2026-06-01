@@ -23,7 +23,8 @@ import { MaterialBindingBar } from "../shared/MaterialBindingBar";
 import { NewsDeskPreview, type NewsDeskPreviewHandle } from "./NewsDeskPreview";
 import { useNewsDeskPreview } from "./useNewsDeskPreview";
 import { ChapterProperties } from "./ChapterProperties";
-import { ImageWatermarkProperties } from "../shared/ImageWatermarkProperties";
+import { ComponentEditor } from "../shared/ComponentEditor";
+import { fieldsForKind } from "@composition/components/fieldSpec.js";
 import { SubtitleCueList, ChapterScheduleList } from "./ComponentDetail";
 
 // Friendly component labels — the UI must never show the internal kind name
@@ -552,8 +553,8 @@ export function StyleTab(props: {
                 disabled={savingId === selected.id}
                 onPatch={(fields) => onPatch(selected, fields)}
               />
-            ) : selected.kind === "image_watermark" ? (
-              <ImageWatermarkProperties
+            ) : fieldsForKind(selected.kind) ? (
+              <ComponentEditor
                 component={selected}
                 disabled={savingId === selected.id}
                 onPatch={(fields) => onPatch(selected, fields)}
