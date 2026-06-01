@@ -307,6 +307,57 @@ def test_delete_render_unlinks_and_clears(ctx, project_with_bound_news_desk):
     assert rendered == []
     assert not os.path.exists(os.path.join(inst_dir, "output.mp4"))
     assert not os.path.exists(os.path.join(inst_dir, "output.json"))
+    # publish.md is a render artifact too — cleared on delete.
+    assert not os.path.exists(os.path.join(inst_dir, "publish.md"))
+
+
+# ── publish.md (regression: lost in the new-arch migration, restored) ─────────
+
+def test_commit_render_writes_publish_md(ctx, project_with_bound_news_desk):
+    """commit_render writes the derivative's publish.md from instance state +
+    the bound material's context.json. Regression guard: the new-arch export
+    dropped publish.md (Tk-era _write_publish_sidecar was deferred); it's back.
+    """
+    _seed_material_artifacts(project_with_bound_news_desk)
+    _open(ctx, project_with_bound_news_desk)
+    # AI-verified context (the single source for publish.md's episode block).
+    from materials.news_video.model import NewsVideoModel
+    NewsVideoModel(project_with_bound_news_desk, "news-1").write_context_dict(
+        {"episode_topic": "预算听证会", "host": "张三"}
+    )
+    # Snapshot chapters into the chapter component so the chapter block fills.
+    call(ctx, "creation.import_resource",
+         {"type": "news_desk", "instance": "news", "component_id": "chap",
+          "params": {"kind": "chapters", "filename": "zh.analysis.json"}})
+
+    call(ctx, "creation.commit_render",
+         {"type": "news_desk", "instance": "news", "src_idx": 0, "out_idx": 1, "duration_sec": 42.0})
+
+    inst_dir = project_with_bound_news_desk.creation_instance_dir("news_desk", "news")
+    md_path = os.path.join(inst_dir, "publish.md")
+    assert os.path.isfile(md_path)
+    md = open(md_path, encoding="utf-8").read()
+    assert "# 预算听证会" in md          # episode_topic wins the title
+    assert "张三" in md                  # host from context
+    assert "正文" in md                  # snapshotted chapter title flowed through
+
+
+def test_commit_render_publish_md_degrades_without_context(ctx, project_with_bound_news_desk):
+    """No context / no chapters snapshotted yet → publish.md is still written
+    (best-effort), degrading to a minimal chapters-section doc rather than
+    erroring out and losing the render."""
+    _open(ctx, project_with_bound_news_desk)
+    rendered = call(
+        ctx, "creation.commit_render",
+        {"type": "news_desk", "instance": "news", "src_idx": 0, "out_idx": 1, "duration_sec": 10.0},
+    )["result"]
+    assert len(rendered) == 1  # render state committed regardless
+    inst_dir = project_with_bound_news_desk.creation_instance_dir("news_desk", "news")
+    md_path = os.path.join(inst_dir, "publish.md")
+    assert os.path.isfile(md_path)
+    md = open(md_path, encoding="utf-8").read()
+    assert "> Rendered:" in md                          # header always present
+    assert "(no chapters)" in md or "（无章节）" in md   # degraded chapters section
 
 
 # ── import provider (snapshot subtitle SRT / chapter schedule from material) ──

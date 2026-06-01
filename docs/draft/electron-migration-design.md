@@ -52,7 +52,7 @@ news_desk 与 clip 走同一套契约,正面验证「公共组件库 + provider 
 - `config.py NewsDeskInstanceConfig` 单一所有者:`apply_patch`(只 `preset_name`,全源无 reframe 几何)+ `add/remove/move_component`(+ load `_ensure_unique_ids` 修 Tk 时代无/重 id)+ `addable_kinds` + `rendered[]` 字段。
 - `component_defs.py`(纯,新):addable kinds(chapter 单例 + subtitle/text_wm/image_wm 多例)+ default instances。**一处刻意偏离 Tk specs**:subtitle/text_wm 字号/描边发 canonical 分数形(`fontsize_pct`/`stroke_pct`),非 Tk 绝对 px,与已合并的 TS 层对齐;默认值=1080 基线换算。
 - `preview.py`(preview_provider):全源 `mediaRef` + `durationSec`(读 source meta,**不跑 ffprobe**)+ 各 subtitle 组件 srt_path 的快照 SRT 绝对路径(`subtitlePaths`)。**章节不返回**——schedule 已快照进 config。
-- `export.py`(render_provider):`plan_render`(单 `output.mp4`,out_idx 恒 1,src_idx 不用)/`commit_render`(写 `output.json` sidecar + `rendered[]`)/`delete_render`。**deferred**:legacy 的按章节切 mp4 + publish sidecar 归 `tools/news_desk/publish.py`(publish 侧 ffmpeg),不进 core render-state。
+- `export.py`(render_provider):`plan_render`(单 `output.mp4`,out_idx 恒 1,src_idx 不用)/`commit_render`(写 `output.json` sidecar + `rendered[]` + **publish.md**)/`delete_render`(连 publish.md 一并清)。**publish.md 已恢复**(续 36):纯模板 `creations/news_desk/publish.py`(从 Tk 退役时删掉的版本捞回,与 clip 的 publish.py 同位)+ `commit_render` best-effort 调用(数据全从实例状态 + 绑定素材 context.json 取,ADR-0003;语言跟源不跟 UI)。**仍 deferred**(Tk 时代两个 opt-in 交付物):transcript.md + 按章节切 mp4(后者是 publish 侧 ffmpeg stream-copy,非 GPU 渲染)。
 - `imports.py`(import_provider,**新 provider 类型**):`list_imports → {subtitleLangs, analyses}`;`import_resource(component_id, params)` **快照进组件**——`{kind:subtitle,lang}` 把素材 `<lang>.srt` 拷进 `<instance>/subtitles/<id>.srt` 设 srt_path;`{kind:chapters,filename}` 从 analysis.json 填 chapter schedule。**核对:快照非引用,符合 ADR-0003;经 registry 取素材零硬编码名。**
 - `__init__.py`:注册 `config_owner_cls` + `preview_provider` + `render_provider` + `import_provider`。**注:`load_plugins` 必须 import news_desk**(`core_rpc/methods/__init__.py`)——曾漏致 sidecar 看不到它(真 bug,已修)。
 
@@ -75,7 +75,7 @@ news_desk 与 clip 走同一套契约,正面验证「公共组件库 + provider 
 
 **真机踩过并修的 bug(均已 land)**:`window.prompt` 崩(→内联输入)/ 应用预设黑屏两因(reload 重挂 GPU→原地刷新;mapping 对缺 schedule/image_path 抛错→`?? []`/`?? ""` + 装配器 per-component try/catch)/ 导入后字幕不显示(import 没刷 cues→`preview.reload()`)/ **导入切实例丢数据**(import provider 越过 session 缓存 owner 直写 config→缓存陈旧;修=`Session.invalidate_creation` 在 import/commit/delete_render 后调,re-sync 单一所有者)/ 导入下拉跨组件联动(`ImportRow` key by id)/ 图片水印无文件选择器(`vc:pickImage` + `ImageWatermarkProperties`)。
 
-剩余非阻塞欠债:逐章 schedule 编辑(现只读+seek)、字幕双语并排 UI、外部文件导入(磁盘选 SRT)、`tools/news_desk/publish.py` 新架构 publish(per-chapter mp4 切分,defer)。
+剩余非阻塞欠债:逐章 schedule 编辑(现只读+seek)、字幕双语并排 UI、外部文件导入(磁盘选 SRT)、transcript.md + per-chapter mp4 切分(publish 侧 ffmpeg,defer;**publish.md 已恢复=续 36**)。
 
 ### 素材(material)侧 —— 已迁新架构(2026-05-31,M0~M6 实现完整)
 
@@ -196,7 +196,7 @@ TS:`pnpm typecheck` + `pnpm test`(132,含 ir/timemap/components/clip/news_desk/c
 
 **P4 — 打磨 / 补完**(非阻塞,按需):
 - 素材:字幕双语并排 UI;决策性单源 wart 的真·per-instance 化(`subtitle_pipeline.py:29-34` TODO)。
-- news_desk:逐章 schedule 编辑(现只读+seek)、`tools/news_desk/publish.py` 新架构 publish(per-chapter mp4 切分)、外部磁盘 SRT 导入。
+- news_desk:逐章 schedule 编辑(现只读+seek)、transcript.md + per-chapter mp4 切分(publish.md 本体已恢复=续 36)、外部磁盘 SRT 导入。
 - 导出域:逐帧精确 decode、剩余 overlay kind。
 - i18n 余项:sidecar `RpcError.message`(Python 文案)双语化是单独决策;Tk 806-key 表与 renderer 表是否对齐/合并。
 
