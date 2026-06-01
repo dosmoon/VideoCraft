@@ -13,7 +13,12 @@
 
 **✅ P0 真机肉眼验已跑完(2026-06-01):** 素材侧 e2e(建实例→导源本地+yt-dlp→ASR→质检→章节 seek→context→AI 填充)+ i18n 热切换(中/EN 整树即时翻+重启保持)均已真机过。三大本体 + i18n 的 headless 盲区全部人肉收口。
 
-**▶ 下一大任务 = P1 框架服务(让新壳自给自足,退役 Tk 的硬前置)。** 新壳目前只有 project/material/creation 三域、sidecar 无 `ai.*` 域 → **AI job(ASR/翻译/章节分析/ai_fill)在新壳里配不了 provider/key,只能靠 Tk app 先配**。要补:① **AI console 迁新壳**(6-tab provider 路由/内置/云 key/aistack/TTS/统计,去 Prompts;需新增 sidecar `ai.*` RPC 域;[[project_videocraft_ai_console]]);② 本地模型管理([[project_model_manager]]);③ preferences/about/File。完整 P0~P6 计划见 `electron-migration-design.md`「剩余工作计划」节。改 Python 必整重启 sidecar(`desktop/dev.ps1`,Ctrl+R 只重载 renderer)。
+**✅ P1 框架服务基本完成(2026-06-01,新壳自给自足)。** 活动栏改 VSCode 式左侧导航,4 格全落地:**📁项目 / 🤖AI / 📦模型 / ⚙设置**。新壳现在能自助配 AI(provider/key/路由/aistack/Edit base_url·模型/Test 连接)、装嵌入式模型(下载/进度/删除)、查装环境依赖(ffmpeg/Node/yt-dlp 检测+安装)、切语言——不再依赖 Tk app。
+- 新增 sidecar 域:`ai.*`(read+write+网络 job)、`models.*`(catalog+下载 job)、`env.*`(检测+安装 job);读模型 `core/ai/console_view.py`(UI-free,从 Tk 提升);renderer `aiconsole/` `models/` `settings/` `app/ActivityBar.tsx`。新 IPC `vc:openExternal`。语言开关搬进 Settings(Hub 两处已删,语言=set-once,⚙ 永远可达)。
+- 验证:typecheck + 130 vitest + build + **134 sidecar 测**全绿(ai 12 + models 5 + env 3,网络/下载/子进程全 monkeypatch)。细节见 `electron-migration-design.md` P1 各节。
+- **defer(P1 剩余,非阻塞)**:aistack「Test&Refresh」已做但 LLM Test 是 1 词探针;GPU CUDA wheel dialog;change-models-dir;tier 批量下载;File 项目菜单;装好的 faster_whisper/llama_cpp 模型回填路由下拉;TTS 音色 browse/catalog。
+
+**▶ 下一大任务 = 真机肉眼验 P1(headless 盲区)** + 然后 **P2 Tk 退役**。**先 `desktop/dev.ps1` 完整重启**(本轮加了 3 个新 Python 域 + 新 IPC,Ctrl+R 不够),逐项验:🤖 6 tab 数据/录 key/Edit base_url+模型/Test 连接/aistack Test&Refresh/改路由 · 📦 下载一个模型看进度+删除 · ⚙ 环境检测/装一个(如 Node)/语言在 Settings 切。验完进 P2(clip 工作台 + 素材 Tk sidebar 退役)。完整 P0~P6 计划见 `electron-migration-design.md`「剩余工作计划」节。
 
 - **新会话先读**:`docs/draft/electron-migration-design.md` 顶部「★ 实现进度」(含 clip + news_desk + 素材侧 全部实现状态、代码位置、坑)+ 奠基稿 `composition-otio-foundation.md`(数据模型/渲染/拓扑权威)。
 - 工作纪律:忠实还原既存 Tk UI 交互,不发明/不简化([[feedback_faithful_port_not_invent]]);**用户菜单/选项列表照搬 Tk 实际菜单构造,别从引擎 registry 重建**([[feedback_ui_menu_from_tk_not_engine]],续 33 踩过:分析 kind 多列了 2 个);改 Python 必整重启 sidecar(`desktop/dev.ps1`,Ctrl+R 只重载 renderer);素材数据经 Material Model([[feedback_material_via_model_only]]);config 单一所有者([[project_creation_config_owner]]);**改 i18n 必 zh/en 双语同步、UI 新字符串走 tr()**([[feedback_i18n_symmetry]])。
