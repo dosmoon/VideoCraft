@@ -77,9 +77,16 @@ def _models_list(cfg: dict) -> list[str]:
     return []
 
 
+# Per-provider editable extras the Console's Edit panel exposes (beyond key /
+# base_url / models). Surfaced in `settings` and accepted by update_provider.
+_EXTRA_SETTINGS = ("executable", "timeout_sec", "connect_timeout_sec", "read_timeout_sec", "max_retries")
+
+
 def _provider_view(name: str, cfg: dict, category: str) -> dict:
     """One provider row, normalized. `needs_key` = has a key_file (so the UI can
-    distinguish 'not_configured' (actionable) from 'no_key_needed' (local)."""
+    distinguish 'not_configured' (actionable) from 'no_key_needed' (local).
+    `base_url` is "" unless the provider has one (openai_compatible); `settings`
+    carries the editable extras present on this provider (timeouts, etc.)."""
     return {
         "name": name,
         "category": category,
@@ -89,7 +96,9 @@ def _provider_view(name: str, cfg: dict, category: str) -> dict:
         "needs_key": bool(cfg.get("key_file")),
         "has_auth": _cfg.has_auth(cfg),
         "key_status": _key_status(cfg),
+        "base_url": cfg.get("base_url", ""),
         "models": _models_list(cfg),
+        "settings": {k: cfg[k] for k in _EXTRA_SETTINGS if k in cfg},
     }
 
 
@@ -202,3 +211,34 @@ def set_aistack_gateway(base_url: str, enabled: bool) -> None:
     """Set the aistack gateway URL + enabled (one logical entry across LLM/ASR/
     TTS; the router keeps the three registry copies in sync)."""
     router.set_aistack_gateway(base_url, enabled)
+
+
+# Editable config keys per category (the Console Edit panel). Mirrors the fields
+# the Tk console's per-provider Edit dialog writes (base_url + active models +
+# per-provider settings). The API key is a separate path (set_key).
+_PATCH_ALLOW = {
+    "llm": {"base_url", "models", "executable", "timeout_sec"},
+    "asr": {"models", "connect_timeout_sec", "read_timeout_sec", "max_retries"},
+    "tts": {"connect_timeout_sec", "read_timeout_sec", "max_retries"},
+}
+
+
+def update_provider(provider: str, category: str, patch: dict) -> None:
+    """Apply a config patch to a provider (base_url / models / settings). Only
+    whitelisted keys for the category are accepted; the rest are ignored. Raises
+    on an unknown provider or an empty effective patch."""
+    cfg = _find_cfg(provider, category)
+    if cfg is None:
+        raise ValueError(f"unknown provider {provider!r} in category {category!r}")
+    allow = _PATCH_ALLOW.get(category, set())
+    clean = {k: v for k, v in patch.items() if k in allow}
+    if not clean:
+        raise ValueError(f"no editable fields for category {category!r} in patch")
+    if "models" in clean and not isinstance(clean["models"], list):
+        raise ValueError("models must be a list")
+    if category == "llm":
+        router.update_provider(provider, **clean)
+    elif category == "asr":
+        router.update_asr_provider(provider, **clean)
+    else:  # tts
+        router.update_tts_provider(provider, **clean)

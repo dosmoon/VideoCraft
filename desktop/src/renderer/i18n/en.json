@@ -333,5 +333,16 @@
   "ai.stats.col_errors": "Errors",
   "ai.stats.col_error_rate": "Error rate",
   "ai.stats.col_last_used": "Last used",
-  "ai.stats.never": "Never"
+  "ai.stats.never": "Never",
+  "ai.providers.edit": "Edit",
+  "ai.providers.edit_close": "Close",
+  "ai.providers.api_key": "API key",
+  "ai.providers.base_url": "Base URL",
+  "ai.providers.models": "Models",
+  "ai.providers.models_hint": "Comma-separated",
+  "ai.settings.executable": "Executable",
+  "ai.settings.timeout_sec": "Timeout (s)",
+  "ai.settings.connect_timeout_sec": "Connect timeout (s)",
+  "ai.settings.read_timeout_sec": "Read timeout (s)",
+  "ai.settings.max_retries": "Max retries"
 }

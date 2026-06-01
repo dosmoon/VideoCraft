@@ -308,13 +308,7 @@ function ProvidersTab({
 }
 
 function ProviderRow({ provider: p, apply }: { provider: AiProvider; apply: ApplyFn }) {
-  const [keyVal, setKeyVal] = useState("");
-  const [editing, setEditing] = useState(false);
-  const saveKey = () => {
-    apply(rpc.aiSetKey(p.name, p.category, keyVal));
-    setKeyVal("");
-    setEditing(false);
-  };
+  const [open, setOpen] = useState(false);
   return (
     <div style={CARD}>
       <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -336,33 +330,103 @@ function ProviderRow({ provider: p, apply }: { provider: AiProvider; apply: Appl
           />
           {tr("ai.providers.enabled")}
         </label>
+        <button onClick={() => setOpen((o) => !o)} style={BTN}>
+          {open ? tr("ai.providers.edit_close") : tr("ai.providers.edit")}
+        </button>
       </div>
+      {open && <ProviderEditor provider={p} apply={apply} onDone={() => setOpen(false)} />}
+    </div>
+  );
+}
+
+// Per-provider Edit panel: API key + Base URL (openai_compatible) + active models
+// + per-provider settings (timeouts / executable). Mirrors the Tk Edit dialog;
+// "Refresh from API" model-fetch + Test connection are deferred (network → jobs).
+function ProviderEditor({
+  provider: p,
+  apply,
+  onDone,
+}: {
+  provider: AiProvider;
+  apply: ApplyFn;
+  onDone: () => void;
+}) {
+  const [keyVal, setKeyVal] = useState("");
+  const [baseUrl, setBaseUrl] = useState(p.base_url);
+  const [models, setModels] = useState(p.models.join(", "));
+  const [settings, setSettings] = useState<Record<string, string>>(
+    Object.fromEntries(Object.entries(p.settings).map(([k, v]) => [k, String(v)])),
+  );
+  const showBaseUrl = p.type === "openai_compatible";
+  const showModels = p.category === "llm" || p.category === "asr";
+
+  const save = () => {
+    const patch: Record<string, unknown> = {};
+    if (showBaseUrl) patch.base_url = baseUrl.trim();
+    if (showModels) patch.models = models.split(",").map((m) => m.trim()).filter(Boolean);
+    for (const [k, v] of Object.entries(settings)) {
+      patch[k] = typeof p.settings[k] === "number" ? Number(v) : v;
+    }
+    const run = async (): Promise<AiSnapshot> => {
+      let snap: AiSnapshot | null = null;
+      if (keyVal.trim()) snap = await rpc.aiSetKey(p.name, p.category, keyVal.trim());
+      if (Object.keys(patch).length) snap = await rpc.aiUpdateProvider(p.name, p.category, patch);
+      return snap ?? (await rpc.aiSnapshot());
+    };
+    apply(run());
+    onDone();
+  };
+
+  const lbl: React.CSSProperties = { fontSize: 12, color: "#bbb", width: 96, flexShrink: 0 };
+  return (
+    <div style={{ marginTop: 10, paddingTop: 10, borderTop: "1px solid #2a2a2e", display: "grid", gap: 6 }}>
       {p.needs_key && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
-          {editing ? (
-            <>
-              <input
-                type="password"
-                value={keyVal}
-                onChange={(e) => setKeyVal(e.target.value)}
-                placeholder={tr("ai.providers.key_placeholder")}
-                style={{ ...INPUT, flex: 1 }}
-                autoFocus
-              />
-              <button onClick={saveKey} disabled={!keyVal} style={BTN}>
-                {tr("common.save")}
-              </button>
-              <button onClick={() => setEditing(false)} style={BTN}>
-                {tr("common.cancel")}
-              </button>
-            </>
-          ) : (
-            <button onClick={() => setEditing(true)} style={BTN}>
-              {p.key_status.state === "ok" ? tr("ai.providers.change_key") : tr("ai.providers.set_key")}
-            </button>
-          )}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={lbl}>{tr("ai.providers.api_key")}</span>
+          <input
+            type="password"
+            value={keyVal}
+            onChange={(e) => setKeyVal(e.target.value)}
+            placeholder={tr("ai.providers.key_placeholder")}
+            style={{ ...INPUT, flex: 1 }}
+          />
         </div>
       )}
+      {showBaseUrl && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={lbl}>{tr("ai.providers.base_url")}</span>
+          <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} style={{ ...INPUT, flex: 1 }} />
+        </div>
+      )}
+      {showModels && (
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={lbl}>{tr("ai.providers.models")}</span>
+          <input
+            value={models}
+            onChange={(e) => setModels(e.target.value)}
+            placeholder={tr("ai.providers.models_hint")}
+            style={{ ...INPUT, flex: 1 }}
+          />
+        </div>
+      )}
+      {Object.keys(settings).map((k) => (
+        <div key={k} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={lbl}>{tr(`ai.settings.${k}`)}</span>
+          <input
+            value={settings[k] ?? ""}
+            onChange={(e) => setSettings((s) => ({ ...s, [k]: e.target.value }))}
+            style={{ ...INPUT, width: 140 }}
+          />
+        </div>
+      ))}
+      <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
+        <button onClick={save} style={{ ...BTN, background: "#2d6cdf", color: "#fff", border: "none" }}>
+          {tr("common.save")}
+        </button>
+        <button onClick={onDone} style={BTN}>
+          {tr("common.cancel")}
+        </button>
+      </div>
     </div>
   );
 }

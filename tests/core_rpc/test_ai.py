@@ -131,6 +131,33 @@ def test_ai_set_provider_enabled(ctx, monkeypatch):
     call(ctx, "ai.set_provider_enabled", {"provider": "DeepSeek", "category": "llm", "enabled": True})
 
 
+def test_ai_update_provider(ctx, monkeypatch):
+    from core.ai.router import router
+
+    monkeypatch.setattr(router, "_persist", lambda: None)
+    orig = dict(router._providers["DeepSeek"])
+    snap = call(
+        ctx,
+        "ai.update_provider",
+        {
+            "provider": "DeepSeek",
+            "category": "llm",
+            "patch": {"base_url": "https://x.test/v1", "models": ["m1", "m2"], "enabled": False},
+        },
+    )["result"]
+    ds = next(p for p in snap["providers"]["llm"] if p["name"] == "DeepSeek")
+    assert ds["base_url"] == "https://x.test/v1"
+    assert ds["models"] == ["m1", "m2"]
+    # `enabled` is not in the patch allow-list → ignored (separate path).
+    assert "enabled" in orig
+    # An empty effective patch (no whitelisted keys) is rejected.
+    resp = call(
+        ctx, "ai.update_provider", {"provider": "DeepSeek", "category": "llm", "patch": {"foo": 1}}
+    )
+    assert "error" in resp
+    router._providers["DeepSeek"] = orig  # restore in-memory
+
+
 def test_ai_set_aistack_gateway(ctx, monkeypatch):
     from core.ai.router import router
 

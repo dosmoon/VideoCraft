@@ -91,3 +91,16 @@ def set_aistack_gateway(ctx: Context, base_url: str, enabled: bool) -> dict[str,
 
     console_view.set_aistack_gateway(base_url, bool(enabled))
     return console_view.snapshot()
+
+
+@rpc_method("ai.update_provider")
+def update_provider(
+    ctx: Context, provider: str, category: str, patch: dict[str, Any]
+) -> dict[str, Any]:
+    """Apply a config patch to a provider — base_url / models / per-provider
+    settings (timeouts, executable). Whitelisted keys only; the API key has its
+    own path (ai.set_key)."""
+    from core.ai import console_view
+
+    console_view.update_provider(provider, category, patch)
+    return console_view.snapshot()

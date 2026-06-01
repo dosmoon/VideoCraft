@@ -128,7 +128,10 @@ export interface AiProvider {
   needs_key: boolean;
   has_auth: boolean;
   key_status: AiKeyStatus;
+  base_url: string;
   models: string[];
+  // Editable per-provider extras present on this provider (timeouts, executable…).
+  settings: Record<string, string | number>;
 }
 
 /** A routing-matrix row (task). label is "中文 / English" from the engine. */
@@ -288,6 +291,10 @@ export const rpc = {
     rpcCall<AiSnapshot>("ai.set_tier_pref", { task, tier, provider, model }),
   aiSetAistackGateway: (baseUrl: string, enabled: boolean) =>
     rpcCall<AiSnapshot>("ai.set_aistack_gateway", { base_url: baseUrl, enabled }),
+  // Patch a provider's config (base_url / models / settings). Whitelisted keys
+  // only (server-side); the API key has its own path (aiSetKey).
+  aiUpdateProvider: (provider: string, category: AiCategory, patch: Record<string, unknown>) =>
+    rpcCall<AiSnapshot>("ai.update_provider", { provider, category, patch }),
 
   recentList: () => rpcCall<ProjectBrief[]>("project.recent_list"),
   openProject: (folder: string) => rpcCall<ProjectBrief>("project.open", { folder }),

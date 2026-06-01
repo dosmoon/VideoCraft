@@ -333,5 +333,16 @@
   "ai.stats.col_errors": "错误",
   "ai.stats.col_error_rate": "错误率",
   "ai.stats.col_last_used": "最近使用",
-  "ai.stats.never": "从未"
+  "ai.stats.never": "从未",
+  "ai.providers.edit": "编辑",
+  "ai.providers.edit_close": "收起",
+  "ai.providers.api_key": "API Key",
+  "ai.providers.base_url": "Base URL",
+  "ai.providers.models": "模型",
+  "ai.providers.models_hint": "逗号分隔",
+  "ai.settings.executable": "可执行文件",
+  "ai.settings.timeout_sec": "超时(秒)",
+  "ai.settings.connect_timeout_sec": "连接超时(秒)",
+  "ai.settings.read_timeout_sec": "读取超时(秒)",
+  "ai.settings.max_retries": "最大重试"
 }
