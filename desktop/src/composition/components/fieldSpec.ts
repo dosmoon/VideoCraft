@@ -34,6 +34,8 @@ export interface FieldSpec {
   control: FieldControl;
   /** i18n key — NEVER a literal internal name (project rule). */
   labelKey: string;
+  /** Optional i18n key for a section header shown above this field (and its run). */
+  section?: string;
   /** number: stepper increment + hint bounds (NOT the authoritative clamp). */
   step?: number;
   min?: number;
@@ -49,6 +51,7 @@ export interface FieldSpec {
 import { imageWatermarkFields, textWatermarkFields } from "./watermark.js";
 import { subtitleFields } from "./subtitle.js";
 import { cardFields } from "./card.js";
+import { chapterFields } from "./chapter.js";
 
 /**
  * canonical-kind → FieldSpec[]. Keyed by the bare engine kind; both plugin
@@ -62,6 +65,7 @@ const FIELD_REGISTRY: Record<string, readonly FieldSpec[]> = {
   subtitle: subtitleFields,
   hook_card: cardFields,
   outro_card: cardFields,
+  chapter: chapterFields,
 };
 
 /** Strip a creation's kind prefix to the bare engine kind. */

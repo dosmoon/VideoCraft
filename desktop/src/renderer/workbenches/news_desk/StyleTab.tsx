@@ -22,7 +22,6 @@ import { PropertyPanel } from "../clip/propertyEditor";
 import { MaterialBindingBar } from "../shared/MaterialBindingBar";
 import { NewsDeskPreview, type NewsDeskPreviewHandle } from "./NewsDeskPreview";
 import { useNewsDeskPreview } from "./useNewsDeskPreview";
-import { ChapterProperties } from "./ChapterProperties";
 import { ComponentEditor } from "../shared/ComponentEditor";
 import { fieldsForKind } from "@composition/components/fieldSpec.js";
 import { SubtitleCueList, ChapterScheduleList } from "./ComponentDetail";
@@ -547,13 +546,7 @@ export function StyleTab(props: {
               />
             )}
             {importErr && <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {importErr}</p>}
-            {selected.kind === "chapter" ? (
-              <ChapterProperties
-                component={selected}
-                disabled={savingId === selected.id}
-                onPatch={(fields) => onPatch(selected, fields)}
-              />
-            ) : fieldsForKind(selected.kind) ? (
+            {fieldsForKind(selected.kind) ? (
               <ComponentEditor
                 component={selected}
                 disabled={savingId === selected.id}

@@ -18,6 +18,7 @@
 import type { Track } from "../ir.js";
 import { deriveOverlayTrack, type SourceAnchoredCue } from "../timemap.js";
 import type { CompileContext, VideoComponent } from "./contract.js";
+import type { FieldSpec } from "./fieldSpec.js";
 
 export interface ChapterRow {
   startSec: number; // source time
@@ -124,3 +125,35 @@ export const chapter: VideoComponent<ChapterInstance> = {
     return tracks;
   },
 };
+
+// Mode gates for the nested style fields (read the snake-case wire dict).
+const stripOn = (c: Record<string, unknown>): boolean =>
+  !!(c["modes"] as Record<string, unknown> | undefined)?.["top_strip"];
+const cardOn = (c: Record<string, unknown>): boolean =>
+  !!(c["modes"] as Record<string, unknown> | undefined)?.["start_card"];
+
+/**
+ * Edit-UI fields. Chapter nests (modes / style.top_strip / style.start_card), so
+ * style fields use `path` (the editor re-sends the whole top-level sub-object to
+ * survive update_component's shallow merge) and `visibleWhen` to gate by mode.
+ * Reuses the existing news_desk.chapter.* i18n keys. Fontsizes are absolute px
+ * (legacy, scaled at render) → integer step. `schedule` is imported separately.
+ */
+export const chapterFields: readonly FieldSpec[] = [
+  { key: "name", control: "text", labelKey: "news_desk.chapter.name" },
+  { key: "modes.top_strip", path: ["modes", "top_strip"], control: "checkbox", labelKey: "news_desk.chapter.mode_top_strip", section: "news_desk.chapter.mode_section" },
+  { key: "modes.start_card", path: ["modes", "start_card"], control: "checkbox", labelKey: "news_desk.chapter.mode_start_card" },
+  // Top strip
+  { key: "style.top_strip.bg_color", path: ["style", "top_strip", "bg_color"], control: "color", labelKey: "news_desk.chapter.bg_color", section: "news_desk.chapter.strip_style_section", visibleWhen: stripOn },
+  { key: "style.top_strip.text_color", path: ["style", "top_strip", "text_color"], control: "color", labelKey: "news_desk.chapter.text_color", visibleWhen: stripOn },
+  { key: "style.top_strip.fontsize", path: ["style", "top_strip", "fontsize"], control: "number", labelKey: "news_desk.chapter.fontsize", step: 1, min: 1, visibleWhen: stripOn },
+  // Start card
+  { key: "style.start_card.title_color", path: ["style", "start_card", "title_color"], control: "color", labelKey: "news_desk.chapter.title_color", section: "news_desk.chapter.card_style_section", visibleWhen: cardOn },
+  { key: "style.start_card.title_fontsize", path: ["style", "start_card", "title_fontsize"], control: "number", labelKey: "news_desk.chapter.title_fontsize", step: 1, min: 1, visibleWhen: cardOn },
+  { key: "style.start_card.body_color", path: ["style", "start_card", "body_color"], control: "color", labelKey: "news_desk.chapter.body_color", visibleWhen: cardOn },
+  { key: "style.start_card.body_fontsize", path: ["style", "start_card", "body_fontsize"], control: "number", labelKey: "news_desk.chapter.body_fontsize", step: 1, min: 1, visibleWhen: cardOn },
+  { key: "style.start_card.bg_color", path: ["style", "start_card", "bg_color"], control: "color", labelKey: "news_desk.chapter.card_bg_color", visibleWhen: cardOn },
+  { key: "style.start_card.bg_opacity", path: ["style", "start_card", "bg_opacity"], control: "number", labelKey: "news_desk.chapter.bg_opacity", step: 1, min: 0, max: 100, visibleWhen: cardOn },
+  { key: "style.start_card.accent_color", path: ["style", "start_card", "accent_color"], control: "color", labelKey: "news_desk.chapter.accent_color", visibleWhen: cardOn },
+  { key: "style.start_card.duration_sec", path: ["style", "start_card", "duration_sec"], control: "number", labelKey: "news_desk.chapter.duration_sec", step: 1, min: 1, max: 30, visibleWhen: cardOn },
+];

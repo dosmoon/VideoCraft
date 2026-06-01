@@ -9,51 +9,12 @@
  * Labels are always tr(spec.labelKey) — never the raw internal key.
  */
 
+import { Fragment } from "react";
 import { tr } from "../../i18n/tr";
 import type { Component } from "../../ipc/client";
 import { fieldsForKind, type FieldSpec } from "@composition/components/fieldSpec.js";
 import { INPUT_STYLE, NumberInput, TextInput } from "./fieldControls";
-
-/** Read the value a FieldSpec addresses (flat key or nested path). */
-function readValue(component: Record<string, unknown>, spec: FieldSpec): unknown {
-  if (!spec.path) return component[spec.key];
-  let cur: unknown = component;
-  for (const seg of spec.path) {
-    if (cur == null || typeof cur !== "object") return undefined;
-    cur = (cur as Record<string, unknown>)[seg];
-  }
-  return cur;
-}
-
-/** Whether the value a FieldSpec addresses exists on this instance. */
-function fieldPresent(component: Record<string, unknown>, spec: FieldSpec): boolean {
-  if (!spec.path) return spec.key in component;
-  let cur: unknown = component;
-  for (const seg of spec.path) {
-    if (cur == null || typeof cur !== "object" || !(seg in (cur as object))) return false;
-    cur = (cur as Record<string, unknown>)[seg];
-  }
-  return true;
-}
-
-/**
- * Build the patch for a nested field. update_component shallow-merges, so we
- * re-send the WHOLE top-level sub-object (path[0]) with the leaf replaced,
- * cloning each level so siblings survive. Flat fields just patch their key.
- */
-function buildPatch(component: Record<string, unknown>, spec: FieldSpec, value: unknown): Record<string, unknown> {
-  if (!spec.path) return { [spec.key]: value };
-  const [head, ...rest] = spec.path;
-  const root = { ...((component[head!] as Record<string, unknown> | undefined) ?? {}) };
-  let cursor = root;
-  for (let i = 0; i < rest.length - 1; i++) {
-    const seg = rest[i]!;
-    cursor[seg] = { ...((cursor[seg] as Record<string, unknown> | undefined) ?? {}) };
-    cursor = cursor[seg] as Record<string, unknown>;
-  }
-  cursor[rest[rest.length - 1]!] = value;
-  return { [head!]: root };
-}
+import { readValue, fieldPresent, buildPatch } from "./nestedPatch";
 
 export function ComponentEditor(props: {
   component: Component;
@@ -79,18 +40,40 @@ export function ComponentEditor(props: {
       }}
     >
       {specs.length === 0 && <span style={{ color: "#666", fontSize: 12 }}>{tr("clip.property.no_fields")}</span>}
-      {specs.map((spec) => (
+      {renderRows(specs, component, enums, disabled, onPatch)}
+    </div>
+  );
+}
+
+/** Render the visible fields, emitting a full-width section header when the
+ *  section changes (the first visible field carrying a new `section`). */
+function renderRows(
+  specs: readonly FieldSpec[],
+  component: Component,
+  enums: Record<string, readonly string[]> | undefined,
+  disabled: boolean,
+  onPatch: (fields: Record<string, unknown>) => void,
+) {
+  let lastSection: string | undefined;
+  return specs.map((spec) => {
+    let header: React.ReactNode = null;
+    if (spec.section && spec.section !== lastSection) {
+      header = <div style={SECTION_STYLE}>{tr(spec.section)}</div>;
+      lastSection = spec.section;
+    }
+    return (
+      <Fragment key={spec.path ? spec.path.join(".") : spec.key}>
+        {header}
         <FieldControlRow
-          key={spec.path ? spec.path.join(".") : spec.key}
           spec={spec}
           value={readValue(component, spec)}
           {...(enums?.[spec.key] ? { options: enums[spec.key] } : {})}
           disabled={disabled}
           onCommit={(v) => onPatch(buildPatch(component, spec, v))}
         />
-      ))}
-    </div>
-  );
+      </Fragment>
+    );
+  });
 }
 
 function FieldControlRow(props: {
@@ -180,6 +163,14 @@ function FieldControlRow(props: {
       );
   }
 }
+
+const SECTION_STYLE: React.CSSProperties = {
+  gridColumn: "1 / -1",
+  fontSize: 11,
+  color: "#888",
+  fontWeight: 700,
+  margin: "8px 0 2px",
+};
 
 const BTN: React.CSSProperties = {
   background: "#2a2a2e",
