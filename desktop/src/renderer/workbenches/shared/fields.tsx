@@ -147,11 +147,27 @@ export function ColorRow(props: {
         onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
         style={{ ...INPUT, maxWidth: 110 }}
       />
-      {isColor && (
-        <span
-          style={{ width: 14, height: 14, borderRadius: 3, background: v, border: "1px solid #444" }}
-        />
-      )}
+      {/* Native OS color picker — click the swatch to open it; commits on pick. */}
+      <input
+        type="color"
+        disabled={props.disabled}
+        value={isColor ? v.toLowerCase() : "#000000"}
+        onChange={(e) => {
+          const hex = e.target.value.toUpperCase();
+          setV(hex);
+          if (hex !== props.value) props.onCommit(hex);
+        }}
+        style={{
+          width: 22,
+          height: 18,
+          padding: 0,
+          border: "1px solid #444",
+          borderRadius: 3,
+          background: "transparent",
+          cursor: props.disabled ? "default" : "pointer",
+          flexShrink: 0,
+        }}
+      />
     </div>
   );
 }
