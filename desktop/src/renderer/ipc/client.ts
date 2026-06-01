@@ -413,6 +413,10 @@ export const rpc = {
   // read/write config.json + render outputs via window.vc.fs (ADR-0008).
   creationInstanceDir: (type: string, instance: string) =>
     rpcCall<string>("project.creation_instance_dir", { type, instance }),
+  // Abs path of a material instance dir — symmetric to creationInstanceDir; the
+  // TS material model needs it to read/write context/subtitles via window.vc.fs.
+  materialInstanceDir: (type: string, instance: string) =>
+    rpcCall<string>("project.material_instance_dir", { type, instance }),
   // Registered creation types for the 创作 [+] menu (user-facing descriptions —
   // the renderer must not show the raw type_name).
   listCreationTypes: () =>

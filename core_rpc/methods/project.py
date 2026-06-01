@@ -202,6 +202,17 @@ def creation_instance_dir(ctx: Context, type: str, instance: str) -> str:
     return ctx.session.project.creation_instance_dir(type, instance)
 
 
+@rpc_method("project.material_instance_dir")
+def material_instance_dir(ctx: Context, type: str, instance: str) -> str:
+    """Absolute path of a material instance's directory. Symmetric to
+    creation_instance_dir — generic, plugin-agnostic framework dir resolution
+    (ADR-0008): the TS material model reads/writes context/basic_info + subtitles
+    through the main-process fs, but the directory LAYOUT stays owned by Project,
+    so TS asks for the path rather than rebuilding the layout. No plugin name is
+    hard-coded here (ADR-0004)."""
+    return ctx.session.project.material_instance_dir(type, instance)
+
+
 @rpc_method("project.rename_instance")
 def rename_instance(ctx: Context, kind: str, type: str, instance: str, new_name: str) -> dict[str, Any]:
     """Rename a material/creation instance directory. kind ∈ {material, creation}.

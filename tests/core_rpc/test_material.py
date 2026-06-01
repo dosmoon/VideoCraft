@@ -142,6 +142,16 @@ def test_create_material_instance(ctx, tmp_project, emit):
     assert call(ctx, "project.list_materials")["result"]["news_video"] == ["news-1"]
 
 
+def test_material_instance_dir_rpc(ctx, tmp_project):
+    """The generic framework dir resolver the TS material model uses (ADR-0008),
+    symmetric to project.creation_instance_dir."""
+    _open(ctx, tmp_project)
+    call(ctx, "project.create_material_instance", {"type": "news_video"})  # news-1
+    d = call(ctx, "project.material_instance_dir", {"type": "news_video", "instance": "news-1"})["result"]
+    assert d == tmp_project.material_instance_dir("news_video", "news-1")
+    assert d.replace("\\", "/").endswith("materials/news_video/news-1")
+
+
 def test_create_material_instance_autonumbers(ctx, tmp_project):
     _open(ctx, tmp_project)
     call(ctx, "project.create_material_instance", {"type": "news_video"})
