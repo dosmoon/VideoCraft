@@ -11,7 +11,9 @@
 
 **✅ renderer 双语(i18n)改造 + 热切换已完成(续 34,已落 main `a3b53af` 并 push)。** 整个 renderer(Hub + clip/news_desk/material 工作台)硬编码中文已抽成 `tr()` key;轻量自建 i18n(`desktop/src/renderer/i18n/` + 新 RPC `system.get_locale`/`set_locale` 读写同一 `user_data/settings.json`,与 Tk 锁步),zh/en 290 对严格对称。**中/EN 切换是热的**(`tr()` 每帧求值 + `useSyncExternalStore` reactive,`LanguageToggle` 放 Launcher + 项目顶栏,点即翻 + 持久化回 settings.json);区别于 Tk 重启制。typecheck + 130 vitest + build(98 模块)+ 114 sidecar 测全绿。细节见 `electron-migration-design.md`「renderer i18n」节。
 
-**▶ 下一大任务 = 真机肉眼验(两件 headless 盲区都欠)**:① **i18n 热切换**——点项目顶栏/Launcher 的 中/EN 看整树即时翻 + 重启后保持;② **素材侧端到端**——`env -u ELECTRON_RUN_AS_NODE pnpm dev` 跑一遍建实例→导源(本地+yt-dlp)→ASR→质检→章节(seek)→context→AI 填充,逐项肉眼确认。改 Python 必整重启 sidecar(`desktop/dev.ps1`,Ctrl+R 只重载 renderer)。
+**✅ P0 真机肉眼验已跑完(2026-06-01):** 素材侧 e2e(建实例→导源本地+yt-dlp→ASR→质检→章节 seek→context→AI 填充)+ i18n 热切换(中/EN 整树即时翻+重启保持)均已真机过。三大本体 + i18n 的 headless 盲区全部人肉收口。
+
+**▶ 下一大任务 = P1 框架服务(让新壳自给自足,退役 Tk 的硬前置)。** 新壳目前只有 project/material/creation 三域、sidecar 无 `ai.*` 域 → **AI job(ASR/翻译/章节分析/ai_fill)在新壳里配不了 provider/key,只能靠 Tk app 先配**。要补:① **AI console 迁新壳**(6-tab provider 路由/内置/云 key/aistack/TTS/统计,去 Prompts;需新增 sidecar `ai.*` RPC 域;[[project_videocraft_ai_console]]);② 本地模型管理([[project_model_manager]]);③ preferences/about/File。完整 P0~P6 计划见 `electron-migration-design.md`「剩余工作计划」节。改 Python 必整重启 sidecar(`desktop/dev.ps1`,Ctrl+R 只重载 renderer)。
 
 - **新会话先读**:`docs/draft/electron-migration-design.md` 顶部「★ 实现进度」(含 clip + news_desk + 素材侧 全部实现状态、代码位置、坑)+ 奠基稿 `composition-otio-foundation.md`(数据模型/渲染/拓扑权威)。
 - 工作纪律:忠实还原既存 Tk UI 交互,不发明/不简化([[feedback_faithful_port_not_invent]]);**用户菜单/选项列表照搬 Tk 实际菜单构造,别从引擎 registry 重建**([[feedback_ui_menu_from_tk_not_engine]],续 33 踩过:分析 kind 多列了 2 个);改 Python 必整重启 sidecar(`desktop/dev.ps1`,Ctrl+R 只重载 renderer);素材数据经 Material Model([[feedback_material_via_model_only]]);config 单一所有者([[project_creation_config_owner]]);**改 i18n 必 zh/en 双语同步、UI 新字符串走 tr()**([[feedback_i18n_symmetry]])。

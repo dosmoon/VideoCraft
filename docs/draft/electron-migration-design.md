@@ -153,10 +153,10 @@ TS:`pnpm typecheck` + `pnpm test`(130,含 ir/timemap/components/clip/news_desk/c
 
 > 三大本体(clip / news_desk / 素材)+ renderer i18n 均已端到端实现。剩余工作按 **"先验真 → 让新壳能独立用 → 退役 Tk → 打包 → 打磨"** 排序。P0/P1 是退役 Tk 的前置;P2 之前新壳与 Tk 并存。
 
-**P0 — 真机肉眼验收口**(gating;以下都 typecheck/测试/build 全绿,但渲染/GUI/热切换是 headless 盲区,必须人肉过一遍才算落地):
-- 素材侧 e2e:`env -u ELECTRON_RUN_AS_NODE pnpm dev` → 建实例 → 导源(本地+yt-dlp)→ ASR → 质检 → 章节(seek)→ context → AI 填充,逐项确认。
-- i18n 热切换:点项目顶栏/Launcher 的 中/EN,看整树即时翻 + 重启后保持。
-- (clip / news_desk / 音频端到端 已分别肉眼验过,见各节。)
+**P0 — 真机肉眼验收口 ✅ 已跑完(2026-06-01)**(渲染/GUI/热切换 headless 盲区,人肉过一遍):
+- 素材侧 e2e(建实例 → 导源本地+yt-dlp → ASR → 质检 → 章节 seek → context → AI 填充)+ i18n 热切换(中/EN 整树即时翻 + 重启保持)均已真机跑过。
+- (clip / news_desk / 音频端到端 此前已分别肉眼验过,见各节。)
+- ⇒ 三大本体 + i18n 的"代码全绿但 headless 盲区"已全部人肉收口;**下一步进 P1**。
 
 **P1 — 让新壳自给自足:框架服务(§0.5 已规划但未建)**。**当前最大功能缺口**:新壳只有 project/material/creation,**无 AI 配置入口**,sidecar 也无 `ai.*` 域 → ASR/翻译/章节分析/ai_fill 等所有 AI job 在新壳里配不了 provider/key,只能靠 Tk app 先配好。**退役 Tk 前必须补齐**:
 - **AI console 迁新壳**:provider 路由(task-first)/ 内置 / 云 key / aistack / TTS / 统计(6-tab,**去 Prompts**;[[project_videocraft_ai_console]]);需新增 sidecar `ai.*` RPC 域。
