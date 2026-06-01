@@ -7,7 +7,7 @@
 
 ## ▶▶ 新会话从这读起(2026-06-01 更新,接力点)
 
-> **🚩 重大架构转向进行中 = 三个本体收敛为纯 TS 插件,Python 退成 plugin-agnostic 能力网关(ADR-0008,已立)。** 起因:为 news_desk 恢复 publish.md(续 36)暴露"双语插件不可维护"。**权威设计 = `docs/draft/electron-migration-design.md` 顶部「🚩 架构转向」节 + `docs/adr/0008-plugins-ts-python-capability-gateway.md`。** **▶ 持久任务追踪(跨会话防遗忘,勾选进度看这个)= [`docs/draft/adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md)。** 进度:**A1–A3 全落 + push**(clip 的 config 所有者/presets/componentDefs/hotclipsRepo/render/publish 全 port 成纯 TS,带 vitest,160 测全绿;commit `ad1352d`/`6d9baa9`/`484df31`/`566bda1`)。**下一步 = A4 接线 clip 工作台**,但 **A4 撞门**:改 live 工作台 + 删 Python 前必过**人工真机 GUI 对等验**(headless 验不了),且 A4 要定 `MaterialBridge` 的 Phase-A 桥 RPC(ADR-0004 合规)。**纯 TS 逻辑层到此为止可自推;A4 起需要你。****前提 = P2 Tk 退役**(clip Tk 仍依赖 `clip/config.py`)。
+> **🚩 重大架构转向进行中 = 三个本体收敛为纯 TS 插件,Python 退成 plugin-agnostic 能力网关(ADR-0008,已立)。** 起因:为 news_desk 恢复 publish.md(续 36)暴露"双语插件不可维护"。**权威设计 = `docs/draft/electron-migration-design.md` 顶部「🚩 架构转向」节 + `docs/adr/0008-plugins-ts-python-capability-gateway.md`。** **▶ 持久任务追踪(跨会话防遗忘,勾选进度看这个)= [`docs/draft/adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md)。** 进度:**A1–A4 全落 + push,clip 真机 GUI 对等验通过**(用户确认"正常",2026-06-01)。**clip 已是第一个端到端迁到纯 TS 路径并验证的插件**:config/preset/render 走 `ClipConfigOwner`+`render.ts`、经 `vc.fs` 落盘;`client.ts` 按 `type==="clip"` 分发到 `creations/clip/clientBackend.ts`(tabs 零改动);候选/源仍走 Python `preview_data`/`get_artifact`(Phase A 桥)。commit `ad1352d`→`69471f3`,160 vitest 全绿。**下一步 = A5(news_desk 同playbook:port 其 Python 层 + client 分发,末尾同样要 news_desk 工作台 GUI 对等验)**;A6/B 退役 Python 前提仍是 P2 Tk 退役 + news_desk 迁完。**前提 = P2 Tk 退役**(clip Tk 仍依赖 `clip/config.py`)。
 
 > **续 36(本节下方):news_desk + clip 导出恢复 publish.md/index.md,已 commit(`b3f2cb1`+`69ded12`,未 push)。**
 
