@@ -84,7 +84,9 @@
     - **deferred**:`capability.probe`(底层只有私有 `source_acquire._ffprobe`,且 `acquire` 已返回 duration/w/h,主流程不需要独立 probe;真要时再加公开 probe)。
   - [x] ~~`materials/news_video/ai_fill.extract` 移进 `core/`~~ — **作废**(见上 ai_fill 决策:改 TS 侧拼 prompt + 通用 llm_extract)。
   - **欠(B3/B4)**:news prompt 模板 + 15 字段 schema 移到 TS;`capability.asr` 后调用方持久化 `project.meta.language.source`(需 project meta 写 RPC,B3 加)。
-- [ ] **B3 — 接线素材工作台** `workbenches/material/*` → TS model + 经 `runJob.ts` 调 `capability.*`;`client.ts` 换 `material.*`→`capability.*`
+- [~] **B3 — 接线素材工作台** `workbenches/material/*` → TS model + 经 `runJob.ts` 调 `capability.*`;`client.ts` 换 `material.*`→`capability.*`
+  - [x] **B3.1 news prompt 移 TS**(commit `c532c0b`):`materials/news_video/aiFill.ts`(`NEWS_CONTEXT_SCHEMA` 15 字段 + `NEWS_CONTEXT_TASK` + `buildContextPrompt` 港 ai_fill.py prompt 拼装;prompt 中文原文保留=领域数据非 UI)+ `aiFill.test.ts`(4)。纯逻辑,未接 live 工作台。
+  - [ ] **B3.2 工作台接线**(重,动 live renderer):`materialBackend.ts` 分发 `material.*`→`NewsVideoModel`(读) + `capability.*`(job);`client.ts` 按 type 分发(镜像 clip A4.2);**ai_fill 重组**=`buildContextPrompt`→`capability.llm_extract`(job 返 raw dict)→工作台在 job 成功后 `model.writeContextDict`(旧 server 端原子写改成 client 写);**加 project meta 写 RPC** 持久化 `capability.asr` 检出的 `language.source`/`translated_to`(原 shim 在 server 做,现 client 做)。tabs 尽量零改动。⚠️门 = 真机验后才删 `material.*` Python。
 - [ ] **B4 — 创作改走 TS 素材路径**(收口 C7):`clip/hotclipsRepo.ts`、`news_desk/{imports,render}.ts` 读 `materials/news_video/{paths,model}.ts`,桥 RPC 退役
 - [ ] **B5 — ⚠️GATE 退役素材 Python**:删 `materials/news_video/{model,schema,paths,ai_fill}.py`、去 `instance_factory`、删 `core_rpc/methods/material.py` + `Session.material_model`;删 `test_material.py`、vitest 补齐
 
