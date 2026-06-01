@@ -69,9 +69,14 @@
 
 ## Phase B — news_video 素材全 TS + 能力网关
 
-- [~] **B1 — TS 素材模型** `materials/news_video/{schema,paths,model}.ts`(对 `Fs`)+ vitest
-  - [x] `schema.ts`(port `schema.py`:5 字段 SourceBasicInfo + 15 字段 SourceContext + from/to dict + isEmpty + Fs-backed read/write context/basic_info/meta)+ `schema.test.ts`(3 测)。**deferred**:`context_prompt_block`(AI-prompt 注入)归 B2 能力网关,不在数据层;`paths.ts` 需 `material_instance_dir` 通用 RPC(对称 `creation_instance_dir`)——下次先加那个 RPC。typecheck + 168 vitest + build 全绿。
-  - [ ] `paths.ts`(port `paths.py`,需新增 `project.material_instance_dir` RPC)+ `model.ts`(read/write context+basic_info、completion、list/read analyses、slotReadiness、getArtifact)
+- [x] **B1 — TS 素材模型** `materials/news_video/{schema,paths,model}.ts`(对 `Fs`)+ vitest
+  - [x] `schema.ts`(port `schema.py`:5 字段 SourceBasicInfo + 15 字段 SourceContext + from/to dict + isEmpty + Fs-backed read/write context/basic_info/meta)+ `schema.test.ts`(3 测)。**deferred**:`context_prompt_block`(AI-prompt 注入)归 B2 能力网关,不在数据层。typecheck + 168 vitest + build 全绿。
+  - [x] **`project.material_instance_dir` RPC**(对称 `creation_instance_dir`,plugin-agnostic 框架目录解析,ADR-0004/0008)+ `client.materialInstanceDir` + pytest(`test_material_instance_dir_rpc`)。commit `2cd600a`。
+  - [x] `paths.ts`(port `paths.py`:纯路径 helper 接 resolved instanceDir + Fs-backed `sourceStatus`;Python 的 `default_instance`/`instance_dir(project,…)` 不港——TS 里 instance id 总显式,经 RPC 解析)+ `paths.test.ts`(2 测)。commit `2cd600a`。
+  - [x] `model.ts`(port `model.py` 数据层子集:paths getters / hasSourceVideo / read·writeContextDict·writeBasicInfoDict / contextCompletion / listSubtitleLanguages / subtitlePath·hasSubtitle / listAnalyses·readAnalysis·analysisSummary / analysisPath / slotReadiness / getArtifact)+ `model.test.ts`(7 测)。typecheck + 177 vitest + build 全绿。
+    - **deviation([[feedback_i18n_symmetry]])**:`slotReadiness` 返**结构化事实**(filled/total、langs[]、source 描述符),**不发明** Python 的中文 summary 串——UI 文案在 renderer 走 `tr()`(B3 接线时),数据层不产 user-facing 串。
+    - **不港(归 B2 能力网关)**:business actions(commit_source / ai_fill_context / run_asr / run_translate / run_analysis / import_subtitle / quick_fix_subtitle / check_subtitle)+ project-meta accessors(source_language / translated_languages,renderer 经 project.current 已有)。
+    - analysis kind→suffix 表内联进 model(port `core.subtitle_analysis.ANALYSIS_TYPES` 仅 suffix 子集;display 元数据留 analysis UI 层)。
 - [ ] **B2 — 能力网关**
   - [ ] `core_rpc/methods/capability.py`:路径式 job `acquire_source/asr/translate/analyze/ai_fill/probe/subtitle_check/subtitle_quick_fix/save_chapters`(复用 `_jobs_util.py`)
   - [ ] `core/subtitle_pipeline.py` 加 `run_asr_paths/run_translate_paths`(注入 path,消除 line 29-35 `TODO(ADR-0005)` 越界;留 `(project)` shim 至 Tk 退役)
