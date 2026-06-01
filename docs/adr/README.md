@@ -75,3 +75,4 @@ memory 里对应的 `project_*.md` 改成**指针**，正文不重复：
 - [0005 - Project 数据层全面插件化 + 组件化](0005-componentized-data-layer.md)
 - [0006 - Composition Engine Timeline IR](0006-composition-timeline-ir.md)
 - [0007 - 组件编辑 UI = 引擎独占的 FieldSpec 元数据](0007-component-edit-ui-metadata.md)
+- [0008 - 插件逻辑入 TS;Python = 能力网关](0008-plugins-ts-python-capability-gateway.md)（supersede 0004 的 provider-dispatch 部分）

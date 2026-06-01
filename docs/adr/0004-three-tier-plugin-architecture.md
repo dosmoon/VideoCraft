@@ -1,7 +1,9 @@
 # ADR-0004: 三层架构 — Base / Materials / Creations 插件化
 
-- **状态**: Active
+- **状态**: Active（provider-dispatch 实现部分 Superseded by [ADR-0008](0008-plugins-ts-python-capability-gateway.md)）
 - **决定日期**: 2026-05-16
+
+> ⚠️ 三层 + 零硬编码插件名的**原则仍 Active**（ADR-0008 反而强化它）。但本 ADR 描述的"插件经 Python `CreationType.{config_owner_cls,*_provider}` provider 派发、Python 持 per-plugin 业务面"的**实现机制已被 ADR-0008 取代**：插件逻辑入 TS，Python 退成 plugin-agnostic 能力网关。
 
 ## 决定
 
