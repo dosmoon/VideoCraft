@@ -70,10 +70,6 @@
   "news_desk.export.delete_confirm": "Delete the rendered output?",
   "news_desk.export.source_not_ready": "Source data not ready",
   "news_desk.export.no_material_error": "No material bound — cannot export",
-  "news_desk.watermark.image_file": "Image file",
-  "news_desk.watermark.no_file_selected": "Not selected",
-  "news_desk.watermark.browse": "Browse…",
-  "news_desk.watermark.clear": "Clear",
   "news_desk.preview.loading_source": "Loading source…",
   "news_desk.preview.play": "Play",
   "news_desk.preview.pause": "Pause",
@@ -423,5 +419,9 @@
   "hub.rename": "Rename",
   "hub.delete": "Delete",
   "hub.rename_prompt": "New name:",
-  "hub.delete_confirm": "Delete \"{name}\"? This permanently removes all of the instance's files from disk."
+  "hub.delete_confirm": "Delete \"{name}\"? This permanently removes all of the instance's files from disk.",
+  "watermark.image_file": "Image file",
+  "watermark.no_file": "Not selected",
+  "watermark.browse": "Browse…",
+  "watermark.clear": "Clear"
 }

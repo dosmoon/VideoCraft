@@ -22,6 +22,7 @@ import type { Component, PresetList } from "../../ipc/client";
 import { rpc, RpcError } from "../../ipc/client";
 import { PropertyPanel } from "./propertyEditor";
 import { MaterialBindingBar } from "../shared/MaterialBindingBar";
+import { ImageWatermarkProperties } from "../shared/ImageWatermarkProperties";
 import { CropPreview } from "./CropPreview";
 import { useClipPreview } from "./useClipPreview";
 import { centerCropRect, type CropRect } from "./cropEditor";
@@ -628,14 +629,22 @@ export function StyleTab(props: {
           {tr("clip.style.properties_label")}
         </div>
         {selected ? (
-          <PropertyPanel
-            component={selected}
-            disabled={savingId === selected.id}
-            onCommit={(k, v) => onPatch(selected, { [k]: v })}
-            {...(selected.kind === "clip_subtitle"
-              ? { enums: { language: data?.subtitleLangs ?? [] } }
-              : {})}
-          />
+          selected.kind === "clip_image_watermark" ? (
+            <ImageWatermarkProperties
+              component={selected}
+              disabled={savingId === selected.id}
+              onPatch={(fields) => onPatch(selected, fields)}
+            />
+          ) : (
+            <PropertyPanel
+              component={selected}
+              disabled={savingId === selected.id}
+              onCommit={(k, v) => onPatch(selected, { [k]: v })}
+              {...(selected.kind === "clip_subtitle"
+                ? { enums: { language: data?.subtitleLangs ?? [] } }
+                : {})}
+            />
+          )
         ) : (
           <p style={{ color: "#666", fontSize: 12 }}>{tr("clip.style.no_component_selected")}</p>
         )}

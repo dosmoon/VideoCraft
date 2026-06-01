@@ -280,27 +280,38 @@ export function drawOverlayClip(ctx: Ctx2D, clip: Clip, w: number, h: number): b
 
   const place = placement(clip, fontPx, w, h);
   ctx.textAlign = place.align;
-  const { x, y } = place;
-  const textW = ctx.measureText(text).width;
-  // Background box's left edge depends on the text alignment.
-  const boxLeft =
-    place.align === "right"
-      ? x - textW - padPx
-      : place.align === "left"
-        ? x - padPx
-        : x - textW / 2 - padPx;
+  const { x, y: centerY } = place;
 
-  if (bgOpacity > 0) {
-    ctx.fillStyle = rgba(bgColor, bgOpacity);
-    ctx.fillRect(boxLeft, y - fontPx / 2 - padPx, textW + padPx * 2, fontPx + padPx * 2);
-  }
-  if (strokeW > 0) {
-    ctx.lineWidth = strokeW;
-    ctx.strokeStyle = strokeColor;
-    ctx.lineJoin = "round";
-    ctx.strokeText(text, x, y);
-  }
-  ctx.fillStyle = color;
-  ctx.fillText(text, x, y);
+  // Hook / outro cards wrap to the frame width (multi-line, vertically centered
+  // on the placement line). Subtitle cues stay one line (the one-line invariant —
+  // cues are pre-split on the timeline); watermarks stay one corner line.
+  const wraps = clip.kind === "hook_text" || clip.kind === "outro_text";
+  const lines = wraps ? wrapToWidth(ctx, text, w * 0.9) : [text];
+  const lineH = fontPx * 1.3;
+  const firstY = centerY - ((lines.length - 1) / 2) * lineH;
+
+  lines.forEach((line, i) => {
+    const ly = firstY + i * lineH;
+    const lineW = ctx.measureText(line).width;
+    // Background box's left edge depends on the text alignment.
+    const boxLeft =
+      place.align === "right"
+        ? x - lineW - padPx
+        : place.align === "left"
+          ? x - padPx
+          : x - lineW / 2 - padPx;
+    if (bgOpacity > 0) {
+      ctx.fillStyle = rgba(bgColor, bgOpacity);
+      ctx.fillRect(boxLeft, ly - fontPx / 2 - padPx, lineW + padPx * 2, fontPx + padPx * 2);
+    }
+    if (strokeW > 0) {
+      ctx.lineWidth = strokeW;
+      ctx.strokeStyle = strokeColor;
+      ctx.lineJoin = "round";
+      ctx.strokeText(line, x, ly);
+    }
+    ctx.fillStyle = color;
+    ctx.fillText(line, x, ly);
+  });
   return true;
 }

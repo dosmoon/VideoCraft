@@ -1,13 +1,12 @@
 /**
- * ImageWatermarkProperties — dedicated editor for an image-watermark component.
- *
- * The generic PropertyPanel only renders keys that exist on the component and
- * has no file picker, so an image watermark (especially one applied from a
- * preset, which drops image_path as per-project content) showed no way to set
- * its image. This editor always shows an "图片文件" row with a 浏览… button
- * (native file dialog via window.vc.pickImage) + 清除, then delegates the
- * remaining primitive fields (scale / opacity / position / margins) to the
- * shared PropertyPanel (with image_path hidden so it isn't duplicated).
+ * ImageWatermarkProperties — dedicated editor for an image-watermark component,
+ * shared across creations (clip + news_desk). The generic PropertyPanel renders
+ * image_path as a plain text field with no file picker, so a hand-typed path is
+ * easy to get subtly wrong (→ the image silently fails to load). This always
+ * shows an image-file row with a 浏览… button (native dialog via
+ * window.vc.pickImage) + 清除, then delegates the remaining primitive fields
+ * (scale / opacity / position / margins) to the shared PropertyPanel (image_path
+ * hidden so it isn't duplicated).
  */
 
 import type { Component } from "../../ipc/client";
@@ -52,16 +51,16 @@ export function ImageWatermarkProperties(props: {
     <div>
       <div style={{ marginBottom: 10 }}>
         <label style={{ color: "#999", fontSize: 12, display: "block", marginBottom: 4 }}>
-          {tr("news_desk.watermark.image_file")}
+          {tr("watermark.image_file")}
         </label>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <input value={path} readOnly placeholder={tr("news_desk.watermark.no_file_selected")} title={path} style={inputStyle} />
+          <input value={path} readOnly placeholder={tr("watermark.no_file")} title={path} style={inputStyle} />
           <button onClick={() => void browse()} disabled={disabled} style={btn}>
-            {tr("news_desk.watermark.browse")}
+            {tr("watermark.browse")}
           </button>
           {path && (
             <button onClick={() => onPatch({ image_path: "" })} disabled={disabled} style={btn}>
-              {tr("news_desk.watermark.clear")}
+              {tr("watermark.clear")}
             </button>
           )}
         </div>

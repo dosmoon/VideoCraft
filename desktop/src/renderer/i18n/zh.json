@@ -70,10 +70,6 @@
   "news_desk.export.delete_confirm": "删除已渲染的输出？",
   "news_desk.export.source_not_ready": "源数据未就绪",
   "news_desk.export.no_material_error": "未绑定素材 — 无法导出",
-  "news_desk.watermark.image_file": "图片文件",
-  "news_desk.watermark.no_file_selected": "未选择",
-  "news_desk.watermark.browse": "浏览…",
-  "news_desk.watermark.clear": "清除",
   "news_desk.preview.loading_source": "加载源…",
   "news_desk.preview.play": "播放",
   "news_desk.preview.pause": "暂停",
@@ -423,5 +419,9 @@
   "hub.rename": "重命名",
   "hub.delete": "删除",
   "hub.rename_prompt": "新名称：",
-  "hub.delete_confirm": "删除「{name}」？此操作会从磁盘移除该实例的全部文件,不可撤销。"
+  "hub.delete_confirm": "删除「{name}」？此操作会从磁盘移除该实例的全部文件,不可撤销。",
+  "watermark.image_file": "图片文件",
+  "watermark.no_file": "未选择",
+  "watermark.browse": "浏览…",
+  "watermark.clear": "清除"
 }

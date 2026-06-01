@@ -23,7 +23,7 @@ import { MaterialBindingBar } from "../shared/MaterialBindingBar";
 import { NewsDeskPreview, type NewsDeskPreviewHandle } from "./NewsDeskPreview";
 import { useNewsDeskPreview } from "./useNewsDeskPreview";
 import { ChapterProperties } from "./ChapterProperties";
-import { ImageWatermarkProperties } from "./ImageWatermarkProperties";
+import { ImageWatermarkProperties } from "../shared/ImageWatermarkProperties";
 import { SubtitleCueList, ChapterScheduleList } from "./ComponentDetail";
 
 // Friendly component labels — the UI must never show the internal kind name
