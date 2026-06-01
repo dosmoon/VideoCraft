@@ -69,7 +69,9 @@
 
 ## Phase B — news_video 素材全 TS + 能力网关
 
-- [ ] **B1 — TS 素材模型** `materials/news_video/{schema,paths,model}.ts`(对 `Fs`;read/write context+basic_info、completion、list/read analyses、slotReadiness、getArtifact)+ vitest
+- [~] **B1 — TS 素材模型** `materials/news_video/{schema,paths,model}.ts`(对 `Fs`)+ vitest
+  - [x] `schema.ts`(port `schema.py`:5 字段 SourceBasicInfo + 15 字段 SourceContext + from/to dict + isEmpty + Fs-backed read/write context/basic_info/meta)+ `schema.test.ts`(3 测)。**deferred**:`context_prompt_block`(AI-prompt 注入)归 B2 能力网关,不在数据层;`paths.ts` 需 `material_instance_dir` 通用 RPC(对称 `creation_instance_dir`)——下次先加那个 RPC。typecheck + 168 vitest + build 全绿。
+  - [ ] `paths.ts`(port `paths.py`,需新增 `project.material_instance_dir` RPC)+ `model.ts`(read/write context+basic_info、completion、list/read analyses、slotReadiness、getArtifact)
 - [ ] **B2 — 能力网关**
   - [ ] `core_rpc/methods/capability.py`:路径式 job `acquire_source/asr/translate/analyze/ai_fill/probe/subtitle_check/subtitle_quick_fix/save_chapters`(复用 `_jobs_util.py`)
   - [ ] `core/subtitle_pipeline.py` 加 `run_asr_paths/run_translate_paths`(注入 path,消除 line 29-35 `TODO(ADR-0005)` 越界;留 `(project)` shim 至 Tk 退役)
