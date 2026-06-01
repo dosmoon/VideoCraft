@@ -11,7 +11,7 @@
 
 > **clip + news_desk 两个创作工作台均已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现并真机验过**(均含导出渲染;news_desk 含 preset + 素材绑定 + 详情列表 + 章节属性编辑;Tk news_desk 已退役)。本节是后续工作的**接力入口**;实现细节集中在此(task.md 只保留接力指针 + 逐次进展「续 N」,不堆架构细节)。下面"实际实现"凡与本文档正文不同的,以本节为准(正文写于迁移启动期,部分已被实现推翻——另见 §0.5)。
 >
-> **✅ 素材(material)侧已迁新架构(2026-05-31,M0~M6 完整,见本节末「素材侧」)。** 新架构里现在能从零造出可用 news_video 素材(建实例 → 导源视频本地/yt-dlp → ASR/翻译/章节分析 job → 编辑 15 字段新闻背景 + AI 填充)。clip + news_desk + 素材三大本体均已迁;Tk 仍 ship clip 工作台 + 素材 sidebar(待退役)。**下一步见本节末「下一步」**(真机肉眼验 / Tk clip 退役 / 打磨)。
+> **✅ 素材(material)侧已迁新架构(2026-05-31,M0~M6 完整,见本节末「素材侧」)。** 新架构里现在能从零造出可用 news_video 素材(建实例 → 导源视频本地/yt-dlp → ASR/翻译/章节分析 job → 编辑 15 字段新闻背景 + AI 填充)。clip + news_desk + 素材三大本体均已迁 + renderer i18n(双语热切换)已实装;Tk 仍 ship clip 工作台 + 素材 sidebar(待退役)。**剩余工作有序计划见本节末「剩余工作计划」**(P0 真机验 → P1 框架服务/AI console → P2 Tk 退役 → P3 打包 → P4+ 打磨)。
 >
 > 已提交基线:见 `git log`(clip 工作台系列 commit,最新含导出/预设/双语)。
 
@@ -147,15 +147,42 @@ news_desk 与 clip 走同一套契约,正面验证「公共组件库 + provider 
 - **环境**:agent shell 带 `ELECTRON_RUN_AS_NODE=1`,启动必 `env -u ELECTRON_RUN_AS_NODE pnpm dev`;改 Python 必整重启 sidecar(Ctrl+R 只重载 renderer);HMR 不可信,改 renderer 后清 `node_modules/.vite` 整重启;启动前 `taskkill electron.exe` + 杀 5174。
 
 ### 测试
-TS:`pnpm typecheck` + `pnpm test`(130,含 ir/timemap/components/clip/news_desk/cropEditor/mapping/subtitleWrap/chapterPatch/chapterDraw)。Python:`pytest tests/core_rpc`(88,含 creation 全 RPC + render plan/commit/delete + 预设 + 双语 + import + bind + cache 失效回归)。引擎渲染层 headless 覆盖不到,靠真 renderer 肉眼验。全套 `pytest tests/` = 378 passed / 3 pre-existing failed(golden CRLF/tmp 路径 x2 + clip_config stale id)。
+TS:`pnpm typecheck` + `pnpm test`(130,含 ir/timemap/components/clip/news_desk/cropEditor/mapping/subtitleWrap/chapterPatch/chapterDraw)。Python:`pytest tests/core_rpc`(114,含 creation 全 RPC + render plan/commit/delete + 预设 + 双语 + import + bind + cache 失效回归 + material 全 RPC + `system.get_locale`/`set_locale`)。引擎渲染层 + i18n 热切换 headless 覆盖不到,靠真 renderer 肉眼验。全套 `pytest tests/` 仅 3 个 pre-existing failed(golden CRLF/tmp 路径 x2 + clip_config stale id),无新增。
 
-### 下一步(后续会话)
-- **★ 素材侧真机肉眼验**(M0~M6 已 typecheck/测试/build 全绿,但渲染/GUI headless 覆盖不到):`env -u ELECTRON_RUN_AS_NODE pnpm dev` 跑一遍 建实例→导源(本地+yt-dlp)→ASR→章节分析→编辑章节→context→AI 填充,逐项肉眼确认。
-- 素材打磨:字幕双语并排 UI、外部磁盘 SRT 导入、章节 seek-to-time 预览、(决策性单源 wart 的真·per-instance 化,`subtitle_pipeline.py` TODO)。
-- Tk 退役推进:clip 工作台退役 → clip `component_defs` 与 `components/*` Tk specs 合并单一源(news_desk 已退);素材 Tk sidebar 退役。
-- news_desk 打磨:逐章 schedule 编辑、`tools/news_desk/publish.py` 新架构 publish。
-- 导出域细化:逐帧精确 decode、转场、剩余 overlay kind。
-- 升 ADR(数据模型 + 渲染引擎 + IPC 拓扑;预定 ADR-0007)。
+### 剩余工作计划(2026-06-01 重排)
+
+> 三大本体(clip / news_desk / 素材)+ renderer i18n 均已端到端实现。剩余工作按 **"先验真 → 让新壳能独立用 → 退役 Tk → 打包 → 打磨"** 排序。P0/P1 是退役 Tk 的前置;P2 之前新壳与 Tk 并存。
+
+**P0 — 真机肉眼验收口**(gating;以下都 typecheck/测试/build 全绿,但渲染/GUI/热切换是 headless 盲区,必须人肉过一遍才算落地):
+- 素材侧 e2e:`env -u ELECTRON_RUN_AS_NODE pnpm dev` → 建实例 → 导源(本地+yt-dlp)→ ASR → 质检 → 章节(seek)→ context → AI 填充,逐项确认。
+- i18n 热切换:点项目顶栏/Launcher 的 中/EN,看整树即时翻 + 重启后保持。
+- (clip / news_desk / 音频端到端 已分别肉眼验过,见各节。)
+
+**P1 — 让新壳自给自足:框架服务(§0.5 已规划但未建)**。**当前最大功能缺口**:新壳只有 project/material/creation,**无 AI 配置入口**,sidecar 也无 `ai.*` 域 → ASR/翻译/章节分析/ai_fill 等所有 AI job 在新壳里配不了 provider/key,只能靠 Tk app 先配好。**退役 Tk 前必须补齐**:
+- **AI console 迁新壳**:provider 路由(task-first)/ 内置 / 云 key / aistack / TTS / 统计(6-tab,**去 Prompts**;[[project_videocraft_ai_console]]);需新增 sidecar `ai.*` RPC 域。
+- **本地模型管理 迁新壳**:模型下载/安装 catalog([[project_model_manager]]);不强制、可跳过([[feedback_no_forced_downloads]])。
+- **preferences / about / File**:现仅 i18n 语言开关,扩成完整 preferences;File 项目管理(新建/打开/最近——部分已有)。
+
+**P2 — Tk 退役**(前提 = P0+P1 新壳功能对等):
+- clip 工作台退役 → `creations/clip/component_defs` 与 `components/*` Tk specs 合并单一源(news_desk 已退)。
+- 素材 Tk sidebar 退役;`src/ui/` tkinter 工作台/预览大幅瘦身删除。
+
+**P3 — 打包 / 分发**(§7.3 待决,全未触及,目前纯 dev 模式无分发产物):
+- sidecar:PyInstaller onedir(推荐)bundle `core_rpc.server` + myenv 依赖。
+- Electron:electron-builder 出 Win 安装包;userData repo-local([[feedback_portable_data]]);Win11 26200 sandbox 兜底已在 `main.ts`。
+- 二进制依赖:ffmpeg/ffprobe、yt-dlp 的 Node.js runtime 随包或引导。
+
+**P4 — 打磨 / 补完**(非阻塞,按需):
+- 素材:字幕双语并排 UI;决策性单源 wart 的真·per-instance 化(`subtitle_pipeline.py:29-34` TODO)。
+- news_desk:逐章 schedule 编辑(现只读+seek)、`tools/news_desk/publish.py` 新架构 publish(per-chapter mp4 切分)、外部磁盘 SRT 导入。
+- 导出域:逐帧精确 decode、剩余 overlay kind。
+- i18n 余项:sidecar `RpcError.message`(Python 文案)双语化是单独决策;Tk 806-key 表与 renderer 表是否对齐/合并。
+
+**P5 — 转场 + 录播自动剪辑**(地基已就位,真实需求驱动,暂缓):
+- 转场(crossfade / dip_to_black):IR `Transition` + `resolveFrameAt` 重叠区双 active 已就位,缺 GPU per-layer alpha blend + 创作产出 + UI;用户决定暂不做(当前两形态语义上不需段间转场)。
+- 录播自动剪辑(新创作形态;OTIO 多段装配的真实需求来源,[[project_recorded_autoedit]])——它会反过来驱动转场。
+
+**P6 — 文档治理**:升 ADR-0007(数据模型 + 渲染引擎 + IPC 拓扑;固化 foundation/migration 两稿已落决策)。
 
 ---
 
@@ -488,7 +515,7 @@ M4  Tk 退役:删 src/ui/web_preview*.py、video_preview_pane.py、
 
 ## 7. 待决问题(实施前确认)
 
-1. **renderer 技术栈**:React + TS(假设)。是否引 UI 组件库(如 Radix / shadcn)还是裸 CSS?——影响 §3.3 体积与开发速度。
-2. **canvas 移植粒度**:`composition_preview.html` 的 canvas 逻辑直接移植成一个大 React 组件,还是借机重构?——倾向"先 1:1 移植保证 preview≡render,再谈重构"。
-3. **PyInstaller vs 嵌入式 Python**:onedir PyInstaller(推荐)vs 直接 bundle 一个 embeddable python + myenv。前者更省心,后者更透明。
-4. **i18n**:现有 `src/i18n/{zh,en}.json` 806 key 是 Tk 侧的;Electron renderer 需要自己的 i18n 方案(如 i18next),key 可复用 JSON 但加载机制不同。
+1. ~~**renderer 技术栈**~~ **✅ 已落**:React 19 + TS strict;**裸 inline CSS**(无 UI 组件库)。体积/开发速度均可接受。
+2. ~~**canvas 移植粒度**~~ **✅ 已落**:未复用旧 `.html`,直接建 TS 原生 compositor(`engine/`),preview≡render 结构性保证。
+3. **PyInstaller vs 嵌入式 Python(打包)= 仍待决,未触及**:目前全 dev 模式跑(`pnpm dev` + `myenv/Scripts/python.exe -m core_rpc.server`),**尚无分发产物**。onedir PyInstaller(推荐)vs bundle embeddable python + myenv。见下「剩余工作计划」P3。
+4. ~~**i18n**~~ **✅ 已定/已落(2026-06-01)**:renderer 自建轻量 `tr()`(非 i18next)+ 独立 `desktop/src/renderer/i18n/{zh,en}.json`(自包含,不复用 Tk 806 key);语言读写同一 `user_data/settings.json`(`system.get_locale`/`set_locale`),中/EN 热切换。详见顶部「renderer i18n」节。

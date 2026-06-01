@@ -271,7 +271,7 @@ OTIO 模型本就有 `Track.kind="audio"` 与 `Clip.kind="audio"`(catalog `MEDIA
 - **解析层(纯)** `composition/compositor/resolveAudio.ts`(新):`resolveAudioSegments(timeline) → AudioSegment[]`(复用 `placeTrackChildren`,与 `resolveFrameAt` 平行;`dbToGain`)。**预览 + 导出走同一解析**(preview≡render 延伸到音频)。
 - **导出混音** `engine/export/audioMix.ts`(新,纯函数,重点单测):segments + 各源 `DecodedAudio` + 输出采样率 → 求和/gain/线性重采样/clamp[-1,1] planar PCM。`encode.ts` 现加 muxer audio 轨(AAC `mp4a.40.2` @48k)+ `AudioEncoder`,在视频 pass 后混音编码;`ExportTab.tsx` 解码源音频喂 `audioSources`。
 - **预览播放** `engine/playback/AudioPlayback.ts`(新):Web Audio 按 segment 调度 `AudioBufferSourceNode`+per-seg `GainNode`;`currentTime` 作**主时钟**;`CropPreview.tsx` 加播放/暂停按钮 + rAF 循环(有音轨→音频主时钟,视频帧追;无音轨→墙钟静默回退),seek 同步音频。
-- **测试**:`resolveAudio.test.ts`(7)+ `audioMix.test.ts`(8)纯逻辑全覆盖;总 **118 测全绿 + typecheck 干净**。GPU/WebCodecs/WebAudio 部分靠真 renderer 肉眼验(headless 覆盖不到)——**尚欠 live 验**(启 Electron:预览有声 + 导出 mp4 抽帧验音轨)。
+- **测试**:`resolveAudio.test.ts`(7)+ `audioMix.test.ts`(8)纯逻辑全覆盖;总 **118 测全绿 + typecheck 干净**。GPU/WebCodecs/WebAudio 部分靠真 renderer 肉眼验(headless 覆盖不到)——**已 live 验通过**(2026-05-30/31,task.md 续 15:预览有声 + 进度条可拖 + 导出 mp4 有声同步)。
 - **承重决策**:① 预览音画同步 = 音频主时钟(NLE 标准);② 导出 = decode→mix(PCM)→AAC re-encode,**不做压缩域 passthrough**(clip 任意点切 + gainDb + 未来多轨混音都需 PCM 域);③ 音频解析独立于 `resolveFrameAt`(后者是视觉 FrameSlice)。
 
 ### Compositing 现状(本轮复核 = 已完整,转场除外)
