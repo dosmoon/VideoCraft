@@ -77,11 +77,13 @@
     - **deviation([[feedback_i18n_symmetry]])**:`slotReadiness` 返**结构化事实**(filled/total、langs[]、source 描述符),**不发明** Python 的中文 summary 串——UI 文案在 renderer 走 `tr()`(B3 接线时),数据层不产 user-facing 串。
     - **不港(归 B2 能力网关)**:business actions(commit_source / ai_fill_context / run_asr / run_translate / run_analysis / import_subtitle / quick_fix_subtitle / check_subtitle)+ project-meta accessors(source_language / translated_languages,renderer 经 project.current 已有)。
     - analysis kind→suffix 表内联进 model(port `core.subtitle_analysis.ANALYSIS_TYPES` 仅 suffix 子集;display 元数据留 analysis UI 层)。
-- [ ] **B2 — 能力网关**
-  - [ ] `core_rpc/methods/capability.py`:路径式 job `acquire_source/asr/translate/analyze/ai_fill/probe/subtitle_check/subtitle_quick_fix/save_chapters`(复用 `_jobs_util.py`)
-  - [ ] `core/subtitle_pipeline.py` 加 `run_asr_paths/run_translate_paths`(注入 path,消除 line 29-35 `TODO(ADR-0005)` 越界;留 `(project)` shim 至 Tk 退役)
-  - [ ] `materials/news_video/ai_fill.extract` 移进 `core/`(dict-in/dict-out,不引 plugin schema)
-  - [ ] `tests/core_rpc/test_capability.py`(AI/网络 monkeypatch)
+- [~] **B2 — 能力网关**(核心已落;ai_fill 决策见下)
+  - [x] `core/subtitle_pipeline.py` 加 `run_asr_paths/run_translate_paths`(注入 path + 调用方更新 meta,plugin-free;`(project)` shim 保留至 Tk 退役,`_nv_paths` import 移进 shim 内 → 消除 module-level `TODO(ADR-0005)` 越界)+ `tests/test_subtitle_pipeline_paths.py`(5 测)。commit `7aebcf5`。
+  - [x] `core_rpc/methods/capability.py`:路径式 job `acquire_source/asr/translate/analyze` + sync `subtitle_check/subtitle_quick_fix/save_chapters` + 通用 `llm_extract`(复用 `_jobs_util.py` cancel/progress bridge;`_in_project` 路径守卫;**不发 domain 事件**,renderer 在 job 完成时刷新)+ `tests/core_rpc/test_capability.py`(11 测,AI/网络/acquire monkeypatch + sync 真跑)。注册进 `methods/__init__.py`。
+    - **🚩 ai_fill 决策(用户拍板 2026-06-01)= 纯通用**:capability **不碰新闻语义**,只暴露通用 `llm_extract({prompt, schema, task})` → `ai.complete_json`。新闻 prompt 模板 + 15 字段 schema + 读 basic_info/platform 拼 prompt **全移到 TS 插件侧**(归 B3/B4 接线,B2 不做)。故 **`ai_fill.extract` 不移进 core**(该子项作废);现有 `materials/news_video/ai_fill.py` 留给 Tk 旧路径至 A6/B5。core 零领域知识,对齐 ADR-0008 终态。
+    - **deferred**:`capability.probe`(底层只有私有 `source_acquire._ffprobe`,且 `acquire` 已返回 duration/w/h,主流程不需要独立 probe;真要时再加公开 probe)。
+  - [x] ~~`materials/news_video/ai_fill.extract` 移进 `core/`~~ — **作废**(见上 ai_fill 决策:改 TS 侧拼 prompt + 通用 llm_extract)。
+  - **欠(B3/B4)**:news prompt 模板 + 15 字段 schema 移到 TS;`capability.asr` 后调用方持久化 `project.meta.language.source`(需 project meta 写 RPC,B3 加)。
 - [ ] **B3 — 接线素材工作台** `workbenches/material/*` → TS model + 经 `runJob.ts` 调 `capability.*`;`client.ts` 换 `material.*`→`capability.*`
 - [ ] **B4 — 创作改走 TS 素材路径**(收口 C7):`clip/hotclipsRepo.ts`、`news_desk/{imports,render}.ts` 读 `materials/news_video/{paths,model}.ts`,桥 RPC 退役
 - [ ] **B5 — ⚠️GATE 退役素材 Python**:删 `materials/news_video/{model,schema,paths,ai_fill}.py`、去 `instance_factory`、删 `core_rpc/methods/material.py` + `Session.material_model`;删 `test_material.py`、vitest 补齐
