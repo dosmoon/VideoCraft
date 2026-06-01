@@ -19,7 +19,9 @@
 >
 > 已提交基线:见 `git log`(clip 工作台系列 commit,最新含导出/预设/双语)。
 
-### 🚩 架构转向(2026-06-01):插件全 TS,Python = 能力网关 —— 权威,预定 ADR-0008
+### 🚩 架构转向(2026-06-01):插件全 TS,Python = 能力网关 —— 权威,ADR-0008
+
+> **▶ 持久任务追踪(勾选进度、跨会话防遗忘)= [`adr-0008-migration-tasks.md`](adr-0008-migration-tasks.md)。** 本节是设计正文(why + C1~C7 + Phase A/B 步骤);那个文件追踪每步勾选状态。已落:Phase A1(`vc.fs.*` 地基)。
 
 > **问题**:迁移把三个本体(clip / news_desk 创作 + news_video 素材)做成了**双语插件**——每个横跨 Electron renderer(TS,≈1900 行/插件) 和 Python sidecar(per-plugin 业务面 ≈1200 行/插件),读懂一个插件要翻两种语言。**长期跨 Python+TS 的功能模块不可维护**(用户结论 2026-06-01)。这一节取代下面各「Python 业务面」节、§2-3 的 provider 口径、§0.5 的"Python 留 project/material/analysis/AI"口径。
 
