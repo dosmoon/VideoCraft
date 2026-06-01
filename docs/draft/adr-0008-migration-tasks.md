@@ -29,11 +29,10 @@
   - [x] vitest `configOwner.test.ts`(10 测,内存 Fs fake:load/save round-trip、stale-id 修复、applyPatch 白名单 + overrides None-删/空-drop、CRUD+id 唯一+语言继承、bind、presets 排序/apply/save/delete/builtin 保护)
   - **deviation**:`creations/shared/{configOwner 基类,markdownFmt}` **推迟到 A5**(news_desk 给第二个数据点再抽,避免从单例造抽象);`markdownFmt` 归 A3(publish 才用)。
 
-- [ ] **A3 — clip preview/render/publish**
-  - [ ] `creations/clip/hotclipsRepo.ts`:镜像 `candidates.py`(copy-once 快照 via `fs.copy`+`fs.stat`)
-  - [ ] `creations/clip/render.ts`:镜像 `export.py`(`clip_NNN[_hook]` 命名 + `_sanitizeFilenamePart` + `_eff_*` override-wins + stale 清理 + rendered[])
-  - [ ] `creations/clip/publish.ts`:镜像 `publish.py`(render_clip_publish/index + collect_sidecars,用 `shared/markdownFmt`)
-  - [ ] vitest(含"上游变更不影响已快照实例")
+- [x] **A3 — clip preview/render/publish**
+  - [x] **A3a**(纯,无素材依赖):`shared/markdownFmt.ts`(port `markdown_fmt.py`)+ `clip/publish.ts`(`renderClipPublish/Index` 纯 + `collectClipSidecars` Fs-backed)+ `publish.test.ts`(8 测)。commit `484df31`
+  - [x] **A3b**:`clip/hotclipsRepo.ts`(port `candidates.py`,copy-once 快照,经注入式 `MaterialBridge`——Phase-A 桥 RPC 形状推到 A4 接线再定,**不预先钉 ADR-0004 边界**)+ `clip/render.ts`(port `export.py`:`clip_NNN[_hook]` 命名 + `_eff_*` override-wins + stale 清理 + rendered[] + publish.md/index.md 接线)+ 两个 test(hotclipsRepo 5 含"上游变更不影响快照";render 5:plan override-wins / commit sidecar+docs+persist / stale 清理 / delete 重建 index)
+  - **deviation 记录**:`MaterialBridge` 接口注入(`subtitlesDir()`)——Phase A 桥 RPC 选型(ADR-0004 合规)留到 **A4 接线**;render 函数收 `(owner, fs, candidates, projectTitle, langIso)`,候选由工作台经 repo 解析后传入。
 
 - [ ] **A4 — ⚠️GATE 接线 clip 工作台**(前提:P0/P1 真机验)
   - [ ] `workbenches/clip/*` 把所有 `rpc.{loadConfig,updateConfig,update/add/remove/moveComponent,*Preset,bindMaterial,previewData,*Render,*import}` 换成本地 TS owner
