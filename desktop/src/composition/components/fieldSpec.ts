@@ -56,8 +56,8 @@ import { chapterFields } from "./chapter.js";
 /**
  * canonical-kind → FieldSpec[]. Keyed by the bare engine kind; both plugin
  * kinds (clip_image_watermark and image_watermark) resolve here via
- * canonicalKind(). Components not yet migrated have no entry → the workbench
- * falls back to the generic PropertyPanel.
+ * canonicalKind(). A kind with no entry → the editor renders a "no fields"
+ * notice (every shipped component is registered below).
  */
 const FIELD_REGISTRY: Record<string, readonly FieldSpec[]> = {
   image_watermark: imageWatermarkFields,

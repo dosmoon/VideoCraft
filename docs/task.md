@@ -76,6 +76,16 @@
 
 ---
 
+## ▶ 续 35(2026-06-01,统一组件编辑器 = 引擎独占 FieldSpec 元数据 — 已落 main)
+
+dogfood 抓出图片水印属性面板一连串病(小数打不进、上下箭头 +1、position 是自由文本而非 anchor、标签露内部名),根因 = 迁移期一直用通用 `PropertyPanel` 直接编辑各插件原始 wire dict、从值/字段名猜控件与步进。落地奠基稿 §4.5 早已拍板、只是没建的**组件编辑 UI ①**:引擎独占的 `FieldSpec[]` 元数据驱动单一 `<ComponentEditor>`,clip + news_desk **共用**;并把 news_desk wire 单位/字段名**归一**到与 clip 一致(全分数 + 规范名)。**全部组件(水印/字幕/卡片/chapter 嵌套)迁完**,`PropertyPanel`/`ImageWatermarkProperties`/`ChapterProperties`/`chapterPatch` 已删。**权威决策 = `docs/adr/0007-component-edit-ui-metadata.md`**(FieldSpec.key=wire snake / clamp 仅在 mapping / kind 前缀解析 / 嵌套 path 重发)。
+
+- 代码:`composition/components/fieldSpec.ts`(+ 各组件 `*Fields`);`renderer/workbenches/shared/{ComponentEditor,fieldControls,nestedPatch}.tsx`;两 StyleTab 恒用 ComponentEditor;`news_desk/{component_defs.py,types.ts,mapping.ts}` 归一。**顺带修一个潜在 bug**:news_desk 文字水印 mapping 读的是 Python 早已改名前的 stale key。
+- 验证:typecheck + **132 vitest**(+nestedPatch 6 测)+ build + news_desk pytest 全绿;唯一失败 `test_clip_config` stale-id 是 baseline 既有([[project_pytest_preexisting_failures]])。**欠真机肉眼验**:canvas 绘制 + 各控件 headless 测不到——需启 desktop 验小数输入/步进/anchor 下拉/中文标签/chapter mode 门控+嵌套改值不丢兄弟。
+- **接力下一步 = 真机验上述 + 之前积压的 P1 headless 盲区**(见下方旧接力点)。
+
+---
+
 ## ▶ 接力入口(2026-05-30 更新)
 
 **clip 创作工作台已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现完整、真机肉眼验过。**

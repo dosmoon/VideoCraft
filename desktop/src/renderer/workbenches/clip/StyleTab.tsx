@@ -20,10 +20,8 @@ import { useCallback, useEffect, useState } from "react";
 import { tr } from "../../i18n/tr";
 import type { Component, PresetList } from "../../ipc/client";
 import { rpc, RpcError } from "../../ipc/client";
-import { PropertyPanel } from "./propertyEditor";
 import { MaterialBindingBar } from "../shared/MaterialBindingBar";
 import { ComponentEditor } from "../shared/ComponentEditor";
-import { fieldsForKind } from "@composition/components/fieldSpec.js";
 import { CropPreview } from "./CropPreview";
 import { useClipPreview } from "./useClipPreview";
 import { centerCropRect, type CropRect } from "./cropEditor";
@@ -44,26 +42,6 @@ function kindLabel(kind: string): string {
 }
 
 const EMPTY_CANDIDATE: HotclipCandidate = { start: "00:00:00.000", end: "00:00:00.000" };
-
-// Per-kind position vocab — an anchor, not free text — so `position` renders as
-// a dropdown. Mirrors the Tk specs' choices verbatim (creations/clip/components:
-// subtitle top/bottom, watermark 4 corners, hook/outro upper/center/lower-third).
-const POSITION_OPTIONS: Record<string, readonly string[]> = {
-  clip_subtitle: ["top", "bottom"],
-  clip_text_watermark: ["top-left", "top-right", "bottom-left", "bottom-right"],
-  clip_image_watermark: ["top-left", "top-right", "bottom-left", "bottom-right"],
-  clip_hook_card: ["upper-third", "center", "lower-third"],
-  clip_outro_card: ["upper-third", "center", "lower-third"],
-};
-
-// Build the dropdown-field map for a component: its position anchors (if any)
-// plus the subtitle language list.
-function propertyEnums(kind: string, subtitleLangs: readonly string[]): Record<string, readonly string[]> {
-  const enums: Record<string, readonly string[]> = {};
-  if (POSITION_OPTIONS[kind]) enums.position = POSITION_OPTIONS[kind];
-  if (kind === "clip_subtitle") enums.language = subtitleLangs;
-  return enums;
-}
 
 // Mirrors style_panel.py::_ASPECTS / _ENCODE_PRESETS.
 const ASPECTS = ["9:16", "1:1", "16:9", "4:5"];
@@ -650,21 +628,12 @@ export function StyleTab(props: {
           {tr("clip.style.properties_label")}
         </div>
         {selected ? (
-          fieldsForKind(selected.kind) ? (
-            <ComponentEditor
-              component={selected}
-              disabled={savingId === selected.id}
-              onPatch={(fields) => onPatch(selected, fields)}
-              enums={{ language: data?.subtitleLangs ?? [] }}
-            />
-          ) : (
-            <PropertyPanel
-              component={selected}
-              disabled={savingId === selected.id}
-              onCommit={(k, v) => onPatch(selected, { [k]: v })}
-              enums={propertyEnums(selected.kind, data?.subtitleLangs ?? [])}
-            />
-          )
+          <ComponentEditor
+            component={selected}
+            disabled={savingId === selected.id}
+            onPatch={(fields) => onPatch(selected, fields)}
+            enums={{ language: data?.subtitleLangs ?? [] }}
+          />
         ) : (
           <p style={{ color: "#666", fontSize: 12 }}>{tr("clip.style.no_component_selected")}</p>
         )}

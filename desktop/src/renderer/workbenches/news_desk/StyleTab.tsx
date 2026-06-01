@@ -4,13 +4,11 @@
  * _build_property_pane): a component list with [+ 添加] / 删除 / ↑ / ↓ and a
  * type-driven property panel for the selected component.
  *
- * Reuses clip's generic PropertyPanel (it's component-agnostic — primitive
- * fields only). news_desk's chapter component carries nested modes/style/
- * schedule that the primitive panel skips; nested chapter-style editing + the
- * live source preview are deferred to a follow-on increment (the preview needs
- * the GPU engine wired to buildNewsDeskTimeline). Component add/remove/reorder
- * + flat-field editing are fully live here through the same creation.* RPCs clip
- * uses — the base layer is creation-agnostic (ADR-0004).
+ * Uses the shared metadata-driven ComponentEditor (composition/components
+ * FieldSpec) — the same editor clip uses, including the chapter component's
+ * nested modes/style (via FieldSpec path + section + visibleWhen). Component
+ * add/remove/reorder + editing are fully live through the same creation.* RPCs
+ * clip uses — the base layer is creation-agnostic (ADR-0004).
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -18,12 +16,10 @@ import type { Component, PresetList } from "../../ipc/client";
 import { rpc, RpcError } from "../../ipc/client";
 import { tr } from "../../i18n/tr";
 import type { NewsDeskChapterRow } from "@creations/news_desk/types.js";
-import { PropertyPanel } from "../clip/propertyEditor";
 import { MaterialBindingBar } from "../shared/MaterialBindingBar";
 import { NewsDeskPreview, type NewsDeskPreviewHandle } from "./NewsDeskPreview";
 import { useNewsDeskPreview } from "./useNewsDeskPreview";
 import { ComponentEditor } from "../shared/ComponentEditor";
-import { fieldsForKind } from "@composition/components/fieldSpec.js";
 import { SubtitleCueList, ChapterScheduleList } from "./ComponentDetail";
 
 // Friendly component labels — the UI must never show the internal kind name
@@ -546,19 +542,11 @@ export function StyleTab(props: {
               />
             )}
             {importErr && <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {importErr}</p>}
-            {fieldsForKind(selected.kind) ? (
-              <ComponentEditor
-                component={selected}
-                disabled={savingId === selected.id}
-                onPatch={(fields) => onPatch(selected, fields)}
-              />
-            ) : (
-              <PropertyPanel
-                component={selected}
-                disabled={savingId === selected.id}
-                onCommit={(k, v) => onPatch(selected, { [k]: v })}
-              />
-            )}
+            <ComponentEditor
+              component={selected}
+              disabled={savingId === selected.id}
+              onPatch={(fields) => onPatch(selected, fields)}
+            />
 
             {/* Read-only detail list for the selected component, click to seek. */}
             {selected.kind === "subtitle" && (

@@ -3,8 +3,9 @@
  *
  * Foundation doc §4.5: composition is the app's single visual engine, and a
  * video component is a thin, full-stack definition of exactly two things —
- * ① its edit UI (property panel; lands later, with the renderer) and
- * ② `compile() → OTIO`. This file owns ②: the pure compile contract.
+ * ① its edit UI (property panel) and ② `compile() → OTIO`. This file owns ②
+ * (the pure compile contract); ① is the `fields: FieldSpec[]` metadata in
+ * ./fieldSpec.ts, which the renderer's shared <ComponentEditor> interprets.
  *
  * One library, not per-plugin copies. The existing Python plugins each grew
  * their own subtitle / watermark (creations/{news_desk,clip}/components/) with

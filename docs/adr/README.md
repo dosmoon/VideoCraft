@@ -74,3 +74,4 @@ memory 里对应的 `project_*.md` 改成**指针**，正文不重复：
 - [0004 - 三层架构（Base / Materials / Creations 插件化）](0004-three-tier-plugin-architecture.md)
 - [0005 - Project 数据层全面插件化 + 组件化](0005-componentized-data-layer.md)
 - [0006 - Composition Engine Timeline IR](0006-composition-timeline-ir.md)
+- [0007 - 组件编辑 UI = 引擎独占的 FieldSpec 元数据](0007-component-edit-ui-metadata.md)

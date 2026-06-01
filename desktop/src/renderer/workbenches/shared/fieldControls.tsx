@@ -1,8 +1,7 @@
 /**
- * Bare property-form input controls, shared by the legacy generic PropertyPanel
- * (clip/propertyEditor.tsx) and the metadata-driven ComponentEditor. Each
- * commits on blur / Enter (not per keystroke) so editing doesn't fire an RPC
- * write per character, and re-syncs when its `value` prop changes.
+ * Bare property-form input controls used by the metadata-driven ComponentEditor.
+ * Each commits on blur / Enter (not per keystroke) so editing doesn't fire an
+ * RPC write per character, and re-syncs when its `value` prop changes.
  */
 
 import { useEffect, useState, type CSSProperties } from "react";
