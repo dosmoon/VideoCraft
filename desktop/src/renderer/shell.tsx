@@ -9,6 +9,7 @@ import { useState } from "react";
 import { Hub } from "./hub/Hub";
 import { ActivityBar, type AppView } from "./app/ActivityBar";
 import { AiConsole } from "./aiconsole/AiConsole";
+import { ModelManager } from "./models/ModelManager";
 import { useLang, tr } from "./i18n/tr";
 
 function Placeholder({ titleKey }: { titleKey: string }) {
@@ -45,7 +46,11 @@ export function Shell() {
           <AiConsole />
         </div>
       )}
-      {view === "models" && <Placeholder titleKey="shell.models_soon" />}
+      {view === "models" && (
+        <div style={{ flex: 1, minWidth: 0, overflow: "auto" }}>
+          <ModelManager />
+        </div>
+      )}
       {view === "settings" && <Placeholder titleKey="shell.settings_soon" />}
     </div>
   );

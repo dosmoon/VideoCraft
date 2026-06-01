@@ -168,6 +168,36 @@ export interface AiStatsEntry {
   last_error?: string | null;
 }
 
+// ── Local model manager (models.* domain) ─────────────────────────────────────
+
+/** One downloadable model with disk-only installed state (models.catalog). */
+export interface ModelCatalogEntry {
+  id: string;
+  name: string;
+  capability: string; // asr | llm | tts | vad
+  tier: string; // first | recommended
+  recommended_for: string; // cpu | gpu | both
+  description: string;
+  dir: string;
+  installed: boolean;
+  present: number;
+  total: number;
+}
+
+/** A download job (models.jobs + live `event.models` pushes). */
+export interface ModelJob {
+  job_id: string;
+  model_id: string;
+  state: "queued" | "running" | "done" | "failed" | "cancelled";
+  bytes_done: number;
+  bytes_total: number;
+  fraction: number;
+  bytes_per_sec: number;
+  eta_sec: number | null;
+  current_file: string;
+  error: string;
+}
+
 /** A registered material type for the 素材 [+] menu (project.list_material_types_info). */
 export interface MaterialTypeInfo {
   type_name: string;
@@ -308,6 +338,16 @@ export const rpc = {
     rpcCall<{ job_id: string }>("ai.test_aistack", { base_url: baseUrl }),
   aiRefreshModels: (provider: string, category: AiCategory) =>
     rpcCall<{ job_id: string }>("ai.refresh_models", { provider, category }),
+
+  // ── Local model manager (models.* domain) ──────────────────────────────────
+  // Catalog (disk-only installed state) + current jobs; download/cancel/remove.
+  // Live download progress arrives via the `event.models` notification.
+  modelsCatalog: () => rpcCall<ModelCatalogEntry[]>("models.catalog"),
+  modelsJobs: () => rpcCall<ModelJob[]>("models.jobs"),
+  modelsDownload: (modelId: string) =>
+    rpcCall<{ job_id: string }>("models.download", { model_id: modelId }),
+  modelsCancel: (jobId: string) => rpcCall<{ ok: boolean }>("models.cancel", { job_id: jobId }),
+  modelsRemove: (modelId: string) => rpcCall<{ freed: number }>("models.remove", { model_id: modelId }),
 
   recentList: () => rpcCall<ProjectBrief[]>("project.recent_list"),
   openProject: (folder: string) => rpcCall<ProjectBrief>("project.open", { folder }),

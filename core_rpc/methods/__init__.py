@@ -14,6 +14,7 @@ from __future__ import annotations
 from . import ai as ai  # noqa: F401
 from . import creation as creation  # noqa: F401
 from . import material as material  # noqa: F401
+from . import models as models  # noqa: F401
 from . import project as project  # noqa: F401
 from . import system as system  # noqa: F401
 
