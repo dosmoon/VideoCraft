@@ -16,6 +16,7 @@ import type { Track } from "../ir.js";
 import { deriveOverlayTrack, type SourceAnchoredCue } from "../timemap.js";
 import { fitCues } from "../subtitleWrap.js";
 import type { CompileContext, VideoComponent } from "./contract.js";
+import type { FieldSpec } from "./fieldSpec.js";
 
 export interface SubtitleInstance {
   enabled: boolean;
@@ -90,3 +91,32 @@ export const subtitle: VideoComponent<SubtitleInstance> = {
     return [deriveOverlayTrack(cues, ctx.timeMap)];
   },
 };
+
+/**
+ * Edit-UI fields (wire snake keys). A superset across plugins: clip-only fields
+ * (language, bold, bg_padding_x_pct) and news_desk-only (bg_enabled) are simply
+ * absent on the other plugin's instance, so the editor skips them. `language`
+ * options are host-supplied at render time (enums override).
+ */
+export const subtitleFields: readonly FieldSpec[] = [
+  { key: "name", control: "text", labelKey: "subtitle.name" },
+  { key: "language", control: "select", labelKey: "subtitle.language" },
+  {
+    key: "position",
+    control: "select",
+    labelKey: "subtitle.position",
+    options: ["top", "bottom"],
+    optionLabelKeys: { top: "subtitle.position.top", bottom: "subtitle.position.bottom" },
+  },
+  { key: "block_margin_pct", control: "number", labelKey: "subtitle.block_margin", step: 0.01, min: 0, max: 0.4 },
+  { key: "fontsize_pct", control: "number", labelKey: "subtitle.fontsize", step: 0.005, min: 0, max: 0.5 },
+  { key: "color", control: "color", labelKey: "subtitle.color" },
+  { key: "bold", control: "checkbox", labelKey: "subtitle.bold" },
+  { key: "is_chinese", control: "checkbox", labelKey: "subtitle.is_chinese" },
+  { key: "stroke_color", control: "color", labelKey: "subtitle.stroke_color" },
+  { key: "stroke_pct", control: "number", labelKey: "subtitle.stroke_width", step: 0.001, min: 0, max: 0.02 },
+  { key: "bg_enabled", control: "checkbox", labelKey: "subtitle.bg_enabled" },
+  { key: "bg_color", control: "color", labelKey: "subtitle.bg_color" },
+  { key: "bg_opacity", control: "number", labelKey: "subtitle.bg_opacity", step: 1, min: 0, max: 100 },
+  { key: "bg_padding_x_pct", control: "number", labelKey: "subtitle.bg_padding_x", step: 0.005, min: 0, max: 0.2 },
+];

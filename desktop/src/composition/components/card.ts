@@ -12,6 +12,7 @@
 import { clip, type Clip, type Track } from "../ir.js";
 import { packOverlaySegments } from "../assemble.js";
 import type { CompileContext, VideoComponent } from "./contract.js";
+import type { FieldSpec } from "./fieldSpec.js";
 
 export type CardPosition = "upper-third" | "center" | "lower-third";
 
@@ -108,3 +109,32 @@ export const outroCard: VideoComponent<CardInstance> = {
     return [packOverlaySegments([{ startSec: start, endSec: ctx.durationSec, clip: c }])];
   },
 };
+
+/**
+ * Edit-UI fields (wire snake keys). Shared by hook_card + outro_card. `text` is
+ * NOT here — hook/outro text comes from the candidate, not the component (the
+ * Tk panel had no text field either).
+ */
+export const cardFields: readonly FieldSpec[] = [
+  { key: "name", control: "text", labelKey: "card.name" },
+  { key: "duration_sec", control: "number", labelKey: "card.duration", step: 1, min: 1, max: 30 },
+  { key: "font", control: "text", labelKey: "card.font" },
+  { key: "size_pct", control: "number", labelKey: "card.fontsize", step: 0.005, min: 0, max: 0.5 },
+  { key: "color", control: "color", labelKey: "card.color" },
+  { key: "stroke_color", control: "color", labelKey: "card.stroke_color" },
+  { key: "stroke_pct", control: "number", labelKey: "card.stroke_width", step: 0.001, min: 0, max: 0.02 },
+  { key: "bg_color", control: "color", labelKey: "card.bg_color" },
+  { key: "bg_opacity", control: "number", labelKey: "card.bg_opacity", step: 1, min: 0, max: 100 },
+  { key: "box_padding_pct", control: "number", labelKey: "card.box_padding", step: 0.005, min: 0, max: 0.2 },
+  {
+    key: "position",
+    control: "select",
+    labelKey: "card.position",
+    options: ["upper-third", "center", "lower-third"],
+    optionLabelKeys: {
+      "upper-third": "card.position.upper_third",
+      center: "card.position.center",
+      "lower-third": "card.position.lower_third",
+    },
+  },
+];

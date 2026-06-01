@@ -655,6 +655,7 @@ export function StyleTab(props: {
               component={selected}
               disabled={savingId === selected.id}
               onPatch={(fields) => onPatch(selected, fields)}
+              enums={{ language: data?.subtitleLangs ?? [] }}
             />
           ) : (
             <PropertyPanel

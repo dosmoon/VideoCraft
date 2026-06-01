@@ -59,8 +59,10 @@ export function ComponentEditor(props: {
   component: Component;
   disabled: boolean;
   onPatch: (fields: Record<string, unknown>) => void;
+  /** Host-supplied dynamic select options by field key (e.g. subtitle language). */
+  enums?: Record<string, readonly string[]>;
 }) {
-  const { component, disabled, onPatch } = props;
+  const { component, disabled, onPatch, enums } = props;
   const specs = (fieldsForKind(component.kind) ?? []).filter((s) => {
     if (!fieldPresent(component, s)) return false;
     if (s.visibleWhen && !s.visibleWhen(component)) return false;
@@ -82,6 +84,7 @@ export function ComponentEditor(props: {
           key={spec.path ? spec.path.join(".") : spec.key}
           spec={spec}
           value={readValue(component, spec)}
+          {...(enums?.[spec.key] ? { options: enums[spec.key] } : {})}
           disabled={disabled}
           onCommit={(v) => onPatch(buildPatch(component, spec, v))}
         />
@@ -93,10 +96,11 @@ export function ComponentEditor(props: {
 function FieldControlRow(props: {
   spec: FieldSpec;
   value: unknown;
+  options?: readonly string[];
   disabled: boolean;
   onCommit: (value: unknown) => void;
 }) {
-  const { spec, value, disabled, onCommit } = props;
+  const { spec, value, options: dynOptions, disabled, onCommit } = props;
   const label = <label style={{ color: "#999", fontSize: 12 }}>{tr(spec.labelKey)}</label>;
 
   switch (spec.control) {
@@ -126,7 +130,8 @@ function FieldControlRow(props: {
       );
     case "select": {
       const cur = value == null ? "" : String(value);
-      const opts = spec.options ?? [];
+      // Host-supplied dynamic options (e.g. subtitle language) override static.
+      const opts = dynOptions ?? spec.options ?? [];
       const list = opts.includes(cur) ? opts : [cur, ...opts];
       return (
         <>
