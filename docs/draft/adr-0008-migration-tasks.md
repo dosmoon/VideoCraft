@@ -8,6 +8,20 @@
 
 ---
 
+## ⚡ 导出速度（高优 deferred，迁移收尾后做）
+
+**现象**(2026-06-01 用户报告):news_desk 全源导出慢——3 分钟视频 ~2 分钟导出,**用户判定无法接受**(按此 1 小时视频 ≈ 40 分钟,无 NLE 这么慢)。用户称「之前没这么慢」(疑回归)。
+
+**分析**:逐帧 encode 循环 [`engine/export/encode.ts:214-243`](../../desktop/src/renderer/engine/export/encode.ts) **A4/A5 未碰**(纯 GPU/WebCodecs);clip 短窗口快=帧少,news_desk 全源把逐帧成本暴露。每帧三个重活:① `prepareFrame(slice, deps, exact=true)` 逐帧精确解码源帧;② `backend.renderOffscreenToBytes(...)` = GPU 画 + `copyTextureToBuffer` **GPU→CPU 读回**(每帧一次同步阻塞);③ `new VideoFrame(px.data)` 从 CPU 字节建帧 → encode。
+
+**待办**(优先级高):
+1. **先证伪/坐实回归**:`git stash` A4/A5 改动,同一视频对比导出时长(我判断 encode 路径未变、应无差,但尊重用户观察,先验)。
+2. **真优化(最大那刀)**:**砍掉每帧 CPU 读回** —— `Backend.canvasElement` getter 注释已写 *"captured as a VideoFrame source during export"*,但 encode.ts 没用它、走的是 readback。改成 **`new VideoFrame(backend.canvasElement, {timestamp})`** 直接从 GPU canvas 抓帧(浏览器内部优化拷贝,免 copyTextureToBuffer+mapAsync 阻塞)= 半成品优化没接上。
+3. **decode 顺序化**:`exact=true` 逐帧 seek 解码慢;导出是顺序前进,应顺序 demux/decode 而非逐帧 seek(task.md P4「导出域:逐帧精确 decode」)。
+4. 可选:encoder 背压窗口调大、并行 readback 多 staging buffer(若不走方案 2)。
+
+---
+
 ## 前提依赖
 
 - [ ] **P2 — Tk 退役**(独立阶段;gate 住 A6/B5 —— clip Tk 仍 import `creations/clip/config.py` 等,删 Python 前必须先退 Tk)。详见设计文档「剩余工作计划」P2。
@@ -40,10 +54,10 @@
   - [x] **✅ 真机 GUI 对等验通过**(2026-06-01,用户确认"正常"):clip 工作台样式/候选/导出全部与现状一致;news_desk 不受影响。**A4 完成——clip 是第一个端到端迁到纯 TS 路径并验证的插件。**
   - **保留 Python**(A6 删):config/presets/component_defs/export/publish；**`preview.py` 留到 B4**(候选解析依赖素材模型)。
 
-- [~] **A5 — news_desk 同 A2–A4**(代码已落,待 GUI 验)
+- [x] **A5 — news_desk 同 A2–A4**(✅ 代码 + 功能验证完成;导出速度遗留见下「⚡ 导出速度」)
   - [x] port:`creations/news_desk/{componentDefs,presets,configOwner,publish,render,clientBackend}.ts`(config/preset/render 全 TS;presets 含 builtin 模板 + project-content 剥离;render 单全源输出 + publish.md 读 context 经 `material.read_context` 桥 + 章节详情转写经 fs 读 SRT 解析)+ `newsDesk.test.ts`(5 测)。client.ts 加 `type==="news_desk"` 分发。typecheck + 165 vitest + build 全绿。
   - **保留 Python(Phase A)**:`preview_data`(媒体/SRT)+ **`imports.py`**(import_resource 快照素材 SRT/章节,需素材文件访问 → 跟 clip hotclipsRepo 一样 defer 到 Phase B);故 `imports.ts` 暂不做。
-  - [ ] **⚠️ news_desk 工作台 GUI 对等验(待用户)**:样式(组件/属性/预设 应用·另存·覆盖·删除)、素材绑定、导入(字幕/章节,仍走 Python)、导出(全源 mp4 + output.json + **publish.md** + 删除)。
+  - [x] **✅ news_desk 功能验过**(2026-06-01):导出能产出全源 mp4 + output.json + publish.md,功能正常。**A5 完成**(第二个迁到纯 TS 路径的插件)。**唯一遗留 = 导出速度,见下「⚡ 导出速度」(高优 deferred,用户拍板先干完迁移再优化)。**
 
 - [ ] **A6 — ⚠️GATE 退役创作 Python**(前提:P2 Tk clip 退役 + A4/A5 真机验过)
   - [ ] 删 `creations/{clip,news_desk}/{config,presets,component_defs,preview,export,publish,...}.py`

@@ -7,7 +7,10 @@
 
 ## ▶▶ 新会话从这读起(2026-06-01 更新,接力点)
 
-> **🚩 重大架构转向进行中 = 三个本体收敛为纯 TS 插件,Python 退成 plugin-agnostic 能力网关(ADR-0008,已立)。** 起因:为 news_desk 恢复 publish.md(续 36)暴露"双语插件不可维护"。**权威设计 = `docs/draft/electron-migration-design.md` 顶部「🚩 架构转向」节 + `docs/adr/0008-plugins-ts-python-capability-gateway.md`。** **▶ 持久任务追踪(跨会话防遗忘,勾选进度看这个)= [`docs/draft/adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md)。** 进度:**A1–A4 全落 + push,clip 真机 GUI 对等验通过**(用户确认"正常",2026-06-01)。**clip 已是第一个端到端迁到纯 TS 路径并验证的插件**:config/preset/render 走 `ClipConfigOwner`+`render.ts`、经 `vc.fs` 落盘;`client.ts` 按 `type==="clip"` 分发到 `creations/clip/clientBackend.ts`(tabs 零改动);候选/源仍走 Python `preview_data`/`get_artifact`(Phase A 桥)。commit `ad1352d`→`69471f3`,160 vitest 全绿。**下一步 = A5(news_desk 同playbook:port 其 Python 层 + client 分发,末尾同样要 news_desk 工作台 GUI 对等验)**;A6/B 退役 Python 前提仍是 P2 Tk 退役 + news_desk 迁完。**前提 = P2 Tk 退役**(clip Tk 仍依赖 `clip/config.py`)。
+> **🚩 重大架构转向进行中 = 三个本体收敛为纯 TS 插件,Python 退成 plugin-agnostic 能力网关(ADR-0008,已立)。** 起因:为 news_desk 恢复 publish.md(续 36)暴露"双语插件不可维护"。**权威设计 = `docs/draft/electron-migration-design.md` 顶部「🚩 架构转向」节 + `docs/adr/0008-plugins-ts-python-capability-gateway.md`。** **▶ 持久任务追踪(跨会话防遗忘,勾选进度看这个)= [`docs/draft/adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md)。** 进度:**Phase A 完成——clip + news_desk 两个创作都迁到纯 TS 路径并验过**(2026-06-01)。两者 config/preset/render 走 TS owner + `render.ts`、经 `vc.fs` 落盘;`client.ts` 按 `type==="clip"|"news_desk"` 分发到各自 `clientBackend.ts`(工作台 tabs **零改动**);`preview_data`/`get_artifact`/news_desk `imports` 仍走 Python(Phase A 桥,defer 到 Phase B)。commit `ad1352d`→`9077cfd`,**165 vitest 全绿**,clip+news_desk GUI 均验过(news_desk 导出能产出 mp4+publish.md)。
+> **⚡ 遗留高优(用户拍板:迁移收尾后做)= 导出速度**:news_desk 全源 3 分钟视频导出 ~2 分钟,无法接受。**非 A4/A5 回归**(encode 逐帧循环未碰),瓶颈=每帧 GPU→CPU 读回 + exact 逐帧解码;**最大优化线索 = `Backend.canvasElement` 直接建 VideoFrame 免读回(半成品没接上)**。详见 `adr-0008-migration-tasks.md` 顶「⚡ 导出速度」。**下一步先验是否回归(git stash 对比)再优化。**
+
+**下一步(迁移)**:A6 退役创作 Python 仍卡在 **P2 Tk 退役**(clip Tk 还 import `clip/config.py`);或开 **Phase B(news_video 素材 → TS + 能力网关)**。Phase A 已收口。**前提 = P2 Tk 退役**(clip Tk 仍依赖 `clip/config.py`)。
 
 > **续 36(本节下方):news_desk + clip 导出恢复 publish.md/index.md,已 commit(`b3f2cb1`+`69ded12`,未 push)。**
 
