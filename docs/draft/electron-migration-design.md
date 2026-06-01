@@ -1,7 +1,7 @@
 # Electron 迁移正式方案
 
 > **状态**:草案 / 2026-05-29 · 承接 [`electron-migration-plan.md`](electron-migration-plan.md)(启动稿)
-> **性质**:正式迁移方案。成熟后升级为 ADR(预定 ADR-0007),并正式 supersede [`docs/design/01-architecture.md`](../design/01-architecture.md) 的"单进程 + Tab 嵌入 / 无需 IPC"决策。
+> **性质**:正式迁移方案。成熟后升级为 ADR(预定 **ADR-0008**;0007 已用于组件编辑 UI 元数据),并正式 supersede [`docs/design/01-architecture.md`](../design/01-architecture.md) 的"单进程 + Tab 嵌入 / 无需 IPC"决策。
 > **读者**:接手迁移实施的后续会话 / 作者本人。
 > **前置**:已读 ADR-0003/0005/0006、design 01/02/04/06、architecture-vision.md、project-restructure.md(对齐结论见 §0)。
 
@@ -12,6 +12,8 @@
 > **clip + news_desk 两个创作工作台均已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现并真机验过**(均含导出渲染;news_desk 含 preset + 素材绑定 + 详情列表 + 章节属性编辑;Tk news_desk 已退役)。本节是后续工作的**接力入口**;实现细节集中在此(task.md 只保留接力指针 + 逐次进展「续 N」,不堆架构细节)。下面"实际实现"凡与本文档正文不同的,以本节为准(正文写于迁移启动期,部分已被实现推翻——另见 §0.5)。
 >
 > **✅ 素材(material)侧已迁新架构(2026-05-31,M0~M6 完整,见本节末「素材侧」)。** 新架构里现在能从零造出可用 news_video 素材(建实例 → 导源视频本地/yt-dlp → ASR/翻译/章节分析 job → 编辑 15 字段新闻背景 + AI 填充)。clip + news_desk + 素材三大本体均已迁 + renderer i18n(双语热切换)已实装;Tk 仍 ship clip 工作台 + 素材 sidebar(待退役)。**剩余工作有序计划见本节末「剩余工作计划」**(P0 真机验 → P1 框架服务/AI console → P2 Tk 退役 → P3 打包 → P4+ 打磨)。
+>
+> **✅ 统一组件编辑器(引擎独占 FieldSpec 元数据)已实装(2026-06-01,见下「统一组件编辑器」节 + ADR-0007)。** 落地 §4.5 的编辑 UI ①:clip+news_desk 共用一个元数据驱动 `<ComponentEditor>`,全组件(水印/字幕/卡片/chapter 嵌套)迁完,news_desk wire 单位归一,颜色控件升级 Sketch+吸管。`PropertyPanel`/`ImageWatermarkProperties`/`ChapterProperties` 已删。**当前唯一阻塞收口 = 真机肉眼验**(编辑控件 + 各工作台预览 + i18n 热切换 + AI console/模型/环境 P1 的 headless 盲区),验完即可进 P2 Tk 退役。
 >
 > 已提交基线:见 `git log`(clip 工作台系列 commit,最新含导出/预设/双语)。
 
@@ -127,6 +129,17 @@ news_desk 与 clip 走同一套契约,正面验证「公共组件库 + provider 
 - **验证**:`pnpm typecheck` 干净 + 130 vitest + `pnpm build`(98 模块,JSON 入包)全过;`tests/core_rpc` 114 全绿(+`system.get_locale`/`set_locale` round-trip + reject;后者 monkeypatch `i18n.SETTINGS_FILE` 到 tmp 防污染真实配置)。脚本核对:字面 `tr()` key 全部命中 JSON;zh/en key 集合相等;残留中文仅 JSDoc 注释。
 - **欠**:① 真机肉眼验热切换(点 中/EN 看整树即时翻 + 重启后保持;与渲染层同类 headless 盲区);② sidecar `RpcError.message`(Python 侧文案)双语化是单独决策,本轮只做 renderer 自有硬编码;③ Tk `src/i18n/{zh,en}.json` 806 key 与 renderer 表是两套(刻意,迁移期 renderer 自包含),将来可考虑合并/对齐。
 
+### 统一组件编辑器(引擎独占 FieldSpec 元数据)—— 已实装(2026-06-01,落地 foundation §4.5 的 ①;权威 = ADR-0007）
+
+迁移期一直缺奠基稿 §4.5「组件 = ① 编辑 UI + ② compile」的 ①,临时用通用 `PropertyPanel` 直接编辑各插件原始 wire dict——从值类型猜控件、从字段名 `/opacity/i` 猜步进(分数字段取到 0/1.0 就崩)、露 snake_case 内部名当标签。dogfood 连环踩雷(图片不显示真因是缺 picker;小数打不进;箭头 +1;position 是自由文本而非 anchor)后,落地 ① 并把两插件 wire 归一。
+
+- **引擎层(纯数据,无 React)**:`composition/components/fieldSpec.ts`——`FieldSpec`(control/labelKey/step/min/max/options/optionLabelKeys/**path**(嵌套)/**section**/**visibleWhen**)+ `canonicalKind()`(去 `clip_` 前缀)+ `fieldsForKind()` 注册表。各组件导出 `*Fields`(watermark/subtitle/card/chapter)。**FieldSpec.key = 持久化 wire snake key**(编辑器编辑持久化 dict,经 `creation.update_component` 浅合并);camelCase canonical 仅供 compile,由 mapping 桥接。
+- **renderer**:`workbenches/shared/ComponentEditor.tsx`(元数据驱动,clip+news_desk 共用,标签恒走 `tr()`)+ `fieldControls.tsx`(抽出的 number 步进/text/`ColorSwatchPicker`)+ `nestedPatch.ts`(嵌套 read/patch,整子对象重发抗浅合并,6 单测)。两 StyleTab 恒用 `<ComponentEditor>`。删 `PropertyPanel`/`ImageWatermarkProperties`/`ChapterProperties`/`chapterPatch`。
+- **news_desk wire 归一**:`component_defs.py`/`types.ts`/`mapping.ts` 整数百分比→分数 + 规范名(`scale_pct→image_scale` 等);clamp 留 `mapping.ts`(ADR-0006 单点),FieldSpec min/max 仅 UX 提示。**顺带修潜在 bug**:news_desk 文字水印 mapping 读的是 Python 早已改名前的 stale key。
+- **颜色控件**:`@uiw/react-color` Sketch(饱和度方块+色相条+HEX/RGB+预设)+ Chromium EyeDropper 屏幕吸管;关 alpha(不透明度是独立字段);关闭弹窗时提交(不每帧 RPC)。
+- **候选预览**:切候选/nudge 起止点时按 window-key 暂停+进度归零(防旧位置越界短 clip)。
+- **欠真机肉眼验**:各控件小数输入/步进/anchor 下拉/中文标签/chapter mode 门控+嵌套改值不丢兄弟/取色器+吸管。
+
 ### 与本文档正文不同的关键实现决策
 
 | 正文/设计 | 实际实现 | 原因 |
@@ -147,7 +160,7 @@ news_desk 与 clip 走同一套契约,正面验证「公共组件库 + provider 
 - **环境**:agent shell 带 `ELECTRON_RUN_AS_NODE=1`,启动必 `env -u ELECTRON_RUN_AS_NODE pnpm dev`;改 Python 必整重启 sidecar(Ctrl+R 只重载 renderer);HMR 不可信,改 renderer 后清 `node_modules/.vite` 整重启;启动前 `taskkill electron.exe` + 杀 5174。
 
 ### 测试
-TS:`pnpm typecheck` + `pnpm test`(130,含 ir/timemap/components/clip/news_desk/cropEditor/mapping/subtitleWrap/chapterPatch/chapterDraw)。Python:`pytest tests/core_rpc`(114,含 creation 全 RPC + render plan/commit/delete + 预设 + 双语 + import + bind + cache 失效回归 + material 全 RPC + `system.get_locale`/`set_locale`)。引擎渲染层 + i18n 热切换 headless 覆盖不到,靠真 renderer 肉眼验。全套 `pytest tests/` 仅 3 个 pre-existing failed(golden CRLF/tmp 路径 x2 + clip_config stale id),无新增。
+TS:`pnpm typecheck` + `pnpm test`(132,含 ir/timemap/components/clip/news_desk/cropEditor/mapping/subtitleWrap/nestedPatch/chapterDraw)。Python:`pytest tests/core_rpc`(114,含 creation 全 RPC + render plan/commit/delete + 预设 + 双语 + import + bind + cache 失效回归 + material 全 RPC + `system.get_locale`/`set_locale`)。引擎渲染层 + i18n 热切换 headless 覆盖不到,靠真 renderer 肉眼验。全套 `pytest tests/` 仅 3 个 pre-existing failed(golden CRLF/tmp 路径 x2 + clip_config stale id),无新增。
 
 ### 剩余工作计划(2026-06-01 重排)
 
@@ -189,7 +202,7 @@ TS:`pnpm typecheck` + `pnpm test`(130,含 ir/timemap/components/clip/news_desk/c
 - 转场(crossfade / dip_to_black):IR `Transition` + `resolveFrameAt` 重叠区双 active 已就位,缺 GPU per-layer alpha blend + 创作产出 + UI;用户决定暂不做(当前两形态语义上不需段间转场)。
 - 录播自动剪辑(新创作形态;OTIO 多段装配的真实需求来源,[[project_recorded_autoedit]])——它会反过来驱动转场。
 
-**P6 — 文档治理**:升 ADR-0007(数据模型 + 渲染引擎 + IPC 拓扑;固化 foundation/migration 两稿已落决策)。
+**P6 — 文档治理**:升 **ADR-0008**(数据模型 + 渲染引擎 + IPC 拓扑;固化 foundation/migration 两稿已落决策;supersede `01-architecture.md`)。**注:ADR-0007 已被「组件编辑 UI = FieldSpec 元数据」占用**(2026-06-01 本轮落地),故 foundation 大稿顺延到 0008。
 
 ---
 
@@ -483,7 +496,7 @@ M3  Material sidebar + Hub 主壳全量迁 Electron;新建项目/派生对话框
 M4  Tk 退役:删 src/ui/web_preview*.py、video_preview_pane.py、
      composition_preview.html 的 Tk 宿主、所有 Tk UI 模块。
      core + core_rpc + desktop 成为唯一形态。
-     ★ supersede 01-architecture.md → 写 ADR-0007。
+     ★ supersede 01-architecture.md → 写 ADR-0008(0007 已用于组件编辑 UI 元数据)。
 ```
 
 **铁律落实**(启动稿 §六):

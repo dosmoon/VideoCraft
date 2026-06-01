@@ -7,6 +7,8 @@
 
 ## ▶▶ 新会话从这读起(2026-06-01 更新,接力点)
 
+> **最新进展 = 续 35(本节下方):统一组件编辑器(引擎独占 FieldSpec 元数据)已落地 + push。** 全组件迁完、news_desk 单位归一、颜色控件升级、ADR-0007 已立。**当前唯一阻塞 = 真机肉眼验**(编辑控件 / 各工作台预览 / i18n 热切换 / AI console·模型·环境 P1 的 headless 盲区);验完即进 **P2 Tk 退役**。先读 `docs/draft/electron-migration-design.md` 顶部「★ 实现进度」(含「统一组件编辑器」节 + 「剩余工作计划」P0~P6)+ `docs/adr/0007-component-edit-ui-metadata.md`。
+
 **clip + news_desk + 素材(material)侧均已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现;Tk news_desk 已退役。** 续29~31 收口 news_desk;**续 32 把素材侧整块迁过来(M0~M6 + gap A~D)**,**续 33 真机复核后修了三处**(预置语言选择器 / 新闻背景页用法澄清 / 分析 kind 精选)。**两笔已落 `main`:`fd2cffb`(素材迁移)+ `9aeb9bd`(三处修正),均未 push。**
 
 **✅ renderer 双语(i18n)改造 + 热切换已完成(续 34,已落 main `a3b53af` 并 push)。** 整个 renderer(Hub + clip/news_desk/material 工作台)硬编码中文已抽成 `tr()` key;轻量自建 i18n(`desktop/src/renderer/i18n/` + 新 RPC `system.get_locale`/`set_locale` 读写同一 `user_data/settings.json`,与 Tk 锁步),zh/en 290 对严格对称。**中/EN 切换是热的**(`tr()` 每帧求值 + `useSyncExternalStore` reactive,`LanguageToggle` 放 Launcher + 项目顶栏,点即翻 + 持久化回 settings.json);区别于 Tk 重启制。typecheck + 130 vitest + build(98 模块)+ 114 sidecar 测全绿。细节见 `electron-migration-design.md`「renderer i18n」节。
