@@ -422,8 +422,11 @@ export function CropPreview(props: CropPreviewProps) {
           if (typeof p === "string" && p) {
             try {
               await preloadImageOverlay(p, window.vc.mediaUrl(p));
-            } catch {
-              /* unloadable image → renders without it */
+              // DIAGNOSTIC: load succeeded → if still invisible, the bug is in draw.
+              console.log("[image-watermark] preload OK", { path: p });
+            } catch (e) {
+              // DIAGNOSTIC: surface why the watermark image won't load.
+              console.error("[image-watermark] preload failed", { path: p, url: window.vc.mediaUrl(p), error: e });
             }
           }
         }
