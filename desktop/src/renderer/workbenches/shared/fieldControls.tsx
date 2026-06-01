@@ -5,9 +5,21 @@
  */
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
-import { HexColorPicker } from "react-colorful";
+import Sketch from "@uiw/react-color-sketch";
+import { tr } from "../../i18n/tr";
 
 const HEX6 = /^#[0-9a-fA-F]{6}$/;
+
+// Curated preset swatches (app's recurring colors + neutrals).
+const PRESET_COLORS = [
+  "#FFFFFF", "#000000", "#FF8000", "#FFFF00", "#DC2626", "#1E40AF",
+  "#0F1B2C", "#E5E7EB", "#22C55E", "#06B6D4", "#A855F7", "#EC4899",
+];
+
+// Chromium screen eyedropper (Electron has it); typed minimally.
+type EyeDropperCtor = new () => { open: () => Promise<{ sRGBHex: string }> };
+const getEyeDropper = (): EyeDropperCtor | undefined =>
+  (window as unknown as { EyeDropper?: EyeDropperCtor }).EyeDropper;
 
 export const INPUT_STYLE: CSSProperties = {
   width: "100%",
@@ -62,11 +74,13 @@ export function ColorInput(props: { value: string; disabled: boolean; onCommit: 
 }
 
 /**
- * Clickable color swatch that opens a react-colorful popover (saturation square
- * + hue bar + hex field). Electron exposes no native color dialog, and the
- * Chromium <input type="color"> picker is bare-bones — this is the standard
- * lightweight in-app picker. Commits on close (popover dismiss) to avoid an RPC
- * write per drag frame; the swatch shows the live draft while open.
+ * Clickable color swatch that opens a full picker popover (saturation square +
+ * hue bar + HEX/R/G/B inputs + preset swatches, via @uiw/react-color Sketch) and
+ * a screen eyedropper. Electron exposes no native color dialog and the Chromium
+ * <input type="color"> picker is bare-bones, so this is the in-app picker.
+ * Alpha is disabled — opacity is a separate field. Commits on close (popover
+ * dismiss) to avoid an RPC write per drag frame; the swatch shows the live draft
+ * while open.
  */
 export function ColorSwatchPicker(props: { value: string; disabled: boolean; onCommit: (v: string) => void }) {
   const { value, disabled, onCommit } = props;
@@ -123,21 +137,45 @@ export function ColorSwatchPicker(props: { value: string; disabled: boolean; onC
             top: "100%",
             right: 0,
             marginTop: 6,
-            padding: 8,
             background: "#1e1e22",
             border: "1px solid #444",
             borderRadius: 8,
             boxShadow: "0 6px 20px rgba(0,0,0,0.5)",
+            overflow: "hidden",
           }}
         >
-          <HexColorPicker color={HEX6.test(draft) ? draft : "#000000"} onChange={(c) => setDraft(c.toUpperCase())} />
-          <input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && close()}
-            spellCheck={false}
-            style={{ ...INPUT_STYLE, width: 200, maxWidth: 200, marginTop: 8 }}
+          <Sketch
+            color={HEX6.test(draft) ? draft : "#000000"}
+            disableAlpha
+            presetColors={PRESET_COLORS}
+            onChange={(c) => setDraft(c.hex.toUpperCase())}
+            style={{ background: "#1e1e22", boxShadow: "none" } as CSSProperties}
           />
+          {getEyeDropper() && (
+            <button
+              type="button"
+              onClick={() => {
+                const ED = getEyeDropper();
+                if (!ED) return;
+                void new ED()
+                  .open()
+                  .then((r) => setDraft(r.sRGBHex.toUpperCase()))
+                  .catch(() => undefined); // user cancelled
+              }}
+              style={{
+                width: "100%",
+                padding: "6px 0",
+                background: "#2a2a2e",
+                color: "#ccc",
+                border: "none",
+                borderTop: "1px solid #444",
+                fontSize: 12,
+                cursor: "pointer",
+              }}
+            >
+              🖉 {tr("common.eyedropper")}
+            </button>
+          )}
         </div>
       )}
     </span>
