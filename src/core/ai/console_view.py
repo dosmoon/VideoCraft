@@ -1,0 +1,141 @@
+"""Pure, UI-free read model for the AI Console (provider routing / keys / stats).
+
+The provider-tier classification and key-status logic historically lived inside
+the Tk console (tools/router/ai_console.py). This module lifts that logic into a
+reusable, UI-free shape so the Electron renderer (via the core_rpc `ai.*`
+methods) and — eventually — the Tk console can both render from one source.
+
+It returns STRUCTURED DATA ONLY: no i18n strings, no colors. Enums the front-end
+maps to localized labels:
+  - `deploy_tier`  ∈ {local, free_online, aistack, cloud}
+  - `key_status.state` ∈ {cli, no_key_needed, not_configured, empty, ok}
+  - routing tier ids ∈ {embedded, cloud, aistack, auto}
+
+Read-only. Write operations (set key / set routing / test connection) land in a
+later slice as separate `ai.*` methods.
+"""
+
+from __future__ import annotations
+
+import os
+
+from core.ai import config as _cfg
+from core.ai.router import router
+
+# Deploy-tier classification — mirrors ai_console._classify_provider_tier /
+# _LOCAL_PROVIDER_NAMES / _FREE_ONLINE_PROVIDER_NAMES (the UI's real grouping,
+# not the engine registry — see [[feedback_ui_menu_from_tk_not_engine]]).
+_LOCAL_PROVIDERS = frozenset({"LlamaCpp", "faster_whisper"})
+_FREE_ONLINE_PROVIDERS = frozenset({"edge_tts"})
+
+# Routing tiers per category — mirrors ai_console._ROUTING_TIERS_*. LLM has an
+# extra "auto" (candidate-pool fallback); ASR/TTS do not.
+ROUTING_TIERS_LLM = ("embedded", "cloud", "aistack", "auto")
+ROUTING_TIERS_NON_LLM = ("embedded", "cloud", "aistack")
+
+
+def classify_deploy_tier(name: str) -> str:
+    """Return one of: 'local' | 'free_online' | 'aistack' | 'cloud'."""
+    if name == "aistack":
+        return "aistack"
+    if name in _LOCAL_PROVIDERS:
+        return "local"
+    if name in _FREE_ONLINE_PROVIDERS:
+        return "free_online"
+    return "cloud"
+
+
+def _key_status(cfg: dict) -> dict:
+    """Structured key state for a provider — {state, masked}. Mirrors
+    ai_console._key_status but returns an enum + masked key instead of i18n text
+    + color (the renderer localizes)."""
+    if cfg.get("type") == "claude_code":
+        return {"state": "cli", "masked": None}
+    key_file = cfg.get("key_file", "")
+    if not key_file:
+        return {"state": "no_key_needed", "masked": None}
+    key_path = os.path.join(_cfg.keys_dir(), key_file)
+    if not os.path.exists(key_path):
+        return {"state": "not_configured", "masked": None}
+    with open(key_path, "r", encoding="utf-8") as f:
+        key = f.read().strip()
+    if not key:
+        return {"state": "empty", "masked": None}
+    masked = key[:4] + "****" + key[-4:] if len(key) >= 8 else "****"
+    return {"state": "ok", "masked": masked}
+
+
+def _models_list(cfg: dict) -> list[str]:
+    """Normalize a provider's `models` field to a flat string list for display.
+    Cloud LLM providers store {quality_tier: model_id}; embedded ones store a
+    plain list of on-disk model names."""
+    models = cfg.get("models")
+    if isinstance(models, dict):
+        return [str(m) for m in models.values() if m]
+    if isinstance(models, list):
+        return [str(m) for m in models]
+    return []
+
+
+def _provider_view(name: str, cfg: dict, category: str) -> dict:
+    """One provider row, normalized. `needs_key` = has a key_file (so the UI can
+    distinguish 'not_configured' (actionable) from 'no_key_needed' (local)."""
+    return {
+        "name": name,
+        "category": category,
+        "deploy_tier": classify_deploy_tier(name),
+        "type": cfg.get("type", ""),
+        "enabled": bool(cfg.get("enabled", True)),
+        "needs_key": bool(cfg.get("key_file")),
+        "has_auth": _cfg.has_auth(cfg),
+        "key_status": _key_status(cfg),
+        "models": _models_list(cfg),
+    }
+
+
+def snapshot() -> dict:
+    """Full read-only state for the AI Console (everything but live model probes
+    and per-call stats — the latter is `stats()`, refreshed on its own)."""
+    tasks = [{"id": tid, "category": cat, "label": label} for tid, cat, label in _cfg.TASKS]
+
+    # Per-(task, tier) sticky picks the user has configured (sparse — only set
+    # cells). Built from router.get_task_tier_pref since there's no bulk getter.
+    prefs: dict[str, dict] = {}
+    for tid, cat, _label in _cfg.TASKS:
+        tiers = ROUTING_TIERS_LLM if cat == "llm" else ROUTING_TIERS_NON_LLM
+        cell = {}
+        for tier in tiers:
+            pref = router.get_task_tier_pref(tid, tier)
+            if pref:
+                cell[tier] = pref
+        if cell:
+            prefs[tid] = cell
+
+    providers = {
+        "llm": [_provider_view(n, c, "llm") for n, c in router._providers.items()],
+        "asr": [_provider_view(n, c, "asr") for n, c in router._asr_providers.items()],
+        "tts": [_provider_view(n, c, "tts") for n, c in router._tts_providers.items()],
+    }
+
+    gw = router.get_aistack_gateway()
+    return {
+        "tasks": tasks,
+        "routing_tiers": {
+            "llm": list(ROUTING_TIERS_LLM),
+            "non_llm": list(ROUTING_TIERS_NON_LLM),
+        },
+        "task_routing": router.get_task_routing(),
+        "task_tier_prefs": prefs,
+        "providers": providers,
+        "aistack": {
+            "base_url": gw["base_url"],
+            "enabled": gw["enabled"],
+            "models_cache": router.get_aistack_models_cache(),
+        },
+    }
+
+
+def stats() -> dict:
+    """Per-provider call counters for the Stats tab —
+    {provider: {calls, errors, last_used, ...}} (in-memory, deep-copied)."""
+    return router.get_stats()

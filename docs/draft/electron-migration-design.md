@@ -160,6 +160,8 @@ TS:`pnpm typecheck` + `pnpm test`(130,含 ir/timemap/components/clip/news_desk/c
 
 **P1 — 让新壳自给自足:框架服务(§0.5 已规划但未建)**。**当前最大功能缺口**:新壳只有 project/material/creation,**无 AI 配置入口**,sidecar 也无 `ai.*` 域 → ASR/翻译/章节分析/ai_fill 等所有 AI job 在新壳里配不了 provider/key,只能靠 Tk app 先配好。**退役 Tk 前必须补齐**:
 - **AI console 迁新壳**:provider 路由(task-first)/ 内置 / 云 key / aistack / TTS / 统计(6-tab,**去 Prompts**;[[project_videocraft_ai_console]]);需新增 sidecar `ai.*` RPC 域。
+  - **✅ P1-a 已落(2026-06-01,只读域)**:`core/ai/console_view.py`(UI-free 读模型——从 Tk console 提升 provider 分类 + key-status 逻辑,返回**结构化枚举**`deploy_tier`/`key_status.state` 而非 i18n 文案/颜色,渲染端本地化)+ `core_rpc/methods/ai.py`(`ai.snapshot` 全状态 / `ai.stats` 调用计数)。`tests/core_rpc/test_ai.py`(2)全绿,共 116 sidecar 测。**未碰 Tk console**(读模型双方将来共用)。
+  - **下一步 P1-b 写操作** + **P1-c renderer 6-tab 壳**(消费 snapshot)。
 - **本地模型管理 迁新壳**:模型下载/安装 catalog([[project_model_manager]]);不强制、可跳过([[feedback_no_forced_downloads]])。
 - **preferences / about / File**:现仅 i18n 语言开关,扩成完整 preferences;File 项目管理(新建/打开/最近——部分已有)。
 
