@@ -61,3 +61,18 @@ def test_models_cancel(ctx, monkeypatch):
     monkeypatch.setattr(dm, "cancel", lambda job_id: called.setdefault("id", job_id))
     assert call(ctx, "models.cancel", {"job_id": "job-1"})["result"] == {"ok": True}
     assert called["id"] == "job-1"
+
+
+def test_models_root_dir(ctx):
+    out = call(ctx, "models.root_dir")["result"]
+    assert isinstance(out["dir"], str) and out["dir"]
+
+
+def test_models_set_root_dir(ctx, monkeypatch):
+    from core.ai.router import router
+
+    seen = {}
+    monkeypatch.setattr(router, "set_models_dir", lambda p: seen.setdefault("p", p))
+    out = call(ctx, "models.set_root_dir", {"path": "/tmp/models-x"})["result"]
+    assert seen["p"] == "/tmp/models-x"
+    assert "dir" in out

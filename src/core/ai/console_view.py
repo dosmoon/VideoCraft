@@ -65,10 +65,19 @@ def _key_status(cfg: dict) -> dict:
     return {"state": "ok", "masked": masked}
 
 
-def _models_list(cfg: dict) -> list[str]:
-    """Normalize a provider's `models` field to a flat string list for display.
-    Cloud LLM providers store {quality_tier: model_id}; embedded ones store a
-    plain list of on-disk model names."""
+def _models_list(name: str, cfg: dict) -> list[str]:
+    """The model list for a provider's routing dropdown. Embedded providers scan
+    disk (so a model installed via the model manager appears immediately, matching
+    the Tk faster_whisper behaviour and fixing LlamaCpp's stale static list); cloud
+    providers use their configured `models` (dict of quality tiers, or a list)."""
+    if cfg.get("type") == "llama_cpp":
+        from core.ai.providers import llama_cpp
+
+        return llama_cpp.list_models()
+    if name == "faster_whisper":
+        from core.ai.providers import faster_whisper
+
+        return faster_whisper.list_models()
     models = cfg.get("models")
     if isinstance(models, dict):
         return [str(m) for m in models.values() if m]
@@ -97,7 +106,7 @@ def _provider_view(name: str, cfg: dict, category: str) -> dict:
         "has_auth": _cfg.has_auth(cfg),
         "key_status": _key_status(cfg),
         "base_url": cfg.get("base_url", ""),
-        "models": _models_list(cfg),
+        "models": _models_list(name, cfg),
         "settings": {k: cfg[k] for k in _EXTRA_SETTINGS if k in cfg},
     }
 

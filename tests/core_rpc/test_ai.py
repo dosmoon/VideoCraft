@@ -67,6 +67,20 @@ def test_ai_snapshot_shape(ctx):
     assert set(snap["aistack"]["models_cache"]) == {"llm", "asr", "tts"}
 
 
+def test_ai_snapshot_scans_installed_embedded_models(ctx, monkeypatch):
+    # Installed embedded models must flow into the routing dropdowns via a disk
+    # scan, not the static cfg["models"] (faster_whisper has none; LlamaCpp's is []).
+    from core.ai.providers import faster_whisper, llama_cpp
+
+    monkeypatch.setattr(faster_whisper, "list_models", lambda: ["fw-small", "fw-turbo"])
+    monkeypatch.setattr(llama_cpp, "list_models", lambda: ["Qwen3-1.7B.gguf"])
+    snap = call(ctx, "ai.snapshot")["result"]
+    fw = next(p for p in snap["providers"]["asr"] if p["name"] == "faster_whisper")
+    assert fw["models"] == ["fw-small", "fw-turbo"]
+    lc = next(p for p in snap["providers"]["llm"] if p["name"] == "LlamaCpp")
+    assert lc["models"] == ["Qwen3-1.7B.gguf"]
+
+
 def test_ai_stats_shape(ctx):
     stats = call(ctx, "ai.stats")["result"]
     # Per-provider counters; entries (if seeded) carry calls/errors.

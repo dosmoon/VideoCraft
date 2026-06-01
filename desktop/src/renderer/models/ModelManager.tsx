@@ -4,11 +4,13 @@
  * disk check from models.catalog; live download progress streams in over the
  * `event.models` notification (one DownloadManager → one bridge → all rows).
  *
- * Deferred (still Tk-only): CUDA-wheel GPU setup, change-models-dir, tier-batch.
+ * Includes the GPU/CUDA-runtime card (gpu.* jobs) and the models-dir bar
+ * (open / change). Deferred: tier-batch download, pre-download disk preflight.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { rpc, RpcError, type ModelCatalogEntry, type ModelJob } from "../ipc/client";
+import { rpc, RpcError, type GpuStatus, type ModelCatalogEntry, type ModelJob } from "../ipc/client";
+import { runJob } from "../ipc/runJob";
 import { tr } from "../i18n/tr";
 
 function fmtBytes(n: number): string {
@@ -47,6 +49,7 @@ const BTN: React.CSSProperties = {
 export function ModelManager() {
   const [catalog, setCatalog] = useState<ModelCatalogEntry[] | null>(null);
   const [jobs, setJobs] = useState<ModelJob[]>([]);
+  const [rootDir, setRootDir] = useState("");
   const [error, setError] = useState("");
   const doneSeen = useRef<Set<string>>(new Set());
 
@@ -55,7 +58,20 @@ export function ModelManager() {
       .modelsCatalog()
       .then(setCatalog)
       .catch((e) => setError(fmtErr(e)));
+    rpc.modelsRootDir().then((r) => setRootDir(r.dir)).catch(() => {});
   }, []);
+
+  const changeDir = async () => {
+    const dir = await window.vc.pickFolder();
+    if (!dir) return;
+    try {
+      const r = await rpc.modelsSetRootDir(dir);
+      setRootDir(r.dir);
+      loadCatalog();
+    } catch (e) {
+      setError(fmtErr(e));
+    }
+  };
 
   useEffect(() => {
     loadCatalog();
@@ -100,8 +116,26 @@ export function ModelManager() {
 
   return (
     <div style={{ padding: "16px 20px", maxWidth: 760, margin: "0 auto" }}>
-      <h2 style={{ fontWeight: 600, margin: "0 0 4px" }}>{tr("models.title")}</h2>
-      <p style={{ color: "#888", fontSize: 12, margin: "0 0 14px" }}>{tr("models.gpu_note")}</p>
+      <h2 style={{ fontWeight: 600, margin: "0 0 6px" }}>{tr("models.title")}</h2>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12, fontSize: 12, color: "#888" }}>
+        <span style={{ color: "#bbb" }}>{tr("models.dir_label")}</span>
+        <span
+          title={rootDir}
+          style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+        >
+          {rootDir}
+        </span>
+        <button onClick={() => rootDir && void window.vc.showInFolder(rootDir)} style={BTN}>
+          {tr("models.dir_open")}
+        </button>
+        <button onClick={() => void changeDir()} style={BTN}>
+          {tr("models.dir_change")}
+        </button>
+        <button onClick={loadCatalog} style={BTN}>
+          {tr("models.refresh")}
+        </button>
+      </div>
+      <GpuCard onChanged={loadCatalog} />
       {error && <p style={{ color: "#ff6b6b" }}>✗ {error}</p>}
       {catalog === null ? (
         <p style={{ color: "#888" }}>{tr("common.loading")}</p>
@@ -126,6 +160,110 @@ export function ModelManager() {
           </div>
         ))
       )}
+    </div>
+  );
+}
+
+// GPU/CUDA runtime card. One status line + one context action (install when a
+// GPU is present but the wheels are missing; uninstall when installed). Install/
+// uninstall stream pip log inline (job). No NVIDIA GPU → info only.
+function GpuCard({ onChanged }: { onChanged: () => void }) {
+  const [status, setStatus] = useState<GpuStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [line, setLine] = useState("");
+  const [err, setErr] = useState("");
+
+  const detect = useCallback(async () => {
+    setLoading(true);
+    try {
+      const h = await runJob<GpuStatus>(() => rpc.gpuStatus());
+      setStatus(await h.promise);
+    } catch (e) {
+      setErr(fmtErr(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => void detect(), [detect]);
+
+  const run = async (action: "install" | "uninstall") => {
+    setBusy(true);
+    setErr("");
+    setLine("");
+    try {
+      const h = await runJob<GpuStatus>(
+        () => (action === "install" ? rpc.gpuInstall() : rpc.gpuUninstall()),
+        (p) => p.line && setLine(String(p.line)),
+      );
+      setStatus(await h.promise);
+      onChanged(); // installed models' GPU path changed — re-scan catalog
+    } catch (e) {
+      setErr(fmtErr(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Four states: loading / enabled (green) / installed-no-driver (amber) /
+  // disabled-has-gpu (offer install) / no-gpu (info only).
+  let text = tr("models.gpu.detecting");
+  let color = "#888";
+  let action: "install" | "uninstall" | null = null;
+  if (!loading && status) {
+    if (status.installed && status.available) {
+      text = tr("models.gpu.enabled", {
+        device: status.device_name,
+        vram: status.vram_mb,
+        driver: status.driver,
+      });
+      color = "#7fd17f";
+      action = "uninstall";
+    } else if (status.installed) {
+      text = tr("models.gpu.no_driver");
+      color = "#d9b35b";
+      action = "uninstall";
+    } else if (status.device_name) {
+      text = tr("models.gpu.disabled");
+      color = "#d9b35b";
+      action = "install";
+    } else {
+      text = tr("models.gpu.no_gpu");
+      color = "#888";
+    }
+  }
+
+  return (
+    <div style={{ ...CARD, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>{tr("models.gpu.title")}</span>
+        <span style={{ fontSize: 12, color }}>{text}</span>
+        {action && (
+          <button
+            onClick={() => void run(action)}
+            disabled={busy}
+            style={{
+              marginLeft: "auto",
+              ...BTN,
+              ...(action === "install" ? { background: "#2d6cdf", color: "#fff", border: "none" } : {}),
+            }}
+          >
+            {busy
+              ? action === "install"
+                ? tr("models.gpu.installing")
+                : tr("models.gpu.uninstalling")
+              : action === "install"
+                ? tr("models.gpu.install")
+                : tr("models.gpu.uninstall")}
+          </button>
+        )}
+      </div>
+      {busy && line && (
+        <div style={{ fontSize: 11, color: "#888", marginTop: 6, fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {line}
+        </div>
+      )}
+      {err && <div style={{ fontSize: 11, color: "#d98b8b", marginTop: 4 }}>✗ {err}</div>}
     </div>
   );
 }
@@ -162,9 +300,14 @@ function ModelRow({
             {tr("common.cancel")}
           </button>
         ) : m.installed ? (
-          <button onClick={onRemove} style={BTN}>
-            {tr("models.remove")}
-          </button>
+          <>
+            <button onClick={() => void window.vc.showInFolder(m.dir)} title={tr("models.open_folder")} style={BTN}>
+              📂
+            </button>
+            <button onClick={onRemove} style={BTN}>
+              {tr("models.remove")}
+            </button>
+          </>
         ) : (
           <button onClick={onDownload} style={{ ...BTN, background: "#2d6cdf", color: "#fff", border: "none" }}>
             {tr("models.download")}

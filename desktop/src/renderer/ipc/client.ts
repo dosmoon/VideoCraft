@@ -217,6 +217,17 @@ export interface EnvDetect {
   path: string | null;
 }
 
+/** CUDA runtime + GPU status (gpu.status). */
+export interface GpuStatus {
+  installed: boolean; // CUDA pip wheels present
+  available: boolean; // CUDA actually usable (wheels + driver)
+  device_name: string;
+  driver: string;
+  vram_mb: number;
+  wheel: string;
+  reason: string;
+}
+
 /** A registered material type for the 素材 [+] menu (project.list_material_types_info). */
 export interface MaterialTypeInfo {
   type_name: string;
@@ -367,6 +378,14 @@ export const rpc = {
     rpcCall<{ job_id: string }>("models.download", { model_id: modelId }),
   modelsCancel: (jobId: string) => rpcCall<{ ok: boolean }>("models.cancel", { job_id: jobId }),
   modelsRemove: (modelId: string) => rpcCall<{ freed: number }>("models.remove", { model_id: modelId }),
+  // Models root dir (default <repo>/user_data/models) + override.
+  modelsRootDir: () => rpcCall<{ dir: string }>("models.root_dir"),
+  modelsSetRootDir: (path: string) => rpcCall<{ dir: string }>("models.set_root_dir", { path }),
+  // GPU / CUDA runtime — all jobs (nvidia-smi / pip). status terminal = GpuStatus;
+  // install/uninstall stream pip log via progress.gpu.<action> (field `line`).
+  gpuStatus: () => rpcCall<{ job_id: string }>("gpu.status"),
+  gpuInstall: () => rpcCall<{ job_id: string }>("gpu.install"),
+  gpuUninstall: () => rpcCall<{ job_id: string }>("gpu.uninstall"),
 
   // ── Environment dashboard (env.* domain) ────────────────────────────────────
   // Component metadata (sync) + detection/install jobs (subprocess/pip → off-thread).

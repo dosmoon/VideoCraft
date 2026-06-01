@@ -123,3 +123,22 @@ def remove(ctx: Context, model_id: str) -> dict[str, Any]:
     from core.models import registry
 
     return {"freed": registry.remove(model_id)}
+
+
+@rpc_method("models.root_dir")
+def root_dir(ctx: Context) -> dict[str, Any]:
+    """The current models root directory (default <repo>/user_data/models)."""
+    from core.paths import models_dir
+
+    return {"dir": models_dir()}
+
+
+@rpc_method("models.set_root_dir")
+def set_root_dir(ctx: Context, path: str) -> dict[str, Any]:
+    """Override where models live (persisted to keys/providers.json). Returns the
+    resolved dir; the renderer re-scans the catalog afterward."""
+    from core.ai.router import router
+    from core.paths import models_dir
+
+    router.set_models_dir(path)
+    return {"dir": models_dir()}
