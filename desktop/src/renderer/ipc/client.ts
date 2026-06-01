@@ -16,6 +16,7 @@
 
 import { clipBackend } from "@creations/clip/clientBackend.js";
 import { newsDeskBackend } from "@creations/news_desk/clientBackend.js";
+import { materialBackend } from "@materials/news_video/clientBackend.js";
 
 /** Mirrors the Python sidecar's JSON-RPC error (code + message + optional data). */
 export class RpcError extends Error {
@@ -443,7 +444,9 @@ export const rpc = {
   slotReadiness: (type: string, instance: string) =>
     rpcCall<Record<string, SlotState>>("material.slot_readiness", { type, instance }),
   getArtifact: (type: string, instance: string, key: string) =>
-    rpcCall<string | null>("material.get_artifact", { type, instance, key }),
+    type === "news_video"
+      ? materialBackend.getArtifact(instance, key)
+      : rpcCall<string | null>("material.get_artifact", { type, instance, key }),
 
   loadConfig: (type: string, instance: string) =>
     type === "clip"
@@ -639,7 +642,9 @@ export const rpc = {
   // News context (15 fields) + basic_info seed (5 fields). write_* persist the
   // whole dict (server normalizes) and return the stored value.
   readContext: (type: string, instance: string) =>
-    rpcCall<SourceContext>("material.read_context", { type, instance }),
+    type === "news_video"
+      ? materialBackend.readContext(instance)
+      : rpcCall<SourceContext>("material.read_context", { type, instance }),
   writeContext: (type: string, instance: string, context: SourceContext) =>
     rpcCall<SourceContext>("material.write_context", { type, instance, context }),
   readBasicInfo: (type: string, instance: string) =>
@@ -647,16 +652,22 @@ export const rpc = {
   writeBasicInfo: (type: string, instance: string, basicInfo: SourceBasicInfo) =>
     rpcCall<SourceBasicInfo>("material.write_basic_info", { type, instance, basic_info: basicInfo }),
   contextCompletion: (type: string, instance: string) =>
-    rpcCall<{ filled: number; total: number }>("material.context_completion", { type, instance }),
+    type === "news_video"
+      ? materialBackend.contextCompletion(instance)
+      : rpcCall<{ filled: number; total: number }>("material.context_completion", { type, instance }),
 
   // Subtitles + analyses (read). list_subtitle_languages → ISO codes with an SRT;
   // list_analyses → analysis.json filenames; analysis_summary → per-file preview;
   // read_analysis → the raw envelope (chapter editor source of truth).
   listSubtitleLanguages: (type: string, instance: string) =>
-    rpcCall<string[]>("material.list_subtitle_languages", { type, instance }),
+    type === "news_video"
+      ? materialBackend.listSubtitleLanguages(instance)
+      : rpcCall<string[]>("material.list_subtitle_languages", { type, instance }),
   // SRT text for the in-tab viewer; quality check + one-click auto-fix.
   readSubtitle: (type: string, instance: string, lang: string) =>
-    rpcCall<{ text: string }>("material.read_subtitle", { type, instance, lang }),
+    type === "news_video"
+      ? materialBackend.readSubtitle(instance, lang)
+      : rpcCall<{ text: string }>("material.read_subtitle", { type, instance, lang }),
   checkSubtitle: (type: string, instance: string, lang: string) =>
     rpcCall<SubtitleCheck>("material.check_subtitle", { type, instance, lang }),
   quickFixSubtitle: (type: string, instance: string, lang: string) =>
@@ -668,13 +679,21 @@ export const rpc = {
   listAnalysisArtifacts: (type: string, instance: string, lang: string) =>
     rpcCall<AnalysisArtifact[]>("material.list_analysis_artifacts", { type, instance, lang }),
   readAnalysisText: (type: string, instance: string, lang: string, kind: string) =>
-    rpcCall<{ text: string }>("material.read_analysis_text", { type, instance, lang, kind }),
+    type === "news_video"
+      ? materialBackend.readAnalysisText(instance, lang, kind)
+      : rpcCall<{ text: string }>("material.read_analysis_text", { type, instance, lang, kind }),
   listAnalyses: (type: string, instance: string) =>
-    rpcCall<string[]>("material.list_analyses", { type, instance }),
+    type === "news_video"
+      ? materialBackend.listAnalyses(instance)
+      : rpcCall<string[]>("material.list_analyses", { type, instance }),
   analysisSummary: (type: string, instance: string, filename: string) =>
-    rpcCall<AnalysisSummary>("material.analysis_summary", { type, instance, filename }),
+    type === "news_video"
+      ? materialBackend.analysisSummary(instance, filename)
+      : rpcCall<AnalysisSummary>("material.analysis_summary", { type, instance, filename }),
   readAnalysis: (type: string, instance: string, filename: string) =>
-    rpcCall<Record<string, unknown>>("material.read_analysis", { type, instance, filename }),
+    type === "news_video"
+      ? materialBackend.readAnalysis(instance, filename)
+      : rpcCall<Record<string, unknown>>("material.read_analysis", { type, instance, filename }),
   // Re-save an analysis.json after editing the chapter schedule; server
   // normalizes (sort / end=next.start / drop degenerate / synth 00:00) and
   // returns the normalized envelope.

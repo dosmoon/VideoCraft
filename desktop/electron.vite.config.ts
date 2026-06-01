@@ -40,6 +40,7 @@ export default defineConfig({
       alias: {
         "@composition": resolve(__dirname, "src/composition"),
         "@creations": resolve(__dirname, "src/creations"),
+        "@materials": resolve(__dirname, "src/materials"),
       },
     },
     build: {

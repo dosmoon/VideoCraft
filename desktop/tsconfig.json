@@ -19,7 +19,8 @@
     "types": ["node", "vitest/globals", "@webgpu/types"],
     "paths": {
       "@composition/*": ["./src/composition/*"],
-      "@creations/*": ["./src/creations/*"]
+      "@creations/*": ["./src/creations/*"],
+      "@materials/*": ["./src/materials/*"]
     }
   },
   "include": ["src"]

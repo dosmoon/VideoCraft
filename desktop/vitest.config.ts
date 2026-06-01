@@ -11,6 +11,7 @@ export default defineConfig({
     alias: {
       "@composition": resolve(root, "src/composition"),
       "@creations": resolve(root, "src/creations"),
+      "@materials": resolve(root, "src/materials"),
     },
   },
   test: {
