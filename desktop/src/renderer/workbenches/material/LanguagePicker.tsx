@@ -10,6 +10,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { KnownLanguage } from "../../ipc/client";
+import { tr } from "../../i18n/tr";
 
 const INPUT: React.CSSProperties = {
   padding: "4px 8px",
@@ -37,7 +38,7 @@ export function LanguagePicker(props: {
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
   const displayOf = (iso: string): string => {
-    if (!iso) return allowAuto ? "自动检测" : "";
+    if (!iso) return allowAuto ? tr("material.lang.auto_detect") : "";
     return languages.find((l) => l.iso === iso)?.display ?? iso;
   };
 
@@ -54,7 +55,7 @@ export function LanguagePicker(props: {
   const matches = q
     ? languages.filter((l) => l.iso.toLowerCase().includes(q) || l.display.toLowerCase().includes(q))
     : languages;
-  const options: KnownLanguage[] = allowAuto ? [{ iso: "", display: "自动检测" }, ...matches] : matches;
+  const options: KnownLanguage[] = allowAuto ? [{ iso: "", display: tr("material.lang.auto_detect") }, ...matches] : matches;
 
   const pick = (iso: string) => {
     onChange(iso);
@@ -96,7 +97,7 @@ export function LanguagePicker(props: {
           }}
         >
           {options.length === 0 ? (
-            <div style={{ padding: "6px 8px", color: "#888", fontSize: 12 }}>无匹配语言</div>
+            <div style={{ padding: "6px 8px", color: "#888", fontSize: 12 }}>{tr("material.lang.no_match")}</div>
           ) : (
             options.slice(0, 60).map((l) => (
               <button

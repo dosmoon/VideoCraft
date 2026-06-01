@@ -12,6 +12,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { rpc, RpcError, type AnalysisArtifact, type KnownLanguage } from "../../ipc/client";
 import { useJob } from "../../ipc/runJob";
+import { tr } from "../../i18n/tr";
 import type { MaterialTabProps } from "./SourceTab";
 import { ChapterScheduleEditor } from "./ChapterScheduleEditor";
 import { SubtitleViewer } from "./SubtitleViewer";
@@ -23,10 +24,12 @@ import { LanguagePicker } from "./LanguagePicker";
 // generating them — the Tk menu hides them (node_panes._show_analysis_menu:
 // hidden={transcript, chapter_transcript}); they exist only for internal use
 // (news_desk export/publish). We mirror that curated menu, not the engine catalog.
-const ANALYSIS_KINDS: { kind: string; label: string }[] = [
-  { kind: "analysis", label: "标题与章节" },
-  { kind: "hotclips", label: "热点片段" },
-];
+function getAnalysisKinds(): { kind: string; label: string }[] {
+  return [
+    { kind: "analysis", label: tr("material.analysis.kind.analysis") },
+    { kind: "hotclips", label: tr("material.analysis.kind.hotclips") },
+  ];
+}
 
 type Inspect =
   | { mode: "subtitle"; lang: string }
@@ -169,25 +172,26 @@ export function SubtitlesTab({ type, instance, refreshKey, onChanged }: Material
   }
 
   const busy = job.running;
+  const analysisKinds = getAnalysisKinds();
 
   return (
     <div style={{ maxWidth: 640, display: "flex", flexDirection: "column", gap: 18 }}>
       {loadErr && <div style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {loadErr}</div>}
 
       {/* ASR + import */}
-      <Section title="语音转写 / 导入">
+      <Section title={tr("material.subtitles_tab.section_asr")}>
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
           <LanguagePicker
             value={asrLang}
             onChange={setAsrLang}
             languages={knownLangs}
             allowAuto
-            placeholder="语言 (留空=自动)"
+            placeholder={tr("material.subtitles_tab.asr_lang_placeholder")}
             disabled={busy}
             width={200}
           />
           <button onClick={() => void runAsr()} disabled={busy} style={BTN}>
-            生成字幕 (ASR)
+            {tr("material.subtitles_tab.run_asr_btn")}
           </button>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -195,27 +199,27 @@ export function SubtitlesTab({ type, instance, refreshKey, onChanged }: Material
             value={importLang}
             onChange={setImportLang}
             languages={knownLangs}
-            placeholder="语言 (如 en)"
+            placeholder={tr("material.subtitles_tab.import_lang_placeholder")}
             disabled={busy}
             width={200}
           />
           <button onClick={() => void importExternal()} disabled={busy || !importLang.trim()} style={BTN_GHOST}>
-            导入外部 SRT…
+            {tr("material.subtitles_tab.import_srt_btn")}
           </button>
         </div>
       </Section>
 
       {/* Languages: view / check + translate */}
-      <Section title="字幕语言">
+      <Section title={tr("material.subtitles_tab.section_languages")}>
         {langs.length === 0 ? (
-          <div style={{ color: "#666", fontSize: 12 }}>暂无字幕 — 先跑 ASR、翻译或导入。</div>
+          <div style={{ color: "#666", fontSize: 12 }}>{tr("material.subtitles_tab.no_subtitles")}</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 8 }}>
             {langs.map((l) => (
               <div key={l} style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <span style={{ width: 48, color: "#cdd", fontSize: 13 }}>{l}</span>
                 <button onClick={() => setInspect({ mode: "subtitle", lang: l })} style={{ ...BTN_GHOST, padding: "3px 10px", fontSize: 11 }}>
-                  查看 / 质检
+                  {tr("material.subtitles_tab.view_check_btn")}
                 </button>
               </div>
             ))}
@@ -226,28 +230,28 @@ export function SubtitlesTab({ type, instance, refreshKey, onChanged }: Material
             value={transLang}
             onChange={setTransLang}
             languages={knownLangs}
-            placeholder="翻译目标语言 (如 en)"
+            placeholder={tr("material.subtitles_tab.translate_lang_placeholder")}
             disabled={busy}
             width={200}
           />
           <button onClick={() => void runTranslate()} disabled={busy || !transLang.trim()} style={BTN_GHOST}>
-            翻译
+            {tr("material.subtitles_tab.translate_btn")}
           </button>
         </div>
       </Section>
 
       {/* Analysis: per language, run the 4 kinds + open existing artifacts */}
-      <Section title="章节与分析">
+      <Section title={tr("material.subtitles_tab.section_analysis")}>
         {langs.length === 0 ? (
-          <div style={{ color: "#666", fontSize: 12 }}>需要先有字幕。</div>
+          <div style={{ color: "#666", fontSize: 12 }}>{tr("material.subtitles_tab.analysis_needs_subtitles")}</div>
         ) : (
           langs.map((l) => (
             <div key={l} style={{ marginBottom: 12 }}>
               <div style={{ color: "#6a9", fontSize: 12, marginBottom: 4 }}>{l}</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 }}>
-                {ANALYSIS_KINDS.map((k) => (
+                {analysisKinds.map((k) => (
                   <button key={k.kind} onClick={() => void runAnalysis(l, k.kind)} disabled={busy} style={{ ...BTN_GHOST, padding: "3px 10px", fontSize: 11 }}>
-                    生成{k.label}
+                    {tr("material.subtitles_tab.generate_kind_btn", { kind: k.label })}
                   </button>
                 ))}
               </div>
@@ -278,7 +282,7 @@ export function SubtitlesTab({ type, instance, refreshKey, onChanged }: Material
                       <span>{a.icon}</span>
                       <span>{a.display_zh}</span>
                       <span style={{ color: "#666", marginLeft: "auto" }}>
-                        {a.kind === "analysis" ? "编辑章节 →" : "查看 →"}
+                        {a.kind === "analysis" ? tr("material.subtitles_tab.edit_chapters_link") : tr("material.subtitles_tab.view_link")}
                       </span>
                     </button>
                   ))}
@@ -293,11 +297,11 @@ export function SubtitlesTab({ type, instance, refreshKey, onChanged }: Material
       {busy && (
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 12, color: "#4a9eff" }}>
-            {job.progress?.status_text || job.progress?.phase || "处理中"}
+            {job.progress?.status_text || job.progress?.phase || tr("material.subtitles_tab.processing")}
             {job.progress?.pct != null ? ` · ${Math.round(job.progress.pct)}%` : ""}
           </span>
           <button onClick={job.cancel} style={{ ...BTN_GHOST, padding: "3px 10px" }}>
-            取消
+            {tr("common.cancel")}
           </button>
         </div>
       )}

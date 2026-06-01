@@ -11,6 +11,7 @@
  */
 
 import type { Component } from "../../ipc/client";
+import { tr } from "../../i18n/tr";
 import { PropertyPanel } from "../clip/propertyEditor";
 
 const inputStyle: React.CSSProperties = {
@@ -51,16 +52,16 @@ export function ImageWatermarkProperties(props: {
     <div>
       <div style={{ marginBottom: 10 }}>
         <label style={{ color: "#999", fontSize: 12, display: "block", marginBottom: 4 }}>
-          图片文件
+          {tr("news_desk.watermark.image_file")}
         </label>
         <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-          <input value={path} readOnly placeholder="未选择" title={path} style={inputStyle} />
+          <input value={path} readOnly placeholder={tr("news_desk.watermark.no_file_selected")} title={path} style={inputStyle} />
           <button onClick={() => void browse()} disabled={disabled} style={btn}>
-            浏览…
+            {tr("news_desk.watermark.browse")}
           </button>
           {path && (
             <button onClick={() => onPatch({ image_path: "" })} disabled={disabled} style={btn}>
-              清除
+              {tr("news_desk.watermark.clear")}
             </button>
           )}
         </div>

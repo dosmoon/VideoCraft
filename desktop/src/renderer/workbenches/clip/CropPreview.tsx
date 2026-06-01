@@ -24,6 +24,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { tr } from "../../i18n/tr";
 import { resolveFrameAt } from "@composition/compositor/resolve.js";
 import { resolveAudioSegments } from "@composition/compositor/resolveAudio.js";
 import type { Timeline, Clip } from "@composition/ir.js";
@@ -551,14 +552,14 @@ export function CropPreview(props: CropPreviewProps) {
           touchAction: "none",
         }}
       />
-      {status === "loading" && <p style={{ color: "#888", fontSize: 12 }}>加载源…</p>}
+      {status === "loading" && <p style={{ color: "#888", fontSize: 12 }}>{tr("clip.preview.loading_source")}</p>}
       {status === "error" && <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {message}</p>}
 
       {status === "ready" && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, maxWidth: 480, marginTop: 6 }}>
           <button
             onClick={togglePlay}
-            title={playing ? "暂停" : "播放"}
+            title={playing ? tr("clip.preview.pause") : tr("clip.preview.play")}
             style={{
               width: 30,
               height: 30,
@@ -595,7 +596,7 @@ export function CropPreview(props: CropPreviewProps) {
             {t.toFixed(2)}s
           </span>
           <span
-            title={audioOn ? "音轨已加载" : "无音轨 / 解码失败(静音)"}
+            title={audioOn ? tr("clip.preview.audio_loaded") : tr("clip.preview.audio_none")}
             style={{ fontSize: 13, color: audioOn ? "#7fd17f" : "#888" }}
           >
             {audioOn ? "♪" : "🔇"}

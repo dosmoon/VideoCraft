@@ -113,8 +113,19 @@ news_desk 与 clip 走同一套契约,正面验证「公共组件库 + provider 
 - **单源 wart(决策性)**:2nd news_video 实例拿不到自己的源/ASR(读写实例#1);`single_instance=True` 在菜单层挡住,`subtitle_pipeline.py:29-34` 的 `TODO(ADR-0005)` 保留待后续真·per-instance 化。
 - yt-dlp 需 sidecar 进程能找到 Node.js(JS 挑战);失败 category 已透传提示。AI job(ASR/translate/章节/ai_fill)经 `core.ai`,无 provider 配置则 job failed,各 tab 渲染 error 不崩。
 - **真机肉眼验欠**(渲染/GUI 层 headless 覆盖不到,同 clip/news_desk):需 `env -u ELECTRON_RUN_AS_NODE pnpm dev` 跑一遍建实例→导源→ASR→质检→章节(seek)→context→AI 填充。
-- **整个 Electron renderer 目前纯中文硬编码、无 i18n**(clip/news_desk/Hub/素材都是;设计文档 §7.4 待决)——下一步做"全前端双语改造"(轻量 `tr()` + 复用 zh/en JSON,把所有硬编码中文抽成 key)。
+- ~~整个 Electron renderer 纯中文硬编码、无 i18n~~ → **已做(见下「renderer i18n」节)**。
 - 字幕双语并排 UI = 后续打磨。
+
+### renderer i18n(双语)—— 已实装(2026-06-01,§7.4 待决落地)
+
+整个 renderer 之前纯中文硬编码、零 `tr()`(§7.4 待决问题)。本轮铺轻量自建 i18n(否决 i18next:重、renderer 字符串量中等),与 Tk `src/i18n.py` 心智一致。
+
+- **基建**:`desktop/src/renderer/i18n/`——`tr.ts`(`tr(key, vars?)` + `getLang()`/`setLang()`,模块单例语言;fallback 链 当前→en→raw key;`{name}` 占位插值,与 Python `str.format` 对齐)+ `zh.json`/`en.json`(扁平点分 key,290 对,**zh/en 严格对称**)。两表静态 `import` 进 bundle,`tr()` 同步、任意组件可调,无需 Provider。`tsconfig` 加 `resolveJsonModule`。
+- **语言来源 = 单一真相源**:新 RPC `system.get_locale` 返回 `i18n.get_current_lang()`(读同一 `user_data/settings.json`,与 Tk 锁步,默认 en)。`main.tsx` boot 时 `await rpc.getLocale()` → `setLang()` **早于首帧 render**(无闪烁、无需 context)。失败回落默认 locale 不阻塞启动。
+- **热切换(区别于 Tk 重启制)**:renderer `tr()` 每帧求值,故切换是**热的**——`tr.ts` 加 reactive 层(`useSyncExternalStore`,`setLang` 通知订阅者),`Shell` 顶层 `useLang()` 订阅 → 整树重渲染(无 React.memo 边界拦截,工作台 state 不丢)。`i18n/LanguageToggle.tsx`(中/EN segmented control)放 Launcher 右上 + 项目顶栏;点击 `setLang()` 即时翻 + `rpc.setLocale()`(新 RPC `system.set_locale` → `i18n.set_current_lang()`)持久化回 settings.json,**best-effort**(UI 已先翻),下次启动 + Tk 侧跟随。
+- **抽取**:Hub/workbenches(clip/news_desk/material)全部硬编码中文 → `tr("<域>.<key>")`,域前缀 `hub./clip./news_desk./material./common./workbench.`。静态数组(KIND_LABELS/TABS/GROUPS/CATEGORY_HINTS 等)改 key-map + render 时 `tr()` 求值。RPC 来的 `description_zh`/`description_en` 按 `getLang()` 选。**代码注释不动**(非用户可见;仍英文规约,与 i18n 正交)。
+- **验证**:`pnpm typecheck` 干净 + 130 vitest + `pnpm build`(98 模块,JSON 入包)全过;`tests/core_rpc` 114 全绿(+`system.get_locale`/`set_locale` round-trip + reject;后者 monkeypatch `i18n.SETTINGS_FILE` 到 tmp 防污染真实配置)。脚本核对:字面 `tr()` key 全部命中 JSON;zh/en key 集合相等;残留中文仅 JSDoc 注释。
+- **欠**:① 真机肉眼验热切换(点 中/EN 看整树即时翻 + 重启后保持;与渲染层同类 headless 盲区);② sidecar `RpcError.message`(Python 侧文案)双语化是单独决策,本轮只做 renderer 自有硬编码;③ Tk `src/i18n/{zh,en}.json` 806 key 与 renderer 表是两套(刻意,迁移期 renderer 自包含),将来可考虑合并/对齐。
 
 ### 与本文档正文不同的关键实现决策
 

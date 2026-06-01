@@ -9,7 +9,9 @@
 
 **clip + news_desk + 素材(material)侧均已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现;Tk news_desk 已退役。** 续29~31 收口 news_desk;**续 32 把素材侧整块迁过来(M0~M6 + gap A~D)**,**续 33 真机复核后修了三处**(预置语言选择器 / 新闻背景页用法澄清 / 分析 kind 精选)。**两笔已落 `main`:`fd2cffb`(素材迁移)+ `9aeb9bd`(三处修正),均未 push。**
 
-**▶ 下一大任务 = 全 Electron renderer 双语(i18n)改造**(详见本文件下「▶ 下一大任务:Electron renderer 双语 i18n 改造」块,有完整范围 + 起手步骤)。当前整个 renderer(clip/news_desk/Hub/素材)**纯中文硬编码、零 `tr()`**,要铺一层轻量 i18n + 复用现有 zh/en JSON 把所有硬编码中文抽成 key。**另:素材侧真机肉眼验仍欠**(typecheck/测试/build 全绿但 GUI/渲染 headless 覆盖不到),需 `env -u ELECTRON_RUN_AS_NODE pnpm dev` 跑一遍建实例→导源→ASR→质检→章节(seek)→context→AI 填充。
+**✅ renderer 双语(i18n)改造 + 热切换已完成(续 34,⚠️ 未提交)。** 整个 renderer(Hub + clip/news_desk/material 工作台)硬编码中文已抽成 `tr()` key;轻量自建 i18n(`desktop/src/renderer/i18n/` + 新 RPC `system.get_locale`/`set_locale` 读写同一 `user_data/settings.json`,与 Tk 锁步),zh/en 290 对严格对称。**中/EN 切换是热的**(`tr()` 每帧求值 + `useSyncExternalStore` reactive,`LanguageToggle` 放 Launcher + 项目顶栏,点即翻 + 持久化回 settings.json);区别于 Tk 重启制。typecheck + 130 vitest + build(98 模块)+ 114 sidecar 测全绿。细节见 `electron-migration-design.md`「renderer i18n」节。
+
+**▶ 下一大任务 = 真机肉眼验(两件 headless 盲区都欠)**:① **i18n 热切换**——点项目顶栏/Launcher 的 中/EN 看整树即时翻 + 重启后保持;② **素材侧端到端**——`env -u ELECTRON_RUN_AS_NODE pnpm dev` 跑一遍建实例→导源(本地+yt-dlp)→ASR→质检→章节(seek)→context→AI 填充,逐项肉眼确认。改 Python 必整重启 sidecar(`desktop/dev.ps1`,Ctrl+R 只重载 renderer)。
 
 - **新会话先读**:`docs/draft/electron-migration-design.md` 顶部「★ 实现进度」(含 clip + news_desk + 素材侧 全部实现状态、代码位置、坑)+ 奠基稿 `composition-otio-foundation.md`(数据模型/渲染/拓扑权威)。
 - 工作纪律:忠实还原既存 Tk UI 交互,不发明/不简化([[feedback_faithful_port_not_invent]]);**用户菜单/选项列表照搬 Tk 实际菜单构造,别从引擎 registry 重建**([[feedback_ui_menu_from_tk_not_engine]],续 33 踩过:分析 kind 多列了 2 个);改 Python 必整重启 sidecar(`desktop/dev.ps1`,Ctrl+R 只重载 renderer);素材数据经 Material Model([[feedback_material_via_model_only]]);config 单一所有者([[project_creation_config_owner]]);**改 i18n 必 zh/en 双语同步、UI 新字符串走 tr()**([[feedback_i18n_symmetry]])。
@@ -40,7 +42,11 @@
 
 ---
 
-## ▶ 下一大任务:Electron renderer 双语 i18n 改造
+## ▶ 续 34(2026-06-01,Electron renderer 双语 i18n 改造 — ✅ 已完成,⚠️ 未提交)
+
+**做法**:轻量自建 i18n(否决 i18next)。`desktop/src/renderer/i18n/{tr.ts,zh.json,en.json,LanguageToggle.tsx}`——`tr(key, vars?)`(fallback 链 当前→en→raw;`{name}` 插值)+ `getLang/setLang/useLang`;zh/en 290 对**严格对称**。语言来源 = 新 RPC `system.get_locale`/`set_locale` 读写同一 `user_data/settings.json`(与 Tk 锁步,默认 en);`main.tsx` boot `await getLocale` 后 `setLang` 早于首帧。Hub + 三工作台全部硬编码中文 → `tr("<域>.<key>")`(域前缀 hub/clip/news_desk/material/common/workbench);静态数组改 key-map + render 时求值;RPC 的 description_zh/en 按 getLang 选。**代码注释不动**。三工作台抽取经并行子代理完成,JSON 由脚本核对(字面 key 全命中、zh/en 对称、残留中文仅 JSDoc)。**热切换**:`tr()` 每帧求值 + `tr.ts` reactive(`useSyncExternalStore`,`setLang` 通知);`Shell` 顶层 `useLang()` 订阅 → 整树重渲染(无 memo 边界,工作台 state 不丢);`LanguageToggle`(中/EN)放 Launcher 右上 + 项目顶栏,点即翻 + `rpc.setLocale` 持久化(best-effort)。**验证**:typecheck 干净 + 130 vitest + build(98 模块,JSON 入包)+ 114 sidecar 测(+`get_locale`/`set_locale` round-trip + reject,monkeypatch SETTINGS_FILE 防污染)全绿。细节见 `electron-migration-design.md`「renderer i18n」节。**欠**:真机肉眼验热切换;sidecar `RpcError.message`(Python 文案)双语化是单独决策(本轮只做 renderer 自有硬编码)。
+
+<details><summary>（原任务规划,已落地,留档）</summary>
 
 **现状**:整个 `desktop/src/renderer/`(clip / news_desk / Hub / 素材 工作台)**纯中文硬编码、零 `tr()`**(grep `desktop/src/renderer/` 无任何 `i18next`/`useTranslation`/`tr(`)。Tk 侧有完整双语(`src/i18n/{zh,en}.json` 806 key + `tr()`),但 Electron renderer 迁移时一直没接 i18n——见迁移设计文档 §7 待决问题第 4 条。这是用户明确要求恢复的缺口(创作侧迁移时就欠下,不是这次砍的)。
 
@@ -58,6 +64,8 @@
 4. 每抽一批 `pnpm typecheck` + `pnpm test`(快照/逻辑测不应受影响)+ 真机扫一眼。
 
 **工作纪律**:UI 新字符串必须走 tr()、zh/en 双语同步([[feedback_i18n_symmetry]]);core/sidecar 层不引 renderer 的 tr;改 UI 布局/模块前 grep `docs/`([[feedback_check_design_docs]]);UI 文案不准用代码内部名([[feedback_user_facing_naming]])。
+
+</details>
 
 ---
 

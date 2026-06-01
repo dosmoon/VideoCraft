@@ -14,6 +14,7 @@
 import type { SourceCue } from "@composition/components/index.js";
 import type { NewsDeskChapterRow } from "@creations/news_desk/types.js";
 import { formatTimestamp } from "@creations/clip/mapping.js";
+import { tr } from "../../i18n/tr";
 
 const panel: React.CSSProperties = {
   border: "1px solid #2a2a2e",
@@ -65,13 +66,13 @@ export function SubtitleCueList(props: {
   const { cues, onSeek } = props;
   return (
     <fieldset style={panel}>
-      <legend style={legendStyle}>字幕{cues && cues.length ? `（${cues.length}）` : ""}</legend>
+      <legend style={legendStyle}>{tr("news_desk.detail.subtitle_legend")}{cues && cues.length ? `（${cues.length}）` : ""}</legend>
       <div style={listBox}>
         {!cues || cues.length === 0 ? (
-          <div style={emptyStyle}>（未导入字幕）</div>
+          <div style={emptyStyle}>{tr("news_desk.detail.subtitle_empty")}</div>
         ) : (
           cues.map((c, i) => (
-            <button key={i} onClick={() => onSeek(c.sourceStart)} style={rowBtn} title="跳到此处">
+            <button key={i} onClick={() => onSeek(c.sourceStart)} style={rowBtn} title={tr("news_desk.detail.seek_here")}>
               <span style={tsCol}>{formatTimestamp(c.sourceStart)}</span>
               <span style={textCol}>{c.text}</span>
             </button>
@@ -90,15 +91,15 @@ export function ChapterScheduleList(props: {
   const { schedule, onSeek } = props;
   return (
     <fieldset style={panel}>
-      <legend style={legendStyle}>章节{schedule && schedule.length ? `（${schedule.length}）` : ""}</legend>
+      <legend style={legendStyle}>{tr("news_desk.detail.chapter_legend")}{schedule && schedule.length ? `（${schedule.length}）` : ""}</legend>
       <div style={listBox}>
         {!schedule || schedule.length === 0 ? (
-          <div style={emptyStyle}>（未导入章节）</div>
+          <div style={emptyStyle}>{tr("news_desk.detail.chapter_empty")}</div>
         ) : (
           schedule.map((row, i) => (
-            <button key={i} onClick={() => onSeek(row.start_sec)} style={rowBtn} title="跳到此处">
+            <button key={i} onClick={() => onSeek(row.start_sec)} style={rowBtn} title={tr("news_desk.detail.seek_here")}>
               <span style={tsCol}>{formatTimestamp(row.start_sec)}</span>
-              <span style={textCol}>{row.title || "（无标题）"}</span>
+              <span style={textCol}>{row.title || tr("news_desk.detail.chapter_no_title")}</span>
             </button>
           ))
         )}

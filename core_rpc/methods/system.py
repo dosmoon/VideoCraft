@@ -33,6 +33,29 @@ def echo(ctx: Context, **params: Any) -> dict[str, Any]:
     return params
 
 
+@rpc_method("system.get_locale")
+def get_locale(ctx: Context) -> dict[str, str]:
+    """The UI language the renderer should render in — read from the same
+    user_data/settings.json the Tk app uses (i18n.get_current_lang), so both
+    front-ends stay in lockstep. The renderer awaits this at boot before its
+    first render and sets its tr() singleton accordingly."""
+    from i18n import get_current_lang
+
+    return {"lang": get_current_lang()}
+
+
+@rpc_method("system.set_locale")
+def set_locale(ctx: Context, lang: str) -> dict[str, str]:
+    """Persist the UI language to the shared user_data/settings.json (the same
+    knob the Tk app's Preferences writes). The renderer switches hot on its own;
+    this just makes the choice survive restart and keeps both front-ends in sync.
+    Rejects an unsupported code (→ HANDLER_ERROR)."""
+    from i18n import get_current_lang, set_current_lang
+
+    set_current_lang(lang)  # validates; raises ValueError on unsupported code
+    return {"lang": get_current_lang()}
+
+
 @rpc_method("system.list_languages")
 def list_languages(ctx: Context) -> list[dict[str, str]]:
     """The known-language catalog for the ASR / translate / import pickers

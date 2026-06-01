@@ -11,6 +11,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { tr } from "../../i18n/tr";
 import { rpc, RpcError, type Component, type RenderPlan, type RenderedClip } from "../../ipc/client";
 import { buildClipTimeline } from "@creations/clip/assemble.js";
 import type { ClipComponentConfig } from "@creations/clip/types.js";
@@ -144,7 +145,7 @@ export function ExportTab(props: {
         let clips = p.clips;
         if (only != null) clips = clips.filter((c) => c.srcIdx === only);
         if (clips.length === 0) {
-          setErr("没有选中的候选");
+          setErr(tr("clip.export.no_selected"));
           return;
         }
 
@@ -280,7 +281,7 @@ export function ExportTab(props: {
     if (p) void window.vc.showInFolder(p);
   };
   const onDelete = async (outIdx: number) => {
-    if (!window.confirm(`删除已渲染的 #${outIdx}？`)) return;
+    if (!window.confirm(tr("clip.export.delete_confirm", { outIdx }))) return;
     try {
       await rpc.deleteRender(type, instance, outIdx);
       reload();
@@ -289,9 +290,9 @@ export function ExportTab(props: {
     }
   };
 
-  if (status === "loading") return <Centered>加载…</Centered>;
-  if (status === "nobind") return <Centered>未绑定素材</Centered>;
-  if (status === "nosrc") return <Centered>绑定素材尚无源视频</Centered>;
+  if (status === "loading") return <Centered>{tr("common.loading")}</Centered>;
+  if (status === "nobind") return <Centered>{tr("clip.no_material_bound")}</Centered>;
+  if (status === "nosrc") return <Centered>{tr("clip.no_source_video")}</Centered>;
   if (status === "error") return <Centered>✗ {message}</Centered>;
 
   return (
@@ -300,21 +301,21 @@ export function ExportTab(props: {
 
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <button onClick={() => void runRender()} disabled={rendering || rows.length === 0} style={primaryBtn}>
-          {rendering ? "渲染中…" : `渲染选中 (${rows.length})`}
+          {rendering ? tr("clip.export.rendering") : tr("clip.export.render_btn", { count: rows.length })}
         </button>
         {rendering && (
           <button onClick={() => (cancelRef.current = true)} style={btn}>
-            取消
+            {tr("common.cancel")}
           </button>
         )}
         <button onClick={() => void refresh()} disabled={rendering} style={btn}>
-          刷新
+          {tr("clip.export.refresh")}
         </button>
         {err && <span style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {err}</span>}
       </div>
 
       {rows.length === 0 ? (
-        <p style={{ color: "#888", fontSize: 13 }}>候选 tab 勾选要导出的片段后回到这里。</p>
+        <p style={{ color: "#888", fontSize: 13 }}>{tr("clip.export.empty_hint")}</p>
       ) : (
         <div style={{ flex: 1, overflow: "auto", border: "1px solid #2a2a2e", borderRadius: 6 }}>
           <div
@@ -328,11 +329,11 @@ export function ExportTab(props: {
             }}
           >
             <span style={{ width: 36 }}>#</span>
-            <span style={{ width: 56 }}>源</span>
-            <span style={{ width: 70 }}>时长</span>
-            <span style={{ width: 90 }}>状态</span>
+            <span style={{ width: 56 }}>{tr("clip.export.col_source")}</span>
+            <span style={{ width: 70 }}>{tr("clip.export.col_duration")}</span>
+            <span style={{ width: 90 }}>{tr("clip.export.col_status")}</span>
             <span style={{ flex: 1 }}>Hook</span>
-            <span style={{ width: 150 }}>操作</span>
+            <span style={{ width: 150 }}>{tr("clip.export.col_actions")}</span>
           </div>
           {rows.map((r) => {
             const cand = candidateFor(r.srcIdx);
@@ -359,20 +360,20 @@ export function ExportTab(props: {
                   }}
                   title={r.status === "failed" ? r.error : hook}
                 >
-                  {r.status === "failed" ? `✗ ${r.error || "(无错误信息)"}` : hook}
+                  {r.status === "failed" ? `✗ ${r.error || tr("clip.export.no_error_info")}` : hook}
                 </span>
                 <span style={{ width: 150, display: "flex", gap: 4 }}>
                   {r.status === "done" && (
                     <>
-                      <button onClick={() => onPlay(r.file)} style={rowBtn} title="播放">▶</button>
-                      <button onClick={() => onOpenFolder(r.file)} style={rowBtn} title="打开文件夹">📁</button>
-                      <button onClick={() => void runRender(r.srcIdx)} disabled={rendering} style={rowBtn} title="重新渲染">↻</button>
-                      <button onClick={() => void onDelete(r.outIdx)} disabled={rendering} style={rowBtn} title="删除">🗑</button>
+                      <button onClick={() => onPlay(r.file)} style={rowBtn} title={tr("clip.export.action_play")}>▶</button>
+                      <button onClick={() => onOpenFolder(r.file)} style={rowBtn} title={tr("clip.export.action_open_folder")}>📁</button>
+                      <button onClick={() => void runRender(r.srcIdx)} disabled={rendering} style={rowBtn} title={tr("clip.export.action_rerender")}>↻</button>
+                      <button onClick={() => void onDelete(r.outIdx)} disabled={rendering} style={rowBtn} title={tr("common.delete")}>🗑</button>
                     </>
                   )}
                   {r.status === "failed" && (
-                    <button onClick={() => window.alert(r.error || "(无错误信息)")} style={rowBtn} title="错误详情">
-                      ⚠ 详情
+                    <button onClick={() => window.alert(r.error || tr("clip.export.no_error_info"))} style={rowBtn} title={tr("clip.export.action_error_detail")}>
+                      ⚠ {tr("clip.export.action_error_detail_short")}
                     </button>
                   )}
                 </span>
@@ -388,13 +389,13 @@ export function ExportTab(props: {
 function statusLabel(r: Row): React.ReactNode {
   switch (r.status) {
     case "queued":
-      return <span style={{ color: "#888" }}>排队</span>;
+      return <span style={{ color: "#888" }}>{tr("clip.export.status_queued")}</span>;
     case "rendering":
-      return <span style={{ color: "#4a9eff" }}>渲染 {Math.round(r.progress * 100)}%</span>;
+      return <span style={{ color: "#4a9eff" }}>{tr("clip.export.status_rendering", { pct: Math.round(r.progress * 100) })}</span>;
     case "done":
-      return <span style={{ color: "#3ecf8e" }}>✓ 完成</span>;
+      return <span style={{ color: "#3ecf8e" }}>✓ {tr("clip.export.status_done")}</span>;
     case "failed":
-      return <span style={{ color: "#ff6b6b" }}>✗ 失败</span>;
+      return <span style={{ color: "#ff6b6b" }}>✗ {tr("clip.export.status_failed")}</span>;
   }
 }
 

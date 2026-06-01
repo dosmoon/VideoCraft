@@ -13,16 +13,17 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { rpc, RpcError, type SlotState } from "../../ipc/client";
+import { tr } from "../../i18n/tr";
 import { SourceTab } from "./SourceTab";
 import { SubtitlesTab } from "./SubtitlesTab";
 import { ContextTab } from "./ContextTab";
 
 type Tab = "source" | "subtitles" | "context";
 
-const TABS: { id: Tab; label: string; slot: string }[] = [
-  { id: "source", label: "源视频", slot: "source" },
-  { id: "subtitles", label: "字幕与分析", slot: "subtitles" },
-  { id: "context", label: "新闻背景", slot: "news_context" },
+const TABS: { id: Tab; label: () => string; slot: string }[] = [
+  { id: "source", label: () => tr("material.tab.source"), slot: "source" },
+  { id: "subtitles", label: () => tr("material.tab.subtitles"), slot: "subtitles" },
+  { id: "context", label: () => tr("material.tab.context"), slot: "news_context" },
 ];
 
 function fmt(err: unknown): string {
@@ -92,7 +93,7 @@ export function MaterialWorkbench(props: { type: string; instance: string; onClo
             <button
               key={t.id}
               onClick={() => showTab(t.id)}
-              title={locked ? "待源视频就绪" : undefined}
+              title={locked ? tr("material.tab.locked_title") : undefined}
               style={{
                 padding: "6px 14px",
                 background: "transparent",
@@ -105,7 +106,7 @@ export function MaterialWorkbench(props: { type: string; instance: string; onClo
               }}
             >
               {locked ? "🔒 " : ""}
-              {t.label}
+              {t.label()}
             </button>
           );
         })}
@@ -148,5 +149,5 @@ export function MaterialWorkbench(props: { type: string; instance: string; onClo
 }
 
 function Locked() {
-  return <div style={{ color: "#666", fontSize: 13 }}>🔒 待源视频就绪</div>;
+  return <div style={{ color: "#666", fontSize: 13 }}>🔒 {tr("material.tab.locked_title")}</div>;
 }

@@ -208,6 +208,12 @@ export const rpc = {
   echo: (params: Record<string, unknown>) => rpcCall<Record<string, unknown>>("system.echo", params),
   // Preset language catalog for the ASR/translate/import combobox pickers.
   listLanguages: () => rpcCall<KnownLanguage[]>("system.list_languages"),
+  // UI language ("zh" | "en") from the shared user_data/settings.json — the
+  // renderer awaits this at boot and sets its tr() singleton before first render.
+  getLocale: () => rpcCall<{ lang: string }>("system.get_locale"),
+  // Persist the UI language back to settings.json (the renderer switches hot on
+  // its own; this keeps it across restart and in sync with the Tk app).
+  setLocale: (lang: string) => rpcCall<{ lang: string }>("system.set_locale", { lang }),
 
   recentList: () => rpcCall<ProjectBrief[]>("project.recent_list"),
   openProject: (folder: string) => rpcCall<ProjectBrief>("project.open", { folder }),

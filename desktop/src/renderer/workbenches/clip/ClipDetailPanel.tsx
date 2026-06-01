@@ -18,6 +18,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { tr } from "../../i18n/tr";
 import { rpc, RpcError, type Component } from "../../ipc/client";
 import type { ClipOverride, HotclipCandidate } from "@creations/clip/types.js";
 import type { SourceCue } from "@composition/components/index.js";
@@ -194,7 +195,7 @@ export function ClipDetailPanel(props: ClipDetailPanelProps) {
 
   // ── restore AI text (deletes the four text overrides together) ──────────────
   const onRestoreAiText = useCallback(() => {
-    if (!window.confirm("恢复此候选的 AI 文本（清除你对 hook/outro/标题/标签的修改）？")) return;
+    if (!window.confirm(tr("clip.detail.restore_ai_confirm"))) return;
     void writeOverride({ hook_text: null, outro_text: null, title: null, hashtags: null });
   }, [writeOverride]);
 
@@ -223,11 +224,11 @@ export function ClipDetailPanel(props: ClipDetailPanelProps) {
 
       {/* Time row */}
       <fieldset style={{ border: "1px solid #2a2a2e", borderRadius: 6, padding: "8px 10px" }}>
-        <legend style={{ color: "#888", fontSize: 11, padding: "0 4px" }}>时间</legend>
+        <legend style={{ color: "#888", fontSize: 11, padding: "0 4px" }}>{tr("clip.detail.time_legend")}</legend>
         {(
           [
-            ["开始", startText, setStartText, commitStart, nudgeStart],
-            ["结束", endText, setEndText, commitEnd, nudgeEnd],
+            [tr("clip.detail.start_label"), startText, setStartText, commitStart, nudgeStart],
+            [tr("clip.detail.end_label"), endText, setEndText, commitEnd, nudgeEnd],
           ] as const
         ).map(([label, value, setValue, commit, nudge]) => (
           <div key={label} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
@@ -246,19 +247,19 @@ export function ClipDetailPanel(props: ClipDetailPanelProps) {
           </div>
         ))}
         <div style={{ color: "#777", fontSize: 12 }}>
-          时长 {(endSec - startSec).toFixed(1)}s · 评分 {scoreLabel}
+          {tr("clip.detail.duration_score", { dur: (endSec - startSec).toFixed(1), score: String(scoreLabel) })}
         </div>
       </fieldset>
 
       {/* Text overrides */}
       <fieldset style={{ border: "1px solid #2a2a2e", borderRadius: 6, padding: "8px 10px" }}>
-        <legend style={{ color: "#888", fontSize: 11, padding: "0 4px" }}>文本</legend>
+        <legend style={{ color: "#888", fontSize: 11, padding: "0 4px" }}>{tr("clip.detail.text_legend")}</legend>
         {(
           [
             ["Hook", hookText, setHookText, () => commitText("hook_text", hookText)],
             ["Outro", outroText, setOutroText, () => commitText("outro_text", outroText)],
-            ["标题", titleText, setTitleText, () => commitText("title", titleText)],
-            ["标签", tagsText, setTagsText, () => commitTags(tagsText)],
+            [tr("clip.detail.title_label"), titleText, setTitleText, () => commitText("title", titleText)],
+            [tr("clip.detail.tags_label"), tagsText, setTagsText, () => commitTags(tagsText)],
           ] as const
         ).map(([label, value, setValue, commit]) => (
           <div key={label} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
@@ -278,7 +279,7 @@ export function ClipDetailPanel(props: ClipDetailPanelProps) {
 
       {/* SRT cue list (read-only, source time) */}
       <fieldset style={{ border: "1px solid #2a2a2e", borderRadius: 6, padding: "8px 10px" }}>
-        <legend style={{ color: "#888", fontSize: 11, padding: "0 4px" }}>字幕</legend>
+        <legend style={{ color: "#888", fontSize: 11, padding: "0 4px" }}>{tr("clip.detail.subtitles_legend")}</legend>
         <div
           style={{
             maxHeight: 130,
@@ -293,7 +294,7 @@ export function ClipDetailPanel(props: ClipDetailPanelProps) {
           }}
         >
           {cues.length === 0 ? (
-            <span style={{ color: "#666" }}>（此区间无字幕）</span>
+            <span style={{ color: "#666" }}>{tr("clip.detail.no_subtitles")}</span>
           ) : (
             cues.map((c, i) => (
               <div key={i}>
@@ -308,11 +309,11 @@ export function ClipDetailPanel(props: ClipDetailPanelProps) {
       <div style={{ display: "flex", gap: 8 }}>
         {mode === "reframe" && (
           <button onClick={onResetCrop} style={actionBtn}>
-            重置裁剪
+            {tr("clip.detail.reset_crop")}
           </button>
         )}
         <button onClick={onRestoreAiText} style={actionBtn}>
-          恢复 AI 文本
+          {tr("clip.detail.restore_ai_text")}
         </button>
       </div>
     </div>

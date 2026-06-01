@@ -11,17 +11,20 @@
 import { useCallback, useEffect, useState } from "react";
 import { rpc, RpcError, type SourceBasicInfo, type SourceContext } from "../../ipc/client";
 import { useJob } from "../../ipc/runJob";
+import { tr } from "../../i18n/tr";
 import { Section, TextRow, TextAreaRow } from "../shared/fields";
 import type { MaterialTabProps } from "./SourceTab";
 
 // The 5 basic_info hint fields (AI-fill seed). Input-only; AI replaces context.
-const SEED_FIELDS: { key: keyof SourceBasicInfo; label: string }[] = [
-  { key: "host", label: "主讲人" },
-  { key: "host_bio", label: "身份" },
-  { key: "event_date", label: "事件日期" },
-  { key: "event_location", label: "事件地点" },
-  { key: "episode_topic", label: "整集主题" },
-];
+function getSeedFields(): { key: keyof SourceBasicInfo; label: string }[] {
+  return [
+    { key: "host", label: tr("material.context.field.host") },
+    { key: "host_bio", label: tr("material.context.field.host_bio") },
+    { key: "event_date", label: tr("material.context.field.event_date") },
+    { key: "event_location", label: tr("material.context.field.event_location") },
+    { key: "episode_topic", label: tr("material.context.field.episode_topic") },
+  ];
+}
 
 const EMPTY_SEED: SourceBasicInfo = {
   host: "",
@@ -33,43 +36,45 @@ const EMPTY_SEED: SourceBasicInfo = {
 
 // Ordered field layout (grouped). `multiline` fields use a textarea.
 type FieldKey = keyof SourceContext;
-const GROUPS: { title: string; fields: { key: FieldKey; label: string; rows?: number }[] }[] = [
-  {
-    title: "锚点 · AI 核对①线索后的权威写法",
-    fields: [
-      { key: "host", label: "主讲人" },
-      { key: "host_bio", label: "身份" },
-      { key: "event_date", label: "事件日期" },
-      { key: "event_location", label: "事件地点" },
-      { key: "episode_topic", label: "整集主题" },
-    ],
-  },
-  {
-    title: "人物 · AI 推导",
-    fields: [
-      { key: "host_affiliation", label: "所属机构" },
-      { key: "guests", label: "嘉宾/在场" },
-    ],
-  },
-  { title: "时间 · AI 推导", fields: [{ key: "event_time", label: "事件时间" }] },
-  {
-    title: "事件 · AI 推导",
-    fields: [
-      { key: "show_type", label: "节目类型" },
-      { key: "event_summary", label: "事件概述", rows: 3 },
-      { key: "key_points", label: "核心要点", rows: 4 },
-    ],
-  },
-  { title: "背景 · AI 推导", fields: [{ key: "background", label: "背景", rows: 5 }] },
-  {
-    title: "制作 · AI 推导",
-    fields: [
-      { key: "audience", label: "观众" },
-      { key: "platform_tone", label: "发布平台" },
-      { key: "notes", label: "备注", rows: 3 },
-    ],
-  },
-];
+function getGroups(): { title: string; fields: { key: FieldKey; label: string; rows?: number }[] }[] {
+  return [
+    {
+      title: tr("material.context.group.anchors"),
+      fields: [
+        { key: "host", label: tr("material.context.field.host") },
+        { key: "host_bio", label: tr("material.context.field.host_bio") },
+        { key: "event_date", label: tr("material.context.field.event_date") },
+        { key: "event_location", label: tr("material.context.field.event_location") },
+        { key: "episode_topic", label: tr("material.context.field.episode_topic") },
+      ],
+    },
+    {
+      title: tr("material.context.group.people"),
+      fields: [
+        { key: "host_affiliation", label: tr("material.context.field.host_affiliation") },
+        { key: "guests", label: tr("material.context.field.guests") },
+      ],
+    },
+    { title: tr("material.context.group.time"), fields: [{ key: "event_time", label: tr("material.context.field.event_time") }] },
+    {
+      title: tr("material.context.group.event"),
+      fields: [
+        { key: "show_type", label: tr("material.context.field.show_type") },
+        { key: "event_summary", label: tr("material.context.field.event_summary"), rows: 3 },
+        { key: "key_points", label: tr("material.context.field.key_points"), rows: 4 },
+      ],
+    },
+    { title: tr("material.context.group.background"), fields: [{ key: "background", label: tr("material.context.field.background"), rows: 5 }] },
+    {
+      title: tr("material.context.group.production"),
+      fields: [
+        { key: "audience", label: tr("material.context.field.audience") },
+        { key: "platform_tone", label: tr("material.context.field.platform_tone") },
+        { key: "notes", label: tr("material.context.field.notes"), rows: 3 },
+      ],
+    },
+  ];
+}
 
 const EMPTY: SourceContext = {
   host: "",
@@ -174,8 +179,11 @@ export function ContextTab(props: MaterialTabProps) {
     [ctx, type, instance, onChanged],
   );
 
+  const seedFields = getSeedFields();
+  const groups = getGroups();
+
   if (!ctx) {
-    return <div style={{ color: "#666", fontSize: 13 }}>{error ? `✗ ${error}` : "加载中…"}</div>;
+    return <div style={{ color: "#666", fontSize: 13 }}>{error ? `✗ ${error}` : tr("common.loading")}</div>;
   }
 
   const total = Object.keys(EMPTY).length;
@@ -185,24 +193,23 @@ export function ContextTab(props: MaterialTabProps) {
     <div style={{ maxWidth: 560 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
         <span style={{ fontSize: 12, color: "#999" }}>
-          新闻背景 · 已填 {filled}/{total} 字段
+          {tr("material.context.filled_count", { filled, total })}
         </span>
-        {saving && <span style={{ fontSize: 11, color: "#4a9eff" }}>保存中…</span>}
+        {saving && <span style={{ fontSize: 11, color: "#4a9eff" }}>{tr("material.context.saving")}</span>}
         {error && <span style={{ fontSize: 11, color: "#ff6b6b" }}>✗ {error}</span>}
       </div>
 
       {/* How this page works */}
       <p style={{ color: "#9aa", fontSize: 12, margin: "0 0 12px", lineHeight: 1.6 }}>
-        用法:① 填几条你知道的<b style={{ color: "#cdd" }}>线索</b>(可选) → ② 点 <b style={{ color: "#b89af0" }}>AI 填充</b> 联网检索生成 →
-        ③ AI 产出的 <b style={{ color: "#cdd" }}>15 字段新闻背景</b>(下游唯一数据源,可手动校正)。
+        {tr("material.context.usage_hint")}
       </p>
 
       {/* Step ① — user hints (input to AI; never read downstream) */}
-      <StepCard step="① 线索" subtitle="你提供 · AI 的输入提示(可不准/留空)">
+      <StepCard step={tr("material.context.step1_label")} subtitle={tr("material.context.step1_subtitle")}>
         <p style={{ color: "#888", fontSize: 11, margin: "0 0 6px" }}>
-          填你知道的就行。AI 会联网核对、纠正、补全成下面 ③ 的权威写法。线索本身不进下游渲染。
+          {tr("material.context.step1_desc")}
         </p>
-        {SEED_FIELDS.map((f) => (
+        {seedFields.map((f) => (
           <TextRow
             key={f.key}
             label={f.label}
@@ -216,41 +223,41 @@ export function ContextTab(props: MaterialTabProps) {
       </StepCard>
 
       {/* Step ② — AI fill (replacement) */}
-      <StepCard step="② AI 填充" subtitle="用①线索联网检索,生成/覆盖③新闻背景">
+      <StepCard step={tr("material.context.step2_label")} subtitle={tr("material.context.step2_subtitle")}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <button
             onClick={() => void runFill()}
             disabled={fillJob.running}
             style={{ padding: "6px 14px", background: "#7a4fd6", color: "#fff", border: "none", borderRadius: 5, fontSize: 13, cursor: "pointer" }}
           >
-            ✨ AI 填充
+            ✨ {tr("material.context.ai_fill_btn")}
           </button>
           {fillJob.running && (
             <span style={{ fontSize: 12, color: "#4a9eff" }}>
-              AI 提取中…
+              {tr("material.context.ai_running")}
               <button onClick={fillJob.cancel} style={{ marginLeft: 8, padding: "2px 8px", background: "#2a2a2e", color: "#ddd", border: "none", borderRadius: 4, fontSize: 11, cursor: "pointer" }}>
-                取消
+                {tr("common.cancel")}
               </button>
             </span>
           )}
           {fillJob.error && <span style={{ fontSize: 11, color: "#ff6b6b" }}>✗ {fillJob.error}</span>}
         </div>
         <p style={{ color: "#d9a441", fontSize: 11, margin: "6px 0 0" }}>
-          ⚠ 会用联网检索结果整体覆盖现有 ③ 新闻背景。
+          ⚠ {tr("material.context.step2_warn")}
         </p>
       </StepCard>
 
       {/* Step ③ — AI-generated background (the downstream source of truth; editable) */}
       <div style={{ fontSize: 12, color: "#cdd", fontWeight: 700, margin: "16px 0 2px" }}>
-        ③ 新闻背景 · AI 生成 · 下游唯一数据源 · 可手动校正
+        {tr("material.context.step3_heading")}
       </div>
       {filled === 0 && (
         <p style={{ color: "#888", fontSize: 11, margin: "0 0 6px" }}>
-          还没有内容 —— 点上面「✨ AI 填充」生成,或直接在下面手动填写。
+          {tr("material.context.step3_empty_hint")}
         </p>
       )}
 
-      {GROUPS.map((g) => (
+      {groups.map((g) => (
         <div key={g.title}>
           <Section title={g.title} />
           {g.fields.map((f) =>

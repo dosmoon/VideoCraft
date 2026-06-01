@@ -19,16 +19,23 @@ import {
   type SlotState,
 } from "../ipc/client";
 import { CreationWorkbench, MaterialWorkbench } from "../workbenches";
+import { tr, getLang } from "../i18n/tr";
+import { LanguageToggle } from "../i18n/LanguageToggle";
 
 // What the open workbench is — a creation or a material, plus its identity.
 type OpenWorkbench = { kind: "creation" | "material"; type: string; instance: string };
 
-// Friendly labels for the news_video slots (placeholder — real i18n later).
+// Friendly labels for the news_video slots.
 const SLOT_LABELS: Record<string, string> = {
-  source: "源视频",
-  news_context: "新闻背景",
-  subtitles: "字幕",
+  source: "hub.slot.source",
+  news_context: "hub.slot.news_context",
+  subtitles: "hub.slot.subtitles",
 };
+
+// Locale-aware description for a registered type (the sidecar ships both).
+function descOf(t: { description_zh: string; description_en: string }): string {
+  return getLang() === "zh" ? t.description_zh : t.description_en;
+}
 
 // "type/instance" → (slotId → state). Flat key keeps the readiness cache simple.
 type Readiness = Record<string, Record<string, SlotState>>;
@@ -230,8 +237,11 @@ function Launcher(props: {
   const { recents, busy, error, onOpen, onPick } = props;
   return (
     <div style={{ maxWidth: 560, margin: "0 auto", padding: "40px 24px" }}>
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
+        <LanguageToggle />
+      </div>
       <h2 style={{ fontWeight: 600, margin: "0 0 4px" }}>VideoCraft</h2>
-      <p style={{ color: "#888", margin: "0 0 24px", fontSize: 13 }}>选择一个项目打开</p>
+      <p style={{ color: "#888", margin: "0 0 24px", fontSize: 13 }}>{tr("hub.launcher.subtitle")}</p>
 
       <button
         onClick={onPick}
@@ -246,18 +256,18 @@ function Launcher(props: {
           cursor: "pointer",
         }}
       >
-        打开文件夹…
+        {tr("hub.launcher.open_folder")}
       </button>
 
       {error && <p style={{ color: "#ff6b6b", marginTop: 16 }}>✗ {error}</p>}
 
       <h3 style={{ fontSize: 13, color: "#aaa", margin: "28px 0 8px", fontWeight: 600 }}>
-        最近项目
+        {tr("hub.launcher.recent")}
       </h3>
       {recents === null ? (
-        <p style={{ color: "#888" }}>加载中…</p>
+        <p style={{ color: "#888" }}>{tr("common.loading")}</p>
       ) : recents.length === 0 ? (
-        <p style={{ color: "#888" }}>暂无最近项目</p>
+        <p style={{ color: "#888" }}>{tr("hub.launcher.no_recent")}</p>
       ) : (
         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
           {recents.map((p) => (
@@ -349,10 +359,12 @@ function ProjectView(props: {
         <span style={{ color: "#777", fontSize: 11 }} title={current.folder}>
           {current.folder}
         </span>
+        <div style={{ marginLeft: "auto" }}>
+          <LanguageToggle />
+        </div>
         <button
           onClick={onClose}
           style={{
-            marginLeft: "auto",
             padding: "4px 10px",
             background: "#2a2a2e",
             color: "#ddd",
@@ -361,7 +373,7 @@ function ProjectView(props: {
             cursor: "pointer",
           }}
         >
-          关闭项目
+          {tr("hub.close_project")}
         </button>
       </header>
 
@@ -377,14 +389,14 @@ function ProjectView(props: {
         >
           {error && <p style={{ color: "#ff6b6b" }}>✗ {error}</p>}
 
-          <SectionTitleRow title="素材">
+          <SectionTitleRow title={tr("hub.section.materials")}>
             <CreateMaterialMenu materials={materials} onCreate={onCreateMaterial} onOpen={onOpenMaterial} />
           </SectionTitleRow>
-          {matTypes.length === 0 && <Empty>无素材 — 用「+」新建</Empty>}
+          {matTypes.length === 0 && <Empty>{tr("hub.no_materials")}</Empty>}
           {matTypes.map(([type, insts]) => (
             <div key={type} style={{ marginBottom: 10 }}>
               <TypeLabel>{type}</TypeLabel>
-              {insts.length === 0 && <Empty>（空）</Empty>}
+              {insts.length === 0 && <Empty>{tr("hub.empty_parens")}</Empty>}
               {insts.map((inst) => {
                 const active =
                   workbench?.kind === "material" &&
@@ -403,14 +415,14 @@ function ProjectView(props: {
             </div>
           ))}
 
-          <SectionTitleRow title="创作">
+          <SectionTitleRow title={tr("hub.section.creations")}>
             <CreateCreationMenu onCreate={onCreateCreation} />
           </SectionTitleRow>
-          {creaTypes.length === 0 && <Empty>无创作 — 用「+」新建</Empty>}
+          {creaTypes.length === 0 && <Empty>{tr("hub.no_creations")}</Empty>}
           {creaTypes.map(([type, insts]) => (
             <div key={type} style={{ marginBottom: 10 }}>
               <TypeLabel>{type}</TypeLabel>
-              {insts.length === 0 && <Empty>（空）</Empty>}
+              {insts.length === 0 && <Empty>{tr("hub.empty_parens")}</Empty>}
               {insts.map((inst) => {
                 const active =
                   workbench?.kind === "creation" &&
@@ -459,7 +471,7 @@ function ProjectView(props: {
               />
             )
           ) : (
-            <div style={{ padding: 24, color: "#666" }}>选择一个素材或创作以打开工作台</div>
+            <div style={{ padding: 24, color: "#666" }}>{tr("hub.pick_to_open")}</div>
           )}
         </main>
       </div>
@@ -516,7 +528,7 @@ function SlotRow({ slot }: { slot: SlotState }) {
     >
       <span style={{ color, width: 14, flexShrink: 0 }}>{icon}</span>
       <span style={{ width: 56, flexShrink: 0, color: "#999" }}>
-        {SLOT_LABELS[slot.slot_id] ?? slot.slot_id}
+        {SLOT_LABELS[slot.slot_id] ? tr(SLOT_LABELS[slot.slot_id]!) : slot.slot_id}
       </span>
       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
         {slot.summary}
@@ -565,7 +577,7 @@ function CreateCreationMenu({ onCreate }: { onCreate: (type: string) => void }) 
     <div style={{ position: "relative" }}>
       <button
         onClick={toggle}
-        title="新建创作"
+        title={tr("hub.new_creation")}
         style={{
           width: 22,
           height: 20,
@@ -597,9 +609,9 @@ function CreateCreationMenu({ onCreate }: { onCreate: (type: string) => void }) 
           }}
         >
           {types === null ? (
-            <div style={{ padding: "5px 8px", color: "#888", fontSize: 12 }}>加载中…</div>
+            <div style={{ padding: "5px 8px", color: "#888", fontSize: 12 }}>{tr("common.loading")}</div>
           ) : types.length === 0 ? (
-            <div style={{ padding: "5px 8px", color: "#888", fontSize: 12 }}>无可用类型</div>
+            <div style={{ padding: "5px 8px", color: "#888", fontSize: 12 }}>{tr("hub.no_types")}</div>
           ) : (
             types.map((t) => (
               <button
@@ -620,9 +632,9 @@ function CreateCreationMenu({ onCreate }: { onCreate: (type: string) => void }) 
                   fontSize: 13,
                   cursor: "pointer",
                 }}
-                title={t.description_zh}
+                title={descOf(t)}
               >
-                {t.description_zh || t.type_name}
+                {descOf(t) || t.type_name}
               </button>
             ))
           )}
@@ -658,7 +670,7 @@ function CreateMaterialMenu(props: {
     <div style={{ position: "relative" }}>
       <button
         onClick={toggle}
-        title="新建素材"
+        title={tr("hub.new_material")}
         style={{
           width: 22,
           height: 20,
@@ -690,17 +702,17 @@ function CreateMaterialMenu(props: {
           }}
         >
           {types === null ? (
-            <div style={{ padding: "5px 8px", color: "#888", fontSize: 12 }}>加载中…</div>
+            <div style={{ padding: "5px 8px", color: "#888", fontSize: 12 }}>{tr("common.loading")}</div>
           ) : types.length === 0 ? (
-            <div style={{ padding: "5px 8px", color: "#888", fontSize: 12 }}>无可用类型</div>
+            <div style={{ padding: "5px 8px", color: "#888", fontSize: 12 }}>{tr("hub.no_types")}</div>
           ) : (
             types.map((t) => {
               const existing = materials[t.type_name] ?? [];
               // Single-instance + already created → offer to open it, not re-create.
               const openExisting = t.single_instance && existing.length > 0;
               const label = openExisting
-                ? `打开 ${existing[0]}`
-                : t.description_zh || t.type_name;
+                ? tr("hub.open_existing", { name: existing[0]! })
+                : descOf(t) || t.type_name;
               return (
                 <button
                   key={t.type_name}
@@ -721,7 +733,7 @@ function CreateMaterialMenu(props: {
                     fontSize: 13,
                     cursor: "pointer",
                   }}
-                  title={t.description_zh}
+                  title={descOf(t)}
                 >
                   {label}
                 </button>

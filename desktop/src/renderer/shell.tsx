@@ -6,8 +6,12 @@
  */
 
 import { Hub } from "./hub/Hub";
+import { useLang } from "./i18n/tr";
 
 export function Shell() {
+  // Subscribe the whole tree to language changes so a hot switch re-renders
+  // every tr() call below (no React.memo boundaries gate the workbenches).
+  useLang();
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
       <Hub />

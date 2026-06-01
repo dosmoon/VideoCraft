@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { rpc, RpcError, type SubtitleCheck } from "../../ipc/client";
+import { tr } from "../../i18n/tr";
 
 const BTN_GHOST: React.CSSProperties = {
   padding: "5px 12px",
@@ -79,23 +80,23 @@ export function SubtitleViewer(props: {
     <div style={{ maxWidth: 720 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
         <button onClick={onClose} style={{ ...BTN_GHOST, padding: "3px 10px" }}>
-          ← 返回
+          {tr("material.back_btn")}
         </button>
         <strong style={{ fontSize: 13 }}>{lang}.srt</strong>
         {check && (
           <span style={{ fontSize: 12, color: "#999" }}>
-            {check.cue_count} 条
-            {check.hard > 0 && <span style={{ color: SEV_COLOR.hard }}> · {check.hard} 严重</span>}
-            {check.fixable > 0 && <span style={{ color: SEV_COLOR.fixable }}> · {check.fixable} 可修复</span>}
-            {check.advisory > 0 && <span style={{ color: SEV_COLOR.advisory }}> · {check.advisory} 提示</span>}
+            {tr("material.subtitles.cue_count", { count: check.cue_count })}
+            {check.hard > 0 && <span style={{ color: SEV_COLOR.hard }}> · {tr("material.subtitles.hard_count", { count: check.hard })}</span>}
+            {check.fixable > 0 && <span style={{ color: SEV_COLOR.fixable }}> · {tr("material.subtitles.fixable_count", { count: check.fixable })}</span>}
+            {check.advisory > 0 && <span style={{ color: SEV_COLOR.advisory }}> · {tr("material.subtitles.advisory_count", { count: check.advisory })}</span>}
             {check.hard === 0 && check.fixable === 0 && (
-              <span style={{ color: "#3ecf8e" }}> · ✓ 无硬伤</span>
+              <span style={{ color: "#3ecf8e" }}> · ✓ {tr("material.subtitles.no_hard_issues")}</span>
             )}
           </span>
         )}
         {check && check.fixable > 0 && (
           <button onClick={() => void quickFix()} disabled={busy} style={{ ...BTN_GHOST, marginLeft: "auto", color: "#d9a441" }}>
-            一键修复可修复项
+            {tr("material.subtitles.quick_fix_btn")}
           </button>
         )}
       </div>
@@ -111,7 +112,7 @@ export function SubtitleViewer(props: {
             </div>
           ))}
           {check.issues.length > 30 && (
-            <div style={{ fontSize: 11, color: "#666" }}>…共 {check.issues.length} 条</div>
+            <div style={{ fontSize: 11, color: "#666" }}>…{tr("material.subtitles.issues_total", { count: check.issues.length })}</div>
           )}
         </div>
       )}
@@ -131,7 +132,7 @@ export function SubtitleViewer(props: {
           fontFamily: "ui-monospace, monospace",
         }}
       >
-        {text ?? "加载中…"}
+        {text ?? tr("common.loading")}
       </pre>
     </div>
   );

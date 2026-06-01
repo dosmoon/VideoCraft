@@ -9,6 +9,7 @@
  */
 
 import { useEffect, useState, type CSSProperties } from "react";
+import { tr } from "../../i18n/tr";
 import type { Component } from "../../ipc/client";
 
 // Structural / separately-handled fields — never shown in the property editor.
@@ -41,7 +42,7 @@ export function PropertyPanel(props: {
         alignItems: "center",
       }}
     >
-      {editable.length === 0 && <span style={{ color: "#666", fontSize: 12 }}>无可编辑字段</span>}
+      {editable.length === 0 && <span style={{ color: "#666", fontSize: 12 }}>{tr("clip.property.no_fields")}</span>}
       {editable.map((k) => (
         <PropertyField
           key={k}
@@ -80,7 +81,7 @@ function PropertyField(props: {
         >
           {opts.map((o) => (
             <option key={o} value={o}>
-              {o || "（未设置）"}
+              {o || tr("clip.property.unset")}
             </option>
           ))}
         </select>

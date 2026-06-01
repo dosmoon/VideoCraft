@@ -89,6 +89,34 @@ def test_list_languages(ctx):
     assert "English" in en["display"] and "—" in en["display"]
 
 
+def test_get_locale(ctx):
+    # The renderer awaits this at boot; it must echo i18n.get_current_lang.
+    from i18n import get_current_lang
+
+    lang = call(ctx, "system.get_locale")["result"]["lang"]
+    assert lang == get_current_lang()
+    assert lang in ("zh", "en")
+
+
+def test_set_locale_round_trip(ctx, tmp_path, monkeypatch):
+    # Persist hot-switch choice back to settings.json. Redirect the settings file
+    # to a tmp path so the real user_data/settings.json is never touched.
+    import i18n
+
+    monkeypatch.setattr(i18n, "SETTINGS_FILE", str(tmp_path / "settings.json"))
+    assert call(ctx, "system.set_locale", {"lang": "zh"})["result"]["lang"] == "zh"
+    assert call(ctx, "system.get_locale")["result"]["lang"] == "zh"
+    assert call(ctx, "system.set_locale", {"lang": "en"})["result"]["lang"] == "en"
+
+
+def test_set_locale_rejects_unsupported(ctx, tmp_path, monkeypatch):
+    import i18n
+
+    monkeypatch.setattr(i18n, "SETTINGS_FILE", str(tmp_path / "settings.json"))
+    resp = call(ctx, "system.set_locale", {"lang": "xx"})
+    assert "error" in resp  # ValueError → HANDLER_ERROR, channel survives
+
+
 # ── create instance + type listing (M0) ──────────────────────────────────────
 
 def test_list_material_types_info(ctx, tmp_project):

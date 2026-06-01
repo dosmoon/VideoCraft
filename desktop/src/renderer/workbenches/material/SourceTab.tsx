@@ -9,6 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { rpc, RpcError, type AcquireSource, type SourceMeta } from "../../ipc/client";
 import { useJob } from "../../ipc/runJob";
+import { tr } from "../../i18n/tr";
 
 export interface MaterialTabProps {
   type: string;
@@ -17,20 +18,21 @@ export interface MaterialTabProps {
   onChanged: () => void;
 }
 
-// AcquireError category (prefix of the failed job's message) → recovery hint.
-const CATEGORY_HINTS: Record<string, string> = {
-  network: "网络问题，请检查连接后重试。",
-  url_invalid: "链接无效或不受支持，请检查 URL。",
-  js_runtime: "缺少 Node.js JS 运行时（yt-dlp 需要）—— 安装 Node.js 后重试。",
-  cookies: "该视频需要登录 / cookies 才能访问。",
-  disk: "磁盘问题（空间不足或写入失败）。",
-  ffmpeg: "ffmpeg / ffprobe 不可用或处理失败。",
-  other: "导入失败。",
+// AcquireError category (prefix of the failed job's message) → i18n key suffix.
+const CATEGORY_KEYS: Record<string, string> = {
+  network: "material.source.hint.network",
+  url_invalid: "material.source.hint.url_invalid",
+  js_runtime: "material.source.hint.js_runtime",
+  cookies: "material.source.hint.cookies",
+  disk: "material.source.hint.disk",
+  ffmpeg: "material.source.hint.ffmpeg",
+  other: "material.source.hint.other",
 };
 
 function hintFor(error: string): string {
   const cat = error.split(":", 1)[0]?.trim();
-  return (cat && CATEGORY_HINTS[cat]) || error;
+  const key = cat && CATEGORY_KEYS[cat];
+  return key ? tr(key) : error;
 }
 
 function fmtDuration(sec?: number): string {
@@ -165,7 +167,7 @@ export function SourceTab({ type, instance, refreshKey, onChanged }: MaterialTab
           )}
           {!reimport && (
             <button onClick={() => setReimport(true)} style={{ ...BTN_GHOST, marginTop: 8, padding: "4px 10px", fontSize: 12 }}>
-              重新导入…
+              {tr("material.source.reimport_btn")}
             </button>
           )}
         </div>
@@ -175,17 +177,17 @@ export function SourceTab({ type, instance, refreshKey, onChanged }: MaterialTab
       {showPicker && (
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           {filled && reimport && (
-            <div style={{ color: "#d9a441", fontSize: 12 }}>⚠ 重新导入会覆盖当前源视频。</div>
+            <div style={{ color: "#d9a441", fontSize: 12 }}>⚠ {tr("material.source.reimport_warn")}</div>
           )}
           <div style={{ display: "flex", gap: 8 }}>
-            <ModeBtn label="本地文件" active={mode === "local"} onClick={() => setMode("local")} />
-            <ModeBtn label="链接下载 (yt-dlp)" active={mode === "link"} onClick={() => setMode("link")} />
+            <ModeBtn label={tr("material.source.mode_local")} active={mode === "local"} onClick={() => setMode("local")} />
+            <ModeBtn label={tr("material.source.mode_link")} active={mode === "link"} onClick={() => setMode("link")} />
           </div>
 
           {mode === "link" && (
             <input
               value={url}
-              placeholder="粘贴视频链接 (YouTube / Bilibili / …)"
+              placeholder={tr("material.source.url_placeholder")}
               disabled={job.running}
               onChange={(e) => setUrl(e.target.value)}
               style={{ ...INPUT, width: "100%", boxSizing: "border-box" }}
@@ -195,29 +197,29 @@ export function SourceTab({ type, instance, refreshKey, onChanged }: MaterialTab
           {/* Optional clip range */}
           <label style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "#bbb" }}>
             <input type="checkbox" checked={useRange} disabled={job.running} onChange={(e) => setUseRange(e.target.checked)} />
-            只截取时间段
+            {tr("material.source.clip_range_label")}
           </label>
           {useRange && (
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <input value={rangeStart} placeholder="开始 00:00" disabled={job.running} onChange={(e) => setRangeStart(e.target.value)} style={{ ...INPUT, width: 110 }} />
+              <input value={rangeStart} placeholder={tr("material.source.range_start_placeholder")} disabled={job.running} onChange={(e) => setRangeStart(e.target.value)} style={{ ...INPUT, width: 110 }} />
               <span style={{ color: "#666" }}>→</span>
-              <input value={rangeEnd} placeholder="结束 10:00" disabled={job.running} onChange={(e) => setRangeEnd(e.target.value)} style={{ ...INPUT, width: 110 }} />
+              <input value={rangeEnd} placeholder={tr("material.source.range_end_placeholder")} disabled={job.running} onChange={(e) => setRangeEnd(e.target.value)} style={{ ...INPUT, width: 110 }} />
             </div>
           )}
 
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             {mode === "local" ? (
               <button onClick={() => void acquireLocal()} disabled={job.running} style={BTN}>
-                选择本地文件…
+                {tr("material.source.pick_local_btn")}
               </button>
             ) : (
               <button onClick={() => void acquireLink()} disabled={job.running || !url.trim()} style={BTN}>
-                下载
+                {tr("material.source.download_btn")}
               </button>
             )}
             {filled && reimport && (
               <button onClick={() => setReimport(false)} disabled={job.running} style={BTN_GHOST}>
-                取消
+                {tr("common.cancel")}
               </button>
             )}
           </div>
@@ -228,11 +230,11 @@ export function SourceTab({ type, instance, refreshKey, onChanged }: MaterialTab
       {job.running && (
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span style={{ fontSize: 12, color: "#4a9eff" }}>
-            {job.progress?.status_text || job.progress?.phase || "处理中"}
+            {job.progress?.status_text || job.progress?.phase || tr("material.source.processing")}
             {job.progress?.pct != null ? ` · ${Math.round(job.progress.pct)}%` : ""}
           </span>
           <button onClick={job.cancel} style={{ ...BTN_GHOST, padding: "3px 10px", fontSize: 12 }}>
-            取消
+            {tr("common.cancel")}
           </button>
         </div>
       )}

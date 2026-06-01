@@ -17,6 +17,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { tr } from "../../i18n/tr";
 import type { Component, PresetList } from "../../ipc/client";
 import { rpc, RpcError } from "../../ipc/client";
 import { PropertyPanel } from "./propertyEditor";
@@ -27,13 +28,17 @@ import type { HotclipCandidate } from "@creations/clip/types.js";
 
 // Friendly component labels — mirrors style_panel.py::_KIND_LABELS. The UI must
 // never show the internal kind name ([[feedback_user_facing_naming]]).
-const KIND_LABELS: Record<string, string> = {
-  clip_subtitle: "字幕",
-  clip_text_watermark: "文字水印",
-  clip_image_watermark: "图片水印",
-  clip_hook_card: "Hook 卡片",
-  clip_outro_card: "Outro 卡片",
+const KIND_LABEL_KEYS: Record<string, string> = {
+  clip_subtitle: "clip.kind.subtitle",
+  clip_text_watermark: "clip.kind.text_watermark",
+  clip_image_watermark: "clip.kind.image_watermark",
+  clip_hook_card: "clip.kind.hook_card",
+  clip_outro_card: "clip.kind.outro_card",
 };
+function kindLabel(kind: string): string {
+  const key = KIND_LABEL_KEYS[kind];
+  return key ? tr(key) : kind;
+}
 
 const EMPTY_CANDIDATE: HotclipCandidate = { start: "00:00:00.000", end: "00:00:00.000" };
 
@@ -124,7 +129,7 @@ export function StyleTab(props: {
 
   const onRemove = useCallback(async () => {
     if (!selectedId) return;
-    if (!window.confirm("删除选中的组件？")) return;
+    if (!window.confirm(tr("clip.style.remove_component_confirm"))) return;
     setCompErr("");
     try {
       const list = await rpc.removeComponent(type, instance, selectedId);
@@ -228,7 +233,7 @@ export function StyleTab(props: {
 
   const onOverwritePreset = useCallback(async () => {
     if (!selectedPreset) return;
-    if (!window.confirm(`覆盖预设「${selectedPreset}」？`)) return;
+    if (!window.confirm(tr("clip.style.overwrite_preset_confirm", { name: selectedPreset }))) return;
     setToolbarErr("");
     try {
       const list = await rpc.savePreset(type, instance, selectedPreset);
@@ -241,7 +246,7 @@ export function StyleTab(props: {
 
   const onDeletePreset = useCallback(async () => {
     if (!selectedPreset) return;
-    if (!window.confirm(`删除预设「${selectedPreset}」？`)) return;
+    if (!window.confirm(tr("clip.style.delete_preset_confirm", { name: selectedPreset }))) return;
     setToolbarErr("");
     try {
       const list = await rpc.deletePreset(type, instance, selectedPreset);
@@ -269,15 +274,15 @@ export function StyleTab(props: {
     const n = data?.candidates.length ?? 0;
     const rect = stagedCrop;
     if (n <= 0 || !rect) {
-      setNote("素材无候选 — 无法应用裁剪");
+      setNote(tr("clip.style.no_candidates_for_crop"));
       return;
     }
-    if (!window.confirm(`把当前裁剪框应用到全部 ${n} 个候选？`)) return;
+    if (!window.confirm(tr("clip.style.apply_crop_confirm", { n }))) return;
     const merge: Record<string, { crop_rect: CropRect }> = {};
     for (let i = 0; i < n; i++) merge[String(i)] = { crop_rect: rect };
     try {
       await rpc.updateConfig(type, instance, { clips_overrides_merge: merge });
-      setNote(`已应用裁剪到全部 ${n} 个候选`);
+      setNote(tr("clip.style.crop_applied", { n }));
     } catch (err) {
       setNote(err instanceof RpcError ? `[${err.code}] ${err.message}` : String(err));
     }
@@ -305,7 +310,7 @@ export function StyleTab(props: {
         }}
       >
         <label>
-          比例{" "}
+          {tr("clip.style.tb_aspect")}{" "}
           <select
             value={aspectStr}
             disabled={!data}
@@ -320,7 +325,7 @@ export function StyleTab(props: {
           </select>
         </label>
         <label>
-          短边{" "}
+          {tr("clip.style.tb_short_edge")}{" "}
           <select
             value={String(data?.shortEdge ?? 1080)}
             disabled={!data}
@@ -335,19 +340,19 @@ export function StyleTab(props: {
           </select>
         </label>
         <label>
-          模式{" "}
+          {tr("clip.style.tb_mode")}{" "}
           <select
             value={data?.mode ?? "reframe"}
             disabled={!data}
             onChange={(e) => void patchOutput({ output_mode: e.target.value })}
             style={selStyle}
           >
-            <option value="reframe">重构裁剪</option>
-            <option value="passthrough">原样</option>
+            <option value="reframe">{tr("clip.style.mode_reframe")}</option>
+            <option value="passthrough">{tr("clip.style.mode_passthrough")}</option>
           </select>
         </label>
         <label>
-          编码{" "}
+          {tr("clip.style.tb_encode")}{" "}
           <select
             value={data?.encodePreset ?? "medium"}
             disabled={!data}
@@ -365,7 +370,7 @@ export function StyleTab(props: {
         <span style={{ width: 1, height: 18, background: "#3a3a40", margin: "0 2px" }} />
 
         <label>
-          预设{" "}
+          {tr("clip.style.tb_preset")}{" "}
           <select
             value={selectedPreset}
             onChange={(e) => setSelectedPreset(e.target.value)}
@@ -383,7 +388,7 @@ export function StyleTab(props: {
             <input
               autoFocus
               value={newPresetName}
-              placeholder="预设名称"
+              placeholder={tr("clip.style.preset_name_placeholder")}
               onChange={(e) => setNewPresetName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void onSavePresetAs();
@@ -392,33 +397,33 @@ export function StyleTab(props: {
               style={{ ...selStyle, maxWidth: 200 }}
             />
             <button onClick={() => void onSavePresetAs()} disabled={!newPresetName.trim()} style={tbBtn}>
-              确定
+              {tr("common.ok")}
             </button>
             <button onClick={cancelSaveAs} style={tbBtn}>
-              取消
+              {tr("common.cancel")}
             </button>
           </>
         ) : (
           <>
             <button onClick={() => void onApplyPreset()} disabled={!selectedPreset} style={tbBtn}>
-              应用
+              {tr("clip.style.preset_apply")}
             </button>
             <button onClick={() => setSavingAs(true)} style={tbBtn}>
-              另存为
+              {tr("clip.style.preset_save_as")}
             </button>
             <button
               onClick={() => void onOverwritePreset()}
               disabled={!selectedPreset || (presets?.builtins.includes(selectedPreset) ?? false)}
               style={tbBtn}
             >
-              覆盖
+              {tr("clip.style.preset_overwrite")}
             </button>
             <button
               onClick={() => void onDeletePreset()}
               disabled={!selectedPreset || (presets?.builtins.includes(selectedPreset) ?? false)}
               style={tbBtn}
             >
-              删除
+              {tr("common.delete")}
             </button>
           </>
         )}
@@ -430,14 +435,14 @@ export function StyleTab(props: {
       <div style={{ flex: "0 0 auto", minWidth: 360 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 4 }}>
           <span style={{ fontSize: 11, color: "#888", fontWeight: 700, textTransform: "uppercase" }}>
-            预览
+            {tr("clip.style.preview_label")}
           </span>
           {note && <span style={{ fontSize: 11, color: "#666" }}>{note}</span>}
         </div>
 
-        {status === "loading" && <p style={{ color: "#888", fontSize: 12 }}>加载源…</p>}
-        {status === "nobind" && <p style={{ color: "#888", fontSize: 12 }}>未绑定素材 — 无法预览</p>}
-        {status === "nosrc" && <p style={{ color: "#888", fontSize: 12 }}>绑定素材尚无源视频</p>}
+        {status === "loading" && <p style={{ color: "#888", fontSize: 12 }}>{tr("clip.preview.loading_source")}</p>}
+        {status === "nobind" && <p style={{ color: "#888", fontSize: 12 }}>{tr("clip.style.no_material_preview")}</p>}
+        {status === "nosrc" && <p style={{ color: "#888", fontSize: 12 }}>{tr("clip.no_source_video")}</p>}
         {status === "error" && <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {message}</p>}
 
         {status === "ready" && data && (
@@ -445,7 +450,7 @@ export function StyleTab(props: {
             {/* Crop bar (style_panel.py::_build_preview): staging hint + apply-to-all. */}
             {isReframe && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                <span style={{ fontSize: 11, color: "#888" }}>全局裁剪 · 拖动预览中的框取景</span>
+                <span style={{ fontSize: 11, color: "#888" }}>{tr("clip.style.global_crop_hint")}</span>
                 <button
                   onClick={() => void onApplyCropToAll()}
                   style={{
@@ -459,7 +464,7 @@ export function StyleTab(props: {
                     cursor: "pointer",
                   }}
                 >
-                  应用裁剪到全部
+                  {tr("clip.style.apply_crop_to_all")}
                 </button>
               </div>
             )}
@@ -482,19 +487,19 @@ export function StyleTab(props: {
         {/* Component manager header — [+ 添加] menu / 删除 / ↑ / ↓ (faithful to
             style_panel.py::_build_component_list). */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "12px 0 6px", position: "relative" }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: "#ccc" }}>组件</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#ccc" }}>{tr("clip.style.components_label")}</span>
           <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
             <button onClick={() => setAddMenuOpen((o) => !o)} style={mgrBtn}>
-              + 添加
+              + {tr("clip.style.add_component")}
             </button>
-            <button onClick={() => void onMove(-1)} disabled={!selectedId} style={mgrBtn} title="上移">
+            <button onClick={() => void onMove(-1)} disabled={!selectedId} style={mgrBtn} title={tr("clip.style.move_up")}>
               ↑
             </button>
-            <button onClick={() => void onMove(1)} disabled={!selectedId} style={mgrBtn} title="下移">
+            <button onClick={() => void onMove(1)} disabled={!selectedId} style={mgrBtn} title={tr("clip.style.move_down")}>
               ↓
             </button>
             <button onClick={() => void onRemove()} disabled={!selectedId} style={mgrBtn}>
-              删除
+              {tr("common.delete")}
             </button>
           </div>
           {addMenuOpen && (
@@ -534,7 +539,7 @@ export function StyleTab(props: {
                       cursor: disabled ? "not-allowed" : "pointer",
                     }}
                   >
-                    {KIND_LABELS[a.kind] ?? a.kind}
+                    {kindLabel(a.kind)}
                   </button>
                 );
               })}
@@ -544,9 +549,9 @@ export function StyleTab(props: {
         {compErr && <p style={{ color: "#ff6b6b", fontSize: 12, margin: "0 0 6px" }}>✗ {compErr}</p>}
 
         {components === null ? (
-          <p style={{ color: "#888" }}>加载中…</p>
+          <p style={{ color: "#888" }}>{tr("common.loading")}</p>
         ) : components.length === 0 ? (
-          <p style={{ color: "#888" }}>无组件 — 用「+ 添加」新建</p>
+          <p style={{ color: "#888" }}>{tr("clip.style.no_components")}</p>
         ) : (
           <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
             {components.map((c) => {
@@ -577,7 +582,7 @@ export function StyleTab(props: {
                       }}
                     >
                       <span style={{ fontWeight: 500, fontSize: 13 }}>
-                        {KIND_LABELS[c.kind] ?? c.kind}
+                        {kindLabel(c.kind)}
                       </span>
                       {typeof c["name"] === "string" && c["name"] && (
                         <span style={{ color: "#777", fontSize: 11 }}>{c["name"] as string}</span>
@@ -602,7 +607,7 @@ export function StyleTab(props: {
             marginBottom: 8,
           }}
         >
-          属性
+          {tr("clip.style.properties_label")}
         </div>
         {selected ? (
           <PropertyPanel
@@ -614,7 +619,7 @@ export function StyleTab(props: {
               : {})}
           />
         ) : (
-          <p style={{ color: "#666", fontSize: 12 }}>选择一个组件以编辑其属性</p>
+          <p style={{ color: "#666", fontSize: 12 }}>{tr("clip.style.no_component_selected")}</p>
         )}
       </div>
       </div>

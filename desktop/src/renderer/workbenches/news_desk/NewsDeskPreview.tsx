@@ -28,6 +28,7 @@ import { AudioPlayback } from "../../engine/playback/AudioPlayback";
 import type { DecodedAudio } from "../../engine/source/sample-types";
 import { isCanvas2dOverlay, drawOverlayClip, preloadImageOverlay } from "../../engine/overlay/canvas2d";
 import type { Component } from "../../ipc/client";
+import { tr } from "../../i18n/tr";
 
 const SOURCE_REF = "source";
 const FPS = 30;
@@ -394,14 +395,14 @@ export function NewsDeskPreview(props: NewsDeskPreviewProps) {
           display: status === "error" ? "none" : "block",
         }}
       />
-      {status === "loading" && <p style={{ color: "#888", fontSize: 12 }}>加载源…</p>}
+      {status === "loading" && <p style={{ color: "#888", fontSize: 12 }}>{tr("news_desk.preview.loading_source")}</p>}
       {status === "error" && <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {message}</p>}
 
       {status === "ready" && (
         <div style={{ display: "flex", alignItems: "center", gap: 10, maxWidth: 480, marginTop: 6 }}>
           <button
             onClick={togglePlay}
-            title={playing ? "暂停" : "播放"}
+            title={playing ? tr("news_desk.preview.pause") : tr("news_desk.preview.play")}
             style={{
               width: 30,
               height: 30,
@@ -436,7 +437,7 @@ export function NewsDeskPreview(props: NewsDeskPreviewProps) {
             {t.toFixed(2)}s
           </span>
           <span
-            title={audioOn ? "音轨已加载" : "无音轨 / 解码失败(静音)"}
+            title={audioOn ? tr("news_desk.preview.audio_loaded") : tr("news_desk.preview.audio_none")}
             style={{ fontSize: 13, color: audioOn ? "#7fd17f" : "#888" }}
           >
             {audioOn ? "♪" : "🔇"}

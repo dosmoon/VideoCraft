@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useMemo, useState } from "react";
+import { tr } from "../../i18n/tr";
 import { rpc, RpcError, type Component } from "../../ipc/client";
 import type { HotclipCandidate } from "@creations/clip/types.js";
 import { useClipPreview } from "./useClipPreview";
@@ -86,13 +87,13 @@ export function ClipsTab(props: { type: string; instance: string; components: Co
   const detailCandidate: HotclipCandidate | null =
     detailIdx !== null ? candidates[detailIdx] ?? null : null;
 
-  const headerLabel = useMemo(() => `已选 ${selected.size} / 总 ${total}`, [selected.size, total]);
+  const headerLabel = useMemo(() => tr("clip.candidates.header", { sel: selected.size, total }), [selected.size, total]);
 
-  if (status === "loading") return <Centered>加载候选…</Centered>;
-  if (status === "nobind") return <Centered>未绑定素材 — 无候选</Centered>;
-  if (status === "nosrc") return <Centered>绑定素材尚无源视频</Centered>;
+  if (status === "loading") return <Centered>{tr("clip.candidates.loading")}</Centered>;
+  if (status === "nobind") return <Centered>{tr("clip.no_material_bound")}</Centered>;
+  if (status === "nosrc") return <Centered>{tr("clip.no_source_video")}</Centered>;
   if (status === "error") return <Centered>✗ {message}</Centered>;
-  if (!data) return <Centered>无数据</Centered>;
+  if (!data) return <Centered>{tr("clip.candidates.no_data")}</Centered>;
 
   return (
     <div style={{ display: "flex", height: "100%" }}>
@@ -108,14 +109,14 @@ export function ClipsTab(props: { type: string; instance: string; components: Co
           }}
         >
           <span style={{ fontSize: 12, color: "#bbb" }}>{headerLabel}</span>
-          <button onClick={selectAll} style={hdrBtn}>全选</button>
-          <button onClick={selectNone} style={hdrBtn}>全不选</button>
+          <button onClick={selectAll} style={hdrBtn}>{tr("clip.candidates.select_all")}</button>
+          <button onClick={selectNone} style={hdrBtn}>{tr("clip.candidates.select_none")}</button>
         </div>
         {selError && <p style={{ color: "#ff6b6b", fontSize: 12, padding: "6px 12px", margin: 0 }}>✗ {selError}</p>}
 
         <div style={{ flex: 1, overflow: "auto", padding: 8 }}>
           {total === 0 ? (
-            <p style={{ color: "#888", fontSize: 13, padding: 8 }}>素材无 hotclips 候选</p>
+            <p style={{ color: "#888", fontSize: 13, padding: 8 }}>{tr("clip.candidates.empty")}</p>
           ) : (
             candidates.map((c, i) => {
               const isDetail = detailIdx === i;
@@ -200,7 +201,7 @@ export function ClipsTab(props: { type: string; instance: string; components: Co
             onChanged={reload}
           />
         ) : (
-          <Centered>选择左侧候选以编辑</Centered>
+          <Centered>{tr("clip.candidates.pick_to_edit")}</Centered>
         )}
       </div>
     </div>

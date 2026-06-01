@@ -8,6 +8,7 @@
  */
 
 import type { ComponentType } from "react";
+import { tr } from "../i18n/tr";
 import { ClipWorkbench } from "./clip/ClipWorkbench";
 import { NewsDeskWorkbench } from "./news_desk/NewsDeskWorkbench";
 import { MaterialWorkbench as NewsVideoWorkbench } from "./material/MaterialWorkbench";
@@ -27,7 +28,7 @@ const MATERIAL_REGISTRY: Record<string, ComponentType<WorkbenchProps>> = {
 function NotPorted({ type }: { type: string }) {
   return (
     <div style={{ padding: 24, color: "#777", fontSize: 13 }}>
-      <p>“{type}” 工作台尚未迁移到新壳。</p>
+      <p>{tr("workbench.not_ported", { type })}</p>
     </div>
   );
 }

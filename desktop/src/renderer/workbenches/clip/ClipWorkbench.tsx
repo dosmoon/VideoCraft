@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
+import { tr } from "../../i18n/tr";
 import { rpc, RpcError, type Component } from "../../ipc/client";
 import { StyleTab } from "./StyleTab";
 import { ClipsTab } from "./ClipsTab";
@@ -21,11 +22,12 @@ import { ExportTab } from "./ExportTab";
 
 type Tab = "style" | "clips" | "export";
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "style", label: "样式" },
-  { id: "clips", label: "候选" },
-  { id: "export", label: "导出" },
-];
+const TAB_IDS: Tab[] = ["style", "clips", "export"];
+const TAB_LABEL_KEYS: Record<Tab, string> = {
+  style: "clip.tab.style",
+  clips: "clip.tab.clips",
+  export: "clip.tab.export",
+};
 
 function fmt(err: unknown): string {
   if (err instanceof RpcError) return `[${err.code}] ${err.message}`;
@@ -114,12 +116,12 @@ export function ClipWorkbench(props: { type: string; instance: string; onClose: 
 
       {/* Tab bar */}
       <div style={{ display: "flex", gap: 4, padding: "8px 16px 0", borderBottom: "1px solid #2a2a2e" }}>
-        {TABS.map((t) => {
-          const active = tab === t.id;
+        {TAB_IDS.map((id) => {
+          const active = tab === id;
           return (
             <button
-              key={t.id}
-              onClick={() => showTab(t.id)}
+              key={id}
+              onClick={() => showTab(id)}
               style={{
                 padding: "6px 14px",
                 background: "transparent",
@@ -131,7 +133,7 @@ export function ClipWorkbench(props: { type: string; instance: string; onClose: 
                 cursor: "pointer",
               }}
             >
-              {t.label}
+              {tr(TAB_LABEL_KEYS[id])}
             </button>
           );
         })}

@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { rpc, RpcError } from "../../ipc/client";
+import { tr } from "../../i18n/tr";
 
 // "HH:MM:SS" / "MM:SS" → seconds (0 on parse failure).
 function parseHMS(s: string): number {
@@ -149,15 +150,15 @@ export function ChapterScheduleEditor(props: {
     <div style={{ maxWidth: 720 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
         <button onClick={onClose} style={{ ...BTN_GHOST, padding: "3px 10px" }}>
-          ← 返回
+          {tr("material.back_btn")}
         </button>
         <strong style={{ fontSize: 13 }}>{filename}</strong>
-        <span style={{ color: "#777", fontSize: 12 }}>章节排期</span>
+        <span style={{ color: "#777", fontSize: 12 }}>{tr("material.chapters.schedule_label")}</span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-          {saving && <span style={{ fontSize: 11, color: "#4a9eff" }}>保存中…</span>}
-          {dirty && !saving && <span style={{ fontSize: 11, color: "#d9a441" }}>未保存</span>}
+          {saving && <span style={{ fontSize: 11, color: "#4a9eff" }}>{tr("material.chapters.saving")}</span>}
+          {dirty && !saving && <span style={{ fontSize: 11, color: "#d9a441" }}>{tr("material.chapters.unsaved")}</span>}
           <button onClick={() => void save()} disabled={saving || !dirty} style={BTN}>
-            保存
+            {tr("common.save")}
           </button>
         </div>
       </div>
@@ -174,9 +175,9 @@ export function ChapterScheduleEditor(props: {
       )}
 
       {chapters === null ? (
-        <div style={{ color: "#666", fontSize: 13 }}>加载中…</div>
+        <div style={{ color: "#666", fontSize: 13 }}>{tr("common.loading")}</div>
       ) : chapters.length === 0 ? (
-        <div style={{ color: "#666", fontSize: 13 }}>无章节。</div>
+        <div style={{ color: "#666", fontSize: 13 }}>{tr("material.chapters.none")}</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {chapters.map((c, i) => (
@@ -190,7 +191,7 @@ export function ChapterScheduleEditor(props: {
                   disabled={saving}
                   onChange={(e) => edit(i, "start", e.target.value)}
                   style={{ ...INPUT, width: 92 }}
-                  title="开始时间 (HH:MM:SS)"
+                  title={tr("material.chapters.start_time_title")}
                 />
                 {srcUrl && (
                   <>
@@ -198,17 +199,17 @@ export function ChapterScheduleEditor(props: {
                       onClick={() => seekTo(c)}
                       disabled={saving}
                       style={{ ...BTN_GHOST, padding: "3px 8px", fontSize: 11 }}
-                      title="跳到该章开始"
+                      title={tr("material.chapters.seek_title")}
                     >
-                      跳转
+                      {tr("material.chapters.seek_btn")}
                     </button>
                     <button
                       onClick={() => takeCurrent(i)}
                       disabled={saving}
                       style={{ ...BTN_GHOST, padding: "3px 8px", fontSize: 11 }}
-                      title="用当前播放位置作为开始时间"
+                      title={tr("material.chapters.take_current_title")}
                     >
-                      取当前
+                      {tr("material.chapters.take_current_btn")}
                     </button>
                   </>
                 )}
@@ -217,7 +218,7 @@ export function ChapterScheduleEditor(props: {
                   disabled={saving}
                   onChange={(e) => edit(i, "title", e.target.value)}
                   style={{ ...INPUT, flex: 1 }}
-                  title="章节标题"
+                  title={tr("material.chapters.title_field_title")}
                 />
               </div>
               {(c.refined || (c.key_points && c.key_points.length > 0)) && (
@@ -235,7 +236,7 @@ export function ChapterScheduleEditor(props: {
             </div>
           ))}
           <p style={{ color: "#666", fontSize: 11, marginTop: 4 }}>
-            保存时会自动按开始时间排序、相邻章节首尾相接、并补齐 00:00 起始章。
+            {tr("material.chapters.save_hint")}
           </p>
         </div>
       )}

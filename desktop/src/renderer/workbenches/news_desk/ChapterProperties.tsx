@@ -11,6 +11,7 @@
  */
 
 import type { Component } from "../../ipc/client";
+import { tr } from "../../i18n/tr";
 import { Section, CheckRow, TextRow, NumRow, ColorRow } from "../shared/fields";
 import {
   patchMode,
@@ -34,17 +35,17 @@ export function ChapterProperties(props: {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <TextRow label="名称" value={name} disabled={disabled} onCommit={(v) => onPatch({ name: v })} />
+      <TextRow label={tr("news_desk.chapter.name")} value={name} disabled={disabled} onCommit={(v) => onPatch({ name: v })} />
 
-      <Section title="模式" />
+      <Section title={tr("news_desk.chapter.mode_section")} />
       <CheckRow
-        label="顶部章节条"
+        label={tr("news_desk.chapter.mode_top_strip")}
         value={modes.top_strip}
         disabled={disabled}
         onChange={(v) => onPatch(patchMode(component, "top_strip", v))}
       />
       <CheckRow
-        label="起始大卡片"
+        label={tr("news_desk.chapter.mode_start_card")}
         value={modes.start_card}
         disabled={disabled}
         onChange={(v) => onPatch(patchMode(component, "start_card", v))}
@@ -52,40 +53,40 @@ export function ChapterProperties(props: {
 
       {modes.top_strip && (
         <>
-          <Section title="顶部章节条样式" />
-          <ColorRow label="背景色" value={strip.bg_color} disabled={disabled}
+          <Section title={tr("news_desk.chapter.strip_style_section")} />
+          <ColorRow label={tr("news_desk.chapter.bg_color")} value={strip.bg_color} disabled={disabled}
             onCommit={(v) => onPatch(patchStrip(component, "bg_color", v))} />
-          <ColorRow label="文字色" value={strip.text_color} disabled={disabled}
+          <ColorRow label={tr("news_desk.chapter.text_color")} value={strip.text_color} disabled={disabled}
             onCommit={(v) => onPatch(patchStrip(component, "text_color", v))} />
-          <NumRow label="字号" value={strip.fontsize} disabled={disabled}
+          <NumRow label={tr("news_desk.chapter.fontsize")} value={strip.fontsize} disabled={disabled}
             onCommit={(v) => onPatch(patchStrip(component, "fontsize", v))} />
         </>
       )}
 
       {modes.start_card && (
         <>
-          <Section title="起始大卡片样式" />
-          <ColorRow label="标题色" value={card.title_color} disabled={disabled}
+          <Section title={tr("news_desk.chapter.card_style_section")} />
+          <ColorRow label={tr("news_desk.chapter.title_color")} value={card.title_color} disabled={disabled}
             onCommit={(v) => onPatch(patchCard(component, "title_color", v))} />
-          <NumRow label="标题字号" value={card.title_fontsize} disabled={disabled}
+          <NumRow label={tr("news_desk.chapter.title_fontsize")} value={card.title_fontsize} disabled={disabled}
             onCommit={(v) => onPatch(patchCard(component, "title_fontsize", v))} />
-          <ColorRow label="正文色" value={card.body_color} disabled={disabled}
+          <ColorRow label={tr("news_desk.chapter.body_color")} value={card.body_color} disabled={disabled}
             onCommit={(v) => onPatch(patchCard(component, "body_color", v))} />
-          <NumRow label="正文字号" value={card.body_fontsize} disabled={disabled}
+          <NumRow label={tr("news_desk.chapter.body_fontsize")} value={card.body_fontsize} disabled={disabled}
             onCommit={(v) => onPatch(patchCard(component, "body_fontsize", v))} />
-          <ColorRow label="背景色" value={card.bg_color} disabled={disabled}
+          <ColorRow label={tr("news_desk.chapter.card_bg_color")} value={card.bg_color} disabled={disabled}
             onCommit={(v) => onPatch(patchCard(component, "bg_color", v))} />
-          <NumRow label="背景不透明度" value={card.bg_opacity} disabled={disabled}
+          <NumRow label={tr("news_desk.chapter.bg_opacity")} value={card.bg_opacity} disabled={disabled}
             onCommit={(v) => onPatch(patchCard(component, "bg_opacity", v))} />
-          <ColorRow label="强调色" value={card.accent_color} disabled={disabled}
+          <ColorRow label={tr("news_desk.chapter.accent_color")} value={card.accent_color} disabled={disabled}
             onCommit={(v) => onPatch(patchCard(component, "accent_color", v))} />
-          <NumRow label="持续秒数" value={card.duration_sec} disabled={disabled}
+          <NumRow label={tr("news_desk.chapter.duration_sec")} value={card.duration_sec} disabled={disabled}
             onCommit={(v) => onPatch(patchCard(component, "duration_sec", v))} />
         </>
       )}
 
       <p style={{ color: "#666", fontSize: 11, marginTop: 8 }}>
-        章节排期来自素材分析(上方导入);逐章编辑待后续迭代。
+        {tr("news_desk.chapter.schedule_hint")}
       </p>
     </div>
   );

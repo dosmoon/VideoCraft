@@ -6,6 +6,7 @@
 
 import { useEffect, useState } from "react";
 import { rpc, RpcError } from "../../ipc/client";
+import { tr } from "../../i18n/tr";
 
 export function AnalysisTextViewer(props: {
   type: string;
@@ -39,7 +40,7 @@ export function AnalysisTextViewer(props: {
           onClick={onClose}
           style={{ padding: "3px 10px", background: "#2a2a2e", color: "#ddd", border: "none", borderRadius: 5, fontSize: 12, cursor: "pointer" }}
         >
-          ← 返回
+          {tr("material.back_btn")}
         </button>
         <strong style={{ fontSize: 13 }}>{lang}</strong>
         <span style={{ color: "#777", fontSize: 12 }}>{title}</span>
@@ -60,7 +61,7 @@ export function AnalysisTextViewer(props: {
           fontFamily: "ui-monospace, monospace",
         }}
       >
-        {text ?? "加载中…"}
+        {text ?? tr("common.loading")}
       </pre>
     </div>
   );

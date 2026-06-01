@@ -16,14 +16,15 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { rpc, RpcError, type Component } from "../../ipc/client";
+import { tr } from "../../i18n/tr";
 import { StyleTab } from "./StyleTab";
 import { ExportTab } from "./ExportTab";
 
 type Tab = "style" | "export";
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "style", label: "样式" },
-  { id: "export", label: "导出" },
+const TABS: { id: Tab; label: () => string }[] = [
+  { id: "style", label: () => tr("news_desk.workbench.tab_style") },
+  { id: "export", label: () => tr("news_desk.workbench.tab_export") },
 ];
 
 function fmt(err: unknown): string {
@@ -124,7 +125,7 @@ export function NewsDeskWorkbench(props: {
                 cursor: "pointer",
               }}
             >
-              {t.label}
+              {t.label()}
             </button>
           );
         })}

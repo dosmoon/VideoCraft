@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { tr } from "../../i18n/tr";
 import { rpc, rpcCall, RpcError, type Component } from "../../ipc/client";
 import { buildNewsDeskTimeline } from "@creations/news_desk/assemble.js";
 import type { NewsDeskComponentConfig } from "@creations/news_desk/types.js";
@@ -108,7 +109,7 @@ export function ExportTab(props: {
   const runRender = useCallback(async () => {
     if (renderStatus === "rendering") return;
     if (!data) {
-      setError("源数据未就绪");
+      setError(tr("news_desk.export.source_not_ready"));
       return;
     }
     cancelRef.current = false;
@@ -122,7 +123,7 @@ export function ExportTab(props: {
       // Fresh plan from disk (config may have changed in the Style tab).
       const p = await rpcCall<NewsDeskRenderPlan>("creation.plan_render", { type, instance });
       setPlan(p);
-      if (!p.mediaRef) throw new Error("未绑定素材 — 无法导出");
+      if (!p.mediaRef) throw new Error(tr("news_desk.export.no_material_error"));
 
       const canvas = hiddenCanvasRef.current;
       if (!canvas) throw new Error("no render canvas");
@@ -216,7 +217,7 @@ export function ExportTab(props: {
   };
   const onDelete = async () => {
     if (!plan) return;
-    if (!window.confirm("删除已渲染的输出？")) return;
+    if (!window.confirm(tr("news_desk.export.delete_confirm"))) return;
     try {
       await rpc.deleteRender(type, instance, plan.outIdx);
       setRendered([]);
@@ -238,27 +239,27 @@ export function ExportTab(props: {
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
         <button onClick={() => void runRender()} disabled={!canRender} style={primaryBtn}>
-          {rendering ? `渲染中… ${Math.round(progress * 100)}%` : "渲染整源"}
+          {rendering ? tr("news_desk.export.rendering_progress", { pct: Math.round(progress * 100) }) : tr("news_desk.export.render_btn")}
         </button>
         {rendering && (
           <button onClick={() => (cancelRef.current = true)} style={btn}>
-            取消
+            {tr("common.cancel")}
           </button>
         )}
         <button onClick={() => void refresh()} disabled={rendering} style={btn}>
-          刷新
+          {tr("news_desk.export.refresh_btn")}
         </button>
         {renderStatus === "done" && !rendering && (
-          <span style={{ color: "#3ecf8e", fontSize: 12 }}>✓ 完成</span>
+          <span style={{ color: "#3ecf8e", fontSize: 12 }}>✓ {tr("news_desk.export.done")}</span>
         )}
         {error && <span style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {error}</span>}
       </div>
 
       {previewStatus === "nobind" && (
-        <p style={{ color: "#888", fontSize: 12 }}>未绑定素材 — 无法导出</p>
+        <p style={{ color: "#888", fontSize: 12 }}>{tr("news_desk.export.nobind")}</p>
       )}
       {previewStatus === "nosrc" && (
-        <p style={{ color: "#888", fontSize: 12 }}>绑定素材尚无源视频</p>
+        <p style={{ color: "#888", fontSize: 12 }}>{tr("news_desk.export.nosrc")}</p>
       )}
       {previewStatus === "error" && (
         <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {previewMsg}</p>
@@ -267,24 +268,24 @@ export function ExportTab(props: {
       {plan && plan.mediaRef && (
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 11, color: "#888", fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>
-            渲染计划(整源单输出)
+            {tr("news_desk.export.plan_heading")}
           </div>
           <div style={row}>
-            <span style={keyStyle}>时长</span>
+            <span style={keyStyle}>{tr("news_desk.export.plan_duration")}</span>
             <span style={valStyle}>{fmtDuration(plan.durationSec)}</span>
           </div>
           <div style={row}>
-            <span style={keyStyle}>输出文件</span>
+            <span style={keyStyle}>{tr("news_desk.export.plan_output_file")}</span>
             <span style={valStyle}>{plan.outputPath}</span>
           </div>
         </div>
       )}
 
       <div style={{ fontSize: 11, color: "#888", fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>
-        已渲染
+        {tr("news_desk.export.rendered_heading")}
       </div>
       {rendered.length === 0 ? (
-        <p style={{ color: "#888", fontSize: 12 }}>尚未渲染</p>
+        <p style={{ color: "#888", fontSize: 12 }}>{tr("news_desk.export.not_yet_rendered")}</p>
       ) : (
         <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
           {rendered.map((r) => (
@@ -296,9 +297,9 @@ export function ExportTab(props: {
               <span style={{ color: "#777" }}>{fmtDuration(r.duration_sec)}</span>
               <span style={{ color: "#666", marginLeft: "auto" }}>{r.rendered_at}</span>
               <span style={{ display: "flex", gap: 4 }}>
-                <button onClick={() => onPlay(r.file)} style={rowBtn} title="播放">▶</button>
-                <button onClick={() => onOpenFolder(r.file)} style={rowBtn} title="打开文件夹">📁</button>
-                <button onClick={() => void onDelete()} disabled={rendering} style={rowBtn} title="删除">🗑</button>
+                <button onClick={() => onPlay(r.file)} style={rowBtn} title={tr("news_desk.export.play")}>▶</button>
+                <button onClick={() => onOpenFolder(r.file)} style={rowBtn} title={tr("news_desk.export.open_folder")}>📁</button>
+                <button onClick={() => void onDelete()} disabled={rendering} style={rowBtn} title={tr("common.delete")}>🗑</button>
               </span>
             </li>
           ))}

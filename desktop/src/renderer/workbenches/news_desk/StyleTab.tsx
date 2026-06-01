@@ -16,6 +16,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Component, PresetList } from "../../ipc/client";
 import { rpc, RpcError } from "../../ipc/client";
+import { tr } from "../../i18n/tr";
 import type { NewsDeskChapterRow } from "@creations/news_desk/types.js";
 import { PropertyPanel } from "../clip/propertyEditor";
 import { NewsDeskPreview, type NewsDeskPreviewHandle } from "./NewsDeskPreview";
@@ -27,12 +28,15 @@ import { SubtitleCueList, ChapterScheduleList } from "./ComponentDetail";
 // Friendly component labels — the UI must never show the internal kind name
 // ([[feedback_user_facing_naming]]). Matches the default_instance names in
 // creations/news_desk/component_defs.py.
-const KIND_LABELS: Record<string, string> = {
-  subtitle: "字幕",
-  text_watermark: "文字水印",
-  image_watermark: "图片水印",
-  chapter: "章节",
-};
+function kindLabel(kind: string): string {
+  const map: Record<string, string> = {
+    subtitle: tr("news_desk.kind.subtitle"),
+    text_watermark: tr("news_desk.kind.text_watermark"),
+    image_watermark: tr("news_desk.kind.image_watermark"),
+    chapter: tr("news_desk.kind.chapter"),
+  };
+  return map[kind] ?? kind;
+}
 
 const mgrBtn: React.CSSProperties = {
   background: "#2a2a2e",
@@ -157,7 +161,7 @@ export function StyleTab(props: {
 
   const onApplyPreset = useCallback(async () => {
     if (!selectedPreset) return;
-    if (!window.confirm(`应用预设「${selectedPreset}」？这会替换当前所有组件。`)) return;
+    if (!window.confirm(tr("news_desk.style.preset_apply_confirm", { name: selectedPreset }))) return;
     setPresetErr("");
     try {
       const cfg = await rpc.applyPreset(type, instance, selectedPreset);
@@ -192,7 +196,7 @@ export function StyleTab(props: {
 
   const onOverwritePreset = useCallback(async () => {
     if (!selectedPreset) return;
-    if (!window.confirm(`覆盖预设「${selectedPreset}」？`)) return;
+    if (!window.confirm(tr("news_desk.style.preset_overwrite_confirm", { name: selectedPreset }))) return;
     setPresetErr("");
     try {
       const list = await rpc.savePreset(type, instance, selectedPreset);
@@ -204,7 +208,7 @@ export function StyleTab(props: {
 
   const onDeletePreset = useCallback(async () => {
     if (!selectedPreset) return;
-    if (!window.confirm(`删除预设「${selectedPreset}」？`)) return;
+    if (!window.confirm(tr("news_desk.style.preset_delete_confirm", { name: selectedPreset }))) return;
     setPresetErr("");
     try {
       const list = await rpc.deletePreset(type, instance, selectedPreset);
@@ -232,7 +236,7 @@ export function StyleTab(props: {
 
   const onRemove = useCallback(async () => {
     if (!selectedId) return;
-    if (!window.confirm("删除选中的组件？")) return;
+    if (!window.confirm(tr("news_desk.style.component_delete_confirm"))) return;
     setCompErr("");
     try {
       const list = await rpc.removeComponent(type, instance, selectedId);
@@ -270,7 +274,7 @@ export function StyleTab(props: {
           flexWrap: "wrap",
         }}
       >
-        <span style={{ fontSize: 12, color: "#888" }}>预设</span>
+        <span style={{ fontSize: 12, color: "#888" }}>{tr("news_desk.style.preset_label")}</span>
         <select
           value={selectedPreset}
           onChange={(e) => setSelectedPreset(e.target.value)}
@@ -295,7 +299,7 @@ export function StyleTab(props: {
             <input
               autoFocus
               value={newPresetName}
-              placeholder="预设名称"
+              placeholder={tr("news_desk.style.preset_name_placeholder")}
               onChange={(e) => setNewPresetName(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") void onSavePresetAs();
@@ -312,33 +316,33 @@ export function StyleTab(props: {
               }}
             />
             <button onClick={() => void onSavePresetAs()} disabled={!newPresetName.trim()} style={mgrBtn}>
-              确定
+              {tr("common.ok")}
             </button>
             <button onClick={cancelSaveAs} style={mgrBtn}>
-              取消
+              {tr("common.cancel")}
             </button>
           </>
         ) : (
           <>
             <button onClick={() => void onApplyPreset()} disabled={!selectedPreset} style={mgrBtn}>
-              应用
+              {tr("news_desk.style.preset_apply")}
             </button>
             <button onClick={() => setSavingAs(true)} style={mgrBtn}>
-              另存为…
+              {tr("news_desk.style.preset_save_as")}
             </button>
             <button
               onClick={() => void onOverwritePreset()}
               disabled={!selectedPreset || (presets?.builtins.includes(selectedPreset) ?? false)}
               style={mgrBtn}
             >
-              覆盖
+              {tr("news_desk.style.preset_overwrite")}
             </button>
             <button
               onClick={() => void onDeletePreset()}
               disabled={!selectedPreset || (presets?.builtins.includes(selectedPreset) ?? false)}
               style={mgrBtn}
             >
-              删除
+              {tr("common.delete")}
             </button>
           </>
         )}
@@ -359,13 +363,13 @@ export function StyleTab(props: {
       <div style={{ flex: "0 0 auto", minWidth: 360 }}>
         <div style={{ marginBottom: 12 }}>
           <div style={{ fontSize: 11, color: "#888", fontWeight: 700, textTransform: "uppercase", marginBottom: 6 }}>
-            预览
+            {tr("news_desk.style.preview_heading")}
           </div>
-          {preview.status === "loading" && <p style={{ color: "#888", fontSize: 12 }}>加载源…</p>}
+          {preview.status === "loading" && <p style={{ color: "#888", fontSize: 12 }}>{tr("news_desk.preview.loading_source")}</p>}
           {preview.status === "nobind" && (
-            <p style={{ color: "#888", fontSize: 12 }}>未绑定素材 — 在上方「素材」处绑定后预览</p>
+            <p style={{ color: "#888", fontSize: 12 }}>{tr("news_desk.style.preview_nobind")}</p>
           )}
-          {preview.status === "nosrc" && <p style={{ color: "#888", fontSize: 12 }}>绑定素材尚无源视频</p>}
+          {preview.status === "nosrc" && <p style={{ color: "#888", fontSize: 12 }}>{tr("news_desk.style.preview_nosrc")}</p>}
           {preview.status === "error" && <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {preview.message}</p>}
           {preview.status === "ready" && preview.data && (
             <NewsDeskPreview
@@ -387,19 +391,19 @@ export function StyleTab(props: {
             position: "relative",
           }}
         >
-          <span style={{ fontSize: 13, fontWeight: 600, color: "#ccc" }}>组件</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "#ccc" }}>{tr("news_desk.style.components_heading")}</span>
           <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
             <button onClick={() => setAddMenuOpen((o) => !o)} style={mgrBtn}>
-              + 添加
+              {tr("news_desk.style.add_component")}
             </button>
-            <button onClick={() => void onMove(-1)} disabled={!selectedId} style={mgrBtn} title="上移">
+            <button onClick={() => void onMove(-1)} disabled={!selectedId} style={mgrBtn} title={tr("news_desk.style.move_up")}>
               ↑
             </button>
-            <button onClick={() => void onMove(1)} disabled={!selectedId} style={mgrBtn} title="下移">
+            <button onClick={() => void onMove(1)} disabled={!selectedId} style={mgrBtn} title={tr("news_desk.style.move_down")}>
               ↓
             </button>
             <button onClick={() => void onRemove()} disabled={!selectedId} style={mgrBtn}>
-              删除
+              {tr("common.delete")}
             </button>
           </div>
           {addMenuOpen && (
@@ -438,7 +442,7 @@ export function StyleTab(props: {
                       cursor: disabled ? "not-allowed" : "pointer",
                     }}
                   >
-                    {KIND_LABELS[a.kind] ?? a.kind}
+                    {kindLabel(a.kind)}
                   </button>
                 );
               })}
@@ -448,9 +452,9 @@ export function StyleTab(props: {
         {compErr && <p style={{ color: "#ff6b6b", fontSize: 12, margin: "0 0 6px" }}>✗ {compErr}</p>}
 
         {components === null ? (
-          <p style={{ color: "#888" }}>加载中…</p>
+          <p style={{ color: "#888" }}>{tr("common.loading")}</p>
         ) : components.length === 0 ? (
-          <p style={{ color: "#888" }}>无组件 — 用「+ 添加」新建</p>
+          <p style={{ color: "#888" }}>{tr("news_desk.style.no_components")}</p>
         ) : (
           <ul style={{ listStyle: "none", padding: 0, margin: 0 }}>
             {components.map((c) => {
@@ -481,7 +485,7 @@ export function StyleTab(props: {
                       }}
                     >
                       <span style={{ fontWeight: 500, fontSize: 13 }}>
-                        {KIND_LABELS[c.kind] ?? c.kind}
+                        {kindLabel(c.kind)}
                       </span>
                       {typeof c["name"] === "string" && c["name"] && (
                         <span style={{ color: "#777", fontSize: 11 }}>{c["name"] as string}</span>
@@ -506,20 +510,20 @@ export function StyleTab(props: {
             marginBottom: 8,
           }}
         >
-          属性
+          {tr("news_desk.style.properties_heading")}
         </div>
         {selected ? (
           <>
             {selected.kind === "subtitle" && (
               <ImportRow
                 key={selected.id}
-                label="字幕来源"
+                label={tr("news_desk.style.subtitle_source")}
                 options={imports.subtitleLangs}
-                emptyHint="素材无可用字幕(先在素材里跑字幕生成)"
+                emptyHint={tr("news_desk.style.subtitle_empty_hint")}
                 current={
                   typeof selected["srt_path"] === "string" && selected["srt_path"]
-                    ? "已导入"
-                    : "未导入"
+                    ? tr("news_desk.style.imported")
+                    : tr("news_desk.style.not_imported")
                 }
                 busy={importBusy}
                 onPick={(lang) => void onImport(selected.id, { kind: "subtitle", lang })}
@@ -528,13 +532,13 @@ export function StyleTab(props: {
             {selected.kind === "chapter" && (
               <ImportRow
                 key={selected.id}
-                label="章节来源"
+                label={tr("news_desk.style.chapter_source")}
                 options={imports.analyses}
-                emptyHint="素材无章节分析(先在素材里跑章节分析)"
+                emptyHint={tr("news_desk.style.chapter_empty_hint")}
                 current={
                   Array.isArray(selected["schedule"]) && (selected["schedule"] as unknown[]).length
-                    ? `已导入 ${(selected["schedule"] as unknown[]).length} 章`
-                    : "未导入"
+                    ? tr("news_desk.style.chapter_imported_count", { count: (selected["schedule"] as unknown[]).length })
+                    : tr("news_desk.style.not_imported")
                 }
                 busy={importBusy}
                 onPick={(filename) => void onImport(selected.id, { kind: "chapters", filename })}
@@ -580,7 +584,7 @@ export function StyleTab(props: {
             )}
           </>
         ) : (
-          <p style={{ color: "#666", fontSize: 12 }}>选择一个组件以编辑其属性</p>
+          <p style={{ color: "#666", fontSize: 12 }}>{tr("news_desk.style.select_component_hint")}</p>
         )}
       </div>
       </div>
@@ -691,11 +695,11 @@ function MaterialBindingBar(props: {
 
   return (
     <div style={barStyle}>
-      <span style={{ fontSize: 12, color: "#888" }}>素材</span>
+      <span style={{ fontSize: 12, color: "#888" }}>{tr("news_desk.style.material_label")}</span>
       {picking ? (
         entries.length === 0 ? (
           <span style={{ fontSize: 12, color: "#c87" }}>
-            项目里还没有素材;先在「素材」区新建并导入源视频
+            {tr("news_desk.style.material_none")}
           </span>
         ) : (
           <>
@@ -707,11 +711,11 @@ function MaterialBindingBar(props: {
               ))}
             </select>
             <button onClick={() => void doBind()} disabled={busy || !choice} style={bindBtn}>
-              绑定
+              {tr("news_desk.style.material_bind")}
             </button>
             {bound && (
               <button onClick={() => setEditing(false)} style={mgrBtn}>
-                取消
+                {tr("common.cancel")}
               </button>
             )}
           </>
@@ -722,7 +726,7 @@ function MaterialBindingBar(props: {
             {bound!.matInstance} <span style={{ color: "#777" }}>· {bound!.matType}</span>
           </span>
           <button onClick={() => setEditing(true)} style={mgrBtn}>
-            换绑
+            {tr("news_desk.style.material_rebind")}
           </button>
         </>
       )}
@@ -795,7 +799,7 @@ function ImportRow(props: {
               opacity: busy ? 0.6 : 1,
             }}
           >
-            导入
+            {tr("news_desk.style.import_btn")}
           </button>
         </div>
       )}
