@@ -29,18 +29,25 @@ from ..registry import Context, rpc_method
 
 # ── Path safety ───────────────────────────────────────────────────────────────
 
-def _in_project(ctx: Context, *paths: str) -> None:
-    """Validate every path resolves inside the open project root. Paths need not
-    exist yet (outputs); only their location is checked."""
+def _in_project(ctx: Context, *paths: str) -> list[str]:
+    """Validate every path resolves inside the open project root and return the
+    OS-normalized forms. Paths need not exist yet (outputs); only their location
+    is checked. Normalizing matters on Windows: the TS layer sends mixed
+    forward/back-slash paths (e.g. ``D:\\proj\\inst/source/video.mp4`` — instance
+    dir from os.path.join + ``/source/...`` joined in JS), and handing those
+    straight to ffmpeg / faster-whisper / yt-dlp can misbehave."""
     if not ctx.session.has_project():
         raise RpcError(-32002, "no project is open")
     root = os.path.abspath(ctx.session.project.folder)
+    out: list[str] = []
     for p in paths:
         if not isinstance(p, str) or not p:
             raise RpcError(-32602, "path must be a non-empty string")
         ap = os.path.abspath(p)
         if ap != root and not ap.startswith(root + os.sep):
             raise RpcError(-32602, f"path escapes project: {p}")
+        out.append(os.path.normpath(p))
+    return out
 
 
 def _check_to_dict(result: Any) -> dict[str, Any]:
@@ -78,7 +85,10 @@ def acquire_source(
     persists what it needs)."""
     if not isinstance(source, dict):
         raise RpcError(-32602, "source must be an object")
-    _in_project(ctx, video_path, *( [meta_path] if meta_path else [] ))
+    if meta_path:
+        video_path, meta_path = _in_project(ctx, video_path, meta_path)
+    else:
+        (video_path,) = _in_project(ctx, video_path)
     from core.project_schema import Source
 
     src = Source.from_dict(source)
@@ -116,7 +126,7 @@ def asr(
     """Transcribe source_video_path → subtitles_dir/<lang>.srt (long job).
     source_lang None = auto-detect. Returns {lang_iso, srt_path, segment_count};
     persisting the detected language to project meta is the caller's job."""
-    _in_project(ctx, source_video_path, subtitles_dir)
+    source_video_path, subtitles_dir = _in_project(ctx, source_video_path, subtitles_dir)
 
     def work(job: Any) -> Any:
         from core import subtitle_pipeline
@@ -140,7 +150,7 @@ def translate(
     """Translate subtitles_dir/<source>.srt → <target>.srt (long job)."""
     if not source_lang or not target_lang:
         raise RpcError(-32602, "source_lang and target_lang are required")
-    _in_project(ctx, subtitles_dir)
+    (subtitles_dir,) = _in_project(ctx, subtitles_dir)
 
     def work(job: Any) -> Any:
         from core import subtitle_pipeline
@@ -166,7 +176,7 @@ def analyze(
     """Run a registered analysis kind over a subtitle → subtitles_dir/<lang>.<suffix>
     (long job). `kind` is a core.subtitle_analysis kind (analysis / transcript /
     chapter_transcript / hotclips)."""
-    _in_project(ctx, srt_path, subtitles_dir)
+    srt_path, subtitles_dir = _in_project(ctx, srt_path, subtitles_dir)
 
     def work(job: Any) -> Any:
         from core import subtitle_analysis_runners
@@ -216,7 +226,10 @@ def subtitle_check(
 ) -> dict[str, Any]:
     """Quality-check an SRT (structural + residue + language purity). Returns issue
     counts by class + the issue list. reference_srt_path enables cue-count parity."""
-    _in_project(ctx, srt_path, *([reference_srt_path] if reference_srt_path else []))
+    if reference_srt_path:
+        srt_path, reference_srt_path = _in_project(ctx, srt_path, reference_srt_path)
+    else:
+        (srt_path,) = _in_project(ctx, srt_path)
     from core.subtitle_check import check_srt
 
     result = check_srt(
@@ -230,7 +243,7 @@ def subtitle_check(
 def subtitle_quick_fix(ctx: Context, srt_path: str, expected_lang: str | None = None) -> dict[str, Any]:
     """Apply in-place auto-fixes (format-residue cleanup) to an SRT, then re-check
     and return the fresh counts/issues."""
-    _in_project(ctx, srt_path)
+    (srt_path,) = _in_project(ctx, srt_path)
     from core.subtitle_check import apply_auto_fixes, check_srt
 
     apply_auto_fixes(srt_path)
@@ -246,7 +259,7 @@ def save_chapters(
     preserves titles[]; returns the normalized envelope."""
     if not isinstance(chapters, list):
         raise RpcError(-32602, "chapters must be a list")
-    _in_project(ctx, analysis_path, srt_path)
+    analysis_path, srt_path = _in_project(ctx, analysis_path, srt_path)
     from core import chapters_io
     from core.subtitle_ops import srt_end_seconds
 

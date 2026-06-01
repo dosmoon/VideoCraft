@@ -114,6 +114,26 @@ def test_asr_job(inline_jobs, tmp_project, emit, monkeypatch):
     assert seen["source_video_path"] == video and seen["subtitles_dir"] == subs
 
 
+def test_asr_normalizes_mixed_separator_paths(inline_jobs, tmp_project, emit, monkeypatch):
+    """The TS layer sends Windows mixed-separator paths (instance dir from
+    os.path.join + '/source/...' joined in JS); capability must normalize before
+    handing them to faster-whisper/ffmpeg (ADR-0008 B3.2 ASR-stall fix)."""
+    ctx = inline_jobs
+    _open(ctx, tmp_project)
+    base = os.path.join(tmp_project.folder, "materials", "news_video", "n1")
+    seen: dict[str, Any] = {}
+    monkeypatch.setattr("core.subtitle_pipeline.run_asr_paths",
+                        lambda **kw: (seen.update(kw), {"lang_iso": "en", "srt_path": "x", "segment_count": 0})[1])
+    # Deliberately mixed: backslash base + forward-slash tail (what the JS model emits).
+    call(ctx, "capability.asr", {
+        "source_video_path": f"{base}\\source/video.mp4",
+        "subtitles_dir": f"{base}\\subtitles",
+    })
+    assert _terminal(emit)["status"] == "succeeded"
+    assert seen["source_video_path"] == os.path.normpath(f"{base}\\source/video.mp4")
+    assert "/" not in os.path.relpath(seen["source_video_path"], tmp_project.folder) or os.sep == "/"
+
+
 def test_translate_job(inline_jobs, tmp_project, emit, monkeypatch):
     ctx = inline_jobs
     _open(ctx, tmp_project)
