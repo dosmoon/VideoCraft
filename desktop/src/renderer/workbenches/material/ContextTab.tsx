@@ -14,6 +14,7 @@ import { useJob } from "../../ipc/runJob";
 import { tr } from "../../i18n/tr";
 import { Section, TextRow, TextAreaRow } from "../shared/fields";
 import type { MaterialTabProps } from "./SourceTab";
+import { color, font, radius, state as st } from "../../ui/tokens";
 
 // The 5 basic_info hint fields (AI-fill seed). Input-only; AI replaces context.
 function getSeedFields(): { key: keyof SourceBasicInfo; label: string }[] {
@@ -193,30 +194,30 @@ export function ContextTab(props: MaterialTabProps) {
   const groups = getGroups();
 
   if (!ctx) {
-    return <div style={{ color: "#666", fontSize: 13 }}>{error ? `✗ ${error}` : tr("common.loading")}</div>;
+    return <div style={{ padding: 20, color: color.textMuted, fontSize: font.md }}>{error ? `✗ ${error}` : tr("common.loading")}</div>;
   }
 
   const total = Object.keys(EMPTY).length;
   const filled = (Object.keys(EMPTY) as FieldKey[]).filter((k) => (ctx[k] ?? "").trim()).length;
 
   return (
-    <div style={{ maxWidth: 560 }}>
+    <div style={{ maxWidth: 960, width: "100%", boxSizing: "border-box", padding: 20 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-        <span style={{ fontSize: 12, color: "#999" }}>
+        <span style={{ fontSize: font.md, color: color.textSecondary }}>
           {tr("material.context.filled_count", { filled, total })}
         </span>
-        {saving && <span style={{ fontSize: 11, color: "#4a9eff" }}>{tr("material.context.saving")}</span>}
-        {error && <span style={{ fontSize: 11, color: "#ff6b6b" }}>✗ {error}</span>}
+        {saving && <span style={{ fontSize: font.sm, color: color.accentText }}>{tr("material.context.saving")}</span>}
+        {error && <span style={{ fontSize: font.sm, color: color.danger }}>✗ {error}</span>}
       </div>
 
       {/* How this page works */}
-      <p style={{ color: "#9aa", fontSize: 12, margin: "0 0 12px", lineHeight: 1.6 }}>
+      <p style={{ color: color.textSecondary, fontSize: font.sm, margin: "0 0 12px", lineHeight: 1.6 }}>
         {tr("material.context.usage_hint")}
       </p>
 
       {/* Step ① — user hints (input to AI; never read downstream) */}
       <StepCard step={tr("material.context.step1_label")} subtitle={tr("material.context.step1_subtitle")}>
-        <p style={{ color: "#888", fontSize: 11, margin: "0 0 6px" }}>
+        <p style={{ color: color.textMuted, fontSize: font.sm, margin: "0 0 8px" }}>
           {tr("material.context.step1_desc")}
         </p>
         {seedFields.map((f) => (
@@ -225,8 +226,7 @@ export function ContextTab(props: MaterialTabProps) {
             label={f.label}
             value={seed[f.key] ?? ""}
             disabled={fillJob.running}
-            labelWidth={96}
-            inputMaxWidth={360}
+            labelWidth={120}
             onCommit={(v) => void commitSeed(f.key, v)}
           />
         ))}
@@ -238,31 +238,31 @@ export function ContextTab(props: MaterialTabProps) {
           <button
             onClick={() => void runFill()}
             disabled={fillJob.running}
-            style={{ padding: "6px 14px", background: "#7a4fd6", color: "#fff", border: "none", borderRadius: 5, fontSize: 13, cursor: "pointer" }}
+            style={{ padding: "6px 14px", background: "#7a4fd6", color: "#fff", border: "none", borderRadius: radius.sm, fontSize: font.md, cursor: "pointer" }}
           >
             ✨ {tr("material.context.ai_fill_btn")}
           </button>
           {fillJob.running && (
-            <span style={{ fontSize: 12, color: "#4a9eff" }}>
+            <span style={{ fontSize: font.md, color: color.accentText }}>
               {tr("material.context.ai_running")}
-              <button onClick={fillJob.cancel} style={{ marginLeft: 8, padding: "2px 8px", background: "#2a2a2e", color: "#ddd", border: "none", borderRadius: 4, fontSize: 11, cursor: "pointer" }}>
+              <button onClick={fillJob.cancel} style={{ marginLeft: 8, padding: "2px 8px", background: color.bgHover, color: color.textPrimary, border: "none", borderRadius: radius.sm, fontSize: font.sm, cursor: "pointer" }}>
                 {tr("common.cancel")}
               </button>
             </span>
           )}
-          {fillJob.error && <span style={{ fontSize: 11, color: "#ff6b6b" }}>✗ {fillJob.error}</span>}
+          {fillJob.error && <span style={{ fontSize: font.sm, color: color.danger }}>✗ {fillJob.error}</span>}
         </div>
-        <p style={{ color: "#d9a441", fontSize: 11, margin: "6px 0 0" }}>
+        <p style={{ color: st.partial, fontSize: font.sm, margin: "8px 0 0" }}>
           ⚠ {tr("material.context.step2_warn")}
         </p>
       </StepCard>
 
       {/* Step ③ — AI-generated background (the downstream source of truth; editable) */}
-      <div style={{ fontSize: 12, color: "#cdd", fontWeight: 700, margin: "16px 0 2px" }}>
+      <div style={{ fontSize: font.md, color: color.textPrimary, fontWeight: 700, margin: "16px 0 3px" }}>
         {tr("material.context.step3_heading")}
       </div>
       {filled === 0 && (
-        <p style={{ color: "#888", fontSize: 11, margin: "0 0 6px" }}>
+        <p style={{ color: color.textMuted, fontSize: font.sm, margin: "0 0 6px" }}>
           {tr("material.context.step3_empty_hint")}
         </p>
       )}
@@ -278,7 +278,7 @@ export function ContextTab(props: MaterialTabProps) {
                 value={ctx[f.key] ?? ""}
                 disabled={saving}
                 rows={f.rows ?? 3}
-                labelWidth={96}
+                labelWidth={120}
                 onCommit={(v) => void commit(f.key, v)}
               />
             ) : (
@@ -287,8 +287,7 @@ export function ContextTab(props: MaterialTabProps) {
                 label={f.label}
                 value={ctx[f.key] ?? ""}
                 disabled={saving}
-                labelWidth={96}
-                inputMaxWidth={360}
+                labelWidth={120}
                 onCommit={(v) => void commit(f.key, v)}
               />
             ),
@@ -302,10 +301,10 @@ export function ContextTab(props: MaterialTabProps) {
 // A bordered "step" card with a numbered heading + subtitle.
 function StepCard(props: { step: string; subtitle: string; children: React.ReactNode }) {
   return (
-    <div style={{ padding: "10px 12px", background: "#1c1c20", borderRadius: 6, border: "1px solid #2a2a2e", marginBottom: 10 }}>
-      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: "#cdd" }}>{props.step}</span>
-        <span style={{ fontSize: 11, color: "#888" }}>{props.subtitle}</span>
+    <div style={{ padding: "12px 14px", background: color.bgInset, borderRadius: radius.md, border: `1px solid ${color.borderSubtle}`, marginBottom: 10 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 8 }}>
+        <span style={{ fontSize: font.md, fontWeight: 700, color: color.textPrimary }}>{props.step}</span>
+        <span style={{ fontSize: font.sm, color: color.textMuted }}>{props.subtitle}</span>
       </div>
       {props.children}
     </div>

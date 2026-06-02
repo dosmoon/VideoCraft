@@ -1,14 +1,16 @@
 /**
- * AnalysisTextViewer — read-only viewer for non-chapter analysis artifacts
- * (transcript.md / chapter_transcript.md / hotclips.json). The chapters
- * (analysis.json) kind is edited via ChapterScheduleEditor instead.
+ * AnalysisTextViewer — read-only viewer for text analysis artifacts
+ * (transcript.md / chapter_transcript.md). The chapters (analysis.json) kind is
+ * edited via ChapterScheduleEditor; hotclips.json is rendered structured via
+ * HotclipsViewer. Fills the detail panel (DetailScaffold).
  */
 
 import { useEffect, useState } from "react";
 import { rpc, RpcError } from "../../ipc/client";
 import { tr } from "../../i18n/tr";
 import { color, radius, font } from "../../ui/tokens";
-import { ArrowLeft, AlertCircle } from "../../ui/icons";
+import { AlertCircle } from "../../ui/icons";
+import { DetailHeader, DetailScaffold } from "./detailChrome";
 
 export function AnalysisTextViewer(props: {
   type: string;
@@ -36,31 +38,9 @@ export function AnalysisTextViewer(props: {
   }, [type, instance, lang, kind]);
 
   return (
-    <div style={{ maxWidth: 720 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-        <button
-          onClick={onClose}
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            padding: "4px 10px",
-            background: color.bgHover,
-            color: color.textPrimary,
-            border: "none",
-            borderRadius: radius.sm,
-            fontSize: font.sm,
-            cursor: "pointer",
-          }}
-        >
-          <ArrowLeft size={14} strokeWidth={2} />
-          {tr("material.back_btn_text")}
-        </button>
-        <strong style={{ fontSize: font.md, color: color.textPrimary }}>{lang}</strong>
-        <span style={{ color: color.textMuted, fontSize: font.sm }}>{title}</span>
-      </div>
+    <DetailScaffold scroll="none" header={<DetailHeader onBack={onClose} title={lang.toUpperCase()} subtitle={title} />}>
       {error && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, color: color.danger, fontSize: font.sm, marginBottom: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, color: color.danger, fontSize: font.sm, marginBottom: 8, flexShrink: 0 }}>
           <AlertCircle size={14} strokeWidth={2} style={{ flexShrink: 0 }} />
           <span>{error}</span>
         </div>
@@ -68,20 +48,22 @@ export function AnalysisTextViewer(props: {
       <pre
         style={{
           margin: 0,
-          padding: 10,
+          padding: 12,
+          flex: 1,
+          minHeight: 0,
           background: color.bgInset,
           border: `1px solid ${color.borderSubtle}`,
           borderRadius: radius.sm,
-          maxHeight: 420,
           overflow: "auto",
-          fontSize: font.sm,
+          fontSize: font.md,
           color: color.textSecondary,
           whiteSpace: "pre-wrap",
           fontFamily: "ui-monospace, monospace",
+          lineHeight: 1.6,
         }}
       >
         {text ?? tr("common.loading")}
       </pre>
-    </div>
+    </DetailScaffold>
   );
 }

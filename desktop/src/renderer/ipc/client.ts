@@ -775,9 +775,12 @@ export const rpc = {
           instance,
           ...(sourceLang ? { source_lang: sourceLang } : {}),
         }),
-  startRunTranslate: (type: string, instance: string, targetLang: string) =>
+  // sourceLang (news_video only): translate FROM this language's SRT instead of the
+  // project source — lets each subtitle node offer "translate from itself". Defaults
+  // to the project source when omitted.
+  startRunTranslate: (type: string, instance: string, targetLang: string, sourceLang?: string) =>
     type === "news_video"
-      ? materialBackend.startRunTranslate(instance, targetLang)
+      ? materialBackend.startRunTranslate(instance, targetLang, sourceLang)
       : rpcCall<{ job_id: string }>("material.run_translate", { type, instance, target_lang: targetLang }),
   startRunAnalysis: (type: string, instance: string, lang: string, analysisKind: string) =>
     type === "news_video"

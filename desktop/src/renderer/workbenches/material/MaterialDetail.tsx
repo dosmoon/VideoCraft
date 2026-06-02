@@ -15,10 +15,10 @@ import { analysisType } from "@materials/news_video/analysisTypes";
 import { getLang, tr } from "../../i18n/tr";
 import { SourceTab } from "./SourceTab";
 import { ContextTab } from "./ContextTab";
-import { SubtitlesTab } from "./SubtitlesTab";
 import { SubtitleViewer } from "./SubtitleViewer";
 import { ChapterScheduleEditor } from "./ChapterScheduleEditor";
 import { AnalysisTextViewer } from "./AnalysisTextViewer";
+import { HotclipsViewer } from "./HotclipsViewer";
 
 function Placeholder({ children }: { children: React.ReactNode }) {
   return <div style={{ padding: 24, color: "#666", fontSize: 13 }}>{children}</div>;
@@ -39,8 +39,7 @@ export function MaterialDetail(props: {
     return <SourceTab type={type} instance={instance} refreshKey={refreshKey} onChanged={onChanged} />;
   if (nodeId === "news_context")
     return <ContextTab type={type} instance={instance} refreshKey={refreshKey} onChanged={onChanged} />;
-  if (nodeId === "subtitles")
-    return <SubtitlesTab type={type} instance={instance} refreshKey={refreshKey} onChanged={onChanged} />;
+  if (nodeId === "subtitles") return <Placeholder>{tr("material.detail.subtitles_hint")}</Placeholder>;
 
   if (nodeId.startsWith("lang:")) {
     const lang = nodeId.slice("lang:".length);
@@ -66,6 +65,9 @@ export function MaterialDetail(props: {
     if (lang && kind) {
       const at = analysisType(kind);
       const title = at ? (getLang() === "zh" ? at.displayZh : at.displayEn) : kind;
+      if (kind === "hotclips") {
+        return <HotclipsViewer type={type} instance={instance} lang={lang} title={title} onClose={onDeselect} />;
+      }
       return (
         <AnalysisTextViewer type={type} instance={instance} lang={lang} kind={kind} title={title} onClose={onDeselect} />
       );

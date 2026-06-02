@@ -5,15 +5,16 @@
  * normalizes: sort / end=next.start / drop degenerate / synth 00:00 + preserves
  * titles[] and per-chapter refined/key_points).
  *
- * refined / key_points are shown read-only and carried through on save (so edits
- * to start/title don't lose the AI narrative). Faithful to the Tk chapter_editor;
- * the seek-to-time video preview is deferred.
+ * refined / key_points are shown read-only and carried through on save. The source
+ * video is PINNED at the top (DetailScaffold) so it stays on screen while the
+ * chapter list scrolls below; seek / take-current act on that pinned video.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { rpc, RpcError } from "../../ipc/client";
 import { tr } from "../../i18n/tr";
-import { ArrowLeft } from "../../ui/icons";
+import { color, radius, font, state as st } from "../../ui/tokens";
+import { DetailHeader, DetailScaffold } from "./detailChrome";
 
 // "HH:MM:SS" / "MM:SS" → seconds (0 on parse failure).
 function parseHMS(s: string): number {
@@ -44,23 +45,23 @@ interface Chapter {
 }
 
 const INPUT: React.CSSProperties = {
-  padding: "3px 6px",
-  background: "#1a1a1e",
-  color: "#ddd",
-  border: "1px solid #333",
-  borderRadius: 3,
-  fontSize: 12,
+  padding: "4px 8px",
+  background: color.bgInset,
+  color: color.textPrimary,
+  border: `1px solid ${color.border}`,
+  borderRadius: radius.sm,
+  fontSize: font.md,
 };
 const BTN: React.CSSProperties = {
   padding: "5px 14px",
-  background: "#2d6cdf",
+  background: color.accent,
   color: "#fff",
   border: "none",
-  borderRadius: 5,
-  fontSize: 13,
+  borderRadius: radius.sm,
+  fontSize: font.sm,
   cursor: "pointer",
 };
-const BTN_GHOST: React.CSSProperties = { ...BTN, background: "#2a2a2e", color: "#ddd" };
+const BTN_GHOST: React.CSSProperties = { ...BTN, background: color.bgHover, color: color.textPrimary };
 
 function fmt(err: unknown): string {
   if (err instanceof RpcError) return `[${err.code}] ${err.message}`;
@@ -90,7 +91,6 @@ export function ChapterScheduleEditor(props: {
         const env = await rpc.readAnalysis(type, instance, filename);
         const chs = (env["chapters"] as Chapter[]) ?? [];
         if (alive) setChapters(chs);
-        // Source video for seek-preview (optional — editor still works without it).
         const path = await rpc.getArtifact(type, instance, "source");
         if (alive) setSrcUrl(path ? window.vc.mediaUrl(path) : "");
       } catch (err) {
@@ -107,14 +107,12 @@ export function ChapterScheduleEditor(props: {
     setDirty(true);
   }, []);
 
-  // Seek the preview video to a chapter's start.
   const seekTo = useCallback((c: Chapter) => {
     const v = videoRef.current;
     if (!v) return;
     v.currentTime = typeof c.start_sec === "number" ? c.start_sec : parseHMS(c.start);
   }, []);
 
-  // Set a chapter's start to the video's current playback position.
   const takeCurrent = useCallback(
     (i: number) => {
       const v = videoRef.current;
@@ -129,7 +127,6 @@ export function ChapterScheduleEditor(props: {
     setSaving(true);
     setError("");
     try {
-      // Send start/title/refined/key_points; the server normalizes the rest.
       const payload = chapters.map((c) => ({
         start: c.start,
         title: c.title,
@@ -147,70 +144,52 @@ export function ChapterScheduleEditor(props: {
     }
   }, [chapters, type, instance, filename, lang, onSaved]);
 
-  return (
-    <div style={{ maxWidth: 720 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-        <button onClick={onClose} style={{ ...BTN_GHOST, display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px" }}>
-          <ArrowLeft size={14} strokeWidth={2} />
-          {tr("material.back_btn_text")}
-        </button>
-        <strong style={{ fontSize: 13 }}>{filename}</strong>
-        <span style={{ color: "#777", fontSize: 12 }}>{tr("material.chapters.schedule_label")}</span>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-          {saving && <span style={{ fontSize: 11, color: "#4a9eff" }}>{tr("material.chapters.saving")}</span>}
-          {dirty && !saving && <span style={{ fontSize: 11, color: "#d9a441" }}>{tr("material.chapters.unsaved")}</span>}
-          <button onClick={() => void save()} disabled={saving || !dirty} style={BTN}>
+  const header = (
+    <DetailHeader
+      onBack={onClose}
+      title={filename}
+      subtitle={tr("material.chapters.schedule_label")}
+      right={
+        <>
+          {saving && <span style={{ fontSize: font.sm, color: color.accentText }}>{tr("material.chapters.saving")}</span>}
+          {dirty && !saving && <span style={{ fontSize: font.sm, color: st.partial }}>{tr("material.chapters.unsaved")}</span>}
+          <button onClick={() => void save()} disabled={saving || !dirty} style={{ ...BTN, opacity: saving || !dirty ? 0.5 : 1 }}>
             {tr("common.save")}
           </button>
-        </div>
-      </div>
+        </>
+      }
+    />
+  );
 
-      {error && <div style={{ color: "#ff6b6b", fontSize: 12, marginBottom: 8 }}>✗ {error}</div>}
+  const pinned = srcUrl ? (
+    <video ref={videoRef} src={srcUrl} controls style={{ display: "block", width: "100%", maxHeight: "44vh", borderRadius: radius.sm, background: "#000" }} />
+  ) : undefined;
 
-      {srcUrl && (
-        <video
-          ref={videoRef}
-          src={srcUrl}
-          controls
-          style={{ display: "block", width: "100%", maxHeight: 280, marginBottom: 10, borderRadius: 4, background: "#000" }}
-        />
-      )}
-
+  return (
+    <DetailScaffold header={header} pinned={pinned}>
+      {error && <div style={{ color: color.danger, fontSize: font.sm, marginBottom: 8 }}>✗ {error}</div>}
       {chapters === null ? (
-        <div style={{ color: "#666", fontSize: 13 }}>{tr("common.loading")}</div>
+        <div style={{ color: color.textMuted, fontSize: font.md }}>{tr("common.loading")}</div>
       ) : chapters.length === 0 ? (
-        <div style={{ color: "#666", fontSize: 13 }}>{tr("material.chapters.none")}</div>
+        <div style={{ color: color.textMuted, fontSize: font.md }}>{tr("material.chapters.none")}</div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           {chapters.map((c, i) => (
-            <div
-              key={i}
-              style={{ padding: "8px 10px", background: "#1c1c20", border: "1px solid #2a2a2e", borderRadius: 5 }}
-            >
+            <div key={i} style={{ padding: "10px 12px", background: color.bgInset, border: `1px solid ${color.borderSubtle}`, borderRadius: radius.sm }}>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                 <input
                   value={c.start ?? ""}
                   disabled={saving}
                   onChange={(e) => edit(i, "start", e.target.value)}
-                  style={{ ...INPUT, width: 92 }}
+                  style={{ ...INPUT, width: 96 }}
                   title={tr("material.chapters.start_time_title")}
                 />
                 {srcUrl && (
                   <>
-                    <button
-                      onClick={() => seekTo(c)}
-                      disabled={saving}
-                      style={{ ...BTN_GHOST, padding: "3px 8px", fontSize: 11 }}
-                      title={tr("material.chapters.seek_title")}
-                    >
+                    <button onClick={() => seekTo(c)} disabled={saving} style={{ ...BTN_GHOST, padding: "4px 10px", fontSize: font.xs }} title={tr("material.chapters.seek_title")}>
                       {tr("material.chapters.seek_btn")}
                     </button>
-                    <button
-                      onClick={() => takeCurrent(i)}
-                      disabled={saving}
-                      style={{ ...BTN_GHOST, padding: "3px 8px", fontSize: 11 }}
-                      title={tr("material.chapters.take_current_title")}
-                    >
+                    <button onClick={() => takeCurrent(i)} disabled={saving} style={{ ...BTN_GHOST, padding: "4px 10px", fontSize: font.xs }} title={tr("material.chapters.take_current_title")}>
                       {tr("material.chapters.take_current_btn")}
                     </button>
                   </>
@@ -219,15 +198,15 @@ export function ChapterScheduleEditor(props: {
                   value={c.title ?? ""}
                   disabled={saving}
                   onChange={(e) => edit(i, "title", e.target.value)}
-                  style={{ ...INPUT, flex: 1 }}
+                  style={{ ...INPUT, flex: 1, minWidth: 0 }}
                   title={tr("material.chapters.title_field_title")}
                 />
               </div>
               {(c.refined || (c.key_points && c.key_points.length > 0)) && (
-                <div style={{ marginTop: 4, paddingLeft: 2, color: "#888", fontSize: 11 }}>
+                <div style={{ marginTop: 6, paddingLeft: 2, color: color.textMuted, fontSize: font.sm, lineHeight: 1.5 }}>
                   {c.refined}
                   {c.key_points && c.key_points.length > 0 && (
-                    <ul style={{ margin: "2px 0 0", paddingLeft: 16 }}>
+                    <ul style={{ margin: "3px 0 0", paddingLeft: 18 }}>
                       {c.key_points.map((kp, k) => (
                         <li key={k}>{kp}</li>
                       ))}
@@ -237,11 +216,9 @@ export function ChapterScheduleEditor(props: {
               )}
             </div>
           ))}
-          <p style={{ color: "#666", fontSize: 11, marginTop: 4 }}>
-            {tr("material.chapters.save_hint")}
-          </p>
+          <p style={{ color: color.textMuted, fontSize: font.xs, marginTop: 4 }}>{tr("material.chapters.save_hint")}</p>
         </div>
       )}
-    </div>
+    </DetailScaffold>
   );
 }

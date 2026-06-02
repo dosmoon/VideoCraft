@@ -2,13 +2,16 @@
  * SubtitleViewer — inspect one subtitle: its SRT text + the quality check
  * (structural / format-residue / language-purity issues) with a one-click
  * auto-fix. Faithful to the Tk srt_preview_pane + subtitles_dialogs check UI.
+ * Fills the detail panel (DetailScaffold): the SRT block grows to the panel
+ * height instead of a fixed maxHeight.
  */
 
 import { useCallback, useEffect, useState } from "react";
 import { rpc, RpcError, type SubtitleCheck } from "../../ipc/client";
 import { tr } from "../../i18n/tr";
 import { color, radius, font, state as st } from "../../ui/tokens";
-import { ArrowLeft, Check, Wrench, AlertCircle } from "../../ui/icons";
+import { Check, Wrench, AlertCircle } from "../../ui/icons";
+import { DetailHeader, DetailScaffold } from "./detailChrome";
 
 const ghostBtn: React.CSSProperties = {
   display: "inline-flex",
@@ -81,45 +84,42 @@ export function SubtitleViewer(props: {
     }
   }, [type, instance, lang, onChanged]);
 
-  return (
-    <div style={{ maxWidth: 720 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-        <button onClick={onClose} style={{ ...ghostBtn, padding: "4px 10px" }}>
-          <ArrowLeft size={14} strokeWidth={2} />
-          {tr("material.back_btn_text")}
-        </button>
-        <strong style={{ fontSize: font.md, color: color.textPrimary }}>{lang}.srt</strong>
-        {check && (
-          <span style={{ fontSize: font.sm, color: color.textSecondary }}>
-            {tr("material.subtitles.cue_count", { count: check.cue_count })}
-            {check.hard > 0 && <span style={{ color: SEV_COLOR.hard }}> · {tr("material.subtitles.hard_count", { count: check.hard })}</span>}
-            {check.fixable > 0 && <span style={{ color: SEV_COLOR.fixable }}> · {tr("material.subtitles.fixable_count", { count: check.fixable })}</span>}
-            {check.advisory > 0 && <span style={{ color: SEV_COLOR.advisory }}> · {tr("material.subtitles.advisory_count", { count: check.advisory })}</span>}
-            {check.hard === 0 && check.fixable === 0 && (
-              <span style={{ color: st.done, display: "inline-flex", alignItems: "center", gap: 3 }}>
-                {" "}
-                · <Check size={13} strokeWidth={2.5} /> {tr("material.subtitles.no_hard_issues")}
-              </span>
-            )}
-          </span>
-        )}
-        {check && check.fixable > 0 && (
-          <button onClick={() => void quickFix()} disabled={busy} style={{ ...ghostBtn, marginLeft: "auto", color: st.partial }}>
-            <Wrench size={13} strokeWidth={2} />
-            {tr("material.subtitles.quick_fix_btn")}
-          </button>
-        )}
-      </div>
+  const summary = check && (
+    <span style={{ fontSize: font.sm, color: color.textSecondary }}>
+      {tr("material.subtitles.cue_count", { count: check.cue_count })}
+      {check.hard > 0 && <span style={{ color: SEV_COLOR.hard }}> · {tr("material.subtitles.hard_count", { count: check.hard })}</span>}
+      {check.fixable > 0 && <span style={{ color: SEV_COLOR.fixable }}> · {tr("material.subtitles.fixable_count", { count: check.fixable })}</span>}
+      {check.advisory > 0 && <span style={{ color: SEV_COLOR.advisory }}> · {tr("material.subtitles.advisory_count", { count: check.advisory })}</span>}
+      {check.hard === 0 && check.fixable === 0 && (
+        <span style={{ color: st.done, display: "inline-flex", alignItems: "center", gap: 3 }}>
+          {" "}
+          · <Check size={13} strokeWidth={2.5} /> {tr("material.subtitles.no_hard_issues")}
+        </span>
+      )}
+    </span>
+  );
 
+  const quickFixBtn = check && check.fixable > 0 && (
+    <button onClick={() => void quickFix()} disabled={busy} style={{ ...ghostBtn, color: st.partial }}>
+      <Wrench size={13} strokeWidth={2} />
+      {tr("material.subtitles.quick_fix_btn")}
+    </button>
+  );
+
+  return (
+    <DetailScaffold
+      scroll="none"
+      header={<DetailHeader onBack={onClose} title={`${lang}.srt`} meta={summary} right={quickFixBtn} />}
+    >
       {error && (
-        <div style={{ display: "flex", alignItems: "center", gap: 6, color: color.danger, fontSize: font.sm, marginBottom: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, color: color.danger, fontSize: font.sm, marginBottom: 8, flexShrink: 0 }}>
           <AlertCircle size={14} strokeWidth={2} style={{ flexShrink: 0 }} />
           <span>{error}</span>
         </div>
       )}
 
       {check && check.issues.length > 0 && (
-        <div style={{ marginBottom: 10, display: "flex", flexDirection: "column", gap: 2 }}>
+        <div style={{ marginBottom: 10, display: "flex", flexDirection: "column", gap: 2, flexShrink: 0, maxHeight: "30%", overflowY: "auto" }}>
           {check.issues.slice(0, 30).map((iss, i) => (
             <div key={i} style={{ fontSize: font.xs, color: SEV_COLOR[iss.severity_class] ?? color.textSecondary }}>
               {iss.cue_index > 0 ? `#${iss.cue_index} ` : ""}
@@ -135,20 +135,22 @@ export function SubtitleViewer(props: {
       <pre
         style={{
           margin: 0,
-          padding: 10,
+          padding: 12,
+          flex: 1,
+          minHeight: 0,
           background: color.bgInset,
           border: `1px solid ${color.borderSubtle}`,
           borderRadius: radius.sm,
-          maxHeight: 360,
           overflow: "auto",
-          fontSize: font.sm,
+          fontSize: font.md,
           color: color.textSecondary,
           whiteSpace: "pre-wrap",
           fontFamily: "ui-monospace, monospace",
+          lineHeight: 1.5,
         }}
       >
         {text ?? tr("common.loading")}
       </pre>
-    </div>
+    </DetailScaffold>
   );
 }

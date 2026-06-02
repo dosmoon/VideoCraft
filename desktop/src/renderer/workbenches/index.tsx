@@ -11,18 +11,12 @@ import type { ComponentType } from "react";
 import { tr } from "../i18n/tr";
 import { ClipWorkbench } from "./clip/ClipWorkbench";
 import { NewsDeskWorkbench } from "./news_desk/NewsDeskWorkbench";
-import { MaterialWorkbench as NewsVideoWorkbench } from "./material/MaterialWorkbench";
 
 type WorkbenchProps = { type: string; instance: string; onClose: () => void };
 
 const REGISTRY: Record<string, ComponentType<WorkbenchProps>> = {
   clip: ClipWorkbench,
   news_desk: NewsDeskWorkbench,
-};
-
-// Material-side workbenches, dispatched by material type (parallel to creations).
-const MATERIAL_REGISTRY: Record<string, ComponentType<WorkbenchProps>> = {
-  news_video: NewsVideoWorkbench,
 };
 
 function NotPorted({ type }: { type: string }) {
@@ -35,10 +29,5 @@ function NotPorted({ type }: { type: string }) {
 
 export function CreationWorkbench(props: WorkbenchProps) {
   const W = REGISTRY[props.type];
-  return W ? <W {...props} /> : <NotPorted type={props.type} />;
-}
-
-export function MaterialWorkbench(props: WorkbenchProps) {
-  const W = MATERIAL_REGISTRY[props.type];
   return W ? <W {...props} /> : <NotPorted type={props.type} />;
 }

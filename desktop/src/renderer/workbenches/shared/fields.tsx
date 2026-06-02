@@ -7,22 +7,23 @@
 
 import { useEffect, useState } from "react";
 import { ColorSwatchPicker } from "./fieldControls";
+import { color, font, radius } from "../../ui/tokens";
 
-const LABEL: React.CSSProperties = { color: "#999", fontSize: 12, flexShrink: 0 };
+const LABEL: React.CSSProperties = { color: color.textSecondary, fontSize: font.md, flexShrink: 0 };
 const INPUT: React.CSSProperties = {
   flex: 1,
-  maxWidth: 160,
-  padding: "2px 6px",
-  background: "#1a1a1e",
-  color: "#ddd",
-  border: "1px solid #333",
-  borderRadius: 3,
-  fontSize: 12,
+  minWidth: 0,
+  padding: "3px 8px",
+  background: color.bgInset,
+  color: color.textPrimary,
+  border: `1px solid ${color.border}`,
+  borderRadius: radius.sm,
+  fontSize: font.md,
 };
 
 export function Section({ title }: { title: string }) {
   return (
-    <div style={{ fontSize: 11, color: "#888", fontWeight: 700, margin: "8px 0 2px" }}>{title}</div>
+    <div style={{ fontSize: font.sm, color: color.textMuted, fontWeight: 700, margin: "10px 0 3px" }}>{title}</div>
   );
 }
 
@@ -40,7 +41,7 @@ export function CheckRow(props: {
         disabled={props.disabled}
         onChange={(e) => props.onChange(e.target.checked)}
       />
-      <span style={{ color: "#ccc", fontSize: 12 }}>{props.label}</span>
+      <span style={{ color: color.textPrimary, fontSize: font.md }}>{props.label}</span>
     </label>
   );
 }

@@ -220,11 +220,11 @@ export const materialBackend = {
     });
   },
 
-  startRunTranslate: async (instance: string, targetLang: string): Promise<{ job_id: string }> => {
+  startRunTranslate: async (instance: string, targetLang: string, sourceLang?: string): Promise<{ job_id: string }> => {
     const m = await loadModel(instance);
     return rpcCall<{ job_id: string }>("capability.translate", {
       subtitles_dir: m.subtitlesDir,
-      source_lang: await projectSourceLang(),
+      source_lang: sourceLang || (await projectSourceLang()),
       target_lang: targetLang,
     });
   },
