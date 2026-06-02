@@ -157,7 +157,10 @@ def run_asr_paths(
                 status_text="正在解码音频并转写(长视频首段较久,请耐心等待)...",
             ))
             return
-        # Provider startup / request summary — show we're past "准备中"
+        # Provider startup / request summary — show we're past "准备中". For the
+        # local model this is the gateway to a single blocking model-load call
+        # (cold CUDA init can take 30s–2min, no sub-progress), so say so — the bare
+        # "calling ASR" made users think it stalled and cancel during load.
         if event_type in ("request_summary", "request_summary_local"):
             provider_hint = (
                 kwargs.get("device")
@@ -165,7 +168,10 @@ def run_asr_paths(
                 or kwargs.get("backend")
                 or ""
             )
-            txt = "正在调用 ASR"
+            if event_type == "request_summary_local":
+                txt = "正在加载本地模型(首次较慢,请耐心等待)"
+            else:
+                txt = "正在调用 ASR"
             if provider_hint:
                 txt += f" · {provider_hint}"
             _emit(progress_cb, ProgressInfo(
