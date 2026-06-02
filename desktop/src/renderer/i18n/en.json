@@ -285,6 +285,8 @@
   "material.sidebar.ctx_empty": "not filled",
   "material.sidebar.langs": "{n} languages",
   "material.sidebar.generate_title": "Generate analysis from this subtitle",
+  "material.sidebar.gen_analysis": "Generate titles & chapters",
+  "material.sidebar.gen_hotclips": "Generate hot clips",
   "material.sidebar.running": "working…",
   "material.detail.pick_node": "← Select source / subtitles / news context on the left to view or edit",
   "material.context.step2_warn": "This will overwrite the entire ③ news context with web search results.",

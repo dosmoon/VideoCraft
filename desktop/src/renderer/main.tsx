@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Shell } from "./shell";
 import { rpc } from "./ipc/client";
 import { setLang } from "./i18n/tr";
+import "./ui/anim.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root element");

@@ -1,11 +1,18 @@
 /**
  * MaterialSidebar — the rich, guided node tree for one news_video instance
- * (ADR-0008 B3.2 sidebar-driven redesign). Replaces the read-only SlotRow +
- * 3-tab workbench: the pipeline (source → news_context → subtitles → lang →
- * analysis) is a selectable tree with inline status + the one-click actions
- * (AI fill / ASR / generate analysis). Selecting a node drives MaterialDetail in
- * the right panel; input-heavy actions (acquire / translate / import / edit) live
- * in that detail panel.
+ * (ADR-0008 B3.2 sidebar-driven redesign; visual refresh: lucide icons + shared
+ * tokens). The pipeline (source → news_context → subtitles → lang → analysis) is
+ * a compact, VSCode-explorer-style tree:
+ *   - state is encoded in the leading icon's tint (empty / partial / done / locked)
+ *   - status is a compact right-aligned badge (✓ + duration · n/total · n langs),
+ *     NOT a long truncated sentence — heavy detail lives in the right detail panel
+ *   - one-click actions (AI fill / ASR / generate) hover-reveal as ghost icons
+ *     instead of always-on bordered buttons
+ *   - one softened selection style (accent-soft fill + left bar), and a single
+ *     selection that won't clash with the instance header's
+ *
+ * Selecting a node drives MaterialDetail in the right panel; input-heavy actions
+ * (acquire / translate / import / edit) live in that detail panel.
  *
  * Inline jobs reuse the same rpc.start* + project.* meta path the detail tabs use
  * (capability emits no domain events): on success the action persists meta where
@@ -21,13 +28,35 @@ import type { SlotId, SlotState } from "@materials/news_video/model";
 import { rpc, RpcError, type SourceContext } from "../../ipc/client";
 import { useJob } from "../../ipc/runJob";
 import { getLang, tr } from "../../i18n/tr";
+import { color, state as st, font, radius } from "../../ui/tokens";
+import {
+  SLOT_ICON,
+  LANG_ICON,
+  analysisIcon,
+  Sparkles,
+  AudioLines,
+  Plus,
+  ChevronRight,
+  ChevronDown,
+  Check,
+  Loader2,
+  AlertCircle,
+  type LucideIcon,
+} from "../../ui/icons";
+
+const INDENT = 14;
+const ICON = 15;
 
 const SLOT_LABEL: Record<string, string> = {
   source: "hub.slot.source",
   news_context: "hub.slot.news_context",
   subtitles: "hub.slot.subtitles",
 };
-const SLOT_ICON: Record<string, string> = { source: "📹", news_context: "📰", subtitles: "📝" };
+// Menu label for each user-generatable analysis kind (mirrors the Tk generate menu).
+const GEN_LABEL: Record<string, string> = {
+  analysis: "material.sidebar.gen_analysis",
+  hotclips: "material.sidebar.gen_hotclips",
+};
 
 function fmtDuration(sec: number): string {
   const s = Math.round(sec);
@@ -35,46 +64,234 @@ function fmtDuration(sec: number): string {
   return `${m}:${String(s % 60).padStart(2, "0")}`;
 }
 
-/** Human status line for a slot node, from the structured SlotState. */
-function slotStatus(node: MaterialNode): string {
-  const slot = node.slot;
-  if (!slot) return "";
-  if (slot.isLocked) return tr("material.sidebar.locked");
-  if (node.kind === "source") {
-    if (!slot.isFilled) return tr("material.sidebar.no_source");
-    const s = slot.source;
-    const extra = [s?.durationSec ? fmtDuration(s.durationSec) : "", s?.width && s?.height ? `${s.width}×${s.height}` : ""].filter(Boolean).join(" · ");
-    return `✓ ${s?.title || "video.mp4"}${extra ? " · " + extra : ""}`;
+// ── Per-node presentation derived from structured SlotState ──────────────────
+
+/** Tint for a node's leading icon, encoding its readiness. */
+function nodeStateColor(node: MaterialNode): string {
+  if (node.slot?.isLocked) return st.locked;
+  switch (node.kind) {
+    case "source":
+      return node.slot?.isFilled ? st.done : st.empty;
+    case "news_context": {
+      const c = node.slot?.context;
+      if (!c || c.filled === 0) return st.empty;
+      return c.filled >= c.total ? st.done : st.partial;
+    }
+    case "subtitles":
+      return (node.slot?.subtitles?.langs.length ?? 0) > 0 ? st.done : st.empty;
+    default:
+      return color.textSecondary; // lang / analysis — neutral (state colors reserved for slots)
   }
-  if (node.kind === "news_context") {
-    const c = slot.context;
-    return c && c.filled > 0 ? tr("material.sidebar.ctx_filled", { n: String(c.filled), total: String(c.total) }) : tr("material.sidebar.ctx_empty");
-  }
-  if (node.kind === "subtitles") {
-    const langs = slot.subtitles?.langs ?? [];
-    return langs.length ? `✓ ${tr("material.sidebar.langs", { n: String(langs.length) })}` : tr("material.sidebar.no_source");
-  }
-  return "";
+}
+
+function nodeIcon(node: MaterialNode): LucideIcon {
+  if (node.kind === "lang") return LANG_ICON;
+  if (node.kind === "analysis") return analysisIcon(node.analysisKind ?? "");
+  return SLOT_ICON[node.kind]!;
 }
 
 function nodeLabel(node: MaterialNode): string {
   if (node.kind === "lang") return (node.lang ?? "").toUpperCase();
   if (node.kind === "analysis") {
     const at = node.analysisKind ? analysisType(node.analysisKind) : undefined;
-    return at ? `${at.icon} ${getLang() === "zh" ? at.displayZh : at.displayEn}` : (node.analysisKind ?? "");
+    return at ? (getLang() === "zh" ? at.displayZh : at.displayEn) : (node.analysisKind ?? "");
   }
-  return `${SLOT_ICON[node.kind] ?? ""} ${tr(SLOT_LABEL[node.kind] ?? node.kind)}`.trim();
+  return tr(SLOT_LABEL[node.kind] ?? node.kind);
 }
 
-const ACT_BTN: React.CSSProperties = {
-  border: "1px solid #3a3a40",
-  background: "#26262b",
-  color: "#cfcfd4",
-  borderRadius: 4,
-  fontSize: 11,
-  padding: "1px 7px",
+// ── Small presentational atoms ───────────────────────────────────────────────
+
+function Pill({ children, tone }: { children: React.ReactNode; tone: "muted" | "partial" }) {
+  const t =
+    tone === "partial"
+      ? { color: st.partial, border: "rgba(217,162,58,0.5)" }
+      : { color: color.textSecondary, border: color.border };
+  return (
+    <span
+      style={{
+        fontSize: font.xs,
+        color: t.color,
+        border: `1px solid ${t.border}`,
+        borderRadius: radius.pill,
+        padding: "0 6px",
+        lineHeight: "15px",
+        whiteSpace: "nowrap",
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function MutedTag({ children }: { children: React.ReactNode }) {
+  return <span style={{ fontSize: font.xs, color: color.textMuted, whiteSpace: "nowrap" }}>{children}</span>;
+}
+
+/** Compact right-aligned status badge — the long detail (title, resolution) lives
+ * in the right detail panel, not crammed into the row. */
+function StatusBadge({ node }: { node: MaterialNode }): React.ReactNode {
+  const slot = node.slot;
+  if (slot?.isLocked) return null;
+  if (node.kind === "source") {
+    if (!slot?.isFilled) return <MutedTag>{tr("material.sidebar.no_source")}</MutedTag>;
+    const d = slot.source?.durationSec;
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+        <Check size={13} color={st.done} strokeWidth={2.5} />
+        {d ? <Pill tone="muted">{fmtDuration(d)}</Pill> : null}
+      </span>
+    );
+  }
+  if (node.kind === "news_context") {
+    const c = slot?.context;
+    if (!c || c.filled === 0) return <MutedTag>{tr("material.sidebar.ctx_empty")}</MutedTag>;
+    return c.filled >= c.total ? (
+      <Check size={13} color={st.done} strokeWidth={2.5} />
+    ) : (
+      <Pill tone="partial">
+        {c.filled}/{c.total}
+      </Pill>
+    );
+  }
+  if (node.kind === "subtitles") {
+    const n = slot?.subtitles?.langs.length ?? 0;
+    return n > 0 ? <Pill tone="muted">{tr("material.sidebar.langs", { n: String(n) })}</Pill> : null;
+  }
+  return null;
+}
+
+// ── Ghost (hover-reveal) action buttons ──────────────────────────────────────
+
+const ghostBase: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  justifyContent: "center",
+  width: 22,
+  height: 22,
+  padding: 0,
+  border: "none",
+  borderRadius: radius.sm,
+  background: "transparent",
+  color: color.textSecondary,
   cursor: "pointer",
+  transition: "opacity 120ms ease, background 120ms ease, color 120ms ease",
 };
+
+function ghostHoverIn(e: React.MouseEvent<HTMLButtonElement>) {
+  e.currentTarget.style.background = color.bgHover;
+  e.currentTarget.style.color = color.accentText;
+}
+function ghostHoverOut(e: React.MouseEvent<HTMLButtonElement>) {
+  e.currentTarget.style.background = "transparent";
+  e.currentTarget.style.color = color.textSecondary;
+}
+
+function GhostIconButton(props: {
+  icon: LucideIcon;
+  title: string;
+  opacity: number;
+  onClick: (e: React.MouseEvent) => void;
+}) {
+  const { icon: Icon, title, opacity, onClick } = props;
+  return (
+    <button
+      title={title}
+      onClick={onClick}
+      onMouseEnter={ghostHoverIn}
+      onMouseLeave={ghostHoverOut}
+      style={{ ...ghostBase, opacity }}
+    >
+      <Icon size={15} strokeWidth={2} />
+    </button>
+  );
+}
+
+/** The "+" generate action on a language row → dropdown of generatable kinds. */
+function GenerateMenu(props: { lang: string; opacity: number; onPick: (kind: string) => void }) {
+  const { opacity, onPick } = props;
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={{ position: "relative", display: "inline-flex" }}>
+      <button
+        title={tr("material.sidebar.generate_title")}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((o) => !o);
+        }}
+        onMouseEnter={ghostHoverIn}
+        onMouseLeave={ghostHoverOut}
+        style={{ ...ghostBase, opacity: open ? 1 : opacity }}
+      >
+        <Plus size={15} strokeWidth={2} />
+      </button>
+      {open && (
+        <>
+          <div
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+            }}
+            style={{ position: "fixed", inset: 0, zIndex: 40 }}
+          />
+          <div
+            style={{
+              position: "absolute",
+              top: "100%",
+              right: 0,
+              zIndex: 41,
+              background: color.bgRaised,
+              border: `1px solid ${color.border}`,
+              borderRadius: radius.md,
+              padding: 4,
+              minWidth: 170,
+              boxShadow: "0 6px 16px rgba(0,0,0,0.45)",
+            }}
+          >
+            {ANALYSIS_TYPES.filter((t) => t.generatable).map((t) => {
+              const Icon = analysisIcon(t.kind);
+              const label = GEN_LABEL[t.kind]
+                ? tr(GEN_LABEL[t.kind]!)
+                : getLang() === "zh"
+                  ? t.displayZh
+                  : t.displayEn;
+              return (
+                <button
+                  key={t.kind}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setOpen(false);
+                    onPick(t.kind);
+                  }}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    width: "100%",
+                    textAlign: "left",
+                    background: "transparent",
+                    color: color.textPrimary,
+                    border: "none",
+                    borderRadius: radius.sm,
+                    padding: "5px 8px",
+                    fontSize: font.sm,
+                    cursor: "pointer",
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = color.bgHover)}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                >
+                  <Icon size={14} strokeWidth={2} style={{ flexShrink: 0, color: color.textSecondary }} />
+                  <span>{label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Sidebar ──────────────────────────────────────────────────────────────────
 
 export function MaterialSidebar(props: {
   type: string;
@@ -89,6 +306,8 @@ export function MaterialSidebar(props: {
   const [langs, setLangs] = useState<string[]>([]);
   const [analysesByLang, setAnalysesByLang] = useState<Record<string, string[]>>({});
   const [err, setErr] = useState("");
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(new Set());
   const job = useJob();
 
   const load = useCallback(async () => {
@@ -109,6 +328,15 @@ export function MaterialSidebar(props: {
   useEffect(() => {
     void load();
   }, [load, refreshKey]);
+
+  const toggleCollapse = useCallback((id: string) => {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
 
   // ── Inline one-click actions (persist meta on success, then refresh) ─────────
   const fill = useCallback(async () => {
@@ -143,67 +371,134 @@ export function MaterialSidebar(props: {
     [job, type, instance, onChanged],
   );
 
-  const tree = readiness
-    ? buildMaterialTree({ readiness, langs, analysesByLang })
-    : [];
+  const tree = readiness ? buildMaterialTree({ readiness, langs, analysesByLang }) : [];
 
   const renderNode = (node: MaterialNode, depth: number): React.ReactNode => {
     const selected = node.id === selectedNodeId;
+    const hovered = node.id === hoveredId;
     const locked = node.slot?.isLocked ?? false;
-    const actions: React.ReactNode[] = [];
+    const expandable = node.children.length > 0;
+    const collapsed = collapsedIds.has(node.id);
+    const Icon = nodeIcon(node);
+    const opacity = hovered ? 1 : 0.35;
+
+    let action: React.ReactNode = null;
     if (!job.running && !locked) {
       if (node.kind === "news_context") {
-        actions.push(<button key="fill" style={ACT_BTN} onClick={(e) => { e.stopPropagation(); void fill(); }}>{tr("material.context.ai_fill_btn")}</button>);
+        action = (
+          <GhostIconButton
+            icon={Sparkles}
+            title={tr("material.context.ai_fill_btn")}
+            opacity={opacity}
+            onClick={(e) => {
+              e.stopPropagation();
+              void fill();
+            }}
+          />
+        );
       } else if (node.kind === "subtitles") {
-        actions.push(<button key="asr" style={ACT_BTN} onClick={(e) => { e.stopPropagation(); void asr(); }}>{tr("material.subtitles_tab.run_asr_btn")}</button>);
+        action = (
+          <GhostIconButton
+            icon={AudioLines}
+            title={tr("material.subtitles_tab.run_asr_btn")}
+            opacity={opacity}
+            onClick={(e) => {
+              e.stopPropagation();
+              void asr();
+            }}
+          />
+        );
       } else if (node.kind === "lang" && node.lang) {
-        for (const t of ANALYSIS_TYPES.filter((x) => x.generatable)) {
-          actions.push(
-            <button key={t.kind} style={ACT_BTN} title={tr("material.sidebar.generate_title")} onClick={(e) => { e.stopPropagation(); void analyze(node.lang!, t.kind); }}>
-              +{t.icon}
-            </button>,
-          );
-        }
+        action = <GenerateMenu lang={node.lang} opacity={opacity} onPick={(kind) => void analyze(node.lang!, kind)} />;
       }
     }
+
     return (
       <div key={node.id}>
         <div
           onClick={() => onSelect(node.id)}
+          onMouseEnter={() => setHoveredId(node.id)}
+          onMouseLeave={() => setHoveredId((h) => (h === node.id ? null : h))}
           style={{
             display: "flex",
             alignItems: "center",
             gap: 6,
-            padding: "3px 8px",
-            paddingLeft: 8 + depth * 14,
-            borderRadius: 4,
+            padding: "0 8px",
+            minHeight: 27,
+            borderRadius: radius.sm,
             cursor: "pointer",
-            background: selected ? "#2d6cdf" : "transparent",
-            color: locked ? "#777" : selected ? "#fff" : "#ccc",
-            fontSize: 12,
+            background: selected ? color.accentSoft : hovered ? color.bgHover : "transparent",
+            boxShadow: selected ? `inset 2px 0 0 ${color.accent}` : "none",
+            color: locked ? st.locked : selected ? color.accentText : color.textPrimary,
           }}
         >
-          <span style={{ flexShrink: 0 }}>{nodeLabel(node)}</span>
-          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: selected ? "#dde" : "#888", fontSize: 11 }}>
-            {slotStatus(node)}
+          {/* indent guide lines, one per ancestor depth */}
+          {Array.from({ length: depth }, (_, i) => (
+            <span
+              key={i}
+              style={{ width: INDENT, flexShrink: 0, alignSelf: "stretch", borderLeft: `1px solid ${color.borderSubtle}` }}
+            />
+          ))}
+          {/* disclosure chevron (expandable) or aligning spacer */}
+          {expandable ? (
+            <span
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleCollapse(node.id);
+              }}
+              style={{ display: "inline-flex", width: 16, flexShrink: 0, color: color.textMuted, cursor: "pointer" }}
+            >
+              {collapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+            </span>
+          ) : (
+            <span style={{ width: 16, flexShrink: 0 }} />
+          )}
+          <Icon size={ICON} color={nodeStateColor(node)} strokeWidth={2} style={{ flexShrink: 0 }} />
+          <span
+            style={{
+              flex: 1,
+              minWidth: 0,
+              fontSize: font.sm,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}
+          >
+            {nodeLabel(node)}
           </span>
-          <span style={{ display: "flex", gap: 3, flexShrink: 0 }}>{actions}</span>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+            <StatusBadge node={node} />
+            {action}
+          </span>
         </div>
-        {node.children.map((c) => renderNode(c, depth + 1))}
+        {expandable && !collapsed && node.children.map((c) => renderNode(c, depth + 1))}
       </div>
     );
   };
 
   return (
-    <div>
-      {err && <div style={{ color: "#ff6b6b", fontSize: 11, padding: "2px 8px" }}>✗ {err}</div>}
+    <div style={{ paddingTop: 2 }}>
+      {err && (
+        <div style={{ display: "flex", alignItems: "center", gap: 5, color: color.danger, fontSize: font.xs, padding: "3px 8px" }}>
+          <AlertCircle size={13} strokeWidth={2} style={{ flexShrink: 0 }} />
+          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{err}</span>
+        </div>
+      )}
       {job.running && (
-        <div style={{ color: "#7fa6ff", fontSize: 11, padding: "2px 8px", display: "flex", gap: 6 }}>
-          <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            ⏳ {job.progress?.status_text || tr("material.sidebar.running")}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, color: color.accentText, fontSize: font.xs, padding: "3px 8px" }}>
+          <Loader2 size={13} strokeWidth={2} className="vc-spin" style={{ flexShrink: 0 }} />
+          <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {job.progress?.status_text || tr("material.sidebar.running")}
             {job.progress?.pct != null ? ` · ${Math.round(job.progress.pct)}%` : ""}
           </span>
-          <button style={ACT_BTN} onClick={job.cancel}>{tr("common.cancel")}</button>
+          <button
+            onClick={job.cancel}
+            onMouseEnter={ghostHoverIn}
+            onMouseLeave={ghostHoverOut}
+            style={{ ...ghostBase, width: "auto", padding: "0 8px", fontSize: font.xs, color: color.textSecondary }}
+          >
+            {tr("common.cancel")}
+          </button>
         </div>
       )}
       {tree.map((n) => renderNode(n, 0))}

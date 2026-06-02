@@ -22,6 +22,19 @@ import { CreationWorkbench } from "../workbenches";
 import { MaterialSidebar } from "../workbenches/material/MaterialSidebar";
 import { MaterialDetail } from "../workbenches/material/MaterialDetail";
 import { tr, getLang } from "../i18n/tr";
+import { color, radius, font } from "../ui/tokens";
+import { Folder, Diamond, MoreHorizontal } from "../ui/icons";
+
+// Active row: accent-soft fill + a left accent bar (inset shadow, no layout shift).
+// Replaces the old solid-blue fill so the instance header and a selected sidebar
+// node read as one coherent selection system instead of two clashing blue blocks.
+function rowSelectionStyle(active: boolean): React.CSSProperties {
+  return {
+    background: active ? color.accentSoft : "transparent",
+    boxShadow: active ? `inset 2px 0 0 ${color.accent}` : "none",
+    color: active ? color.accentText : color.textPrimary,
+  };
+}
 
 // What the open workbench is — a creation or a material, plus its identity.
 type OpenWorkbench = { kind: "creation" | "material"; type: string; instance: string };
@@ -304,19 +317,20 @@ function InstanceActions({ onRename, onDelete }: { onRename: () => void; onDelet
         }}
         title={tr("hub.instance_actions")}
         style={{
-          width: 20,
-          height: 20,
-          lineHeight: "16px",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          width: 22,
+          height: 22,
           padding: 0,
           background: "transparent",
-          color: "#888",
+          color: color.textMuted,
           border: "none",
-          borderRadius: 4,
-          fontSize: 15,
+          borderRadius: radius.sm,
           cursor: "pointer",
         }}
       >
-        ⋯
+        <MoreHorizontal size={16} strokeWidth={2} />
       </button>
       {open && (
         <div
@@ -564,17 +578,20 @@ function ProjectView(props: {
                       style={{
                         flex: 1,
                         minWidth: 0,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 7,
                         textAlign: "left",
-                        padding: "4px 8px",
-                        color: active ? "#fff" : "#ccc",
-                        background: active ? "#2d6cdf" : "transparent",
+                        padding: "5px 8px",
                         border: "none",
-                        borderRadius: 4,
-                        fontSize: 13,
+                        borderRadius: radius.sm,
+                        fontSize: font.md,
                         cursor: "pointer",
+                        ...rowSelectionStyle(active),
                       }}
                     >
-                      ◆ {inst}
+                      <Diamond size={14} strokeWidth={2} color={active ? color.accentText : color.textSecondary} style={{ flexShrink: 0 }} />
+                      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{inst}</span>
                     </button>
                     <InstanceActions
                       onRename={() => onRenameInstance("creation", type, inst)}
@@ -637,18 +654,21 @@ function MaterialInstance(props: {
           style={{
             flex: 1,
             minWidth: 0,
+            display: "flex",
+            alignItems: "center",
+            gap: 7,
             textAlign: "left",
-            padding: "4px 8px",
-            color: active ? "#fff" : "#ddd",
-            background: active ? "#2d6cdf" : "transparent",
+            padding: "5px 8px",
             border: "none",
-            borderRadius: 4,
-            fontSize: 13,
-            fontWeight: 500,
+            borderRadius: radius.sm,
+            fontSize: font.md,
+            fontWeight: 600,
             cursor: "pointer",
+            ...rowSelectionStyle(active),
           }}
         >
-          📁 {name}
+          <Folder size={15} strokeWidth={2} color={active ? color.accentText : color.textSecondary} style={{ flexShrink: 0 }} />
+          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
         </button>
         <InstanceActions onRename={onRename} onDelete={onDelete} />
       </div>

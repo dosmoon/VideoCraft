@@ -285,6 +285,8 @@
   "material.sidebar.ctx_empty": "未填",
   "material.sidebar.langs": "{n} 种语言",
   "material.sidebar.generate_title": "基于此字幕生成分析",
+  "material.sidebar.gen_analysis": "生成标题与章节",
+  "material.sidebar.gen_hotclips": "生成热点片段",
   "material.sidebar.running": "处理中…",
   "material.detail.pick_node": "← 在左侧选择源 / 字幕 / 新闻背景节点查看或编辑",
   "material.context.step2_warn": "会用联网检索结果整体覆盖现有 ③ 新闻背景。",

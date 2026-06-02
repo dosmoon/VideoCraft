@@ -1,0 +1,12 @@
+/* Minimal shared animation utilities (the renderer's first stylesheet — keyframes
+ * can't be expressed in inline styles). Imported once in main.tsx. */
+
+@keyframes vc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.vc-spin {
+  animation: vc-spin 0.8s linear infinite;
+}
