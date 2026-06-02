@@ -12,16 +12,16 @@
 
 **下一步(迁移)**:**Phase B1 + B2 + B3.1 + B3.2(读+写+job+ai_fill)已完成**(2026-06-01/02,commit `b1ea0ad`→`13e9ef1`)。**B1**=TS 素材数据层。**B2**=能力网关 `capability.py`(路径式 job + 通用 `llm_extract`;`subtitle_pipeline` 加 plugin-free `*_paths`)。**B3.1**=news prompt+schema 移 TS(`aiFill.ts`)。**B3.2**=素材工作台接线:`client.ts` 按 `type==="news_video"` 把读/写/job 全分发到 `materials/news_video/clientBackend.ts`(走 `NewsVideoModel` + `capability.*`);变更通知用 `emitLocal`(client.ts 本地总线,`onNotification` 合并 server+local,Hub 零改动);job 完成后 tab 经新 `project.*` meta RPC(commit_source/set_source_language/add_translated_language)持久化 source/语言;ai_fill = 插件拼 prompt → `capability.llm_extract` → ContextTab 写回。**🚩 ai_fill=纯通用**(capability 零领域知识)。
 > **⚠️ ASR 死锁排查(本会话大坑,已修+已记忆 [[reference_sidecar_native_import_deadlock]])**:真机验 B3.2 时发现 ASR 永远卡「正在加载本地模型」。根因=**daemon 线程首次 import ctranslate2(faster-whisper)C 扩展 + 有线程 park 在 stdin 阻塞读 = 死锁**(跟 GPU/模型/路径/迁移代码无关)。修=`core/ai/warmup.py` 启动时主线程预热原生 import(`674b5c3`)。**实测证伪**:挪 stdin、env 变量(OMP/ORT)都无效,预热是唯一解。详见记忆。
-**▶▶ 本会话(2026-06-02)又干了:2 个 bug 修复 + B3.2c 数据尾巴 + 素材 UI 侧栏化重构(Steps 0-3)。全部 build-green、已 commit `13e9ef1`→`65455da`、未 push。**
+**▶▶ 本会话(2026-06-02)干了:2 bug 修复 + B3.2c 数据尾巴 + 素材 UI 全面重塑(侧栏视觉 + 对称 `+` 菜单 + 四详情面板自适应)。全部 build-green、已 commit + **push**(`13e9ef1`→`67c2358`)。**
 
 - **bug 修复**:① 源预览进度条拖不动 = vc-media:// 没透传 Range,改成手动 206/Accept-Ranges(`d4ecfca`)。② 重新导入跳过下载 = yt-dlp 缺 `overwrites`,加上(`375d849`)。**两个都待真机验**(拖进度条 / 重导链接源)。
 - **B3.2c 数据尾巴(DONE,`9980d91`)**:`analysisTypes.ts`(port `ANALYSIS_TYPES`)+ materialBackend 的 `source_meta`/`listAnalysisArtifacts`/`importSubtitle`/`slotReadinessStructured` 全走 TS。**至此 material.* 读/写/job/import 全在 TS**(Python `material.*` 仅剩待删,卡 P2 Tk 退役)。
-- **🚩 素材 UI 侧栏化重构(用户要的"更多交互进左栏、tab 那锅粥拆开";纠偏回 ADR-0005「侧栏拥有 slot 级 UI」本意。Tk 因 Treeview 塞不进按钮才妥协,Electron 无此限)**。已对齐决策:**右详情区复用 tab0(=Hub 右主区,不开可关闭 tab)/ 分析挂在具体字幕语言节点下 / hub-and-spoke(侧栏轻动作+触发,右区重编辑器)**。已落:
-  - `materials/news_video/sidebarTree.ts`(纯节点树模型 instance→源/背景/字幕→语言→分析,+单测 `3e94b75`)
-  - `workbenches/material/MaterialSidebar.tsx`(节点树+状态徽标+内联一键动作 AI填充/ASR/生成分析+选中态)+ `MaterialDetail.tsx`(选中节点→路由到复用的 SourceTab/ContextTab/SubtitlesTab/SubtitleViewer/ChapterScheduleEditor/AnalysisTextViewer)(`5eafdb7`)
-  - Hub 接线:`material` 选择态(与创作 `workbench` 互斥)+ matRefresh;点实例展开 MaterialSidebar、点节点右区出 MaterialDetail;**MaterialWorkbench 已不再渲染**;删了死 SlotRow/SLOT_LABELS(`65455da`)
-- **⚠️ 整套素材 UI 是真机 gated,我没法 headless 验。** 新对话先让用户**重启 `dev.ps1`** 真机验:节点树展开/状态徽标对不对、点节点右区详情对不对、内联动作(AI填充/ASR/生成分析)能跑+跑完刷新、整体引导性。
-- **Step 4 收尾(验后再做)**:删已死的 `MaterialWorkbench.tsx`(+不再用的 SubtitlesTab? 仍被 MaterialDetail 用)、清 Hub 残留的 `readiness` state/`material.slot_readiness` fetch(新侧栏用 `slotReadinessStructured` 自取)、i18n 扫一遍。**新对话先读**:`MaterialSidebar.tsx`/`MaterialDetail.tsx`/`sidebarTree.ts` + Hub.tsx 的 material 段。
+- **🚩 素材 UI 全面重塑(Steps 0-3 真机验过 ✅,再叠视觉/交互大改并已 push)**。纠偏回 ADR-0005「侧栏拥有 slot 级 UI」本意(hub-and-spoke:侧栏轻动作+触发、右栏 tab0 重编辑器;分析挂在字幕语言节点下)。落地链(均真机验过 + push):
+  - **节点树侧栏**:`materials/news_video/sidebarTree.ts`(纯模型 instance→源/背景/字幕→语言→分析,+单测)+ `MaterialSidebar.tsx` + `MaterialDetail.tsx`;Hub `material` 选择态与创作 `workbench` 互斥。`3e94b75`/`5eafdb7`/`65455da`。
+  - **视觉重构** `f826e2e`:引 `lucide-react` + `ui/tokens.ts`(design token)+ `ui/icons.tsx` + `ui/anim.css`;状态进图标着色、紧凑右徽标、hover 浮现动作、柔化单一选中、缩进导线。
+  - **对称 `+` 菜单模型** `67c2358`:字幕节点 `+`=识别(ASR,可选源语言)/导入 SRT;每条语言 `+`=翻译(**译自该条**——`startRunTranslate` 透传 `sourceLang`,后端 `capability.translate` 本就收)/ 生成分析;**源字幕带「源」标识**。**撤右栏 SubtitlesTab**(动作进菜单,点字幕节点=轻提示)。
+  - **四详情视图自适应** `67c2358`:新 `workbenches/material/detailChrome.tsx`(`DetailHeader`+`DetailScaffold`,视频 pinned 置顶);ContextTab 加宽 560→960+输入填满、SubtitleViewer/AnalysisTextViewer `<pre>` 填满高、ChapterScheduleEditor 视频置顶+列表滚、新 `HotclipsViewer` 结构化卡片(替裸 JSON,镜像章节)。`shared/fields.tsx` 字号 12→13 + token(news_desk 章节属性面板一并受益)。
+- **Step 4 收尾**:✅ 已删 `MaterialWorkbench.tsx` + `SubtitlesTab.tsx`(+清 `workbenches/index.tsx` 死 registry);i18n 已随各轮清 orphan(zh/en 475 对称)。**剩**:清 Hub 残留 `readiness` state + `loadTree`/通知/`createMaterial` 里的 `material.slot_readiness` fetch + 传入 `ProjectView` 的 `readiness` prop——**已无消费者**(SlotRow 已删,新侧栏 `MaterialSidebar` 改用 `materialBackend.slotReadinessStructured` 自取),整条可移除。
 - 之后 = A6/B5 退役 Python(卡 **P2 Tk 退役**:clip Tk 还 import `clip/config.py`)。进度勾选权威 = [`adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md)。
 
 > **续 36(本节下方):news_desk + clip 导出恢复 publish.md/index.md,已 commit(`b3f2cb1`+`69ded12`,未 push)。**
