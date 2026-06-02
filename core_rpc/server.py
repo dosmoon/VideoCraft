@@ -105,6 +105,15 @@ def main() -> int:
 
     _log(f"ready (pid={os.getpid()}, repo={_REPO})")
 
+    # NB: the main thread blocks here in the stdin read between requests. That is
+    # FINE only because warm_native_extensions() above already imported the native
+    # CUDA C-extensions (ctranslate2/faster-whisper, llama_cpp) on this thread at
+    # startup. If a job daemon thread is the FIRST to import one of those while ANY
+    # thread is parked in a sys.stdin.buffer blocking read, the C-ext init deadlocks
+    # (confirmed: the ASR "loading model" hang). Moving the stdin read to a worker
+    # thread does NOT help — the trigger is the blocked stdin read itself, on any
+    # thread, not the main thread specifically. So the warm-up above is the fix; any
+    # new native-backed local engine must be added to warmup._NATIVE_MODULES.
     in_buf = sys.stdin.buffer
     try:
         for raw in in_buf:  # iterates line-by-line (split on b'\n')
