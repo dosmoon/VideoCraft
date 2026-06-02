@@ -18,18 +18,13 @@ import {
   type ProjectBrief,
   type SlotState,
 } from "../ipc/client";
-import { CreationWorkbench, MaterialWorkbench } from "../workbenches";
+import { CreationWorkbench } from "../workbenches";
+import { MaterialSidebar } from "../workbenches/material/MaterialSidebar";
+import { MaterialDetail } from "../workbenches/material/MaterialDetail";
 import { tr, getLang } from "../i18n/tr";
 
 // What the open workbench is — a creation or a material, plus its identity.
 type OpenWorkbench = { kind: "creation" | "material"; type: string; instance: string };
-
-// Friendly labels for the news_video slots.
-const SLOT_LABELS: Record<string, string> = {
-  source: "hub.slot.source",
-  news_context: "hub.slot.news_context",
-  subtitles: "hub.slot.subtitles",
-};
 
 // Locale-aware description for a registered type (the sidecar ships both).
 function descOf(t: { description_zh: string; description_en: string }): string {
@@ -52,8 +47,14 @@ export function Hub() {
   const [readiness, setReadiness] = useState<Readiness>({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  // The open workbench (one at a time), creation or material, or none.
+  // The open creation workbench (one at a time), or none.
   const [workbench, setWorkbench] = useState<OpenWorkbench | null>(null);
+  // The active material instance + selected node in its sidebar tree (B3.2:
+  // materials are sidebar-driven; the right panel shows the selected node's
+  // detail). Mutually exclusive with `workbench`. matRefresh bumps the sidebar +
+  // detail after a job/write so both re-read.
+  const [material, setMaterial] = useState<{ type: string; instance: string; nodeId: string | null } | null>(null);
+  const [matRefresh, setMatRefresh] = useState(0);
 
   // Load a project's material/creation tree + per-instance slot readiness.
   const loadTree = useCallback(async (brief: ProjectBrief) => {
@@ -216,6 +217,10 @@ export function Hub() {
             ? { ...w, instance: res.instance }
             : w,
         );
+        if (kind === "material")
+          setMaterial((m) =>
+            m && m.type === type && m.instance === instance ? { ...m, instance: res.instance } : m,
+          );
       } catch (err) {
         setError(fmt(err));
       }
@@ -232,6 +237,8 @@ export function Hub() {
         setWorkbench((w) =>
           w && w.kind === kind && w.type === type && w.instance === instance ? null : w,
         );
+        if (kind === "material")
+          setMaterial((m) => (m && m.type === type && m.instance === instance ? null : m));
       } catch (err) {
         setError(fmt(err));
       }
@@ -252,8 +259,18 @@ export function Hub() {
       readiness={readiness}
       error={error}
       workbench={workbench}
-      onOpenCreation={(type, instance) => setWorkbench({ kind: "creation", type, instance })}
-      onOpenMaterial={(type, instance) => setWorkbench({ kind: "material", type, instance })}
+      material={material}
+      matRefresh={matRefresh}
+      onOpenCreation={(type, instance) => {
+        setMaterial(null);
+        setWorkbench({ kind: "creation", type, instance });
+      }}
+      onOpenMaterial={(type, instance) => {
+        setWorkbench(null);
+        setMaterial({ type, instance, nodeId: "source" });
+      }}
+      onSelectNode={(nodeId) => setMaterial((m) => (m ? { ...m, nodeId } : m))}
+      onMaterialChanged={() => setMatRefresh((k) => k + 1)}
       onCreateCreation={(type) => void createCreation(type)}
       onCreateMaterial={(type) => void createMaterial(type)}
       onRenameInstance={(kind, type, instance) => void renameInst(kind, type, instance)}
@@ -420,8 +437,12 @@ function ProjectView(props: {
   readiness: Readiness;
   error: string;
   workbench: OpenWorkbench | null;
+  material: { type: string; instance: string; nodeId: string | null } | null;
+  matRefresh: number;
   onOpenCreation: (type: string, instance: string) => void;
   onOpenMaterial: (type: string, instance: string) => void;
+  onSelectNode: (nodeId: string) => void;
+  onMaterialChanged: () => void;
   onCreateCreation: (type: string) => void;
   onCreateMaterial: (type: string) => void;
   onRenameInstance: (kind: "material" | "creation", type: string, instance: string) => void;
@@ -433,11 +454,14 @@ function ProjectView(props: {
     current,
     materials,
     creations,
-    readiness,
     error,
     workbench,
+    material,
+    matRefresh,
     onOpenCreation,
     onOpenMaterial,
+    onSelectNode,
+    onMaterialChanged,
     onCreateCreation,
     onCreateMaterial,
     onRenameInstance,
@@ -500,17 +524,18 @@ function ProjectView(props: {
               <TypeLabel>{type}</TypeLabel>
               {insts.length === 0 && <Empty>{tr("hub.empty_parens")}</Empty>}
               {insts.map((inst) => {
-                const active =
-                  workbench?.kind === "material" &&
-                  workbench.type === type &&
-                  workbench.instance === inst;
+                const active = material?.type === type && material.instance === inst;
                 return (
                   <MaterialInstance
                     key={inst}
+                    type={type}
                     name={inst}
                     active={active}
-                    slots={readiness[`${type}/${inst}`]}
+                    selectedNodeId={active ? material!.nodeId : null}
+                    matRefresh={matRefresh}
                     onOpen={() => onOpenMaterial(type, inst)}
+                    onSelectNode={onSelectNode}
+                    onMaterialChanged={onMaterialChanged}
                     onRename={() => onRenameInstance("material", type, inst)}
                     onDelete={() => onDeleteInstance("material", type, inst)}
                   />
@@ -563,22 +588,23 @@ function ProjectView(props: {
         </aside>
 
         <main style={{ flex: 1, overflow: "auto" }}>
-          {workbench ? (
-            workbench.kind === "material" ? (
-              <MaterialWorkbench
-                key={`m:${workbench.type}/${workbench.instance}`}
-                type={workbench.type}
-                instance={workbench.instance}
-                onClose={onCloseWorkbench}
-              />
-            ) : (
-              <CreationWorkbench
-                key={`c:${workbench.type}/${workbench.instance}`}
-                type={workbench.type}
-                instance={workbench.instance}
-                onClose={onCloseWorkbench}
-              />
-            )
+          {material ? (
+            <MaterialDetail
+              key={`m:${material.type}/${material.instance}/${material.nodeId ?? ""}`}
+              type={material.type}
+              instance={material.instance}
+              nodeId={material.nodeId}
+              refreshKey={matRefresh}
+              onChanged={onMaterialChanged}
+              onDeselect={() => onSelectNode("")}
+            />
+          ) : workbench ? (
+            <CreationWorkbench
+              key={`c:${workbench.type}/${workbench.instance}`}
+              type={workbench.type}
+              instance={workbench.instance}
+              onClose={onCloseWorkbench}
+            />
           ) : (
             <div style={{ padding: 24, color: "#666" }}>{tr("hub.pick_to_open")}</div>
           )}
@@ -591,14 +617,18 @@ function ProjectView(props: {
 // ── Material sidebar rows ─────────────────────────────────────────────────────
 
 function MaterialInstance(props: {
+  type: string;
   name: string;
   active: boolean;
-  slots: Record<string, SlotState> | undefined;
+  selectedNodeId: string | null;
+  matRefresh: number;
   onOpen: () => void;
+  onSelectNode: (nodeId: string) => void;
+  onMaterialChanged: () => void;
   onRename: () => void;
   onDelete: () => void;
 }) {
-  const { name, active, slots, onOpen, onRename, onDelete } = props;
+  const { type, name, active, selectedNodeId, matRefresh, onOpen, onSelectNode, onMaterialChanged, onRename, onDelete } = props;
   return (
     <div style={{ marginBottom: 6 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
@@ -622,31 +652,16 @@ function MaterialInstance(props: {
         </button>
         <InstanceActions onRename={onRename} onDelete={onDelete} />
       </div>
-      {slots && Object.values(slots).map((s) => <SlotRow key={s.slot_id} slot={s} />)}
-    </div>
-  );
-}
-
-function SlotRow({ slot }: { slot: SlotState }) {
-  const icon = slot.is_locked ? "🔒" : slot.is_filled ? "✓" : "✗";
-  const color = slot.is_locked ? "#777" : slot.is_filled ? "#7fd17f" : "#d98b8b";
-  return (
-    <div
-      style={{
-        display: "flex",
-        gap: 8,
-        padding: "2px 8px 2px 22px",
-        fontSize: 12,
-        color: "#bbb",
-      }}
-    >
-      <span style={{ color, width: 14, flexShrink: 0 }}>{icon}</span>
-      <span style={{ width: 56, flexShrink: 0, color: "#999" }}>
-        {SLOT_LABELS[slot.slot_id] ? tr(SLOT_LABELS[slot.slot_id]!) : slot.slot_id}
-      </span>
-      <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {slot.summary}
-      </span>
+      {active && (
+        <MaterialSidebar
+          type={type}
+          instance={name}
+          selectedNodeId={selectedNodeId}
+          onSelect={onSelectNode}
+          refreshKey={matRefresh}
+          onChanged={onMaterialChanged}
+        />
+      )}
     </div>
   );
 }
