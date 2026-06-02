@@ -236,6 +236,11 @@ def _build_link_opts(
         "merge_output_format": "mp4",
         "noplaylist": True,
         "file_access_retries": 5,
+        # Re-import must actually re-download: without this yt-dlp sees the
+        # existing video.mp4 and skips with "already downloaded" (no progress,
+        # stale file) — the "re-import seems skipped" bug. Local/ffmpeg paths
+        # already overwrite (shutil copy / ffmpeg -y).
+        "overwrites": True,
     })
 
     if clip_range is not None:
