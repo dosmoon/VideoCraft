@@ -9,7 +9,8 @@
  *     mp4box + WebCodecs pipeline can pull a source clip incrementally
  */
 
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, protocol, shell } from "electron";
+import { createReadStream } from "node:fs";
 import {
   copyFile,
   mkdir,
@@ -21,8 +22,27 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { Readable } from "node:stream";
 import { Sidecar, SidecarError } from "./sidecar";
+
+// Extension → MIME for the vc-media:// server (video for <video>/mp4box, images
+// for the watermark picker). Unknown falls back to octet-stream.
+const MEDIA_MIME: Record<string, string> = {
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".webm": "video/webm",
+  ".mkv": "video/x-matroska",
+  ".mov": "video/quicktime",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
+function mediaMime(path: string): string {
+  const dot = path.lastIndexOf(".");
+  return (dot >= 0 && MEDIA_MIME[path.slice(dot).toLowerCase()]) || "application/octet-stream";
+}
 
 // CJS bundle (see electron.vite.config.ts) — __dirname is available.
 const here = __dirname;
@@ -186,16 +206,55 @@ function registerMediaProtocol(): void {
   protocol.handle("vc-media", async (req) => {
     try {
       const url = new URL(req.url);
-      const rel = decodeURIComponent(url.pathname.replace(/^\//, ""));
-      if (!rel) return new Response(null, { status: 404 });
       // host "local" = an absolute path on disk.
       if (url.host !== "local") return new Response(null, { status: 404 });
-      const absPath = rel;
-      // net.fetch honours Range so the renderer's mp4box pipeline can stream.
-      return await net.fetch(pathToFileURL(absPath).toString());
+      const absPath = decodeURIComponent(url.pathname.replace(/^\//, ""));
+      if (!absPath) return new Response(null, { status: 404 });
+
+      const size = (await stat(absPath)).size;
+      const type = mediaMime(absPath);
+      // Serve byte ranges ourselves (HTTP 206). net.fetch(file://) did NOT forward
+      // the incoming Range header, so it always returned the whole file (200) with
+      // no Accept-Ranges — which left the <video> scrubber unable to seek past the
+      // buffered region. Honouring Range here makes both <video> seeking and the
+      // mp4box pull work.
+      const range = req.headers.get("Range");
+      if (range) {
+        const m = /bytes=(\d*)-(\d*)/.exec(range);
+        let start = m && m[1] ? parseInt(m[1], 10) : 0;
+        let end = m && m[2] ? parseInt(m[2], 10) : size - 1;
+        if (!Number.isFinite(start) || start < 0) start = 0;
+        if (!Number.isFinite(end) || end >= size) end = size - 1;
+        if (start > end) {
+          return new Response(null, {
+            status: 416,
+            headers: { "Content-Range": `bytes */${size}` },
+          });
+        }
+        const body = Readable.toWeb(createReadStream(absPath, { start, end })) as unknown as ReadableStream;
+        return new Response(body, {
+          status: 206,
+          headers: {
+            "Content-Type": type,
+            "Content-Range": `bytes ${start}-${end}/${size}`,
+            "Accept-Ranges": "bytes",
+            "Content-Length": String(end - start + 1),
+          },
+        });
+      }
+
+      const body = Readable.toWeb(createReadStream(absPath)) as unknown as ReadableStream;
+      return new Response(body, {
+        status: 200,
+        headers: {
+          "Content-Type": type,
+          "Accept-Ranges": "bytes",
+          "Content-Length": String(size),
+        },
+      });
     } catch (err) {
       console.error("vc-media handler failed:", err);
-      return new Response(null, { status: 500 });
+      return new Response(null, { status: 404 });
     }
   });
 }
