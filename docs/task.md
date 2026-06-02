@@ -5,6 +5,31 @@
 
 ---
 
+## ▶ 下一任务(新对话先读)= P2 — Tk 退役(解锁 A6/B5)
+
+> **目标**:退役 Tk 的 **clip 工作台 + 素材 sidebar**,切断它们对 per-plugin Python 的 import → 解锁 **A6/B5 删 Python**(ADR-0008 终态:三插件零 Python)。Electron 新壳已功能对等(P0/P1 完成,项目/素材/创作/AI/模型/环境/语言均可新壳自助)。素材 UI 重塑 + Step 4 已收口(见下方接力点)。
+
+**为什么卡**:A6(删创作 Python)/B5(删素材 Python)删的就是下列文件,但 Tk 还 import 它们:
+- `src/creations/clip/clip_tool.py`(`ClipToolApp`)→ `creations.clip.{config,presets,candidates,clip_editor,render_queue,style_panel,composer,preview,component_defs,components/*}` + `core.composition`(老 Python 引擎)+ `materials.news_video.model`。
+- `src/materials/news_video/sidebar.py` + `ui/*`(node_panes/chapter_editor/source_*_pane/subtitles_dialogs/…)→ `materials.news_video.{model,schema,paths,ai_fill}`。
+
+**Tk 入口/注册**:`src/launcher.py` → `src/VideoCraftHub.py`;创作注册表 `_TOOL_REGISTRY`(~L55)**现只剩 `"clip"`**(**news_desk 已退 = 精确先例**:删 `*_tool.py`+`components/*`+`publish.py` + VideoCraftHub 注销,见 L39-43 注释);侧栏 materials/creations/files 三 tab(~L530-548)。
+
+**建议步骤**(Electron 对等已达成,这里是删 Tk):
+1. **clip Tk**:`_TOOL_REGISTRY` 删 `"clip"`(仿 news_desk);删 `creations/clip/{clip_tool,clip_editor,style_panel,composer,preview,render_queue,candidates}.py` + `components/*`。
+2. **素材 Tk**:VideoCraftHub 材料 tab host 移除;删 `materials/news_video/sidebar.py` + `materials/news_video/ui/*`。
+3. **A6**(Tk 切断后):删 `creations/{clip,news_desk}/{config,presets,component_defs,preview,export,publish}.py`、清 `__init__.py` provider 注册、删 `core_rpc/methods/creation.py` 14 个 provider 方法 + `CreationType` provider 字段 + `Session.creation_owner/invalidate_creation`、删 `test_creation*.py`、清 `client.ts` 死 `creation.*` stub。
+4. **B5**:删 `materials/news_video/{model,schema,paths,ai_fill}.py` + `instance_factory`、删 `core_rpc/methods/material.py` + `Session.material_model`、删 `test_material.py`、补 vitest。
+5. **顺带**:`core/composition/` 老 Python 引擎(只 Tk clip 用)随之死,可删(词汇已在 TS catalog 复用)。
+
+**开放问题(新对话先与用户定)**:① **整个 Tk app 退不退?** VideoCraftHub 还 host download/translate/speech/text2video/preferences/ai_console 等 menubar 工具(迁移设计 §0.5 说这些 legacy 工具"砍了"、不进 Electron)——是只退 clip+素材保留其余,还是整个 `VideoCraftHub.py`/`launcher.py` 退役(后者需确认 yt-dlp 下载等是否还要)。② `core.composition` + `core_rpc` 其余引用一并清的范围。
+
+**前提**:P0/P1 真机验已过。删前**再真机过一遍 clip+素材在 Electron 完整可用**(建实例→导源→ASR→翻译→分析→章节→新闻背景→导出 / clip 候选→样式→导出),确认无 Electron 缺口再删 Tk。
+
+**先读**:`src/VideoCraftHub.py`(注册+sidebar host)、`src/creations/clip/clip_tool.py`(import 面)、[`docs/draft/adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md)(A6/B5 勾选清单)、`electron-migration-design.md`「剩余工作计划」P2/P2.5。**纪律**:删前确认 Electron 对等([[feedback_faithful_port_not_invent]] 反向——别删了才发现 Electron 缺功能);[[feedback_pre_alpha_no_legacy]] 不留兼容层;改 Python 整重启 sidecar。
+
+---
+
 ## ▶▶ 新会话从这读起(2026-06-01 更新,接力点)
 
 > **🚩 重大架构转向进行中 = 三个本体收敛为纯 TS 插件,Python 退成 plugin-agnostic 能力网关(ADR-0008,已立)。** 起因:为 news_desk 恢复 publish.md(续 36)暴露"双语插件不可维护"。**权威设计 = `docs/draft/electron-migration-design.md` 顶部「🚩 架构转向」节 + `docs/adr/0008-plugins-ts-python-capability-gateway.md`。** **▶ 持久任务追踪(跨会话防遗忘,勾选进度看这个)= [`docs/draft/adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md)。** 进度:**Phase A 完成——clip + news_desk 两个创作都迁到纯 TS 路径并验过**(2026-06-01)。两者 config/preset/render 走 TS owner + `render.ts`、经 `vc.fs` 落盘;`client.ts` 按 `type==="clip"|"news_desk"` 分发到各自 `clientBackend.ts`(工作台 tabs **零改动**);`preview_data`/`get_artifact`/news_desk `imports` 仍走 Python(Phase A 桥,defer 到 Phase B)。commit `ad1352d`→`9077cfd`,**165 vitest 全绿**,clip+news_desk GUI 均验过(news_desk 导出能产出 mp4+publish.md)。
