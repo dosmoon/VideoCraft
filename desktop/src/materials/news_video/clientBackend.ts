@@ -21,10 +21,12 @@ import { realFs } from "../../renderer/ipc/fs";
 import { rpcCall } from "../../renderer/ipc/client";
 import type {
   AcquireSource,
+  AnalysisArtifact,
   AnalysisSummary,
   ProjectBrief,
   SourceBasicInfo,
   SourceContext,
+  SourceMeta,
   SubtitleCheck,
 } from "../../renderer/ipc/client";
 import { NewsVideoModel } from "./model";
@@ -102,6 +104,28 @@ export const materialBackend = {
     return { text };
   },
 
+  // Source descriptor + probe values from project meta (the data layer doesn't
+  // carry project.meta; read it from project.current). Empty when never acquired.
+  materialSourceMeta: async (instance: string): Promise<SourceMeta> => {
+    void instance; // single source per project (single_instance) — meta is project-level
+    const cur = await rpcCall<ProjectBrief | null>("project.current");
+    const meta = (cur?.meta ?? {}) as { source?: SourceMeta };
+    return meta.source ?? {};
+  },
+
+  // Existing analysis artifacts for one language → the snake_case wire shape the
+  // current consumers expect (the new sidebar reads the TS registry directly).
+  listAnalysisArtifacts: async (instance: string, lang: string): Promise<AnalysisArtifact[]> => {
+    const m = await loadModel(instance);
+    return (await m.listAnalysisArtifacts(lang)).map((a) => ({
+      kind: a.kind,
+      format: a.format,
+      icon: a.icon,
+      display_zh: a.displayZh,
+      size_bytes: a.sizeBytes,
+    }));
+  },
+
   // ── Writes + sync QC (B3.2b) ──────────────────────────────────────────────
   // Hub-sidebar refresh after a mutation rides the workbench's onChanged →
   // emitLocal("event.material.changed") path (MaterialWorkbench), the single
@@ -112,6 +136,15 @@ export const materialBackend = {
 
   writeBasicInfo: async (instance: string, basicInfo: SourceBasicInfo): Promise<SourceBasicInfo> =>
     (await (await loadModel(instance)).writeBasicInfoDict(basicInfo)) as SourceBasicInfo,
+
+  // Copy an external .srt into subtitles/<lang>.srt; first import sets the project
+  // source language (mirrors model.import_subtitle). Hub refresh via tab onChanged.
+  importSubtitle: async (instance: string, path: string, lang: string): Promise<{ lang: string }> => {
+    const m = await loadModel(instance);
+    await realFs.copy(path, m.subtitlePath(lang));
+    if (!(await projectSourceLang())) await rpcCall("project.set_source_language", { lang });
+    return { lang };
+  },
 
   checkSubtitle: async (instance: string, lang: string): Promise<SubtitleCheck> => {
     const m = await loadModel(instance);

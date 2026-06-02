@@ -111,6 +111,20 @@ describe("NewsVideoModel", () => {
     expect(bad.chapterCount).toBe(0);
   });
 
+  it("listAnalysisArtifacts returns existing kinds in registry order with metadata", async () => {
+    const fs = makeFs();
+    const subs = `${INST}/subtitles`;
+    // hotclips written first, but registry order puts analysis before hotclips.
+    fs.files.set(`${subs}/zh.hotclips.json`, "[]");
+    fs.files.set(`${subs}/zh.analysis.json`, "{}");
+    fs.files.set(`${subs}/en.analysis.json`, "{}"); // other lang — excluded
+    const arts = await new NewsVideoModel(fs, INST).listAnalysisArtifacts("zh");
+    expect(arts.map((a) => a.kind)).toEqual(["analysis", "hotclips"]);
+    expect(arts[0]!.icon).toBe("📑");
+    expect(arts[0]!.displayZh).toBe("标题与章节");
+    expect(arts[1]!.kind).toBe("hotclips");
+  });
+
   it("slotReadiness locks context/subtitles until source is ready", async () => {
     const fs = makeFs();
     const m = new NewsVideoModel(fs, INST);

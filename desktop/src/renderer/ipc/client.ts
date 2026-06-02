@@ -654,7 +654,9 @@ export const rpc = {
 
   // Source descriptor + probe values for the Source tab (null fields until set).
   materialSourceMeta: (type: string, instance: string) =>
-    rpcCall<SourceMeta>("material.source_meta", { type, instance }),
+    type === "news_video"
+      ? materialBackend.materialSourceMeta(instance)
+      : rpcCall<SourceMeta>("material.source_meta", { type, instance }),
 
   // News context (15 fields) + basic_info seed (5 fields). write_* persist the
   // whole dict (server normalizes) and return the stored value.
@@ -699,10 +701,14 @@ export const rpc = {
       : rpcCall<SubtitleCheck>("material.quick_fix_subtitle", { type, instance, lang }),
   // Import an external .srt from disk (path from window.vc.pickSubtitle).
   importSubtitle: (type: string, instance: string, path: string, lang: string) =>
-    rpcCall<{ lang: string }>("material.import_subtitle", { type, instance, path, lang }),
+    type === "news_video"
+      ? materialBackend.importSubtitle(instance, path, lang)
+      : rpcCall<{ lang: string }>("material.import_subtitle", { type, instance, path, lang }),
   // Existing analysis artifacts across all kinds + raw text of one (md/json viewer).
   listAnalysisArtifacts: (type: string, instance: string, lang: string) =>
-    rpcCall<AnalysisArtifact[]>("material.list_analysis_artifacts", { type, instance, lang }),
+    type === "news_video"
+      ? materialBackend.listAnalysisArtifacts(instance, lang)
+      : rpcCall<AnalysisArtifact[]>("material.list_analysis_artifacts", { type, instance, lang }),
   readAnalysisText: (type: string, instance: string, lang: string, kind: string) =>
     type === "news_video"
       ? materialBackend.readAnalysisText(instance, lang, kind)

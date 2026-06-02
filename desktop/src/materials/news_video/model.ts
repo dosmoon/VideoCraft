@@ -43,6 +43,17 @@ import {
   sourceVideoPath,
   subtitlesDir,
 } from "./paths";
+import { ANALYSIS_TYPES, analysisFilename } from "./analysisTypes";
+
+/** One existing analysis artifact on disk (camelCase; backend maps to the wire shape). */
+export interface AnalysisArtifactInfo {
+  kind: string;
+  format: "json" | "md";
+  icon: string;
+  displayZh: string;
+  displayEn: string;
+  sizeBytes: number;
+}
 
 // ── Slot identifiers (stable strings the sidebar references) ──────────────────
 
@@ -82,16 +93,6 @@ export interface AnalysisSummary {
   endStr: string;
   error: string;
 }
-
-// Analysis kind → on-disk filename suffix (port of core.subtitle_analysis
-// ANALYSIS_TYPES — only the suffix map getArtifact needs; the display metadata
-// stays in the analysis UI layer).
-const ANALYSIS_SUFFIX_BY_KIND: Record<string, string> = {
-  analysis: "analysis.json",
-  transcript: "transcript.md",
-  chapter_transcript: "chapter_transcript.md",
-  hotclips: "hotclips.json",
-};
 
 export class NewsVideoModel {
   constructor(
@@ -222,8 +223,29 @@ export class NewsVideoModel {
 
   /** Canonical path for an analysis artifact; null on unknown kind. */
   analysisPath(langIso: string, kind: string): string | null {
-    const suffix = ANALYSIS_SUFFIX_BY_KIND[kind];
-    return suffix ? `${this.subtitlesDir}/${langIso}.${suffix}` : null;
+    const name = analysisFilename(langIso, kind);
+    return name ? `${this.subtitlesDir}/${name}` : null;
+  }
+
+  /** Existing analysis artifacts for one subtitle language, in registry order
+   * (port of core.subtitle_analysis.existing_artifacts). Each kind whose
+   * `<lang>.<suffix>` file is present is returned with its display metadata. */
+  async listAnalysisArtifacts(langIso: string): Promise<AnalysisArtifactInfo[]> {
+    const out: AnalysisArtifactInfo[] = [];
+    for (const t of ANALYSIS_TYPES) {
+      const st = await this.fs.stat(`${this.subtitlesDir}/${langIso}.${t.suffix}`);
+      if (st.exists && !st.isDir) {
+        out.push({
+          kind: t.kind,
+          format: t.format,
+          icon: t.icon,
+          displayZh: t.displayZh,
+          displayEn: t.displayEn,
+          sizeBytes: st.size ?? 0,
+        });
+      }
+    }
+    return out;
   }
 
   // ── Slot readiness (drives sidebar tree rendering) ────────────────────────
