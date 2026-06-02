@@ -29,7 +29,7 @@ import type {
   SourceMeta,
   SubtitleCheck,
 } from "../../renderer/ipc/client";
-import { NewsVideoModel } from "./model";
+import { NewsVideoModel, type SlotId, type SlotState, type SourceMetaLike } from "./model";
 import { readPlatformMetadata } from "./schema";
 import { NEWS_CONTEXT_SCHEMA, NEWS_CONTEXT_TASK, buildContextPrompt } from "./aiFill";
 
@@ -102,6 +102,21 @@ export const materialBackend = {
     const text = await realFs.readText(path);
     if (text === null) throw new Error(`analysis artifact missing: ${lang}.${kind}`);
     return { text };
+  },
+
+  // Structured per-slot readiness (the new sidebar formats the summary itself via
+  // tr(); the data layer emits facts, not UI strings). source meta comes from
+  // project.current (snake → camel for the model's SourceMetaLike).
+  slotReadinessStructured: async (instance: string): Promise<Record<SlotId, SlotState>> => {
+    const m = await loadModel(instance);
+    const cur = await rpcCall<ProjectBrief | null>("project.current");
+    const s = ((cur?.meta as { source?: SourceMeta } | undefined)?.source ?? {}) as SourceMeta;
+    const meta: SourceMetaLike = {};
+    if (s.title) meta.title = s.title;
+    if (s.duration_sec != null) meta.durationSec = s.duration_sec;
+    if (s.width != null) meta.width = s.width;
+    if (s.height != null) meta.height = s.height;
+    return m.slotReadiness(meta);
   },
 
   // Source descriptor + probe values from project meta (the data layer doesn't

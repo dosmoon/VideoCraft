@@ -14,7 +14,7 @@
  *           └ analysis:<iso>:<kind>         (one per existing analysis artifact)
  */
 
-import type { AnalysisArtifactInfo, SlotState } from "./model";
+import type { SlotState } from "./model";
 import { SLOT_NEWS_CONTEXT, SLOT_SOURCE, SLOT_SUBTITLES, type SlotId } from "./model";
 
 export type MaterialNodeKind = "source" | "news_context" | "subtitles" | "lang" | "analysis";
@@ -26,15 +26,14 @@ export interface MaterialNode {
   kind: MaterialNodeKind;
   slot?: SlotState; // source / news_context / subtitles
   lang?: string; // lang / analysis
-  analysisKind?: string; // analysis
-  artifact?: AnalysisArtifactInfo; // analysis
+  analysisKind?: string; // analysis — renderer looks up icon/label via analysisType()
   children: MaterialNode[];
 }
 
 export interface MaterialTreeInput {
   readiness: Record<SlotId, SlotState>;
   langs: string[]; // subtitle languages present (sorted)
-  analysesByLang: Record<string, AnalysisArtifactInfo[]>; // per-lang existing artifacts
+  analysesByLang: Record<string, string[]>; // lang → existing analysis kinds (registry order)
 }
 
 /** Build the slot-level node tree for one news_video instance (pure). */
@@ -45,12 +44,11 @@ export function buildMaterialTree(input: MaterialTreeInput): MaterialNode[] {
     id: `lang:${l}`,
     kind: "lang",
     lang: l,
-    children: (analysesByLang[l] ?? []).map((a) => ({
-      id: `analysis:${l}:${a.kind}`,
+    children: (analysesByLang[l] ?? []).map((kind) => ({
+      id: `analysis:${l}:${kind}`,
       kind: "analysis",
       lang: l,
-      analysisKind: a.kind,
-      artifact: a,
+      analysisKind: kind,
       children: [],
     })),
   }));
