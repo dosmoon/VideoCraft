@@ -59,17 +59,13 @@ export async function runJob<T = unknown>(
     rejectFn = rej;
   });
 
-  let _progN = 0; // TEMP diagnostic
   const process = (method: string, params: unknown) => {
     if (settled) return;
     if (method.startsWith("progress.")) {
-      _progN += 1;
-      if (_progN <= 3 || _progN % 25 === 0) console.log(`[runJob] progress #${_progN} ${method} job=${(params as {job_id?:string})?.job_id}`);
       onProgress?.(params as JobProgress);
       return;
     }
     if (method === "event.job") {
-      console.log(`[runJob] TERMINAL ${method}`, params);
       settled = true;
       const p = params as { status?: string; result?: unknown; error?: unknown };
       if (p.status === "succeeded") resolveFn(p.result as T);
@@ -83,11 +79,7 @@ export async function runJob<T = unknown>(
       buffered.push({ method, params }); // job_id unknown yet — buffer
       return;
     }
-    const pj = (params as { job_id?: string } | null)?.job_id;
-    if (pj !== jobId) {
-      if (method === "event.job" || method.startsWith("progress.")) console.log(`[runJob] SKIP (job mismatch) ${method} got=${pj} want=${jobId}`);
-      return;
-    }
+    if ((params as { job_id?: string } | null)?.job_id !== jobId) return;
     process(method, params);
   };
 
@@ -95,7 +87,6 @@ export async function runJob<T = unknown>(
   try {
     const { job_id } = await start();
     jobId = job_id;
-    console.log(`[runJob] started job=${jobId}, buffered=${buffered.length}`);
     // Replay anything that arrived for us before job_id was known.
     for (const b of buffered) {
       if ((b.params as { job_id?: string } | null)?.job_id === jobId) process(b.method, b.params);

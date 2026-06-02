@@ -92,6 +92,17 @@ def main() -> int:
     jobs = JobRegistry(emit)
     ctx = Context(session=session, emit=emit, jobs=jobs)
 
+    # Warm native C-extension imports (ctranslate2/faster-whisper, llama_cpp) on
+    # THIS main thread before the stdin loop below. Importing them first on a job
+    # daemon thread while the main thread is blocked in sys.stdin.read() deadlocks
+    # the C-ext init (confirmed minimal repro) — the ASR "loading model" hang.
+    try:
+        from core.ai.warmup import warm_native_extensions
+
+        warm_native_extensions(_log)
+    except Exception as exc:  # noqa: BLE001 — never let warm-up block startup
+        _log("native warm-up error (non-fatal):", exc)
+
     _log(f"ready (pid={os.getpid()}, repo={_REPO})")
 
     in_buf = sys.stdin.buffer
