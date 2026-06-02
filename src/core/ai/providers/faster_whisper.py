@@ -208,6 +208,11 @@ def transcribe(
 
     model = _load_model(md, device=device, compute_type=compute,
                         num_threads=num_threads)
+    # Model is in; the next big gap is the first generator pull (whole-file
+    # decode + VAD before segment 1) which is silent. Signal it so the UI shows
+    # forward motion instead of a frozen "calling ASR" line — long files there
+    # otherwise look hung and get cancelled mid-decode.
+    emit("model_loaded", device=f"faster-whisper-{device}")
 
     started = time.monotonic()
     decode_started = time.monotonic()
@@ -234,6 +239,10 @@ def transcribe(
     all_segments: list[dict] = []
     all_words: list[dict] = []
     text_parts: list[str] = []
+
+    # The first pull below blocks while the whole file is decoded + VAD'd
+    # (no per-segment events yet); announce the phase so it doesn't look stalled.
+    emit("state_decoding")
 
     try:
         # Iteration is what actually drives the decode (segments_iter is a

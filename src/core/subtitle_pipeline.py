@@ -142,6 +142,21 @@ def run_asr_paths(
                 status_text=f"已转写 {seg} 段 · {int(elapsed)}s",
             ))
             return
+        # Local model loaded; the silent whole-file decode is about to start.
+        if event_type == "model_loaded":
+            _emit(progress_cb, ProgressInfo(
+                phase="transcribing", percent=None,
+                status_text="模型已加载,正在解码音频...",
+            ))
+            return
+        # First generator pull = whole-file decode + VAD (longest silent step on
+        # big files). Tell the user so they don't think it stalled and cancel.
+        if event_type == "state_decoding":
+            _emit(progress_cb, ProgressInfo(
+                phase="transcribing", percent=None,
+                status_text="正在解码音频并转写(长视频首段较久,请耐心等待)...",
+            ))
+            return
         # Provider startup / request summary — show we're past "准备中"
         if event_type in ("request_summary", "request_summary_local"):
             provider_hint = (
