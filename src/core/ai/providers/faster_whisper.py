@@ -19,15 +19,8 @@ Background on the earlier sherpa-onnx attempt:
 from __future__ import annotations
 
 import os
-import sys
 import time
 from typing import Callable
-
-
-def _log(msg: str) -> None:
-    """Diagnostic timing to stderr — visible in the sidecar terminal so a slow
-    ASR can be pinpointed (model load vs whole-file decode vs per-segment)."""
-    print(f"[asr] {msg}", file=sys.stderr, flush=True)
 
 from core.ai.errors import AIError, Kind
 from core import gpu as _gpu
@@ -213,11 +206,8 @@ def transcribe(
         translate="true" if translate else "false",
     )
 
-    _log(f"loading model {model_name} on {device} ({compute}) from {md} ...")
-    _t_load = time.monotonic()
     model = _load_model(md, device=device, compute_type=compute,
                         num_threads=num_threads)
-    _log(f"model ready in {time.monotonic() - _t_load:.1f}s; audio={audio_path!r}")
     # Model is in; the next big gap is the first generator pull (whole-file
     # decode + VAD before segment 1) which is silent. Signal it so the UI shows
     # forward motion instead of a frozen "calling ASR" line — long files there
@@ -253,18 +243,11 @@ def transcribe(
     # The first pull below blocks while the whole file is decoded + VAD'd
     # (no per-segment events yet); announce the phase so it doesn't look stalled.
     emit("state_decoding")
-    _log("transcribe() returned; pulling first segment (this triggers whole-file "
-         "decode + VAD — the silent step)...")
 
     try:
         # Iteration is what actually drives the decode (segments_iter is a
         # generator). Emit progress per segment so long files don't stall.
         for seg in segments_iter:
-            if not all_segments:
-                _log(f"first segment yielded at {time.monotonic() - decode_started:.1f}s "
-                     f"(decode done, transcribing)")
-            elif len(all_segments) % 50 == 0:
-                _log(f"{len(all_segments)} segments, {time.monotonic() - decode_started:.1f}s")
             if cancel_token is not None and cancel_token.cancelled:
                 raise AIError(Kind.CANCELLED, "faster_whisper",
                               "Cancelled by user")
