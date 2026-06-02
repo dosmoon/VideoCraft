@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { rpc, RpcError } from "../../ipc/client";
 import { tr } from "../../i18n/tr";
+import { ArrowLeft } from "../../ui/icons";
 
 // "HH:MM:SS" / "MM:SS" → seconds (0 on parse failure).
 function parseHMS(s: string): number {
@@ -149,8 +150,9 @@ export function ChapterScheduleEditor(props: {
   return (
     <div style={{ maxWidth: 720 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-        <button onClick={onClose} style={{ ...BTN_GHOST, padding: "3px 10px" }}>
-          {tr("material.back_btn")}
+        <button onClick={onClose} style={{ ...BTN_GHOST, display: "inline-flex", alignItems: "center", gap: 6, padding: "4px 10px" }}>
+          <ArrowLeft size={14} strokeWidth={2} />
+          {tr("material.back_btn_text")}
         </button>
         <strong style={{ fontSize: 13 }}>{filename}</strong>
         <span style={{ color: "#777", fontSize: 12 }}>{tr("material.chapters.schedule_label")}</span>

@@ -7,14 +7,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { rpc, RpcError, type SubtitleCheck } from "../../ipc/client";
 import { tr } from "../../i18n/tr";
+import { color, radius, font, state as st } from "../../ui/tokens";
+import { ArrowLeft, Check, Wrench, AlertCircle } from "../../ui/icons";
 
-const BTN_GHOST: React.CSSProperties = {
+const ghostBtn: React.CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
   padding: "5px 12px",
-  background: "#2a2a2e",
-  color: "#ddd",
+  background: color.bgHover,
+  color: color.textPrimary,
   border: "none",
-  borderRadius: 5,
-  fontSize: 12,
+  borderRadius: radius.sm,
+  fontSize: font.sm,
   cursor: "pointer",
 };
 
@@ -24,9 +29,9 @@ function fmt(err: unknown): string {
 }
 
 const SEV_COLOR: Record<string, string> = {
-  hard: "#ff6b6b",
-  fixable: "#d9a441",
-  advisory: "#888",
+  hard: color.danger,
+  fixable: st.partial,
+  advisory: color.textMuted,
 };
 
 export function SubtitleViewer(props: {
@@ -79,40 +84,50 @@ export function SubtitleViewer(props: {
   return (
     <div style={{ maxWidth: 720 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 10 }}>
-        <button onClick={onClose} style={{ ...BTN_GHOST, padding: "3px 10px" }}>
-          {tr("material.back_btn")}
+        <button onClick={onClose} style={{ ...ghostBtn, padding: "4px 10px" }}>
+          <ArrowLeft size={14} strokeWidth={2} />
+          {tr("material.back_btn_text")}
         </button>
-        <strong style={{ fontSize: 13 }}>{lang}.srt</strong>
+        <strong style={{ fontSize: font.md, color: color.textPrimary }}>{lang}.srt</strong>
         {check && (
-          <span style={{ fontSize: 12, color: "#999" }}>
+          <span style={{ fontSize: font.sm, color: color.textSecondary }}>
             {tr("material.subtitles.cue_count", { count: check.cue_count })}
             {check.hard > 0 && <span style={{ color: SEV_COLOR.hard }}> · {tr("material.subtitles.hard_count", { count: check.hard })}</span>}
             {check.fixable > 0 && <span style={{ color: SEV_COLOR.fixable }}> · {tr("material.subtitles.fixable_count", { count: check.fixable })}</span>}
             {check.advisory > 0 && <span style={{ color: SEV_COLOR.advisory }}> · {tr("material.subtitles.advisory_count", { count: check.advisory })}</span>}
             {check.hard === 0 && check.fixable === 0 && (
-              <span style={{ color: "#3ecf8e" }}> · ✓ {tr("material.subtitles.no_hard_issues")}</span>
+              <span style={{ color: st.done, display: "inline-flex", alignItems: "center", gap: 3 }}>
+                {" "}
+                · <Check size={13} strokeWidth={2.5} /> {tr("material.subtitles.no_hard_issues")}
+              </span>
             )}
           </span>
         )}
         {check && check.fixable > 0 && (
-          <button onClick={() => void quickFix()} disabled={busy} style={{ ...BTN_GHOST, marginLeft: "auto", color: "#d9a441" }}>
+          <button onClick={() => void quickFix()} disabled={busy} style={{ ...ghostBtn, marginLeft: "auto", color: st.partial }}>
+            <Wrench size={13} strokeWidth={2} />
             {tr("material.subtitles.quick_fix_btn")}
           </button>
         )}
       </div>
 
-      {error && <div style={{ color: "#ff6b6b", fontSize: 12, marginBottom: 8 }}>✗ {error}</div>}
+      {error && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, color: color.danger, fontSize: font.sm, marginBottom: 8 }}>
+          <AlertCircle size={14} strokeWidth={2} style={{ flexShrink: 0 }} />
+          <span>{error}</span>
+        </div>
+      )}
 
       {check && check.issues.length > 0 && (
         <div style={{ marginBottom: 10, display: "flex", flexDirection: "column", gap: 2 }}>
           {check.issues.slice(0, 30).map((iss, i) => (
-            <div key={i} style={{ fontSize: 11, color: SEV_COLOR[iss.severity_class] ?? "#999" }}>
+            <div key={i} style={{ fontSize: font.xs, color: SEV_COLOR[iss.severity_class] ?? color.textSecondary }}>
               {iss.cue_index > 0 ? `#${iss.cue_index} ` : ""}
               {iss.message}
             </div>
           ))}
           {check.issues.length > 30 && (
-            <div style={{ fontSize: 11, color: "#666" }}>…{tr("material.subtitles.issues_total", { count: check.issues.length })}</div>
+            <div style={{ fontSize: font.xs, color: color.textMuted }}>…{tr("material.subtitles.issues_total", { count: check.issues.length })}</div>
           )}
         </div>
       )}
@@ -121,13 +136,13 @@ export function SubtitleViewer(props: {
         style={{
           margin: 0,
           padding: 10,
-          background: "#161619",
-          border: "1px solid #2a2a2e",
-          borderRadius: 5,
+          background: color.bgInset,
+          border: `1px solid ${color.borderSubtle}`,
+          borderRadius: radius.sm,
           maxHeight: 360,
           overflow: "auto",
-          fontSize: 12,
-          color: "#cdd",
+          fontSize: font.sm,
+          color: color.textSecondary,
           whiteSpace: "pre-wrap",
           fontFamily: "ui-monospace, monospace",
         }}

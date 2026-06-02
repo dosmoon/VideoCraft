@@ -13,6 +13,7 @@
 
 export const color = {
   bg: "#111111", // app base (matches index.html body)
+  bgInset: "#16161a", // recessed surfaces: cards, code/preview blocks
   bgRaised: "#1f1f23", // popovers / menus
   bgHover: "#26262b", // row hover, ghost-button rest
   border: "#3a3a40",

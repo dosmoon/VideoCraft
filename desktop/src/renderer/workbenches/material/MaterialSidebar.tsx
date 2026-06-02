@@ -131,7 +131,7 @@ function MutedTag({ children }: { children: React.ReactNode }) {
  * in the right detail panel, not crammed into the row. */
 function StatusBadge({ node }: { node: MaterialNode }): React.ReactNode {
   const slot = node.slot;
-  if (slot?.isLocked) return null;
+  if (slot?.isLocked) return <MutedTag>{tr("material.sidebar.locked")}</MutedTag>;
   if (node.kind === "source") {
     if (!slot?.isFilled) return <MutedTag>{tr("material.sidebar.no_source")}</MutedTag>;
     const d = slot.source?.durationSec;
