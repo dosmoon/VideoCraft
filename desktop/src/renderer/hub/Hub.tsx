@@ -1,8 +1,8 @@
 /**
  * Hub — the product UI, driven entirely by the read-only sidecar RPC
  * (project.recent_list/open/close/current, project.list_materials/
- * list_creations, material.slot_readiness). It is the renderer's sole surface
- * now that the substrate spike harness has been retired.
+ * list_creations). It is the renderer's sole surface now that the substrate
+ * spike harness has been retired.
  *
  * Scope (migration doc §0.5 — the Electron shell is framework + 素材 + 创作;
  * the legacy Tk menubar tools are cut): a project launcher and a material
@@ -16,7 +16,6 @@ import {
   type CreationTypeInfo,
   type MaterialTypeInfo,
   type ProjectBrief,
-  type SlotState,
 } from "../ipc/client";
 import { CreationWorkbench } from "../workbenches";
 import { MaterialSidebar } from "../workbenches/material/MaterialSidebar";
@@ -44,9 +43,6 @@ function descOf(t: { description_zh: string; description_en: string }): string {
   return getLang() === "zh" ? t.description_zh : t.description_en;
 }
 
-// "type/instance" → (slotId → state). Flat key keeps the readiness cache simple.
-type Readiness = Record<string, Record<string, SlotState>>;
-
 function fmt(err: unknown): string {
   if (err instanceof RpcError) return `[${err.code}] ${err.message}`;
   return err instanceof Error ? err.message : String(err);
@@ -57,7 +53,6 @@ export function Hub() {
   const [current, setCurrent] = useState<ProjectBrief | null>(null);
   const [materials, setMaterials] = useState<Record<string, string[]>>({});
   const [creations, setCreations] = useState<Record<string, string[]>>({});
-  const [readiness, setReadiness] = useState<Readiness>({});
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   // The open creation workbench (one at a time), or none.
@@ -69,23 +64,13 @@ export function Hub() {
   const [material, setMaterial] = useState<{ type: string; instance: string; nodeId: string | null } | null>(null);
   const [matRefresh, setMatRefresh] = useState(0);
 
-  // Load a project's material/creation tree + per-instance slot readiness.
+  // Load a project's material/creation instance lists. (Each material sidebar
+  // fetches its own slot readiness via materialBackend.slotReadinessStructured.)
   const loadTree = useCallback(async (brief: ProjectBrief) => {
     setCurrent(brief);
     const [mats, creas] = await Promise.all([rpc.listMaterials(), rpc.listCreations()]);
     setMaterials(mats);
     setCreations(creas);
-    const next: Readiness = {};
-    for (const [type, insts] of Object.entries(mats)) {
-      for (const inst of insts) {
-        try {
-          next[`${type}/${inst}`] = await rpc.slotReadiness(type, inst);
-        } catch {
-          /* a model that can't report readiness just renders without slots */
-        }
-      }
-    }
-    setReadiness(next);
   }, []);
 
   // On mount: recents + whatever project the sidecar already holds open (it
@@ -107,39 +92,19 @@ export function Hub() {
     };
   }, [loadTree]);
 
-  // Live-refresh the tree from sidecar notifications (a workbench job / write in
-  // another view, or a material edit, broadcasts these). materials/creations
-  // .changed = structural (reload lists + readiness); material.changed = one
-  // instance's slots changed (re-read just that one).
+  // Live-refresh the instance lists from sidecar notifications: materials/
+  // creations.changed = structural (an instance was added/removed). Per-instance
+  // slot changes (event.material.changed) refresh inside the active sidebar via
+  // matRefresh, so the Hub no longer tracks readiness here.
   useEffect(() => {
     if (!current) return;
-    const unsub = rpc.onNotification((method, params) => {
+    const unsub = rpc.onNotification((method) => {
       if (method === "event.materials.changed" || method === "event.creations.changed") {
         void (async () => {
           const [mats, creas] = await Promise.all([rpc.listMaterials(), rpc.listCreations()]);
           setMaterials(mats);
           setCreations(creas);
-          const next: Readiness = {};
-          for (const [t, insts] of Object.entries(mats)) {
-            for (const i of insts) {
-              try {
-                next[`${t}/${i}`] = await rpc.slotReadiness(t, i);
-              } catch {
-                /* best-effort */
-              }
-            }
-          }
-          setReadiness(next);
         })();
-      } else if (method === "event.material.changed") {
-        const p = params as { type?: string; instance?: string } | null;
-        if (p?.type && p.instance) {
-          const key = `${p.type}/${p.instance}`;
-          void rpc
-            .slotReadiness(p.type, p.instance)
-            .then((r) => setReadiness((prev) => ({ ...prev, [key]: r })))
-            .catch(() => {});
-        }
       }
     });
     return unsub;
@@ -172,7 +137,6 @@ export function Hub() {
     setCurrent(null);
     setMaterials({});
     setCreations({});
-    setReadiness({});
     setWorkbench(null);
   }, []);
 
@@ -191,23 +155,17 @@ export function Hub() {
     [],
   );
 
-  // Create a new material instance, refresh the tree (+ its slot readiness), and
-  // open its workbench. Single-instance types are guarded at the menu, but the
-  // RPC also rejects a duplicate name defensively.
+  // Create a new material instance, refresh the list, and open it in the
+  // sidebar-driven material view (source node selected). Single-instance types
+  // are guarded at the menu, but the RPC also rejects a duplicate name.
   const createMaterial = useCallback(
     async (type: string) => {
       setError("");
       try {
         const { instance } = await rpc.createMaterialInstance(type);
-        const mats = await rpc.listMaterials();
-        setMaterials(mats);
-        try {
-          const r = await rpc.slotReadiness(type, instance);
-          setReadiness((prev) => ({ ...prev, [`${type}/${instance}`]: r }));
-        } catch {
-          /* readiness is best-effort */
-        }
-        setWorkbench({ kind: "material", type, instance });
+        setMaterials(await rpc.listMaterials());
+        setWorkbench(null);
+        setMaterial({ type, instance, nodeId: "source" });
       } catch (err) {
         setError(fmt(err));
       }
@@ -269,7 +227,6 @@ export function Hub() {
       current={current}
       materials={materials}
       creations={creations}
-      readiness={readiness}
       error={error}
       workbench={workbench}
       material={material}
@@ -448,7 +405,6 @@ function ProjectView(props: {
   current: ProjectBrief;
   materials: Record<string, string[]>;
   creations: Record<string, string[]>;
-  readiness: Readiness;
   error: string;
   workbench: OpenWorkbench | null;
   material: { type: string; instance: string; nodeId: string | null } | null;
