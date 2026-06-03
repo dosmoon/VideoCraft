@@ -1,6 +1,6 @@
 {
   "name": "videocraft-desktop",
-  "version": "0.0.0",
+  "version": "0.3.5",
   "private": true,
   "description": "VideoCraft Electron renderer — home of the OTIO composition core, video component library, and GPU compositor. See docs/draft/composition-otio-foundation.md.",
   "type": "module",
@@ -8,6 +8,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "build:win": "electron-vite build && electron-builder --win",
     "preview": "electron-vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -26,6 +27,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "@webgpu/types": "^0.1.69",
     "electron": "^42.3.0",
+    "electron-builder": "^26.8.1",
     "electron-vite": "^2.3.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

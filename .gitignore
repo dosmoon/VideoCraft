@@ -38,6 +38,7 @@ MANIFEST
 # electron-builder; never committed — rebuilt from source).
 .build/
 desktop/resources/
+desktop/release/
 
 # Installer logs
 pip-log.txt

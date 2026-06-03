@@ -1,0 +1,49 @@
+# electron-builder config for the VideoCraft desktop app (P3, packaging-design.md §3).
+#
+# Prereq: packaging/build_sidecar.ps1 has produced desktop/resources/sidecar/
+# (the PyInstaller onedir). Then: pnpm build:win → out/ + installer in release/.
+#
+# `files` deliberately omits node_modules: electron/ imports only `electron` +
+# node: builtins (verified), and the renderer's third-party deps are vite-bundled
+# into out/renderer/. Packing node_modules would only invite the pnpm symlink
+# quirks electron-builder has with hoisted vs isolated stores.
+
+appId: com.dosmoon.videocraft
+productName: VideoCraft
+copyright: Copyright © 2026 dosmoon
+
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**
+  - package.json
+
+# The frozen Python sidecar ships outside the asar, under <app>/resources/sidecar/
+# — exactly where paths.ts looks for it in packaged mode.
+extraResources:
+  - from: resources/sidecar
+    to: sidecar
+
+asar: true
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: ${productName}-${version}-setup.${ext}
+  # Skip signing + rcedit exe-resource editing. Editing pulls electron-builder's
+  # winCodeSign tool, whose archive contains macOS symlinks that fail to extract
+  # on a non-admin / non-Developer-Mode Windows box. Off → no winCodeSign needed
+  # (the exe keeps the default Electron icon until we sign properly in step 8/CI).
+  signAndEditExecutable: false
+
+nsis:
+  # Per-user install (no admin) into %LOCALAPPDATA%\Programs\VideoCraft — a
+  # WRITABLE location, so paths.ts's install-local user_data (beside the exe)
+  # works without admin and honours the portable-data rule (not %APPDATA%).
+  perMachine: false
+  oneClick: false
+  allowToChangeInstallationDirectory: true
