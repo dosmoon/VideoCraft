@@ -19,13 +19,15 @@
 
 ---
 
-## ▶▶ 本会话(2026-06-03 续)= P3 打包启动:方案定稿 + 路径 seam(step 1-2 ✅ build-green)
+## ▶▶ 本会话(2026-06-03 续)= P3 打包启动:方案定稿 + seam + 冻结 sidecar(step 1-3 ✅,commit `919895f`/`806653f`,**待 push 后暂停**)
 
-> 用户「push P6 → 然后 P3」。P3 起手先定方案(纪律)。**权威方案 = 新建 [`packaging-design.md`](draft/packaging-design.md)**(深度细节都在那,task.md 只留指针)。两个地基分叉用户已拍板:**① sidecar = PyInstaller onedir ② 瘦装包 + 引导下载**。
+> 用户「push P6 → 然后 P3」→ steps 1-3 后「先 push 停一停」。P3 起手先定方案(纪律)。**权威方案 = 新建 [`packaging-design.md`](draft/packaging-design.md)**(深度细节都在那,task.md 只留指针)。两个地基分叉用户已拍板:**① sidecar = PyInstaller onedir ② 瘦装包 + 引导下载**。
 
-- **关键摸底**:`myenv` = **7.0GB 污染态**(装了 requirements.txt 明令移除的 torch/sherpa/nvidia/wandb/pandas)→ **绝不能整包 ship**;打包输入必须从 `requirements.txt` 用 uv 重建干净 CPU 档闭包。引导下载已有机制可复用(`user_data/{runtimes,models}` + `env`/`models`/`gpu` RPC 域)。
-- **step 1+2 已落(build-green)**:① `desktop/electron/paths.ts` 新建 = **单一 dev↔packaged seam**(`app.isPackaged` 分发 sidecar `{command,args,cwd}` + userData);`sidecar.ts` 改吃注入式 launch 描述符(去 repo 布局假设);`main.ts` 接线。**dev 行为字节等价**。② `core_rpc/server.py` 冻结态根解析(`sys.frozen`→`_MEIPASS`,dev 不变)。**验证**:typecheck + build + **212 vitest** 绿;sidecar dev-seam 冒烟(boot + load_plugins + native warmup + `system.get_locale`→`{lang:zh}` + clean shutdown)全过。
-- **下一步 = step 3**:拆 `requirements-base.txt`(base 非 AI 随包 / embedded-ai-extra 运行时装)+ `packaging/{build_sidecar.ps1,core_rpc.spec}`;uv 建干净 env → PyInstaller 出 `resources/sidecar/core_rpc.exe`,命令行验 echo 往返。step 4-8(ffmpeg 随包 / electron-builder / userData install-local / 嵌入 AI opt-in / 打磨)见 packaging-design.md §8。
+- **关键摸底**:`myenv` = **7.0GB 污染态**(装了 requirements.txt 明令移除的 torch/sherpa/nvidia/wandb/pandas)→ **绝不能整包 ship**;打包输入从 `requirements.txt` 用 uv 重建干净 CPU 档闭包(实测冻结后仅 **66MB**)。引导下载已有机制可复用(`user_data/{runtimes,models}` + `env`/`models`/`gpu` RPC 域)。
+- **step 1+2(`919895f`)**:① `desktop/electron/paths.ts` 新建 = **单一 dev↔packaged seam**(`app.isPackaged` 分发 sidecar `{command,args,cwd}` + userData);`sidecar.ts` 改吃注入式 launch 描述符(去 repo 布局假设);`main.ts` 接线。**dev 行为字节等价**。② `core_rpc/server.py` 冻结态根解析(`sys.frozen`→`_MEIPASS`,dev 不变)。typecheck + build + **212 vitest** 绿。
+- **step 3(`806653f`)= PyInstaller onedir sidecar 管线**:`requirements-base.txt`(base 非 AI / embedded-ai 运行时装,排除 faster-whisper+llama-cpp)+ `packaging/{build_sidecar.ps1,core_rpc.spec,sidecar_entry.py}`。**坑修**:冻结后入口脚本无包上下文 → server.py 相对 import 全断;入口 wrapper `sidecar_entry.py` 用 `from core_rpc.server import main` 当包导入解决(server.py 不改)。动态 `load_plugins()` 靠 spec 的 `collect_submodules(core/creations/materials/core_rpc)` 全收。**实测冻结 exe**:三插件全注册 + 99 语言 + env 注册表 + 优雅降级(`project.list_creation_types`/`list_material_types_info`/`system.list_languages`/`env.components` 全 OK),**66.4MB**。产物 `desktop/resources/sidecar/`(gitignore)。
+- **决策(用户拍板)**:**ffmpeg 暂不随包**(step 4 defer)——`core.env` 的 ffmpeg/ffprobe 是 detect-only(`install=None`)、只探 PATH,随包需新源;`ffmpeg.ts` 已有 PATH 回退,开发机/装了 ffmpeg 的机器能跑,真分发前再补 pinned 下载。
+- **下一步(暂停后继续)= step 5** electron-builder 出 NSIS 安装包(产出后**必须真机验**启动/导出/sidecar 连上——headless 盲区);然后 step 6 userData install-local 可写根(便携 vs NSIS,packaging-design.md §9 待决)+ step 7 嵌入 AI opt-in 装 `py-extra`(§5.3,新代码)+ step 8 打磨。完整计划 packaging-design.md §8。
 
 ---
 
