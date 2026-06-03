@@ -1,18 +1,19 @@
 /**
- * Spike C — WebCodecs export. Walk the timeline's output frames, prepare each
- * via the SAME prepareFrame/paintPreparedFrame the preview uses (so preview≡
- * render is structural), render to an OFFSCREEN target and read the pixels back
- * (the swapchain can't be read — WebGPU doesn't preserve the drawing buffer),
- * wrap them in a VideoFrame, encode with VideoEncoder, mux to mp4. Bytes go to
- * the main process to write (renderer can't touch the filesystem).
+ * WebCodecs export. Walk the timeline's output frames, prepare each via the SAME
+ * prepareFrame/paintPreparedFrame the preview uses (so preview≡render is
+ * structural), render into the GPU canvas, capture the canvas straight into a
+ * VideoFrame (no GPU→CPU readback — the browser keeps it GPU-side), encode with
+ * VideoEncoder, mux to mp4. The mp4 streams to disk via the `output` sink (16
+ * MiB chunks) for large renders, or is returned as bytes for small ones.
  *
- * Note (Spike A carry-over): frame sampling uses the playback ClipReader, which
- * returns the nearest decoded frame at-or-before each output time (±a few
- * frames). Bit-exact export wants a decode-to-exact-frame path — documented
- * refinement, not blocking the encode/mux/write de-risk here.
+ * Note: this is the in-browser encode path. It's software H.264 (~135 fps@1080p)
+ * — Chromium exposes no hardware encoder for WebCodecs on this platform. The
+ * native ffmpeg + NVENC path (sidecar) is the route to hardware-speed export.
  */
 
-import { ArrayBufferTarget, Muxer } from "mp4-muxer";
+import { ArrayBufferTarget, Muxer, StreamTarget } from "mp4-muxer";
+
+type MuxTarget = ArrayBufferTarget | StreamTarget;
 import { resolveFrameAt } from "@composition/compositor/resolve.js";
 import { resolveAudioSegments, type AudioSegment } from "@composition/compositor/resolveAudio.js";
 import type { Timeline } from "@composition/ir.js";
@@ -38,6 +39,36 @@ export class ExportCancelled extends Error {
   }
 }
 
+/**
+ * Block until the encoder's queue drains to `max`, sleeping on the `dequeue`
+ * event rather than polling with setTimeout. setTimeout(0) is clamped to ~4ms
+ * for nested timers, so a poll loop throttles throughput to ~120 fps even when
+ * the encoder is far faster — the dequeue event wakes us the instant a frame
+ * leaves the queue. A short timeout backstops the rare missed-event race.
+ */
+async function drainQueueBelow(
+  encoder: VideoEncoder | AudioEncoder,
+  max: number,
+  checkError: () => Error | null,
+): Promise<void> {
+  while (encoder.encodeQueueSize > max) {
+    const err = checkError();
+    if (err) throw err;
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        encoder.removeEventListener("dequeue", finish);
+        clearTimeout(timer);
+        resolve();
+      };
+      const timer = setTimeout(finish, 8);
+      encoder.addEventListener("dequeue", finish);
+    });
+  }
+}
+
 export interface ExportOptions {
   timeline: Timeline;
   drawDeps: DrawDeps;
@@ -56,6 +87,18 @@ export interface ExportOptions {
    * audio clips referencing them), an AAC audio track is mixed + muxed in.
    */
   audioSources?: ReadonlyMap<string, DecodedAudio>;
+  /**
+   * When set, the muxed mp4 is STREAMED to this sink (16 MiB chunks, at the
+   * given byte position) instead of being buffered whole in memory and returned.
+   * Required for full-source renders, which are too large to hold in one
+   * ArrayBuffer (let alone copy over IPC). `drain` is awaited once per frame so
+   * pending writes flush and outstanding data stays bounded; the function
+   * returns an empty Uint8Array in this mode.
+   */
+  output?: {
+    onData: (data: Uint8Array, position: number) => void;
+    drain?: () => Promise<void>;
+  };
 }
 
 interface AudioOut {
@@ -84,7 +127,7 @@ function planAudio(
 
 /** Mix + AAC-encode the audio track into the muxer (after the video pass). */
 async function encodeAudioTrack(
-  muxer: Muxer<ArrayBufferTarget>,
+  muxer: Muxer<MuxTarget>,
   segments: readonly AudioSegment[],
   sources: ReadonlyMap<string, DecodedAudio>,
   out: AudioOut,
@@ -130,10 +173,7 @@ async function encodeAudioTrack(
     });
     encoder.encode(data);
     data.close();
-    while (encoder.encodeQueueSize > 8) {
-      await new Promise<void>((r) => setTimeout(r, 0));
-      if (encodeError) throw encodeError;
-    }
+    await drainQueueBelow(encoder, 8, () => encodeError);
   }
 
   await encoder.flush();
@@ -142,36 +182,53 @@ async function encodeAudioTrack(
 }
 
 /**
- * Pick an H.264 codec string whose level actually covers width×height. A fixed
- * low level (e.g. baseline 3.1 = max 1280×720) makes configure() reject for
- * portrait/HD targets — and then encode() throws "closed codec". Try High
- * profile from level 5.2 down and take the first the encoder reports supported
- * for these dims; fall back to baseline 3.1.
+ * Pick a working H.264 encoder config. Probes codec level (a fixed low level
+ * like baseline 3.1 = max 1280×720 makes configure() reject portrait/HD targets,
+ * then encode() throws "closed codec") × acceleration × latency, taking the
+ * first the encoder reports supported. `latencyMode:"realtime"` drops B-frames/
+ * lookahead for speed; prefer-hardware is honoured where a hardware encoder
+ * exists (none on the current Windows/Chromium, which falls back to software).
  */
-async function pickAvcCodec(width: number, height: number, bitrate: number, fps: number): Promise<string> {
-  const candidates = [
+async function pickEncoderConfig(
+  width: number,
+  height: number,
+  bitrate: number,
+  fps: number,
+): Promise<VideoEncoderConfig> {
+  const codecs = [
     "avc1.640034", // High 5.2  (≤ 4K)
     "avc1.640033", // High 5.1
     "avc1.64002a", // High 4.2  (≤ 1080p-ish)
     "avc1.640028", // High 4.0
     "avc1.42001f", // Baseline 3.1 (≤ 720p)
   ];
-  for (const codec of candidates) {
-    try {
-      const s = await VideoEncoder.isConfigSupported({
-        codec,
-        width,
-        height,
-        bitrate,
-        framerate: fps,
-        avc: { format: "avc" },
-      });
-      if (s.supported) return codec;
-    } catch {
-      /* try the next candidate */
+  const base = (
+    codec: string,
+    accel: HardwareAcceleration,
+    latency: LatencyMode,
+  ): VideoEncoderConfig => ({
+    codec,
+    width,
+    height,
+    bitrate,
+    framerate: fps,
+    avc: { format: "avc" }, // length-prefixed (AVCC) — what mp4 wants
+    hardwareAcceleration: accel,
+    latencyMode: latency,
+  });
+  for (const accel of ["prefer-hardware", "no-preference"] as const) {
+    for (const latency of ["realtime", "quality"] as const) {
+      for (const codec of codecs) {
+        try {
+          const s = await VideoEncoder.isConfigSupported(base(codec, accel, latency));
+          if (s.supported) return base(codec, accel, latency);
+        } catch {
+          /* try the next candidate */
+        }
+      }
     }
   }
-  return "avc1.640034";
+  return base("avc1.640034", "no-preference", "quality");
 }
 
 export async function exportTimelineToMp4(opts: ExportOptions): Promise<Uint8Array> {
@@ -186,13 +243,21 @@ export async function exportTimelineToMp4(opts: ExportOptions): Promise<Uint8Arr
   const audioSegments = opts.audioSources ? resolveAudioSegments(timeline) : [];
   const audioOut = planAudio(audioSegments, opts.audioSources);
 
+  // Streaming to disk (full-source renders) vs in-memory buffer (small clip
+  // outputs). Streaming can't move the moov atom to the front without buffering
+  // the whole file, so it uses fastStart:false (moov at end) — fine for local
+  // playback. The in-memory path keeps fastStart:"in-memory" (faststart mp4).
+  const streaming = opts.output;
+  const target: MuxTarget = streaming
+    ? new StreamTarget({ onData: streaming.onData, chunked: true })
+    : new ArrayBufferTarget();
   const muxer = new Muxer({
-    target: new ArrayBufferTarget(),
+    target,
     video: { codec: "avc", width, height, frameRate: fps },
     ...(audioOut
       ? { audio: { codec: "aac" as const, numberOfChannels: audioOut.numberOfChannels, sampleRate: audioOut.sampleRate } }
       : {}),
-    fastStart: "in-memory",
+    fastStart: streaming ? false : "in-memory",
   });
 
   let encodeError: Error | null = null;
@@ -202,14 +267,7 @@ export async function exportTimelineToMp4(opts: ExportOptions): Promise<Uint8Arr
       encodeError = e instanceof Error ? e : new Error(String(e));
     },
   });
-  encoder.configure({
-    codec: await pickAvcCodec(width, height, bitrate, fps),
-    width,
-    height,
-    bitrate,
-    framerate: fps,
-    avc: { format: "avc" }, // length-prefixed (AVCC) — what mp4 wants
-  });
+  encoder.configure(await pickEncoderConfig(width, height, bitrate, fps));
 
   for (let i = 0; i < total; i++) {
     if (encodeError) throw encodeError;
@@ -220,24 +278,36 @@ export async function exportTimelineToMp4(opts: ExportOptions): Promise<Uint8Arr
 
     const slice = resolveFrameAt(timeline, i / fps);
     const prepared = await prepareFrame(slice, deps, /* exact */ true);
-    const px = await backend.renderOffscreenToBytes((rp) => paintPreparedFrame(backend, rp, prepared));
-    disposePrepared(prepared);
-    if (!px) throw new Error("offscreen render failed (no GPU target)");
 
-    const frame = new VideoFrame(px.data, {
-      format: px.format.startsWith("bgra") ? "BGRA" : "RGBA",
-      codedWidth: px.width,
-      codedHeight: px.height,
+    // Render into the GPU canvas and capture it straight into a VideoFrame.
+    // Capturing the canvas (vs. copyTextureToBuffer + mapAsync readback) keeps
+    // the pixels GPU-side — no per-frame stall, no CPU round-trip, no re-upload
+    // by the encoder. Captured synchronously right after submit so it reflects
+    // exactly this frame's draw.
+    const rp = backend.beginPass();
+    if (!rp) {
+      disposePrepared(prepared);
+      throw new Error("render failed (no GPU target)");
+    }
+    paintPreparedFrame(backend, rp, prepared);
+    backend.endPass(rp);
+    disposePrepared(prepared);
+
+    const canvas = backend.canvasElement;
+    if (!canvas) throw new Error("render failed (no canvas)");
+    const frame = new VideoFrame(canvas, {
       timestamp: Math.round(i * frameDurUs),
       duration: Math.round(frameDurUs),
-      layout: [{ offset: 0, stride: px.bytesPerRow }],
     });
     encoder.encode(frame, { keyFrame: i % fps === 0 });
     frame.close();
 
-    while (encoder.encodeQueueSize > 8) {
-      await new Promise<void>((r) => setTimeout(r, 0));
-      if (encodeError) throw encodeError;
+    await drainQueueBelow(encoder, 16, () => encodeError);
+    // Flush pending disk writes periodically — the muxer emits 16 MiB chunks
+    // hundreds of frames apart, so draining every frame just folds IO into the
+    // loop. A rejected write surfaces here and aborts the export.
+    if (streaming?.drain && ((i + 1) % 120 === 0 || i + 1 === total)) {
+      await streaming.drain();
     }
     onProgress?.(i + 1, total);
   }
@@ -252,5 +322,9 @@ export async function exportTimelineToMp4(opts: ExportOptions): Promise<Uint8Arr
   }
 
   muxer.finalize();
-  return new Uint8Array(muxer.target.buffer);
+  if (streaming) {
+    if (streaming.drain) await streaming.drain();
+    return new Uint8Array(0);
+  }
+  return new Uint8Array((target as ArrayBufferTarget).buffer);
 }

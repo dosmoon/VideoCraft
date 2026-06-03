@@ -14,12 +14,14 @@ import { createReadStream } from "node:fs";
 import {
   copyFile,
   mkdir,
+  open,
   readFile,
   readdir,
   rename,
   rm,
   stat,
   writeFile,
+  type FileHandle,
 } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
@@ -298,6 +300,58 @@ ipcMain.handle("vc:writeFile", async (_e, absPath: string, bytes: Uint8Array) =>
   await mkdir(resolve(absPath, ".."), { recursive: true });
   await writeFile(absPath, Buffer.from(bytes));
   return absPath;
+});
+
+// ── vc:writeStream:* — positional streaming write to disk ────────────────────
+// Used by the mp4 export path: a full-source render is too large to hold in one
+// in-memory ArrayBuffer (let alone copy it over IPC), so the muxer streams 16 MiB
+// chunks here as they're produced. Writes go to "<path>.part" at the muxer-given
+// byte position (mp4-muxer seeks back once to patch the mdat size), then close
+// renames into place (atomic) and abort discards the partial file.
+const writeStreams = new Map<number, { fh: FileHandle; tmp: string; final: string }>();
+let nextWriteStreamId = 1;
+
+ipcMain.handle("vc:writeStream:open", async (_e, absPath: string) => {
+  await mkdir(resolve(absPath, ".."), { recursive: true });
+  const tmp = absPath + ".part";
+  const fh = await open(tmp, "w");
+  const id = nextWriteStreamId++;
+  writeStreams.set(id, { fh, tmp, final: absPath });
+  return id;
+});
+
+ipcMain.handle(
+  "vc:writeStream:write",
+  async (_e, id: number, position: number, bytes: Uint8Array) => {
+    const s = writeStreams.get(id);
+    if (!s) throw new Error(`write stream ${id} not open`);
+    await s.fh.write(Buffer.from(bytes), 0, bytes.byteLength, position);
+  },
+);
+
+ipcMain.handle("vc:writeStream:close", async (_e, id: number) => {
+  const s = writeStreams.get(id);
+  if (!s) throw new Error(`write stream ${id} not open`);
+  await s.fh.close();
+  writeStreams.delete(id);
+  await rename(s.tmp, s.final);
+  return s.final;
+});
+
+ipcMain.handle("vc:writeStream:abort", async (_e, id: number) => {
+  const s = writeStreams.get(id);
+  if (!s) return;
+  writeStreams.delete(id);
+  try {
+    await s.fh.close();
+  } catch {
+    /* already closed */
+  }
+  try {
+    await rm(s.tmp);
+  } catch {
+    /* nothing to remove */
+  }
 });
 
 // ── vc:fs:* — generic project-scoped file I/O (ADR-0008) ─────────────────────

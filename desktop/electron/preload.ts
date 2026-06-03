@@ -15,6 +15,23 @@ const api = {
   writeFile(absPath: string, bytes: Uint8Array): Promise<string> {
     return ipcRenderer.invoke("vc:writeFile", absPath, bytes);
   },
+  /** Open a positional write stream to disk for large mp4 exports; returns a
+   *  handle id. Pair with writeStreamChunk + closeWriteStream/abortWriteStream. */
+  openWriteStream(absPath: string): Promise<number> {
+    return ipcRenderer.invoke("vc:writeStream:open", absPath);
+  },
+  /** Write one chunk at a byte position into an open write stream. */
+  writeStreamChunk(id: number, position: number, bytes: Uint8Array): Promise<void> {
+    return ipcRenderer.invoke("vc:writeStream:write", id, position, bytes);
+  },
+  /** Finalize a write stream (rename .part into place); returns the final path. */
+  closeWriteStream(id: number): Promise<string> {
+    return ipcRenderer.invoke("vc:writeStream:close", id);
+  },
+  /** Discard a write stream's partial file (on cancel/error). */
+  abortWriteStream(id: number): Promise<void> {
+    return ipcRenderer.invoke("vc:writeStream:abort", id);
+  },
   /** Reveal a file in the OS file manager. */
   showInFolder(absPath: string): Promise<void> {
     return ipcRenderer.invoke("vc:showInFolder", absPath);

@@ -175,19 +175,38 @@ export function ExportTab(props: {
         frameAspect: srcW / srcH,
       });
 
-      const bytes = await exportTimelineToMp4({
-        timeline: tl,
-        drawDeps,
-        backend,
-        width: srcW,
-        height: srcH,
-        fps: FPS,
-        durationSec: tl.durationSec,
-        onProgress: (d, t) => setProgress(d / t),
-        cancelCheck: () => cancelRef.current,
-        ...(audioSources ? { audioSources } : {}),
-      });
-      await window.vc.writeFile(p.outputPath, bytes);
+      // Stream the muxed mp4 straight to disk — a full-source render is far too
+      // large to buffer in one ArrayBuffer or copy whole over IPC. Writes are
+      // serialized; `drain` (awaited per frame in encode) flushes the backlog
+      // and surfaces any write error.
+      const streamId = await window.vc.openWriteStream(p.outputPath);
+      let writeChain: Promise<void> = Promise.resolve();
+      const onData = (data: Uint8Array, position: number) => {
+        // Copy: the chunk is owned by the muxer and IPC is async.
+        const chunk = data.slice();
+        writeChain = writeChain.then(() => window.vc.writeStreamChunk(streamId, position, chunk));
+      };
+      try {
+        await exportTimelineToMp4({
+          timeline: tl,
+          drawDeps,
+          backend,
+          width: srcW,
+          height: srcH,
+          fps: FPS,
+          durationSec: tl.durationSec,
+          onProgress: (d, t) => setProgress(d / t),
+          cancelCheck: () => cancelRef.current,
+          output: { onData, drain: () => writeChain },
+          ...(audioSources ? { audioSources } : {}),
+        });
+        await writeChain;
+        await window.vc.closeWriteStream(streamId);
+      } catch (e) {
+        await writeChain.catch(() => {});
+        await window.vc.abortWriteStream(streamId);
+        throw e;
+      }
       // src_idx unused for news_desk; out_idx pinned to 1.
       const list = await rpc.commitRender(type, instance, 0, p.outIdx, tl.durationSec);
       setRendered(list as RenderedEntry[]);

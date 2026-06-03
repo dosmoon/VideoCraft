@@ -22,6 +22,10 @@ interface VcFsApi {
 interface VcApi {
   mediaUrl(absPath: string): string;
   writeFile(absPath: string, bytes: Uint8Array): Promise<string>;
+  openWriteStream(absPath: string): Promise<number>;
+  writeStreamChunk(id: number, position: number, bytes: Uint8Array): Promise<void>;
+  closeWriteStream(id: number): Promise<string>;
+  abortWriteStream(id: number): Promise<void>;
   showInFolder(absPath: string): Promise<void>;
   openPath(absPath: string): Promise<string>;
   openExternal(url: string): Promise<void>;

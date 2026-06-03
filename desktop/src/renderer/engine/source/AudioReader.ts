@@ -38,11 +38,12 @@ export class AudioReader {
       return null;
     }
 
-    // decodeAudioData detaches its input buffer, so pass a copy (the same bytes
-    // may be reused elsewhere). One throwaway context just to decode.
+    // decodeAudioData detaches its input buffer; `bytes` is a throwaway local
+    // we never touch again, so hand it over directly (no copy — a full-source
+    // file copy here is gigabytes). One throwaway context just to decode.
     const ctx = new AudioContext();
     try {
-      const buf = await ctx.decodeAudioData(bytes.slice(0));
+      const buf = await ctx.decodeAudioData(bytes);
       if (buf.numberOfChannels === 0 || buf.length === 0) {
         console.warn("[AudioReader] decoded buffer is empty (no audio track?)");
         return null;
