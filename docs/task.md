@@ -11,8 +11,10 @@
 
 **剩余收尾(非阻塞,按需;权威 = `adr-0008-migration-tasks.md` 收尾段)**:
 1. ✅ **client.ts 死 fallback 清理(已完成)**:`material.*`/`creation.*` 死 rpcCall fallback 换成抛错 `unsupported{Creation,Material}(type)` helper(`type` 仍用、过 `noUnusedParameters`、不再引用已删 RPC)。
-2. 文档治理:`electron-migration-design.md` ★实现进度删掉已退役的「Python 业务面」考古节;ADR-0008 状态确认 Active、ADR-0004 provider 部分确认 Superseded(P6)。
-3. 之后大方向(`electron-migration-design.md`「剩余工作计划」):**P3 打包/分发**(PyInstaller sidecar + electron-builder,目前纯 dev 无产物)→ P4 打磨 → P5 转场/录播自动剪辑。
+2. ✅ **文档治理(已完成)**:`electron-migration-design.md` ★实现进度删掉三处「Python 业务面」/「RPC 面」考古块(clip/news_desk/material)+ §2.2/§2.3 横幅改过去时;ADR-0008/0004 状态字段核对无误(建 0008 时已设好)。
+3. **下一大方向 = P3 打包/分发**(`electron-migration-design.md`「剩余工作计划」P3):PyInstaller sidecar(`core_rpc.server` + myenv 依赖,onedir)+ electron-builder 出 Win 安装包;userData repo-local;ffmpeg/ffprobe/yt-dlp Node runtime 随包或引导。目前纯 dev 无分发产物。建议单独开一轮、先定打包方案。→ 之后 P4 打磨 → P5 转场/录播自动剪辑。
+
+> **🎉 ADR-0008(三插件零 Python)全部收尾完成 2026-06-03**(B4/A6/B5 + client.ts 清理 + 文档治理)。
 
 **纪律**:[[feedback_pre_alpha_no_legacy]] 不留兼容层;改 Python 整重启 sidecar;每步 build-green(pytest + desktop typecheck/vitest/build);[[feedback_faithful_port_not_invent]]。
 

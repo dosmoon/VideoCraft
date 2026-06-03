@@ -130,5 +130,7 @@ news_desk 全源导出原 ~30fps(30 分钟视频要 ~30 分钟)。两刀已修(W
 
 - [x] 全套回归:`pytest tests/`(全绿,无 pre-existing 失败)+ desktop typecheck + 212 vitest + build。
 - [x] **client.ts 死 fallback 清理**(完成):`material.*`/`creation.*` 的死 rpcCall fallback arm 全部换成抛错的 `unsupported{Creation,Material}(type)` helper(`type` 仍被使用,过 `noUnusedParameters`;未知类型给清晰错误,不再引用已删 RPC)。
-- [ ] 文档:`electron-migration-design.md` ★实现进度删掉已退役的「Python 业务面」节(从考古转为删除);更新 `vc.fs.*`/`capability.*` 为已实现。
-- [ ] ADR-0008 状态确认 Active 落地;ADR-0004 provider 部分确认 Superseded(正文已标 superseded,确认 ADR 文件状态字段)。
+- [x] 文档:`electron-migration-design.md` ★实现进度删掉已退役的「Python 业务面」/「RPC 面」考古块(clip/news_desk/material 三处 + §2.2/§2.3 横幅改过去时);保留 TS/引擎/工作台 UI 描述。
+- [x] ADR 状态确认:ADR-0008 = Active、ADR-0004 = Active(provider-dispatch 部分 Superseded by 0008)——建 0008 时已设好,核对无误。
+
+> **✅ ADR-0008 全部收尾完成(2026-06-03)。** 下一大方向 = P3 打包/分发(`electron-migration-design.md`「剩余工作计划」)。
