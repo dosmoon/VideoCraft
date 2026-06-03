@@ -32,6 +32,33 @@ const api = {
   abortWriteStream(id: number): Promise<void> {
     return ipcRenderer.invoke("vc:writeStream:abort", id);
   },
+  /** Native ffmpeg (NVENC) encode: pipe raw frames in, ffmpeg encodes to disk. */
+  ffmpegEncode: {
+    probe(): Promise<{ ffmpeg: boolean; nvenc: boolean }> {
+      return ipcRenderer.invoke("vc:ffmpegEncode:probe");
+    },
+    start(params: {
+      outputPath: string;
+      width: number;
+      height: number;
+      fps: number;
+      bitrate: number;
+      pixfmt: "bgra" | "rgba";
+      sourcePath?: string;
+      audioStartSec?: number;
+    }): Promise<number> {
+      return ipcRenderer.invoke("vc:ffmpegEncode:start", params);
+    },
+    writeFrame(id: number, bytes: Uint8Array): Promise<void> {
+      return ipcRenderer.invoke("vc:ffmpegEncode:writeFrame", id, bytes);
+    },
+    finish(id: number): Promise<string> {
+      return ipcRenderer.invoke("vc:ffmpegEncode:finish", id);
+    },
+    abort(id: number): Promise<void> {
+      return ipcRenderer.invoke("vc:ffmpegEncode:abort", id);
+    },
+  },
   /** Reveal a file in the OS file manager. */
   showInFolder(absPath: string): Promise<void> {
     return ipcRenderer.invoke("vc:showInFolder", absPath);

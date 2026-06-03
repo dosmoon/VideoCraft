@@ -26,6 +26,7 @@ import {
 import { dirname, join, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { Sidecar, SidecarError } from "./sidecar";
+import * as ffmpeg from "./ffmpeg";
 
 // Extension → MIME for the vc-media:// server (video for <video>/mp4box, images
 // for the watermark picker). Unknown falls back to octet-stream.
@@ -354,6 +355,16 @@ ipcMain.handle("vc:writeStream:abort", async (_e, id: number) => {
   }
 });
 
+// ── vc:ffmpegEncode:* — native ffmpeg (NVENC) encode jobs ────────────────────
+// The renderer renders frames on the GPU and pipes raw pixels here; ffmpeg
+// encodes (h264_nvenc, hardware) + pulls audio from the source file. See
+// electron/ffmpeg.ts.
+ipcMain.handle("vc:ffmpegEncode:probe", () => ffmpeg.probeFfmpeg());
+ipcMain.handle("vc:ffmpegEncode:start", (_e, params: ffmpeg.FfmpegStartParams) => ffmpeg.startJob(params));
+ipcMain.handle("vc:ffmpegEncode:writeFrame", (_e, id: number, bytes: Uint8Array) => ffmpeg.writeFrame(id, bytes));
+ipcMain.handle("vc:ffmpegEncode:finish", (_e, id: number) => ffmpeg.finishJob(id));
+ipcMain.handle("vc:ffmpegEncode:abort", (_e, id: number) => ffmpeg.abortJob(id));
+
 // ── vc:fs:* — generic project-scoped file I/O (ADR-0008) ─────────────────────
 // readJson/readText/list/stat degrade to null/[]/{exists:false} on a missing
 // path (a clean "not there yet" signal for TS owners). writeJson/writeText are
@@ -494,4 +505,7 @@ app.on("window-all-closed", () => {
 });
 
 // Tear the sidecar down with the app so no orphaned python child lingers.
-app.on("before-quit", () => sidecar.dispose());
+app.on("before-quit", () => {
+  ffmpeg.killAllFfmpeg();
+  sidecar.dispose();
+});

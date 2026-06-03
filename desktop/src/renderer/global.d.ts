@@ -19,6 +19,23 @@ interface VcFsApi {
   presetsDir(): Promise<string>;
 }
 
+interface VcFfmpegEncodeApi {
+  probe(): Promise<{ ffmpeg: boolean; nvenc: boolean }>;
+  start(params: {
+    outputPath: string;
+    width: number;
+    height: number;
+    fps: number;
+    bitrate: number;
+    pixfmt: "bgra" | "rgba";
+    sourcePath?: string;
+    audioStartSec?: number;
+  }): Promise<number>;
+  writeFrame(id: number, bytes: Uint8Array): Promise<void>;
+  finish(id: number): Promise<string>;
+  abort(id: number): Promise<void>;
+}
+
 interface VcApi {
   mediaUrl(absPath: string): string;
   writeFile(absPath: string, bytes: Uint8Array): Promise<string>;
@@ -26,6 +43,7 @@ interface VcApi {
   writeStreamChunk(id: number, position: number, bytes: Uint8Array): Promise<void>;
   closeWriteStream(id: number): Promise<string>;
   abortWriteStream(id: number): Promise<void>;
+  ffmpegEncode: VcFfmpegEncodeApi;
   showInFolder(absPath: string): Promise<void>;
   openPath(absPath: string): Promise<string>;
   openExternal(url: string): Promise<void>;
