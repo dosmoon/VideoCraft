@@ -484,6 +484,16 @@ export function CropPreview(props: CropPreviewProps) {
           console.warn("[CropPreview] audio build failed:", e);
         }
       }
+      // Sync the crop box to the authoritative rect BEFORE this paint. The
+      // standalone crop effect can run while the timeline is still null (first
+      // candidate mount: status flips to "ready" before this async build
+      // finishes), so its renderAt no-ops and rectRef is left at the initial
+      // full-frame placeholder. Re-deriving it here is the paint that actually
+      // draws the box, so the first candidate never shows a full-frame crop.
+      rectRef.current =
+        mode === "passthrough"
+          ? { x: 0, y: 0, w: 1, h: 1 }
+          : (cropRect ?? centerCropRect(eng.srcW, eng.srcH, aspect.aw, aspect.ah));
       void renderAt(tRef.current);
     })();
     return () => {
