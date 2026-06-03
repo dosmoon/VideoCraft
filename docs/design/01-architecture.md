@@ -1,5 +1,9 @@
 # 架构决策
 
+> ⚠️ **状态：Superseded by [ADR-0008](../adr/0008-plugins-ts-python-capability-gateway.md)（2026-06-03）。**
+> 本文档描述的"单进程 + Tk Tab 嵌入 / 无需 IPC / AI Router 进程内单例 / 多工具共享进程内全局状态"外壳模型已整体退役：产品迁到 Electron renderer + Python sidecar（JSON-RPC over stdio）拓扑，进程边界是**数据级**（Python 不渲染），Tk app 已删（见迁移设计文档 P2）。**进程模型已反转，但业务/引擎代码未重写**——引擎本就零 tkinter、IPC-ready。
+> 仅作历史留档；当前架构权威 = [ADR-0006](../adr/0006-composition-timeline-ir.md)（数据模型）+ [ADR-0008](../adr/0008-plugins-ts-python-capability-gateway.md)（IPC 拓扑 + 插件语言边界）+ [`docs/draft/electron-migration-design.md`](../draft/electron-migration-design.md)。
+
 ## 单进程 + Tab 嵌入模式
 
 **决策**：放弃 `subprocess.Popen` 启动工具，也不再弹 `tk.Toplevel`，改为把工具嵌入 Hub 的 Tab 内容区。

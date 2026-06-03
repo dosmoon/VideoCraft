@@ -227,7 +227,7 @@ TS:`pnpm typecheck` + `pnpm test`(132,含 ir/timemap/components/clip/news_desk/c
 - 转场(crossfade / dip_to_black):IR `Transition` + `resolveFrameAt` 重叠区双 active 已就位,缺 GPU per-layer alpha blend + 创作产出 + UI;用户决定暂不做(当前两形态语义上不需段间转场)。
 - 录播自动剪辑(新创作形态;OTIO 多段装配的真实需求来源,[[project_recorded_autoedit]])——它会反过来驱动转场。
 
-**P6 — 文档治理**:升 **ADR-0008「插件逻辑入 TS;Python = 能力网关」**(正文来源 = 顶部「🚩 架构转向」节;固化 渲染引擎 + IPC 拓扑 + 插件语言边界;数据模型已在 ADR-0006)。0008 supersede ADR-0004 的 provider-dispatch 部分 + `01-architecture.md`。**注:ADR-0007 已被「组件编辑 UI = FieldSpec 元数据」占用**(2026-06-01);foundation 大稿的数据模型部分已由 ADR-0006 承载,0008 聚焦 拓扑 + 插件边界这次转向。
+**P6 — 文档治理 ✅ 已完成(2026-06-03)**:**ADR-0008「插件逻辑入 TS;Python = 能力网关」**已立 + Active(正文来源 = 顶部「🚩 架构转向」节;固化 渲染引擎 + IPC 拓扑 + 插件语言边界;数据模型已在 ADR-0006)。0008 supersede:① ADR-0004 的 provider-dispatch 部分(已标 `Superseded by 0008`)② `docs/design/01-architecture.md`(已加顶部 superseded 横幅,指向 0008/0006/迁移设计文档)。**注:ADR-0007 已被「组件编辑 UI = FieldSpec 元数据」占用**(2026-06-01);foundation 大稿的数据模型部分已由 ADR-0006 承载,0008 聚焦 拓扑 + 插件边界这次转向。
 
 ---
 
