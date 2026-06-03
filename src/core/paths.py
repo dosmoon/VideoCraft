@@ -7,8 +7,8 @@ Read order, first non-empty wins:
   1. `models_dir` field in keys/providers.json (user override via AI Console)
   2. `<repo>/user_data/models/` (default — keeps Portable install self-contained)
 
-Kept dependency-free on purpose: the startup hook in VideoCraftHub.py must
-call this BEFORE importing torch / huggingface_hub / nemo, so we cannot
+Kept dependency-free on purpose: the sidecar startup hook (core_rpc.server)
+calls this BEFORE importing torch / huggingface_hub / nemo, so we cannot
 pull in core.ai (which transitively imports the OpenAI SDK).
 """
 

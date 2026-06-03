@@ -1,1 +1,0 @@
-drawtext=textfile='C\:/Users/51798/AppData/Local/Temp/composition-watermark-PID-ID.txt':fontfile='C\:/Windows/Fonts/msyh.ttc':fontcolor=#FFFFFF@0.70:fontsize=36:x=w-text_w-48:y=27:borderw=2:bordercolor=black@0.35

@@ -100,30 +100,7 @@ def test_news_desk_is_headless_no_tkinter():
     assert not violations, f"news_desk still imports tkinter: {violations}"
 
 
-def test_no_news_desk_specific_ui_leaked_outside():
-    """News-desk-specific UI must not live under src/ui/."""
-    leaked: list[str] = []
-    for f in os.listdir("src/ui"):
-        if not f.endswith(".py") or f.startswith("__"):
-            continue
-        if "news_desk" in f.lower() or "newsdesk" in f.lower():
-            leaked.append(f)
-    assert not leaked, f"leaked into src/ui/: {leaked}"
-
-
-# ── C. ADR-0005 material binding ─────────────────────────────────────────────
-
-def test_material_binding_module_is_picker_only():
-    """material_binding.py exposes ONLY show_material_picker — no config IO."""
-    import creations.material_binding as mb
-    publicish = [n for n in dir(mb)
-                 if not n.startswith("_") and callable(getattr(mb, n))]
-    forbidden = {"read_bound_material", "write_bound_material", "get_or_bind"}
-    leaked = forbidden & set(publicish)
-    assert not leaked, f"material_binding leaks config-IO API: {leaked}"
-
-
-# ── D. ADR-0003 snapshot semantics (import path) ─────────────────────────────
+# ── C. ADR-0003 snapshot semantics (import path) ─────────────────────────────
 
 def test_imports_snapshot_subtitle_into_instance_dir():
     """imports.py copies the imported SRT into <instance_dir>/, not a reference
@@ -136,7 +113,7 @@ def test_imports_snapshot_subtitle_into_instance_dir():
     assert "inst_dir" in src
 
 
-# ── E. Decoupling ────────────────────────────────────────────────────────────
+# ── D. Decoupling ────────────────────────────────────────────────────────────
 
 def test_news_desk_does_not_import_other_creation_plugins():
     """news_desk MUST NOT import other creation plugins. Each is independent."""
@@ -170,13 +147,3 @@ def test_core_does_not_import_news_desk():
             if re.search(r"(^|\n)\s*(from|import)\s+creations\.news_desk", src):
                 violations.append(p)
     assert not violations, f"core imports news_desk: {violations}"
-
-
-def test_hub_does_not_reach_into_news_desk_internals():
-    """The Tk hub retired news_desk; it must not reach into news_desk internals
-    (creations.news_desk.X attribute access)."""
-    with open("src/VideoCraftHub.py", "r", encoding="utf-8") as f:
-        src = f.read()
-    attr_refs = re.findall(r"creations\.news_desk\.[a-zA-Z_]+", src)
-    assert not attr_refs, (
-        f"Hub reaches into news_desk internals: {attr_refs}")

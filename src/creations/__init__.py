@@ -6,9 +6,9 @@ A creation plugin = one downstream workbench that produces a video from
 a project's source materials. Each plugin lives at creations/<type_name>/
 and self-registers at import time by calling register().
 
-Base layer (core/, ui/) MUST NOT hard-code plugin names. Discovery happens
-via VideoCraftHub.py importing each plugin module at startup, which
-triggers the plugin's register() call.
+Base layer (core/) MUST NOT hard-code plugin names. Discovery happens via
+core_rpc.methods.load_plugins() importing each plugin module at sidecar
+startup, which triggers the plugin's register() call.
 
 Replaces the old core/derivative_types.py REGISTRY (slice E retires it).
 """

@@ -48,7 +48,7 @@ news_desk 全源导出原 ~30fps(30 分钟视频要 ~30 分钟)。两刀已修(W
 
 ## 前提依赖
 
-- [ ] **P2 — Tk 退役**(独立阶段;gate 住 A6/B5 —— clip Tk 仍 import `creations/clip/config.py` 等,删 Python 前必须先退 Tk)。详见设计文档「剩余工作计划」P2。
+- [x] **P2 — 整个 Tk app 退役**(2026-06-03,用户拍板「整个 Tk app 退」+「信任既有验证直接删」)。**删掉**:`launcher.py`/`VideoCraftHub.py`/`operations.py` + `src/tools/`(全部遗留独立工具:下载/语音/翻译/视频/text2video/发布/preferences/ai_console/prompt_console/model_manager,§0.5「砍了」落地)+ `src/ui/`(全部 Tk 对话框/预览)+ clip Tk(`clip_tool`/`clip_editor`/`style_panel`/`composer`/`render_queue`/`components/`)+ `creations/material_binding.py` + 素材 Tk(`materials/news_video/sidebar.py` + `ui/`)+ **dead `core/composition/`**(老 Python 合成引擎,只被 Tk 消费,TS catalog 已复用词汇)+ Tk 打包(`build_portable.py`/`RunVideoCraft.bat`/`.github/workflows/build-portable.yml`)。**de-register**:`materials/news_video/__init__.py` 去 `sidebar_renderer`/`create_handler`。**测试**:删 `tests/composition/` + clip-component/composer/render_queue/subtitle 测 + `test_arch_clip.py`;`test_arch_{materials,news_desk}` + `test_registration` + `test_clip_presets` 裁到存活的 headless/sidecar 不变量。**验证**:sidecar 三插件 import 干净;`pytest tests/` 仅剩 1 个 pre-existing(`test_clip_config::test_load_full_roundtrip` stale-id,[[project_pytest_preexisting_failures]];composition golden-CRLF 两个随删测消失)。**未碰 desktop TS。** ⇒ **A6/B5 解锁**(clip 不再有 Tk 兄弟 import 那些 keep 文件)。
 - [ ] **P0/P1 真机肉眼验新壳功能对等**(gate 住 A4 起的接线/删除;headless 验不了)。
 
 ---

@@ -31,11 +31,11 @@ def test_builtins_carry_components_and_output():
         assert isinstance(entry["output"], dict)
         assert entry["output"]["aspect"] in ("9:16", "1:1", "16:9", "4:5")
         assert isinstance(entry["encode_preset"], str)
-        # Each component must declare a known kind that the registry
-        # recognises — preset apply would crash otherwise.
-        from creations.clip.components import spec_for_kind
+        # Each component must declare a known kind that the headless
+        # registry recognises — preset apply would crash otherwise.
+        from creations.clip import component_defs
         for comp in entry["components"]:
-            assert spec_for_kind(comp["kind"]) is not None
+            assert comp["kind"] in component_defs._FACTORIES
 
 
 # ── Load + seed ────────────────────────────────────────────────────────────

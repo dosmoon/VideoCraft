@@ -3,9 +3,9 @@
 Two side effects on import:
   1. each domain module's @rpc_method decorators populate registry.REGISTRY
   2. material/creation plugins self-register their MaterialType (so the
-     registry-driven factory lookups in session.py resolve). This mirrors the
-     Hub's explicit `import materials.news_video` (VideoCraftHub.py) — pre-alpha
-     there is exactly one material plugin; add new ones here as they land.
+     registry-driven factory lookups in session.py resolve) — see
+     load_plugins() below. Pre-alpha there is exactly one material plugin;
+     add new ones there as they land.
 """
 
 from __future__ import annotations

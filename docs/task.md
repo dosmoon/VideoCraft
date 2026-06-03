@@ -5,28 +5,30 @@
 
 ---
 
-## ▶ 下一任务(新对话先读)= P2 — Tk 退役(解锁 A6/B5)
+## ▶ 下一任务(新对话先读)= A6 + B5 — 删 per-plugin Python(ADR-0008 终态:三插件零 Python)
 
-> **目标**:退役 Tk 的 **clip 工作台 + 素材 sidebar**,切断它们对 per-plugin Python 的 import → 解锁 **A6/B5 删 Python**(ADR-0008 终态:三插件零 Python)。Electron 新壳已功能对等(P0/P1 完成,项目/素材/创作/AI/模型/环境/语言均可新壳自助)。素材 UI 重塑 + Step 4 已收口(见下方接力点)。
+> **P2 整个 Tk app 退役 = ✅ 完成(2026-06-03,见下方本会话块 + [`adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md)「前提依赖」)。** Tk 那层(launcher/VideoCraftHub/tools/ui + clip Tk + 素材 sidebar + dead `core/composition` + Tk 打包)全删,sidecar 三插件 import 干净、`pytest` 仅剩 1 个 pre-existing。**A6/B5 已解锁**——keep 的 sidecar 业务文件不再有 Tk 兄弟 import。
 
-**为什么卡**:A6(删创作 Python)/B5(删素材 Python)删的就是下列文件,但 Tk 还 import 它们:
-- `src/creations/clip/clip_tool.py`(`ClipToolApp`)→ `creations.clip.{config,presets,candidates,clip_editor,render_queue,style_panel,composer,preview,component_defs,components/*}` + `core.composition`(老 Python 引擎)+ `materials.news_video.model`。
-- `src/materials/news_video/sidebar.py` + `ui/*`(node_panes/chapter_editor/source_*_pane/subtitles_dialogs/…)→ `materials.news_video.{model,schema,paths,ai_fill}`。
+**现在做 A6**(删创作 Python,Tk 已不挡):删 `creations/{clip,news_desk}/{config,presets,component_defs,preview,export,publish,candidates,imports}.py`、清各 `__init__.py` provider 注册(留 `type_name/single_instance/description_*` + 素材的 `instance_factory`)、删 `core_rpc/methods/creation.py` 的 provider-delegating 方法 + `CreationType` provider 字段 + `Session.creation_owner/invalidate_creation`、删 `tests/core_rpc/test_creation*.py` + `tests/creations/test_clip_*`/`test_news_desk_*`、清 `client.ts` 死 `creation.*` stub。**前提**:A4/A5 已把 clip+news_desk 接到纯 TS 路径并验过(client.ts 按 type 分发到 clientBackend.ts),删 Python provider 不影响工作台。
 
-**Tk 入口/注册**:`src/launcher.py` → `src/VideoCraftHub.py`;创作注册表 `_TOOL_REGISTRY`(~L55)**现只剩 `"clip"`**(**news_desk 已退 = 精确先例**:删 `*_tool.py`+`components/*`+`publish.py` + VideoCraftHub 注销,见 L39-43 注释);侧栏 materials/creations/files 三 tab(~L530-548)。
+**然后 B5**(删素材 Python):删 `materials/news_video/{model,schema,paths,ai_fill}.py` + `instance_factory`、删 `core_rpc/methods/material.py` + `Session.material_model`、删 `test_material.py` + `test_arch_materials.py`/`test_registration.py` 里残留的 model 断言、补 vitest。**前提**:B3.2 已把 material.* 读/写/job/import 全接到 TS(`materials/news_video/clientBackend.ts` 走 `NewsVideoModel.ts` + `capability.*`),仅 Python `material.*`/`model.py` 待删。
 
-**建议步骤**(Electron 对等已达成,这里是删 Tk):
-1. **clip Tk**:`_TOOL_REGISTRY` 删 `"clip"`(仿 news_desk);删 `creations/clip/{clip_tool,clip_editor,style_panel,composer,preview,render_queue,candidates}.py` + `components/*`。
-2. **素材 Tk**:VideoCraftHub 材料 tab host 移除;删 `materials/news_video/sidebar.py` + `materials/news_video/ui/*`。
-3. **A6**(Tk 切断后):删 `creations/{clip,news_desk}/{config,presets,component_defs,preview,export,publish}.py`、清 `__init__.py` provider 注册、删 `core_rpc/methods/creation.py` 14 个 provider 方法 + `CreationType` provider 字段 + `Session.creation_owner/invalidate_creation`、删 `test_creation*.py`、清 `client.ts` 死 `creation.*` stub。
-4. **B5**:删 `materials/news_video/{model,schema,paths,ai_fill}.py` + `instance_factory`、删 `core_rpc/methods/material.py` + `Session.material_model`、删 `test_material.py`、补 vitest。
-5. **顺带**:`core/composition/` 老 Python 引擎(只 Tk clip 用)随之死,可删(词汇已在 TS catalog 复用)。
+**勾选清单权威 = [`docs/draft/adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md)** Phase A(A6)+ Phase B(B4→B5)。**纪律**:[[feedback_pre_alpha_no_legacy]] 不留兼容层;TS 替代测好前绝不删对应 Python(A4/A5/B3 已替代到位);改 Python 整重启 sidecar;每步 build-green(pytest + desktop typecheck/vitest)。**先读**:`adr-0008-migration-tasks.md` A6/B5 节、`electron-migration-design.md`「剩余工作计划」P2.5、`client.ts`(type 分发面,确认删 Python 后无悬空 stub)。
 
-**开放问题(新对话先与用户定)**:① **整个 Tk app 退不退?** VideoCraftHub 还 host download/translate/speech/text2video/preferences/ai_console 等 menubar 工具(迁移设计 §0.5 说这些 legacy 工具"砍了"、不进 Electron)——是只退 clip+素材保留其余,还是整个 `VideoCraftHub.py`/`launcher.py` 退役(后者需确认 yt-dlp 下载等是否还要)。② `core.composition` + `core_rpc` 其余引用一并清的范围。
+---
 
-**前提**:P0/P1 真机验已过。删前**再真机过一遍 clip+素材在 Electron 完整可用**(建实例→导源→ASR→翻译→分析→章节→新闻背景→导出 / clip 候选→样式→导出),确认无 Electron 缺口再删 Tk。
+## ▶▶ 本会话(2026-06-03 下午)= P2 整个 Tk app 退役(✅ 完成,待 commit)
 
-**先读**:`src/VideoCraftHub.py`(注册+sidebar host)、`src/creations/clip/clip_tool.py`(import 面)、[`docs/draft/adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md)(A6/B5 勾选清单)、`electron-migration-design.md`「剩余工作计划」P2/P2.5。**纪律**:删前确认 Electron 对等([[feedback_faithful_port_not_invent]] 反向——别删了才发现 Electron 缺功能);[[feedback_pre_alpha_no_legacy]] 不留兼容层;改 Python 整重启 sidecar。
+> 用户拍板:**整个 Tk app 退役**(非只退 clip+素材)+ **信任既有验证直接删**(不再删前真机验,P0/P1/A4/A5 已验过)。这是 ADR-0008 转向的「先退 Tk」前提阶段;A6/B5 由此解锁。
+
+- **删掉的 Tk 层**:`src/{launcher,VideoCraftHub,operations}.py` · `src/tools/`(全部遗留独立工具:下载/语音/翻译/视频工具集/text2video[TTS·每日新闻·composer]/发布/preferences/ai_console/prompt_console/model_manager —— §0.5「这些 legacy 工具砍了不进 Electron」落地)· `src/ui/`(全部 Tk 对话框/预览)· clip Tk(`clip_tool`/`clip_editor`/`style_panel`/`composer`/`render_queue`/`components/`)· `creations/material_binding.py` · 素材 Tk(`materials/news_video/sidebar.py` + `ui/`)。
+- **dead `core/composition/` 整包删**:老 Python 合成引擎,grep 实证只被 Tk 删除集消费(clip_tool/editor/composer/render_queue/components + chapter_editor),sidecar keep 文件(clip config/preview/export/candidates)零引用;词汇早已在 TS `composition/catalog.ts` 复用。
+- **Tk 打包删**:`build_portable.py` + `RunVideoCraft.bat` + `.github/workflows/build-portable.yml`(只打包/启动 Tk app,新 Electron 打包 = P3 未做)。
+- **de-register**:`materials/news_video/__init__.py` 去 `sidebar_renderer`/`create_handler`/`_create_handler`(素材 [+] 创建现走 RPC `project.create_material_instance`);保留 `instance_factory`/`suggest_name`。
+- **测试**:删 `tests/composition/`(含 composition golden-CRLF 两个 pre-existing failed,随之消失)+ `tests/creations/test_clip_{components,hook_outro,composer,watermark,subtitle,render_queue}.py` + `tests/test_arch_clip.py`;`test_arch_{materials,news_desk}` + `test_registration` 裁到存活的 headless/sidecar 不变量(去 Hub/sidebar/create_handler 守卫);`test_clip_presets` 的 kind 校验从删掉的 `components.spec_for_kind` 改成 `component_defs._FACTORIES`。
+- **stale 注释刷新**:`core_rpc/methods/__init__.py`/`core/paths.py`/`creations/__init__.py` 去掉对已删 `VideoCraftHub.py` 的引用。**未碰 desktop TS**(删除全在 Python/Tk 侧)。
+- **验证**:sidecar `load_plugins()` + 三插件 register 干净;`pytest tests/` 仅剩 `test_clip_config::test_load_full_roundtrip`(stale-id pre-existing,[[project_pytest_preexisting_failures]];config.py 未碰)。
+- **欠**:A6/B5(下一任务,见最上方)。
 
 ---
 
