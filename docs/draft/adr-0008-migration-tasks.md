@@ -8,17 +8,40 @@
 
 ---
 
-## ⚡ 导出速度（高优 deferred，迁移收尾后做）
+## ⚡ 导出速度
 
-**现象**(2026-06-01 用户报告):news_desk 全源导出慢——3 分钟视频 ~2 分钟导出,**用户判定无法接受**(按此 1 小时视频 ≈ 40 分钟,无 NLE 这么慢)。用户称「之前没这么慢」(疑回归)。
+### 已落地(2026-06-03,commit `ddf64cf`,已 push)= ~4.5x
+news_desk 全源导出原 ~30fps(30 分钟视频要 ~30 分钟)。两刀已修(WebCodecs 路径):
+- **砍每帧 GPU→CPU 读回**:`renderOffscreenToBytes`(copyTextureToBuffer + `mapAsync` 同步阻塞 + CPU 重建帧 + 编码器再上传)→ 改 `new VideoFrame(backend.canvasElement)` 直接抓 GPU canvas(浏览器保持 GPU 侧)。**真机验过画面正常**。
+- **mp4 流式写盘**:原 `ArrayBufferTarget` + `fastStart:"in-memory"` 把整文件攒内存再整份过 IPC(长视频 >2GB → "Array buffer allocation failed")→ `StreamTarget` 16MiB 块经新 `vc:writeStream:*` 定位写 `.part`(原子 rename)。**修了长视频 OOM 崩溃**。
+- 附:`dequeue` 事件背压(替 setTimeout(0) 的 4ms 钳制)、`latencyMode:"realtime"`、AudioReader 去整文件多余拷贝。
 
-**分析**:逐帧 encode 循环 [`engine/export/encode.ts:214-243`](../../desktop/src/renderer/engine/export/encode.ts) **A4/A5 未碰**(纯 GPU/WebCodecs);clip 短窗口快=帧少,news_desk 全源把逐帧成本暴露。每帧三个重活:① `prepareFrame(slice, deps, exact=true)` 逐帧精确解码源帧;② `backend.renderOffscreenToBytes(...)` = GPU 画 + `copyTextureToBuffer` **GPU→CPU 读回**(每帧一次同步阻塞);③ `new VideoFrame(px.data)` 从 CPU 字节建帧 → encode。
+**结果**:1080p 现 ~135fps(encoder-bound)。30 分钟视频 ~7 分钟。
 
-**待办**(优先级高):
-1. **先证伪/坐实回归**:`git stash` A4/A5 改动,同一视频对比导出时长(我判断 encode 路径未变、应无差,但尊重用户观察,先验)。
-2. **真优化(最大那刀)**:**砍掉每帧 CPU 读回** —— `Backend.canvasElement` getter 注释已写 *"captured as a VideoFrame source during export"*,但 encode.ts 没用它、走的是 readback。改成 **`new VideoFrame(backend.canvasElement, {timestamp})`** 直接从 GPU canvas 抓帧(浏览器内部优化拷贝,免 copyTextureToBuffer+mapAsync 阻塞)= 半成品优化没接上。
-3. **decode 顺序化**:`exact=true` 逐帧 seek 解码慢;导出是顺序前进,应顺序 demux/decode 而非逐帧 seek(task.md P4「导出域:逐帧精确 decode」)。
-4. 可选:encoder 背压窗口调大、并行 readback 多 staging buffer(若不走方案 2)。
+### 诊断结论(确凿,别重复踩)
+逐帧拆分实测:`decode/overlay/render/io` 全 <1ms,**90% 时间是 encoder**(`encWait ~7ms`,队列贴满)。深挖编码器并行全部无效:
+- 单编码器 / 4 个同 realm 编码器 / **4 个 worker 线程编码器** / `prefer-hardware` / `prefer-software` —— **全部 ~135fps**(WebCodecs 软件 H.264 在本 Chromium 是**进程级单线程**,并行打不破;worker 代码已删)。
+- **硬件编码不可用**:`getGPUInfo` 实测 Chromium 跑在 NVIDIA 4060 上(active vendor=0x10de)但 `videoEncodeAcceleratorSupportedProfile=[]`(**0 个硬件编码档位**);`getGPUFeatureStatus().video_encode=disabled_software`;`ignore-gpu-blocklist`/`enable-features`/flag 全无效。Chromium Windows 桌面 WebCodecs **不暴露 NVENC**(已知老问题)。
+- ⇒ **浏览器内编码永久封顶 ~135fps@1080p**。要更快只能绕开 Chromium。
+
+### ▶ 下一步 = 原生 ffmpeg + NVENC(真硬件编码,预计 ~300fps+,30 分钟视频 ~3 分钟)
+**已验证可行**:系统 `C:\ffmpeg-master-latest-win64-gpl-shared\...\bin\ffmpeg.exe` 有 `h264_nvenc`,smoke test 通过,1080p 实测 **~350fps**。
+- **数据级保 preview≡render**:渲染仍在 GPU(自建合成器不变),ffmpeg **只编码我们渲染好的帧**,不做合成 → 不破坏 preview≡render。
+- **架构**:渲染器每帧 GPU 渲染 → 读回原始像素(复用**保留的** `Backend.renderOffscreenToBytes`,做**流水线异步**多 staging buffer,不再 `mapAsync` 卡死)→ 原始帧经 IPC 喂主进程 → 主进程 spawn ffmpeg,原始帧进 stdin:
+  ```
+  ffmpeg -f rawvideo -pix_fmt rgba -s WxH -r FPS -i pipe:0 \
+         -i <源视频> -map 0:v -map 1:a \
+         -c:v h264_nvenc -preset p4 -b:v <bitrate> -pix_fmt yuv420p \
+         -c:a aac  <output.mp4>
+  ```
+- **附带简化**:音频直接让 ffmpeg 从源文件取(`-map 1:a`;clip 用 `-ss/-to`)→ **干掉 WebCodecs 音频解码/混音**(AudioReader/audioMix 退出导出路径)。
+- **实施分期**:
+  1. 主进程 ffmpeg 编码 IPC(`vc:ffmpegEncode:{start,writeFrame,finish,abort}`,spawn/stdin 背压/退出码)+ ffmpeg 路径检测(复用 env 检测)+ `h264_nvenc` 探测(无则回退 `libx264`,原生 x264 多线程也比 OpenH264 快)。
+  2. Backend 异步读回环(N staging buffer,copy(i)/map(i-1)/encode(i-2) 重叠)。
+  3. 新 `exportTimelineViaFfmpeg`(render→readback→pipe;音频走 ffmpeg `-map`)。
+  4. 接线 news_desk + clip ExportTab,**保留 WebCodecs 为 fallback**(无 nvenc/ffmpeg 时);真机验画面+音画+耗时。
+- **风险/未知**:240MB/s 原始帧过 IPC 的吞吐(必要时 MessagePort/transfer 或本地 socket);读回流水线复杂度;打包后 ffmpeg 路径;clip 裁剪窗口的 `-ss/-to` 音频对齐。
+- **WebCodecs 路径保留**:`encode.ts` 现态(单编码器+canvas 抓帧+流式)是干净 fallback,不删。`renderOffscreenToBytes` **故意保留**(ffmpeg 路径的读回基础)。
 
 ---
 
