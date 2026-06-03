@@ -83,11 +83,12 @@ news_desk 全源导出原 ~30fps(30 分钟视频要 ~30 分钟)。两刀已修(W
   - **保留 Python(Phase A)**:`preview_data`(媒体/SRT)+ **`imports.py`**(import_resource 快照素材 SRT/章节,需素材文件访问 → 跟 clip hotclipsRepo 一样 defer 到 Phase B);故 `imports.ts` 暂不做。
   - [x] **✅ news_desk 功能验过**(2026-06-01):导出能产出全源 mp4 + output.json + publish.md,功能正常。**A5 完成**(第二个迁到纯 TS 路径的插件)。**唯一遗留 = 导出速度,见下「⚡ 导出速度」(高优 deferred,用户拍板先干完迁移再优化)。**
 
-- [ ] **A6 — ⚠️GATE 退役创作 Python**(前提:P2 Tk clip 退役 + A4/A5 真机验过)
-  - [ ] 删 `creations/{clip,news_desk}/{config,presets,component_defs,preview,export,publish,...}.py`
-  - [ ] 清各 `__init__.py` provider 注册(留 `type_name/single_instance/description_*`)
-  - [ ] 删 `core_rpc/methods/creation.py` 的 14 个 provider-delegating 方法 + `CreationType` provider 字段 + `Session.creation_owner/invalidate_creation`
-  - [ ] 删 `tests/core_rpc/test_creation*.py`;清 `client.ts` 死 `creation.*` stub+类型
+- [x] **A6 — 退役创作 Python**(2026-06-03,commit `57e102b`;前提 P2 Tk 退役 + A4/A5 验过均满足)
+  - [x] 删 `creations/{clip,news_desk}/{config,presets,component_defs,preview,export,publish}.py` + clip `candidates.py` + news_desk `imports.py`
+  - [x] 清各 `__init__.py` provider 注册(留 `type_name/single_instance/description_*` 等元数据)
+  - [x] 删 `core_rpc/methods/creation.py`(整文件,18 个 provider-delegating 方法)+ `CreationType` provider 字段 + `Session.creation_owner/invalidate_creation` + `_creations` 缓存
+  - [x] 删 `tests/core_rpc/test_creation*.py` + `tests/creations/test_{clip,news_desk}_*.py`;裁 `test_arch_news_desk`(去 provider-wiring + imports.py 断言)
+  - [~] `client.ts` 死 `creation.*` fallback arm 清理**延后**(永不命中;`noUnusedParameters` 下干净移除需改签名,不成比例)
 
 ---
 
@@ -115,14 +116,19 @@ news_desk 全源导出原 ~30fps(30 分钟视频要 ~30 分钟)。两刀已修(W
     - writes:writeContext/writeBasicInfo→`model.write*Dict`。sync QC:checkSubtitle/quickFixSubtitle/saveChapters→`capability.*`(check 的 reference=源语言 SRT 从 project.current 取)。
     - jobs:startSetSource→`capability.acquire_source`、RunAsr→`asr`、RunTranslate→`translate`、RunAnalysis→`analyze`(薄转发,返 job_id,runJob 不变)。**capability 不 stamp meta** → tab 在 job 成功后经 **project meta 写 RPC**(`commit_source`/`set_source_language`/`add_translated_language`,已加+pytest)持久化:SourceTab.commitSource、SubtitlesTab setSourceLanguage/addTranslatedLanguage。
     - **ai_fill 重组**:startAiFillContext→插件 `buildContextPrompt`(basic_info+platform)→通用 `capability.llm_extract`(返 raw 15 字段 dict,不写 context.json)→ContextTab 经 writeContext 持久化(替换语义)。全部 TS 分支 `type==="news_video"` 守卫,其余类型留 Python job。
-  - [ ] **B3.2c 只读尾巴 + import**(真机验 gated):source_meta(project.current 取 meta.source);slotReadiness(结构化 reshape + Hub SlotRow 走 tr()+i18n zh/en 对称,目前仍走 Python);listAnalysisArtifacts(需先把 `core.subtitle_analysis.ANALYSIS_TYPES` icon/display/format 注册表移 TS);importSubtitle(`fs.copy`+首次 `setSourceLanguage`,目前仍走 Python)。做完 = `material.*` 全 TS。⚠️门 = 真机验整链后才删 `material.*` Python(B5)。
-- [ ] **B4 — 创作改走 TS 素材路径**(收口 C7):`clip/hotclipsRepo.ts`、`news_desk/{imports,render}.ts` 读 `materials/news_video/{paths,model}.ts`,桥 RPC 退役
-- [ ] **B5 — ⚠️GATE 退役素材 Python**:删 `materials/news_video/{model,schema,paths,ai_fill}.py`、去 `instance_factory`、删 `core_rpc/methods/material.py` + `Session.material_model`;删 `test_material.py`、vitest 补齐
+  - [x] **B3.2c 只读尾巴 + import**(commit `9980d91` + B4 `cc15d95`):source_meta/listAnalysisArtifacts/importSubtitle/slotReadinessStructured 全 TS;slotReadiness/readBasicInfo 在 B4 翻 TS dispatch(`cc15d95`)。`material.*` 读/写/job/import 全在 TS。
+- [x] **B4 — 创作改走 TS 素材路径**(2026-06-03,commit `cc15d95`,收口 C7):clip preview(`clip/preview.ts` + `hotclipsRepo.ts` 喂真实 `model.subtitlesDir`)、news_desk preview(`news_desk/preview.ts`)、news_desk imports(`news_desk/imports.ts`)全读 TS `materials/news_video/{model,resolve}.ts`;`materials/news_video/resolve.ts` = 共享 `loadNewsVideoModel`。`creation.preview_data`/`list_imports`/`import_resource` + `material.slot_readiness`/`read_basic_info` 桥 RPC 退役(已无调用方)。真机验过。
+- [x] **B5 — 退役素材 Python**(2026-06-03,commit `ea08bd4`):删 `materials/news_video/{model,schema,paths,ai_fill}.py`、去 `instance_factory` + `MaterialType.instance_factory` 字段、删 `core_rpc/methods/material.py` + `Session.material_model`、删 `subtitle_pipeline` 的 `(project)` shim(core/ 零 material import)、删 `test_material.py`+`test_{model,paths,schema}.py`、裁 `test_registration`/`test_arch_materials`/`test_dispatch`。
+  - **pre-step(分析 context 解耦)**:`subtitle_analysis_runners` + `capability.analyze` 改收注入式 `context_block`;新闻 block 插件侧 `aiFill.ts buildContextBlock`(port `context_prompt_block`)构建,经 `startRunAnalysis` 注入;news_desk publish 读 context 改走 TS model。
+  - news_desk publish context bridge(`material.read_context`)= B5 抓出的最后一个活跨调用,已 port 到 TS model。真机验过(分析含 context + publish.md + 素材侧)。
 
 ---
 
 ## 收尾
 
-- [ ] 文档:`electron-migration-design.md` ★实现进度删掉已退役的「Python 业务面」节(转向落地后,从考古转为删除);更新 `vc.fs.*`/`capability.*` 为已实现
-- [ ] ADR-0008 状态确认 Active 落地;ADR-0004 provider 部分确认 Superseded
-- [ ] 全套回归:`pytest tests/`(只剩 capability + 框架)+ desktop typecheck/vitest/build
+> **🎉 ADR-0008 终态达成(2026-06-03,commit `cc15d95`→`57e102b`→`ea08bd4`):clip + news_desk + news_video 三插件零插件专属 Python。** Python 现仅剩:plugin-agnostic 能力网关(`capability.*`)+ 框架目录生命周期(`project.*`)+ AI/models/env/gpu 框架服务。
+
+- [x] 全套回归:`pytest tests/`(全绿,无 pre-existing 失败)+ desktop typecheck + 212 vitest + build。
+- [ ] **client.ts 死 fallback 清理(延后)**:`material.*`/`creation.*` 的 rpcCall fallback arm 已无对应 Python,但永不命中(三类型穷尽且全走 TS)。干净移除受 `noUnusedParameters` 限制(material 侧删 fallback 留 unused `type` → 需改方法签名 + 全部 renderer caller)。低价值、需独立小重构,单独做。
+- [ ] 文档:`electron-migration-design.md` ★实现进度删掉已退役的「Python 业务面」节(从考古转为删除);更新 `vc.fs.*`/`capability.*` 为已实现。
+- [ ] ADR-0008 状态确认 Active 落地;ADR-0004 provider 部分确认 Superseded(正文已标 superseded,确认 ADR 文件状态字段)。

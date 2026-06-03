@@ -5,15 +5,28 @@
 
 ---
 
-## ▶ 下一任务(新对话先读)= A6 + B5 — 删 per-plugin Python(ADR-0008 终态:三插件零 Python)
+## ▶ 下一任务(新对话先读)= ADR-0008 收尾(三插件零 Python 已达成)
 
-> **P2 整个 Tk app 退役 = ✅ 完成(2026-06-03,见下方本会话块 + [`adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md)「前提依赖」)。** Tk 那层(launcher/VideoCraftHub/tools/ui + clip Tk + 素材 sidebar + dead `core/composition` + Tk 打包)全删,sidecar 三插件 import 干净、`pytest` 仅剩 1 个 pre-existing。**A6/B5 已解锁**——keep 的 sidecar 业务文件不再有 Tk 兄弟 import。
+> **🎉 ADR-0008 终态达成(2026-06-03):clip + news_desk + news_video 三插件零插件专属 Python。** B4(创作/素材读全接 TS)+ A6(删创作 Python)+ B5(删素材 Python)全部完成、build-green、真机验过、已 commit(`cc15d95`→`57e102b`→`ea08bd4`,**未 push**)。Python 现仅剩:plugin-agnostic 能力网关 `capability.*` + 框架目录生命周期 `project.*` + AI/models/env/gpu 框架服务。详见下方本会话块 + [`adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md) 收尾段。
 
-**现在做 A6**(删创作 Python,Tk 已不挡):删 `creations/{clip,news_desk}/{config,presets,component_defs,preview,export,publish,candidates,imports}.py`、清各 `__init__.py` provider 注册(留 `type_name/single_instance/description_*` + 素材的 `instance_factory`)、删 `core_rpc/methods/creation.py` 的 provider-delegating 方法 + `CreationType` provider 字段 + `Session.creation_owner/invalidate_creation`、删 `tests/core_rpc/test_creation*.py` + `tests/creations/test_clip_*`/`test_news_desk_*`、清 `client.ts` 死 `creation.*` stub。**前提**:A4/A5 已把 clip+news_desk 接到纯 TS 路径并验过(client.ts 按 type 分发到 clientBackend.ts),删 Python provider 不影响工作台。
+**剩余收尾(非阻塞,按需;权威 = `adr-0008-migration-tasks.md` 收尾段)**:
+1. **client.ts 死 fallback 清理**:`material.*`/`creation.*` 的 rpcCall fallback arm 已无对应 Python、永不命中(clip/news_desk/news_video 三类型穷尽且全走 TS)。干净移除受 `noUnusedParameters` 限制(material 侧删 fallback 留 unused `type` → 需改方法签名 + 全部 renderer caller),低价值需独立小重构。
+2. 文档治理:`electron-migration-design.md` ★实现进度删掉已退役的「Python 业务面」考古节;ADR-0008 状态确认 Active、ADR-0004 provider 部分确认 Superseded(P6)。
+3. 之后大方向(`electron-migration-design.md`「剩余工作计划」):**P3 打包/分发**(PyInstaller sidecar + electron-builder,目前纯 dev 无产物)→ P4 打磨 → P5 转场/录播自动剪辑。
 
-**然后 B5**(删素材 Python):删 `materials/news_video/{model,schema,paths,ai_fill}.py` + `instance_factory`、删 `core_rpc/methods/material.py` + `Session.material_model`、删 `test_material.py` + `test_arch_materials.py`/`test_registration.py` 里残留的 model 断言、补 vitest。**前提**:B3.2 已把 material.* 读/写/job/import 全接到 TS(`materials/news_video/clientBackend.ts` 走 `NewsVideoModel.ts` + `capability.*`),仅 Python `material.*`/`model.py` 待删。
+**纪律**:[[feedback_pre_alpha_no_legacy]] 不留兼容层;改 Python 整重启 sidecar;每步 build-green(pytest + desktop typecheck/vitest/build);[[feedback_faithful_port_not_invent]]。
 
-**勾选清单权威 = [`docs/draft/adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md)** Phase A(A6)+ Phase B(B4→B5)。**纪律**:[[feedback_pre_alpha_no_legacy]] 不留兼容层;TS 替代测好前绝不删对应 Python(A4/A5/B3 已替代到位);改 Python 整重启 sidecar;每步 build-green(pytest + desktop typecheck/vitest)。**先读**:`adr-0008-migration-tasks.md` A6/B5 节、`electron-migration-design.md`「剩余工作计划」P2.5、`client.ts`(type 分发面,确认删 Python 后无悬空 stub)。
+---
+
+## ▶▶ 本会话(2026-06-03 下午续)= ADR-0008 B4 + A6 + B5 — 三插件零 Python(✅ 完成,commit `cc15d95`/`57e102b`/`ea08bd4`,未 push)
+
+> 用户「启动 tasks、一步步走、重要步骤手工验证后继续」。摸清发现 task.md 旧口径(A6 一次删 preview/imports)与代码现实冲突:preview/imports 仍走 Python 桥、依赖 model.py,**必须先 B4 接到 TS 才能删干净**。故按 B4 → 真机验 → A6 → B5 推进,验证门停两次(B4 后、B5 后),均「正常」。
+
+- **B4(`cc15d95`)= 创作/素材读全接 TS,退役桥 RPC**:① clip preview `creations/clip/preview.ts`(`buildClipPreview` over `HotclipsRepo` + 真实 `model.subtitlesDir`)② news_desk preview `creations/news_desk/preview.ts` ③ news_desk imports `creations/news_desk/imports.ts`(subtitle copy + chapter schedule)④ `materials/news_video/resolve.ts` 共享 `loadNewsVideoModel`(经 `project.material_instance_dir`)⑤ client.ts 翻 `previewData`/`listImports`/`importResource`/`slotReadiness`/`readBasicInfo` 到 TS;旧 wire `SlotState` 删、SourceTab 读 structured `isFilled`。三 port 取注入式 Fs/repo/model 供 vitest(+11 测)。真机验过(clip/news_desk 预览+导入 + 素材 tab)。
+- **A6(`57e102b`)= 删创作 Python**:删 `creations/{clip,news_desk}/{config,presets,component_defs,preview,export,publish}.py`+clip `candidates.py`+news_desk `imports.py`;删整个 `core_rpc/methods/creation.py`(18 方法)+ `CreationType` provider 字段 + `Session.creation_owner`;删 `test_creation*`/`tests/creations/*`、裁 `test_arch_news_desk`。sidecar 干净加载、`creation.*` RPC 全无;`pytest tests/` 全绿(删了 test_clip_config,旧 stale-id pre-existing 也消失)。**行为中性**(那些路径 B4 已不调),未碰 desktop TS。
+- **B5(`ea08bd4`)= 删素材 Python + 分析 context 解耦**:删 `materials/news_video/{model,schema,paths,ai_fill}.py`+`material.py` RPC+`instance_factory`(+`MaterialType` 字段)+`Session.material_model`+`subtitle_pipeline` 的 `(project)` shim(**core/ 现零 material import,最后一个 `TODO(ADR-0005)` 越界消除**)。**pre-step**:`subtitle_analysis_runners`+`capability.analyze` 改收注入式 `context_block`;新闻 block 插件侧 `aiFill.ts buildContextBlock`(port `context_prompt_block`)构建经 `startRunAnalysis` 注入;**news_desk publish 读 context 改走 TS model**(B5 抓出的最后一个活跨调用 `material.read_context`)。裁 `test_material`/`test_{model,paths,schema}`/`test_registration`/`test_arch_materials`(收紧为零 core→plugin import)/`test_dispatch`/`test_capability`。真机验过(分析含 context + publish.md + 素材侧)。
+- **build-green(B5 收口)**:`pytest tests/` 全绿 · desktop typecheck + **212 vitest** + build。
+- **欠**:见最上方「剩余收尾」(client.ts 死 fallback 清理 + 文档治理 + ADR 状态)。**三笔 commit 未 push。**
 
 ---
 
