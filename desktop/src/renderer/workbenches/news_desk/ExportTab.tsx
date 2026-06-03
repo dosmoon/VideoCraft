@@ -23,16 +23,18 @@ import { MediaSource } from "../../engine/source/MediaSource";
 import { ClipReader } from "../../engine/source/ClipReader";
 import { AudioReader } from "../../engine/source/AudioReader";
 import { preloadImageOverlay } from "../../engine/overlay/canvas2d";
-import { exportTimelineToMp4, ExportCancelled } from "../../engine/export/encode";
+import { exportTimelineToMp4, exportTimelineViaFfmpeg, ExportCancelled } from "../../engine/export/encode";
 import { resolveBitrate } from "../../engine/export/types";
 import { ExportSettingsBar } from "../common/ExportSettingsBar";
 import {
   DEFAULT_EXPORT_SETTINGS,
   FULL_RESOLUTIONS,
   downscaleToShortEdge,
+  effectiveEngine,
   exportSettingsFromConfig,
   normalizeResolution,
   type ExportSettings,
+  type FfmpegProbe,
 } from "@creations/exportSettings";
 import { useNewsDeskPreview } from "./useNewsDeskPreview";
 
@@ -89,10 +91,22 @@ export function ExportTab(props: {
   const [progress, setProgress] = useState(0); // 0..1 while rendering
   const [error, setError] = useState("");
   const [settings, setSettings] = useState<ExportSettings>(DEFAULT_EXPORT_SETTINGS);
+  const [probe, setProbe] = useState<FfmpegProbe | null>(null);
   const cancelRef = useRef(false);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const probeRef = useRef(probe);
+  probeRef.current = probe;
   const hiddenCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Probe ffmpeg/NVENC availability once (cached main-side) to enable the engine
+  // option and resolve the auto-default engine.
+  useEffect(() => {
+    void window.vc.ffmpegEncode
+      .probe()
+      .then(setProbe)
+      .catch(() => setProbe({ ffmpeg: false, nvenc: false }));
+  }, []);
 
   const refresh = useCallback(async () => {
     setError("");
@@ -184,9 +198,14 @@ export function ExportTab(props: {
         overlayCtx,
       };
 
-      // Decode the source audio once. decodeAll() self-detects audio and returns
-      // null for a silent source — do NOT gate on ms.audio (fragile mp4box probe).
-      const decodedAudio = await new AudioReader(window.vc.mediaUrl(data.srcPath)).decodeAll();
+      const engine = effectiveEngine(cfg.engine, probeRef.current);
+
+      // WebCodecs mixes audio in the renderer; ffmpeg pulls it from the source
+      // file, so only decode the source audio for the WebCodecs path.
+      const decodedAudio =
+        engine === "chromium"
+          ? await new AudioReader(window.vc.mediaUrl(data.srcPath)).decodeAll()
+          : null;
       const audioSources = decodedAudio ? new Map([[SOURCE_REF, decodedAudio]]) : undefined;
 
       // Preload any image-watermark assets once.
@@ -211,38 +230,43 @@ export function ExportTab(props: {
         frameAspect: srcW / srcH,
       });
 
-      // Stream the muxed mp4 straight to disk — a full-source render is far too
-      // large to buffer in one ArrayBuffer or copy whole over IPC. Writes are
-      // serialized; `drain` (awaited per frame in encode) flushes the backlog
-      // and surfaces any write error.
-      const streamId = await window.vc.openWriteStream(p.outputPath);
-      let writeChain: Promise<void> = Promise.resolve();
-      const onData = (data: Uint8Array, position: number) => {
-        // Copy: the chunk is owned by the muxer and IPC is async.
-        const chunk = data.slice();
-        writeChain = writeChain.then(() => window.vc.writeStreamChunk(streamId, position, chunk));
+      const base = {
+        timeline: tl,
+        drawDeps,
+        backend,
+        width: srcW,
+        height: srcH,
+        fps: cfg.fps,
+        bitrate: resolveBitrate(cfg.bitrateMode, cfg.bitrateMbps, srcW, srcH, cfg.fps),
+        durationSec: tl.durationSec,
+        onProgress: (d: number, t: number) => setProgress(d / t),
+        cancelCheck: () => cancelRef.current,
       };
-      try {
-        await exportTimelineToMp4({
-          timeline: tl,
-          drawDeps,
-          backend,
-          width: srcW,
-          height: srcH,
-          fps: cfg.fps,
-          bitrate: resolveBitrate(cfg.bitrateMode, cfg.bitrateMbps, srcW, srcH, cfg.fps),
-          durationSec: tl.durationSec,
-          onProgress: (d, t) => setProgress(d / t),
-          cancelCheck: () => cancelRef.current,
-          output: { onData, drain: () => writeChain },
-          ...(audioSources ? { audioSources } : {}),
-        });
-        await writeChain;
-        await window.vc.closeWriteStream(streamId);
-      } catch (e) {
-        await writeChain.catch(() => {});
-        await window.vc.abortWriteStream(streamId);
-        throw e;
+
+      if (engine === "ffmpeg") {
+        // ffmpeg writes the mp4 directly and pulls full-source audio.
+        await exportTimelineViaFfmpeg(base, { outputPath: p.outputPath, sourcePath: data.srcPath });
+      } else {
+        // WebCodecs → stream the muxed mp4 to disk (too large to buffer/IPC whole).
+        const streamId = await window.vc.openWriteStream(p.outputPath);
+        let writeChain: Promise<void> = Promise.resolve();
+        const onData = (chunkData: Uint8Array, position: number) => {
+          const chunk = chunkData.slice(); // muxer owns the buffer; IPC is async
+          writeChain = writeChain.then(() => window.vc.writeStreamChunk(streamId, position, chunk));
+        };
+        try {
+          await exportTimelineToMp4({
+            ...base,
+            output: { onData, drain: () => writeChain },
+            ...(audioSources ? { audioSources } : {}),
+          });
+          await writeChain;
+          await window.vc.closeWriteStream(streamId);
+        } catch (e) {
+          await writeChain.catch(() => {});
+          await window.vc.abortWriteStream(streamId);
+          throw e;
+        }
       }
       // src_idx unused for news_desk; out_idx pinned to 1.
       const list = await rpc.commitRender(type, instance, 0, p.outIdx, tl.durationSec);
@@ -295,7 +319,7 @@ export function ExportTab(props: {
 
       <ExportSettingsBar
         settings={settings}
-        probe={null}
+        probe={probe}
         resolutionOptions={FULL_RESOLUTIONS}
         disabled={rendering}
         onChange={onSettingsChange}

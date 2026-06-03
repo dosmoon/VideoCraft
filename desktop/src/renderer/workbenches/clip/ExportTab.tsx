@@ -20,15 +20,17 @@ import { MediaSource } from "../../engine/source/MediaSource";
 import { ClipReader } from "../../engine/source/ClipReader";
 import { AudioReader } from "../../engine/source/AudioReader";
 import { preloadImageOverlay } from "../../engine/overlay/canvas2d";
-import { exportTimelineToMp4, ExportCancelled } from "../../engine/export/encode";
+import { exportTimelineToMp4, exportTimelineViaFfmpeg, ExportCancelled } from "../../engine/export/encode";
 import { resolveBitrate } from "../../engine/export/types";
 import { ExportSettingsBar } from "../common/ExportSettingsBar";
 import {
   CLIP_RESOLUTIONS,
   DEFAULT_EXPORT_SETTINGS,
+  effectiveEngine,
   exportSettingsFromConfig,
   presetToShortEdge,
   type ExportSettings,
+  type FfmpegProbe,
 } from "@creations/exportSettings";
 import { useClipPreview } from "./useClipPreview";
 import { centerCropRect, parseAspect, targetDimsForAspect, type CropRect } from "./cropEditor";
@@ -67,10 +69,21 @@ export function ExportTab(props: {
   const [rendering, setRendering] = useState(false);
   const [err, setErr] = useState("");
   const [settings, setSettings] = useState<ExportSettings>(DEFAULT_EXPORT_SETTINGS);
+  const [probe, setProbe] = useState<FfmpegProbe | null>(null);
   const cancelRef = useRef(false);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
+  const probeRef = useRef(probe);
+  probeRef.current = probe;
   const hiddenCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Probe ffmpeg/NVENC once to enable the engine option + resolve auto-default.
+  useEffect(() => {
+    void window.vc.ffmpegEncode
+      .probe()
+      .then(setProbe)
+      .catch(() => setProbe({ ffmpeg: false, nvenc: false }));
+  }, []);
 
   // Persist a settings change to config.json. Clip resolution is the reframe
   // short-edge → writes output_short_edge (single source, shared with Style tab).
@@ -212,15 +225,17 @@ export function ExportTab(props: {
           overlayCtx,
         };
 
-        // Decode the source audio once (shared across candidates); the export
-        // mixes + muxes it per candidate window. Undefined when the source is
-        // silent / has no audio track.
+        const engine = effectiveEngine(settingsRef.current.engine, probeRef.current);
+
+        // WebCodecs mixes the source audio per candidate window; ffmpeg pulls it
+        // from the source file (-ss per clip), so only decode it for WebCodecs.
         // decodeAll() self-detects audio and returns null for a silent source —
         // do NOT gate on ms.audio (the fragile mp4box probe we route around).
-        const decodedAudio = await new AudioReader(window.vc.mediaUrl(data.srcPath)).decodeAll();
-        const audioSources = decodedAudio
-          ? new Map([[SOURCE_REF, decodedAudio]])
-          : undefined;
+        const decodedAudio =
+          engine === "chromium"
+            ? await new AudioReader(window.vc.mediaUrl(data.srcPath)).decodeAll()
+            : null;
+        const audioSources = decodedAudio ? new Map([[SOURCE_REF, decodedAudio]]) : undefined;
 
         // Preload any image-watermark assets once.
         for (const c of components ?? []) {
@@ -257,7 +272,7 @@ export function ExportTab(props: {
               ? undefined
               : (clip.cropRect ?? centerCropRect(srcW, srcH, aspect.aw, aspect.ah));
             const cfg = settingsRef.current;
-            const bytes = await exportTimelineToMp4({
+            const base = {
               timeline: tl,
               drawDeps,
               backend,
@@ -267,14 +282,26 @@ export function ExportTab(props: {
               bitrate: resolveBitrate(cfg.bitrateMode, cfg.bitrateMbps, target.width, target.height, cfg.fps),
               durationSec: tl.durationSec,
               ...(cropRect ? { cropRect } : {}),
-              onProgress: (d, t) =>
+              onProgress: (d: number, t: number) =>
                 setRows((rs) =>
                   rs.map((r) => (r.outIdx === clip.outIdx ? { ...r, progress: d / t } : r)),
                 ),
               cancelCheck: () => cancelRef.current,
-              ...(audioSources ? { audioSources } : {}),
-            });
-            await window.vc.writeFile(clip.outputPath, bytes);
+            };
+            if (engine === "ffmpeg") {
+              // ffmpeg writes the mp4 directly; audio = source[startSec..] (clip window).
+              await exportTimelineViaFfmpeg(base, {
+                outputPath: clip.outputPath,
+                sourcePath: data.srcPath,
+                audioStartSec: clip.startSec,
+              });
+            } else {
+              const bytes = await exportTimelineToMp4({
+                ...base,
+                ...(audioSources ? { audioSources } : {}),
+              });
+              await window.vc.writeFile(clip.outputPath, bytes);
+            }
             const rendered = await rpc.commitRender(
               type,
               instance,
@@ -340,7 +367,7 @@ export function ExportTab(props: {
 
       <ExportSettingsBar
         settings={settings}
-        probe={null}
+        probe={probe}
         resolutionOptions={CLIP_RESOLUTIONS}
         disabled={rendering}
         onChange={onSettingsChange}

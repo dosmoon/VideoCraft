@@ -17,6 +17,7 @@ import type { DecodedAudio } from "../source/sample-types";
 import { disposePrepared, prepareFrame, type DrawDeps } from "../compositor/draw";
 import { resolveBitrate, type EncodeSink } from "./types";
 import { createWebCodecsSink } from "./webcodecsSink";
+import { createFfmpegSink, type FfmpegTarget } from "./ffmpegSink";
 
 /** Thrown when cancelCheck() trips mid-encode so the caller can discard the clip. */
 export class ExportCancelled extends Error {
@@ -87,13 +88,26 @@ async function runRenderLoop(opts: ExportOptions, sink: EncodeSink): Promise<Uin
   }
 }
 
-export async function exportTimelineToMp4(opts: ExportOptions): Promise<Uint8Array> {
-  const params = {
+function effectiveParams(opts: ExportOptions) {
+  return {
     width: opts.width,
     height: opts.height,
     fps: opts.fps,
     bitrate: opts.bitrate ?? resolveBitrate("auto", 0, opts.width, opts.height, opts.fps),
   };
-  const sink = await createWebCodecsSink(opts, params);
+}
+
+/** Export via the in-browser WebCodecs engine (software H.264). Returns mp4
+ *  bytes, or an empty array when streamed to disk via `opts.output`. */
+export async function exportTimelineToMp4(opts: ExportOptions): Promise<Uint8Array> {
+  const sink = await createWebCodecsSink(opts, effectiveParams(opts));
   return runRenderLoop(opts, sink);
+}
+
+/** Export via the native ffmpeg engine (h264_nvenc). ffmpeg writes the mp4 to
+ *  `target.outputPath` directly and pulls audio from the source file, so no
+ *  renderer-side audio mix / file write is needed. */
+export async function exportTimelineViaFfmpeg(opts: ExportOptions, target: FfmpegTarget): Promise<void> {
+  const sink = await createFfmpegSink(opts, effectiveParams(opts), target);
+  await runRenderLoop(opts, sink);
 }
