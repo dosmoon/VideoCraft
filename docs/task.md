@@ -5,22 +5,21 @@
 
 ---
 
-## ▶ 下一任务(新对话先读)= ADR-0008 收尾(三插件零 Python 已达成)
+## ▶ 下一任务(新对话先读)= P3 打包 / 分发
 
-> **🎉 ADR-0008 终态达成(2026-06-03):clip + news_desk + news_video 三插件零插件专属 Python。** B4(创作/素材读全接 TS)+ A6(删创作 Python)+ B5(删素材 Python)全部完成、build-green、真机验过、已 commit(`cc15d95`→`57e102b`→`ea08bd4`,**未 push**)。Python 现仅剩:plugin-agnostic 能力网关 `capability.*` + 框架目录生命周期 `project.*` + AI/models/env/gpu 框架服务。详见下方本会话块 + [`adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md) 收尾段。
+> **🎉 ADR-0008 终态 + 全部收尾完成(2026-06-03,已 push 到 `main`,commit `cc15d95`→`11ac7ed`):** clip + news_desk + news_video 三插件**零插件专属 Python**;Python = plugin-agnostic 能力网关 `capability.*` + 框架目录生命周期 `project.*` + AI/models/env/gpu 框架服务;`core/` 零 material import(最后一个 `TODO(ADR-0005)` 越界已消除)。B4/A6/B5 + client.ts 死 fallback 清理 + 文档治理全做完。细节见下方本会话块 + [`adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md)。
 
-**剩余收尾(非阻塞,按需;权威 = `adr-0008-migration-tasks.md` 收尾段)**:
-1. ✅ **client.ts 死 fallback 清理(已完成)**:`material.*`/`creation.*` 死 rpcCall fallback 换成抛错 `unsupported{Creation,Material}(type)` helper(`type` 仍用、过 `noUnusedParameters`、不再引用已删 RPC)。
-2. ✅ **文档治理(已完成)**:`electron-migration-design.md` ★实现进度删掉三处「Python 业务面」/「RPC 面」考古块(clip/news_desk/material)+ §2.2/§2.3 横幅改过去时;ADR-0008/0004 状态字段核对无误(建 0008 时已设好)。
-3. **下一大方向 = P3 打包/分发**(`electron-migration-design.md`「剩余工作计划」P3):PyInstaller sidecar(`core_rpc.server` + myenv 依赖,onedir)+ electron-builder 出 Win 安装包;userData repo-local;ffmpeg/ffprobe/yt-dlp Node runtime 随包或引导。目前纯 dev 无分发产物。建议单独开一轮、先定打包方案。→ 之后 P4 打磨 → P5 转场/录播自动剪辑。
+**P3 = 打包 / 分发**(权威 = [`electron-migration-design.md`](draft/electron-migration-design.md)「剩余工作计划」P3 + §7.3 待决;目前纯 dev 模式、零分发产物):
+- **sidecar**:PyInstaller onedir(推荐)bundle `core_rpc.server` + myenv 依赖。
+- **Electron**:electron-builder 出 Win 安装包;userData repo-local([[feedback_portable_data]]);Win11 26200 sandbox 兜底已在 `main.ts`([[project_electron_version_policy]])。
+- **二进制依赖**:ffmpeg/ffprobe、yt-dlp 的 Node.js runtime 随包或引导。
+- **起手**:**先定打包方案**(sidecar onedir 目录结构 / myenv 依赖打包 / 二进制随包 vs 引导下载 / dev↔packaged 路径解析)再动手;启动陷阱见 [[reference_electron_run_as_node]]。之后 P4 打磨 → P5 转场/录播自动剪辑。
 
-> **🎉 ADR-0008(三插件零 Python)全部收尾完成 2026-06-03**(B4/A6/B5 + client.ts 清理 + 文档治理)。
-
-**纪律**:[[feedback_pre_alpha_no_legacy]] 不留兼容层;改 Python 整重启 sidecar;每步 build-green(pytest + desktop typecheck/vitest/build);[[feedback_faithful_port_not_invent]]。
+**纪律**:[[feedback_pre_alpha_no_legacy]] 不留兼容层;改 Python 整重启 sidecar;每步 build-green(pytest + desktop typecheck/vitest/build);[[feedback_faithful_port_not_invent]]。**外部/远端写操作前先只读核对**([[feedback_external_actions]])。
 
 ---
 
-## ▶▶ 本会话(2026-06-03 下午续)= ADR-0008 B4 + A6 + B5 — 三插件零 Python(✅ 完成,commit `cc15d95`/`57e102b`/`ea08bd4`,未 push)
+## ▶▶ 本会话(2026-06-03 下午续)= ADR-0008 B4 + A6 + B5 + 收尾 — 三插件零 Python(✅ 完成,commit `cc15d95`/`57e102b`/`ea08bd4`/`01ce780`/`71f0e1e`/`11ac7ed`,**已 push**)
 
 > 用户「启动 tasks、一步步走、重要步骤手工验证后继续」。摸清发现 task.md 旧口径(A6 一次删 preview/imports)与代码现实冲突:preview/imports 仍走 Python 桥、依赖 model.py,**必须先 B4 接到 TS 才能删干净**。故按 B4 → 真机验 → A6 → B5 推进,验证门停两次(B4 后、B5 后),均「正常」。
 
@@ -28,7 +27,8 @@
 - **A6(`57e102b`)= 删创作 Python**:删 `creations/{clip,news_desk}/{config,presets,component_defs,preview,export,publish}.py`+clip `candidates.py`+news_desk `imports.py`;删整个 `core_rpc/methods/creation.py`(18 方法)+ `CreationType` provider 字段 + `Session.creation_owner`;删 `test_creation*`/`tests/creations/*`、裁 `test_arch_news_desk`。sidecar 干净加载、`creation.*` RPC 全无;`pytest tests/` 全绿(删了 test_clip_config,旧 stale-id pre-existing 也消失)。**行为中性**(那些路径 B4 已不调),未碰 desktop TS。
 - **B5(`ea08bd4`)= 删素材 Python + 分析 context 解耦**:删 `materials/news_video/{model,schema,paths,ai_fill}.py`+`material.py` RPC+`instance_factory`(+`MaterialType` 字段)+`Session.material_model`+`subtitle_pipeline` 的 `(project)` shim(**core/ 现零 material import,最后一个 `TODO(ADR-0005)` 越界消除**)。**pre-step**:`subtitle_analysis_runners`+`capability.analyze` 改收注入式 `context_block`;新闻 block 插件侧 `aiFill.ts buildContextBlock`(port `context_prompt_block`)构建经 `startRunAnalysis` 注入;**news_desk publish 读 context 改走 TS model**(B5 抓出的最后一个活跨调用 `material.read_context`)。裁 `test_material`/`test_{model,paths,schema}`/`test_registration`/`test_arch_materials`(收紧为零 core→plugin import)/`test_dispatch`/`test_capability`。真机验过(分析含 context + publish.md + 素材侧)。
 - **build-green(B5 收口)**:`pytest tests/` 全绿 · desktop typecheck + **212 vitest** + build。
-- **欠**:见最上方「剩余收尾」(client.ts 死 fallback 清理 + 文档治理 + ADR 状态)。**三笔 commit 未 push。**
+- **收尾(同会话)`71f0e1e`/`11ac7ed`**:① client.ts 死 `material.*`/`creation.*` fallback → 抛错 `unsupported{Creation,Material}(type)` helper(`type` 仍用、过 `noUnusedParameters`)② 删 `electron-migration-design.md` 三处「Python 业务面」/「RPC 面」考古块 + §2.2/§2.3 横幅改过去时 ③ ADR-0008/0004 状态核对无误。
+- **ADR-0008 全收尾完成,六笔 commit 已 push。下一步 = P3 打包(见最上方)。**
 
 ---
 
