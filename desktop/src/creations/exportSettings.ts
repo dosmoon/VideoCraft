@@ -60,9 +60,16 @@ export interface FfmpegProbe {
   nvenc: boolean;
 }
 
-/** Engine to use when the user left the choice on auto (""). */
-export function defaultEngine(probe: FfmpegProbe | null): "chromium" | "ffmpeg" {
-  return probe?.ffmpeg && probe.nvenc ? "ffmpeg" : "chromium";
+/**
+ * Engine for the auto ("") choice. Currently always WebCodecs: the native
+ * ffmpeg+NVENC path is transport-bound (GPU→CPU readback + 8 MB/frame IPC) and
+ * slower than in-renderer WebCodecs for this GPU-compositing architecture, so
+ * ffmpeg is an explicit opt-in until the readback/IPC pipeline is optimized
+ * (see docs/draft/adr-0008-migration-tasks.md「⚡ 导出速度」). `_probe` kept for
+ * when that lands.
+ */
+export function defaultEngine(_probe: FfmpegProbe | null): "chromium" | "ffmpeg" {
+  return "chromium";
 }
 /** Resolve the actual engine: an explicit choice wins, but a requested ffmpeg
  *  with no ffmpeg available falls back to chromium (config authored elsewhere). */

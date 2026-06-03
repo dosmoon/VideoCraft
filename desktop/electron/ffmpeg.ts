@@ -39,6 +39,8 @@ interface FfmpegJob {
   tmp: string;
   final: string;
   stderrTail: string[];
+  /** Set when ffmpeg exits before finish() — writeFrame rejects rather than hangs. */
+  exited?: boolean;
 }
 
 const jobs = new Map<number, FfmpegJob>();
@@ -74,13 +76,17 @@ export function probeFfmpeg(): { ffmpeg: boolean; nvenc: boolean } {
   const list = spawnSync(ff, ["-hide_banner", "-encoders"], { encoding: "utf-8" });
   if (list.status === 0 && /h264_nvenc/.test(list.stdout)) {
     // Built with nvenc — confirm it actually initializes on this box (driver/GPU).
+    // Use testsrc @256² (nullsrc / tiny sizes can fail NVENC init).
     const test = spawnSync(
       ff,
-      ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "nullsrc=s=64x64", "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"],
+      ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=256x256:rate=30:duration=1",
+       "-frames:v", "1", "-c:v", "h264_nvenc", "-pix_fmt", "yuv420p", "-f", "null", "-"],
       { encoding: "utf-8" },
     );
     nvenc = test.status === 0;
+    if (!nvenc) console.error("[ffmpeg] nvenc probe failed:", (test.stderr || "").trim() || `status=${test.status}`);
   }
+  console.log(`[ffmpeg] probe: ffmpeg=true nvenc=${nvenc} (${ff})`);
   probeCache = { ffmpeg: true, nvenc };
   return probeCache;
 }
@@ -110,16 +116,27 @@ export async function startJob(p: FfmpegStartParams): Promise<number> {
     "-pix_fmt", "yuv420p",
   );
   if (p.sourcePath) args.push("-c:a", "aac", "-b:a", "192k");
-  args.push("-shortest", "-movflags", "+faststart", tmp);
+  // Explicit muxer: the ".part" temp extension hides the format from ffmpeg's
+  // extension-based detection ("Unable to choose an output format").
+  args.push("-shortest", "-movflags", "+faststart", "-f", "mp4", tmp);
 
+  console.log(`[ffmpeg] start ${ff} ${args.join(" ")}`);
   const proc = spawn(ff, args, { stdio: ["pipe", "ignore", "pipe"] }) as FfmpegProc;
   const job: FfmpegJob = { proc, tmp, final: p.outputPath, stderrTail: [] };
   proc.stderr.setEncoding("utf-8");
   proc.stderr.on("data", (chunk: string) => {
     for (const line of chunk.split("\n")) {
-      if (line.trim()) job.stderrTail.push(line);
+      if (line.trim()) {
+        job.stderrTail.push(line);
+        console.error("[ffmpeg]", line);
+      }
     }
     if (job.stderrTail.length > 50) job.stderrTail.splice(0, job.stderrTail.length - 50);
+  });
+  proc.on("error", (e) => console.error("[ffmpeg] spawn error:", e));
+  proc.on("close", (code) => {
+    job.exited = true;
+    console.log(`[ffmpeg] exit ${code}`);
   });
   // Surface a spawn/stdin error so writeFrame/finish reject rather than hang.
   proc.stdin.on("error", () => {/* swallowed; finish() reports via exit code */});
@@ -133,6 +150,9 @@ export async function startJob(p: FfmpegStartParams): Promise<number> {
 export function writeFrame(id: number, bytes: Uint8Array): Promise<void> {
   const job = jobs.get(id);
   if (!job) return Promise.reject(new Error(`ffmpeg job ${id} not open`));
+  if (job.exited) {
+    return Promise.reject(new Error(`ffmpeg exited early: ${job.stderrTail.join("\n") || "(no stderr)"}`));
+  }
   const buf = Buffer.from(bytes);
   return new Promise<void>((resolve, reject) => {
     const onErr = (e: Error) => reject(e);

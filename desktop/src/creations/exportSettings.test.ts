@@ -44,18 +44,16 @@ describe("exportSettings — normalizers", () => {
 });
 
 describe("exportSettings — engine resolution", () => {
-  it("defaultEngine: ffmpeg only when ffmpeg AND nvenc", () => {
+  it("defaultEngine: always WebCodecs (ffmpeg transport-bound; opt-in only)", () => {
     expect(defaultEngine(null)).toBe("chromium");
-    expect(defaultEngine({ ffmpeg: false, nvenc: false })).toBe("chromium");
-    expect(defaultEngine({ ffmpeg: true, nvenc: false })).toBe("chromium");
-    expect(defaultEngine({ ffmpeg: true, nvenc: true })).toBe("ffmpeg");
+    expect(defaultEngine({ ffmpeg: true, nvenc: true })).toBe("chromium");
   });
-  it("effectiveEngine: explicit choice wins; ffmpeg falls back when absent", () => {
+  it("effectiveEngine: explicit choice wins; ffmpeg falls back when absent; auto = WebCodecs", () => {
     const probe = { ffmpeg: true, nvenc: true };
     expect(effectiveEngine("chromium", probe)).toBe("chromium");
     expect(effectiveEngine("ffmpeg", probe)).toBe("ffmpeg");
     expect(effectiveEngine("ffmpeg", { ffmpeg: false, nvenc: false })).toBe("chromium");
-    expect(effectiveEngine("", probe)).toBe("ffmpeg"); // auto → default
+    expect(effectiveEngine("", probe)).toBe("chromium"); // auto → WebCodecs
     expect(effectiveEngine("", null)).toBe("chromium");
   });
 });

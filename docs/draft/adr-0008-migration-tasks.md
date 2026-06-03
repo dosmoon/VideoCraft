@@ -24,24 +24,25 @@ news_desk 全源导出原 ~30fps(30 分钟视频要 ~30 分钟)。两刀已修(W
 - **硬件编码不可用**:`getGPUInfo` 实测 Chromium 跑在 NVIDIA 4060 上(active vendor=0x10de)但 `videoEncodeAcceleratorSupportedProfile=[]`(**0 个硬件编码档位**);`getGPUFeatureStatus().video_encode=disabled_software`;`ignore-gpu-blocklist`/`enable-features`/flag 全无效。Chromium Windows 桌面 WebCodecs **不暴露 NVENC**(已知老问题)。
 - ⇒ **浏览器内编码永久封顶 ~135fps@1080p**。要更快只能绕开 Chromium。
 
-### ▶ 下一步 = 原生 ffmpeg + NVENC(真硬件编码,预计 ~300fps+,30 分钟视频 ~3 分钟)
-**已验证可行**:系统 `C:\ffmpeg-master-latest-win64-gpl-shared\...\bin\ffmpeg.exe` 有 `h264_nvenc`,smoke test 通过,1080p 实测 **~350fps**。
-- **数据级保 preview≡render**:渲染仍在 GPU(自建合成器不变),ffmpeg **只编码我们渲染好的帧**,不做合成 → 不破坏 preview≡render。
-- **架构**:渲染器每帧 GPU 渲染 → 读回原始像素(复用**保留的** `Backend.renderOffscreenToBytes`,做**流水线异步**多 staging buffer,不再 `mapAsync` 卡死)→ 原始帧经 IPC 喂主进程 → 主进程 spawn ffmpeg,原始帧进 stdin:
-  ```
-  ffmpeg -f rawvideo -pix_fmt rgba -s WxH -r FPS -i pipe:0 \
-         -i <源视频> -map 0:v -map 1:a \
-         -c:v h264_nvenc -preset p4 -b:v <bitrate> -pix_fmt yuv420p \
-         -c:a aac  <output.mp4>
-  ```
-- **附带简化**:音频直接让 ffmpeg 从源文件取(`-map 1:a`;clip 用 `-ss/-to`)→ **干掉 WebCodecs 音频解码/混音**(AudioReader/audioMix 退出导出路径)。
-- **实施分期**:
-  1. 主进程 ffmpeg 编码 IPC(`vc:ffmpegEncode:{start,writeFrame,finish,abort}`,spawn/stdin 背压/退出码)+ ffmpeg 路径检测(复用 env 检测)+ `h264_nvenc` 探测(无则回退 `libx264`,原生 x264 多线程也比 OpenH264 快)。
-  2. Backend 异步读回环(N staging buffer,copy(i)/map(i-1)/encode(i-2) 重叠)。
-  3. 新 `exportTimelineViaFfmpeg`(render→readback→pipe;音频走 ffmpeg `-map`)。
-  4. 接线 news_desk + clip ExportTab,**保留 WebCodecs 为 fallback**(无 nvenc/ffmpeg 时);真机验画面+音画+耗时。
-- **风险/未知**:240MB/s 原始帧过 IPC 的吞吐(必要时 MessagePort/transfer 或本地 socket);读回流水线复杂度;打包后 ffmpeg 路径;clip 裁剪窗口的 `-ss/-to` 音频对齐。
-- **WebCodecs 路径保留**:`encode.ts` 现态(单编码器+canvas 抓帧+流式)是干净 fallback,不删。`renderOffscreenToBytes` **故意保留**(ffmpeg 路径的读回基础)。
+### 导出设置框架 + 可选引擎(已落地 2026-06-03,commit `551c1d2`→Phase5)
+按 NLE 习惯加了**每创作持久化的导出设置**(引擎/分辨率/帧率/码率,存 config.json):
+- 架构:`encode.ts` 拆成共享 `runRenderLoop` + 可插拔 `EncodeSink`(`types.ts`);`webcodecsSink.ts`(现状搬移)/ `ffmpegSink.ts`(新)。两引擎复用同一 GPU 渲染循环 → preview≡render 不破。
+- `exportSettings.ts`(纯模型 + 归一化 + `resolveBitrate`/`downscaleToShortEdge`);`ExportSettingsBar.tsx`(两 tab 共用);clip 分辨率复用 `output_short_edge`,news_desk 用 `export_resolution` 降采样。
+- 主进程 `electron/ffmpeg.ts` + `vc:ffmpegEncode:*`(spawn/stdin 背压/`.part`→rename/probe;`-f mp4` 显式 muxer;退出即 reject 防假死);`h264_nvenc` 探测用 `testsrc` 256²(`nullsrc`/小尺寸会 init 失败)。
+- 198 vitest + typecheck + build 绿。
+
+### ⚠️ ffmpeg+NVENC 引擎:能跑通但**搬运税**慢于 WebCodecs —— **已暂缓(2026-06-03 用户拍板),未来处理**
+**实测**(news_desk 全源 1080p,真机):ffmpeg+NVENC 路 **~27fps**,反而比 WebCodecs(135fps)慢。逐帧拆分:
+- `readback 15ms`(GPU 渲染+`mapAsync` 同步读回)+ `write 21ms`(8MB/帧经 contextBridge 克隆 + IPC 拷贝到主进程)= **36ms/帧全串行**;NVENC 本身 ~3ms 不是瓶颈。
+- **根本矛盾**:WebCodecs 在渲染进程内直接编码(无读回、无 IPC);ffmpeg 是独立进程,每帧 8MB 必须 GPU→CPU→IPC 搬过去,这笔搬运税 > 硬件编码省下的时间。**本 GPU-合成-在-渲染器 架构下,ffmpeg 难超 WebCodecs。**
+- **决策**:暂缓 ffmpeg 提速;**auto 默认引擎 = WebCodecs**(`defaultEngine` 恒 chromium);ffmpeg 引擎选项保留(能跑、硬件编码、画面/音画已通,只是慢),UI 仍可显式选。
+
+**未来要让 ffmpeg 真正发挥(目标 ~150-300fps)= 三级流水线**(目前全串行):
+1. **读回流水线化**:`Backend` 加 N(=3) staging buffer 环,submit(N)/map(N-2) overlap,藏 `mapAsync` 阻塞 → readback 15ms→~2ms(`renderOffscreenToBytes` 故意保留作基础)。
+2. **写不串行**:`ffmpegSink.consume` 发完帧不 await,bounded in-flight,overlap 读回与 IPC。
+3. **IPC 零拷贝**:`vc:ffmpegEncode:writeFrame` 改用 **MessagePort + transfer ArrayBuffer**(绕开 contextBridge 8MB 克隆)→ write 21ms→~3ms。
+- 三者 + 三级 overlap → 瓶颈降到单级 ~3ms。风险:GPU buffer 复用竞态、MessagePort 背压、打包后 ffmpeg 路径、clip `-ss` 音频对齐(均未深验)。
+- **保留物**:`encode.ts`/`ffmpegSink.ts`/`electron/ffmpeg.ts` 全部留着(能跑);`renderOffscreenToBytes` 留作读回基础。捡起时从「三级流水线」三步做起。
 
 ---
 
