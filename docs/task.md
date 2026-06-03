@@ -10,7 +10,7 @@
 > **🎉 ADR-0008 终态达成(2026-06-03):clip + news_desk + news_video 三插件零插件专属 Python。** B4(创作/素材读全接 TS)+ A6(删创作 Python)+ B5(删素材 Python)全部完成、build-green、真机验过、已 commit(`cc15d95`→`57e102b`→`ea08bd4`,**未 push**)。Python 现仅剩:plugin-agnostic 能力网关 `capability.*` + 框架目录生命周期 `project.*` + AI/models/env/gpu 框架服务。详见下方本会话块 + [`adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md) 收尾段。
 
 **剩余收尾(非阻塞,按需;权威 = `adr-0008-migration-tasks.md` 收尾段)**:
-1. **client.ts 死 fallback 清理**:`material.*`/`creation.*` 的 rpcCall fallback arm 已无对应 Python、永不命中(clip/news_desk/news_video 三类型穷尽且全走 TS)。干净移除受 `noUnusedParameters` 限制(material 侧删 fallback 留 unused `type` → 需改方法签名 + 全部 renderer caller),低价值需独立小重构。
+1. ✅ **client.ts 死 fallback 清理(已完成)**:`material.*`/`creation.*` 死 rpcCall fallback 换成抛错 `unsupported{Creation,Material}(type)` helper(`type` 仍用、过 `noUnusedParameters`、不再引用已删 RPC)。
 2. 文档治理:`electron-migration-design.md` ★实现进度删掉已退役的「Python 业务面」考古节;ADR-0008 状态确认 Active、ADR-0004 provider 部分确认 Superseded(P6)。
 3. 之后大方向(`electron-migration-design.md`「剩余工作计划」):**P3 打包/分发**(PyInstaller sidecar + electron-builder,目前纯 dev 无产物)→ P4 打磨 → P5 转场/录播自动剪辑。
 

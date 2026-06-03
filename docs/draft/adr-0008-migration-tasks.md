@@ -88,7 +88,7 @@ news_desk 全源导出原 ~30fps(30 分钟视频要 ~30 分钟)。两刀已修(W
   - [x] 清各 `__init__.py` provider 注册(留 `type_name/single_instance/description_*` 等元数据)
   - [x] 删 `core_rpc/methods/creation.py`(整文件,18 个 provider-delegating 方法)+ `CreationType` provider 字段 + `Session.creation_owner/invalidate_creation` + `_creations` 缓存
   - [x] 删 `tests/core_rpc/test_creation*.py` + `tests/creations/test_{clip,news_desk}_*.py`;裁 `test_arch_news_desk`(去 provider-wiring + imports.py 断言)
-  - [~] `client.ts` 死 `creation.*` fallback arm 清理**延后**(永不命中;`noUnusedParameters` 下干净移除需改签名,不成比例)
+  - [x] `client.ts` 死 `creation.*`/`material.*` fallback arm 清理(commit 见收尾;用抛错 `unsupported{Creation,Material}(type)` helper 替死 rpcCall,`type` 仍被使用过 `noUnusedParameters`)
 
 ---
 
@@ -129,6 +129,6 @@ news_desk 全源导出原 ~30fps(30 分钟视频要 ~30 分钟)。两刀已修(W
 > **🎉 ADR-0008 终态达成(2026-06-03,commit `cc15d95`→`57e102b`→`ea08bd4`):clip + news_desk + news_video 三插件零插件专属 Python。** Python 现仅剩:plugin-agnostic 能力网关(`capability.*`)+ 框架目录生命周期(`project.*`)+ AI/models/env/gpu 框架服务。
 
 - [x] 全套回归:`pytest tests/`(全绿,无 pre-existing 失败)+ desktop typecheck + 212 vitest + build。
-- [ ] **client.ts 死 fallback 清理(延后)**:`material.*`/`creation.*` 的 rpcCall fallback arm 已无对应 Python,但永不命中(三类型穷尽且全走 TS)。干净移除受 `noUnusedParameters` 限制(material 侧删 fallback 留 unused `type` → 需改方法签名 + 全部 renderer caller)。低价值、需独立小重构,单独做。
+- [x] **client.ts 死 fallback 清理**(完成):`material.*`/`creation.*` 的死 rpcCall fallback arm 全部换成抛错的 `unsupported{Creation,Material}(type)` helper(`type` 仍被使用,过 `noUnusedParameters`;未知类型给清晰错误,不再引用已删 RPC)。
 - [ ] 文档:`electron-migration-design.md` ★实现进度删掉已退役的「Python 业务面」节(从考古转为删除);更新 `vc.fs.*`/`capability.*` 为已实现。
 - [ ] ADR-0008 状态确认 Active 落地;ADR-0004 provider 部分确认 Superseded(正文已标 superseded,确认 ADR 文件状态字段)。

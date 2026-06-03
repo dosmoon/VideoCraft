@@ -342,6 +342,18 @@ export interface AcquireSource {
   title?: string;
 }
 
+// ADR-0008 terminal state: the three plugins (clip / news_desk / news_video) run
+// entirely TS-side, so the creation.*/material.* dispatch below routes every known
+// type to its TS backend. An unknown type is a programming error (the type-picker
+// only offers the registered three) — these throw rather than hit a now-deleted
+// Python RPC. Returning `never` keeps the dispatch ternaries well-typed.
+function unsupportedCreation(type: string): never {
+  throw new RpcError(-32602, `unsupported creation type: ${type}`);
+}
+function unsupportedMaterial(type: string): never {
+  throw new RpcError(-32602, `unsupported material type: ${type}`);
+}
+
 // ── Method stubs (the bound read-only surface; mutations land in later slices) ─
 
 export const rpc = {
@@ -454,22 +466,18 @@ export const rpc = {
 
   // news_video (the only material type) → TS structured readiness; the data layer
   // emits facts (isFilled/isLocked + source/context/subtitle descriptors), the UI
-  // formats any summary via tr(). Python fallback is dead (removed with material.py at B5).
+  // formats any summary via tr().
   slotReadiness: (type: string, instance: string): Promise<Record<SlotId, SlotState>> =>
-    type === "news_video"
-      ? materialBackend.slotReadinessStructured(instance)
-      : rpcCall<Record<SlotId, SlotState>>("material.slot_readiness", { type, instance }),
+    type === "news_video" ? materialBackend.slotReadinessStructured(instance) : unsupportedMaterial(type),
   getArtifact: (type: string, instance: string, key: string) =>
-    type === "news_video"
-      ? materialBackend.getArtifact(instance, key)
-      : rpcCall<string | null>("material.get_artifact", { type, instance, key }),
+    type === "news_video" ? materialBackend.getArtifact(instance, key) : unsupportedMaterial(type),
 
   loadConfig: (type: string, instance: string) =>
     type === "clip"
       ? clipBackend.loadConfig(instance)
       : type === "news_desk"
         ? newsDeskBackend.loadConfig(instance)
-        : rpcCall<Record<string, unknown>>("creation.load_config", { type, instance }),
+        : unsupportedCreation(type),
   // Bind a material instance to the creation (ADR-0005). A new-arch creation is
   // created unbound; this is how it gets its source. Returns the updated config.
   bindMaterial: (
@@ -482,18 +490,13 @@ export const rpc = {
       ? clipBackend.bindMaterial(instance, materialType, materialInstance)
       : type === "news_desk"
         ? newsDeskBackend.bindMaterial(instance, materialType, materialInstance)
-        : rpcCall<Record<string, unknown>>("creation.bind_material", {
-            type,
-            instance,
-            material_type: materialType,
-            material_instance: materialInstance,
-          }),
+        : unsupportedCreation(type),
   listComponents: (type: string, instance: string) =>
     type === "clip"
       ? clipBackend.listComponents(instance)
       : type === "news_desk"
         ? newsDeskBackend.listComponents(instance)
-        : rpcCall<Component[]>("creation.list_components", { type, instance }),
+        : unsupportedCreation(type),
   updateComponent: (
     type: string,
     instance: string,
@@ -504,12 +507,7 @@ export const rpc = {
       ? clipBackend.updateComponent(instance, componentId, patch)
       : type === "news_desk"
         ? newsDeskBackend.updateComponent(instance, componentId, patch)
-        : rpcCall<Component>("creation.update_component", {
-            type,
-            instance,
-            component_id: componentId,
-            patch,
-          }),
+        : unsupportedCreation(type),
   // Patch top-level config fields (output geometry, selection, per-candidate
   // overrides via clips_overrides_merge). Returns the updated config dict.
   updateConfig: (type: string, instance: string, patch: Record<string, unknown>) =>
@@ -517,7 +515,7 @@ export const rpc = {
       ? clipBackend.updateConfig(instance, patch)
       : type === "news_desk"
         ? newsDeskBackend.updateConfig(instance, patch)
-        : rpcCall<Record<string, unknown>>("creation.update_config", { type, instance, patch }),
+        : unsupportedCreation(type),
   // Per-creation preview inputs; the shape is owned by the matching TS assembler
   // (clip → ClipPreviewData), so it's opaque here.
   previewData: (type: string, instance: string) =>
@@ -525,53 +523,40 @@ export const rpc = {
       ? clipBackend.previewData(instance)
       : type === "news_desk"
         ? newsDeskBackend.previewData(instance)
-        : rpcCall<unknown>("creation.preview_data", { type, instance }),
+        : unsupportedCreation(type),
 
   // Component list management ([+ Add] menu / remove / reorder). add/remove/move
   // return the updated component list (list order = z-order).
-  listAddableComponents: (type: string, instance: string) =>
+  listAddableComponents: (type: string, _instance: string) =>
     type === "clip"
       ? clipBackend.listAddableComponents()
       : type === "news_desk"
         ? newsDeskBackend.listAddableComponents()
-        : rpcCall<{ kind: string; multi_instance: boolean }[]>("creation.list_addable_components", {
-            type,
-            instance,
-          }),
+        : unsupportedCreation(type),
   addComponent: (type: string, instance: string, kind: string) =>
     type === "clip"
       ? clipBackend.addComponent(instance, kind)
       : type === "news_desk"
         ? newsDeskBackend.addComponent(instance, kind)
-        : rpcCall<Component[]>("creation.add_component", { type, instance, kind }),
+        : unsupportedCreation(type),
   removeComponent: (type: string, instance: string, componentId: string) =>
     type === "clip"
       ? clipBackend.removeComponent(instance, componentId)
       : type === "news_desk"
         ? newsDeskBackend.removeComponent(instance, componentId)
-        : rpcCall<Component[]>("creation.remove_component", { type, instance, component_id: componentId }),
+        : unsupportedCreation(type),
   moveComponent: (type: string, instance: string, componentId: string, delta: number) =>
     type === "clip"
       ? clipBackend.moveComponent(instance, componentId, delta)
       : type === "news_desk"
         ? newsDeskBackend.moveComponent(instance, componentId, delta)
-        : rpcCall<Component[]>("creation.move_component", {
-            type,
-            instance,
-            component_id: componentId,
-            delta,
-          }),
+        : unsupportedCreation(type),
 
   // Material-artifact imports (provider-defined shape). list_imports reports what
   // the bound material offers; import_resource snapshots one into a component and
   // returns the updated component. news_desk: subtitle SRT + chapter schedule.
   listImports: (type: string, instance: string) =>
-    type === "news_desk"
-      ? newsDeskBackend.listImports(instance)
-      : rpcCall<{ subtitleLangs: string[]; analyses: string[] }>("creation.list_imports", {
-          type,
-          instance,
-        }),
+    type === "news_desk" ? newsDeskBackend.listImports(instance) : unsupportedCreation(type),
   importResource: (
     type: string,
     instance: string,
@@ -580,12 +565,7 @@ export const rpc = {
   ) =>
     type === "news_desk"
       ? newsDeskBackend.importResource(instance, componentId, params)
-      : rpcCall<Component>("creation.import_resource", {
-          type,
-          instance,
-          component_id: componentId,
-          params,
-        }),
+      : unsupportedCreation(type),
 
   // Render orchestration. plan_render returns output paths + geometry for the
   // selected candidates; the renderer encodes each to outputPath, writes it via
@@ -595,7 +575,7 @@ export const rpc = {
       ? clipBackend.planRender(instance)
       : type === "news_desk"
         ? newsDeskBackend.planRender(instance)
-        : rpcCall<RenderPlan>("creation.plan_render", { type, instance }),
+        : unsupportedCreation(type),
   commitRender: (
     type: string,
     instance: string,
@@ -607,19 +587,13 @@ export const rpc = {
       ? clipBackend.commitRender(instance, srcIdx, outIdx, durationSec)
       : type === "news_desk"
         ? newsDeskBackend.commitRender(instance, srcIdx, outIdx, durationSec)
-        : rpcCall<RenderedClip[]>("creation.commit_render", {
-            type,
-            instance,
-            src_idx: srcIdx,
-            out_idx: outIdx,
-            duration_sec: durationSec,
-          }),
+        : unsupportedCreation(type),
   deleteRender: (type: string, instance: string, outIdx: number) =>
     type === "clip"
       ? clipBackend.deleteRender(instance, outIdx)
       : type === "news_desk"
         ? newsDeskBackend.deleteRender(instance, outIdx)
-        : rpcCall<RenderedClip[]>("creation.delete_render", { type, instance, out_idx: outIdx }),
+        : unsupportedCreation(type),
 
   // Presets (Style-tab toolbar). apply returns the updated config; save/delete
   // return the updated preset list.
@@ -628,25 +602,25 @@ export const rpc = {
       ? clipBackend.listPresets(instance)
       : type === "news_desk"
         ? newsDeskBackend.listPresets(instance)
-        : rpcCall<PresetList>("creation.list_presets", { type, instance }),
+        : unsupportedCreation(type),
   applyPreset: (type: string, instance: string, name: string) =>
     type === "clip"
       ? clipBackend.applyPreset(instance, name)
       : type === "news_desk"
         ? newsDeskBackend.applyPreset(instance, name)
-        : rpcCall<Record<string, unknown>>("creation.apply_preset", { type, instance, name }),
+        : unsupportedCreation(type),
   savePreset: (type: string, instance: string, name: string) =>
     type === "clip"
       ? clipBackend.savePreset(instance, name)
       : type === "news_desk"
         ? newsDeskBackend.savePreset(instance, name)
-        : rpcCall<PresetList>("creation.save_preset", { type, instance, name }),
+        : unsupportedCreation(type),
   deletePreset: (type: string, instance: string, name: string) =>
     type === "clip"
       ? clipBackend.deletePreset(instance, name)
       : type === "news_desk"
         ? newsDeskBackend.deletePreset(instance, name)
-        : rpcCall<PresetList>("creation.delete_preset", { type, instance, name }),
+        : unsupportedCreation(type),
 
   // ── Material side (素材) ───────────────────────────────────────────────────
   // Registered material types for the 素材 [+] menu (descriptions, never the raw
@@ -661,79 +635,47 @@ export const rpc = {
 
   // Source descriptor + probe values for the Source tab (null fields until set).
   materialSourceMeta: (type: string, instance: string) =>
-    type === "news_video"
-      ? materialBackend.materialSourceMeta(instance)
-      : rpcCall<SourceMeta>("material.source_meta", { type, instance }),
+    type === "news_video" ? materialBackend.materialSourceMeta(instance) : unsupportedMaterial(type),
 
   // News context (15 fields) + basic_info seed (5 fields). write_* persist the
   // whole dict (server normalizes) and return the stored value.
   readContext: (type: string, instance: string) =>
-    type === "news_video"
-      ? materialBackend.readContext(instance)
-      : rpcCall<SourceContext>("material.read_context", { type, instance }),
+    type === "news_video" ? materialBackend.readContext(instance) : unsupportedMaterial(type),
   writeContext: (type: string, instance: string, context: SourceContext) =>
-    type === "news_video"
-      ? materialBackend.writeContext(instance, context)
-      : rpcCall<SourceContext>("material.write_context", { type, instance, context }),
+    type === "news_video" ? materialBackend.writeContext(instance, context) : unsupportedMaterial(type),
   readBasicInfo: (type: string, instance: string) =>
-    type === "news_video"
-      ? materialBackend.readBasicInfo(instance)
-      : rpcCall<SourceBasicInfo>("material.read_basic_info", { type, instance }),
+    type === "news_video" ? materialBackend.readBasicInfo(instance) : unsupportedMaterial(type),
   writeBasicInfo: (type: string, instance: string, basicInfo: SourceBasicInfo) =>
-    type === "news_video"
-      ? materialBackend.writeBasicInfo(instance, basicInfo)
-      : rpcCall<SourceBasicInfo>("material.write_basic_info", { type, instance, basic_info: basicInfo }),
+    type === "news_video" ? materialBackend.writeBasicInfo(instance, basicInfo) : unsupportedMaterial(type),
   contextCompletion: (type: string, instance: string) =>
-    type === "news_video"
-      ? materialBackend.contextCompletion(instance)
-      : rpcCall<{ filled: number; total: number }>("material.context_completion", { type, instance }),
+    type === "news_video" ? materialBackend.contextCompletion(instance) : unsupportedMaterial(type),
 
   // Subtitles + analyses (read). list_subtitle_languages → ISO codes with an SRT;
   // list_analyses → analysis.json filenames; analysis_summary → per-file preview;
   // read_analysis → the raw envelope (chapter editor source of truth).
   listSubtitleLanguages: (type: string, instance: string) =>
-    type === "news_video"
-      ? materialBackend.listSubtitleLanguages(instance)
-      : rpcCall<string[]>("material.list_subtitle_languages", { type, instance }),
+    type === "news_video" ? materialBackend.listSubtitleLanguages(instance) : unsupportedMaterial(type),
   // SRT text for the in-tab viewer; quality check + one-click auto-fix.
   readSubtitle: (type: string, instance: string, lang: string) =>
-    type === "news_video"
-      ? materialBackend.readSubtitle(instance, lang)
-      : rpcCall<{ text: string }>("material.read_subtitle", { type, instance, lang }),
+    type === "news_video" ? materialBackend.readSubtitle(instance, lang) : unsupportedMaterial(type),
   checkSubtitle: (type: string, instance: string, lang: string) =>
-    type === "news_video"
-      ? materialBackend.checkSubtitle(instance, lang)
-      : rpcCall<SubtitleCheck>("material.check_subtitle", { type, instance, lang }),
+    type === "news_video" ? materialBackend.checkSubtitle(instance, lang) : unsupportedMaterial(type),
   quickFixSubtitle: (type: string, instance: string, lang: string) =>
-    type === "news_video"
-      ? materialBackend.quickFixSubtitle(instance, lang)
-      : rpcCall<SubtitleCheck>("material.quick_fix_subtitle", { type, instance, lang }),
+    type === "news_video" ? materialBackend.quickFixSubtitle(instance, lang) : unsupportedMaterial(type),
   // Import an external .srt from disk (path from window.vc.pickSubtitle).
   importSubtitle: (type: string, instance: string, path: string, lang: string) =>
-    type === "news_video"
-      ? materialBackend.importSubtitle(instance, path, lang)
-      : rpcCall<{ lang: string }>("material.import_subtitle", { type, instance, path, lang }),
+    type === "news_video" ? materialBackend.importSubtitle(instance, path, lang) : unsupportedMaterial(type),
   // Existing analysis artifacts across all kinds + raw text of one (md/json viewer).
   listAnalysisArtifacts: (type: string, instance: string, lang: string) =>
-    type === "news_video"
-      ? materialBackend.listAnalysisArtifacts(instance, lang)
-      : rpcCall<AnalysisArtifact[]>("material.list_analysis_artifacts", { type, instance, lang }),
+    type === "news_video" ? materialBackend.listAnalysisArtifacts(instance, lang) : unsupportedMaterial(type),
   readAnalysisText: (type: string, instance: string, lang: string, kind: string) =>
-    type === "news_video"
-      ? materialBackend.readAnalysisText(instance, lang, kind)
-      : rpcCall<{ text: string }>("material.read_analysis_text", { type, instance, lang, kind }),
+    type === "news_video" ? materialBackend.readAnalysisText(instance, lang, kind) : unsupportedMaterial(type),
   listAnalyses: (type: string, instance: string) =>
-    type === "news_video"
-      ? materialBackend.listAnalyses(instance)
-      : rpcCall<string[]>("material.list_analyses", { type, instance }),
+    type === "news_video" ? materialBackend.listAnalyses(instance) : unsupportedMaterial(type),
   analysisSummary: (type: string, instance: string, filename: string) =>
-    type === "news_video"
-      ? materialBackend.analysisSummary(instance, filename)
-      : rpcCall<AnalysisSummary>("material.analysis_summary", { type, instance, filename }),
+    type === "news_video" ? materialBackend.analysisSummary(instance, filename) : unsupportedMaterial(type),
   readAnalysis: (type: string, instance: string, filename: string) =>
-    type === "news_video"
-      ? materialBackend.readAnalysis(instance, filename)
-      : rpcCall<Record<string, unknown>>("material.read_analysis", { type, instance, filename }),
+    type === "news_video" ? materialBackend.readAnalysis(instance, filename) : unsupportedMaterial(type),
   // Re-save an analysis.json after editing the chapter schedule; server
   // normalizes (sort / end=next.start / drop degenerate / synth 00:00) and
   // returns the normalized envelope.
@@ -746,13 +688,7 @@ export const rpc = {
   ) =>
     type === "news_video"
       ? materialBackend.saveChapters(instance, filename, chapters, lang)
-      : rpcCall<Record<string, unknown>>("material.save_chapters", {
-          type,
-          instance,
-          filename,
-          chapters,
-          lang,
-        }),
+      : unsupportedMaterial(type),
 
   // Project-meta writes the TS material backend calls after capability jobs
   // (which are plugin-agnostic and touch no project meta): persist the acquired
@@ -773,40 +709,25 @@ export const rpc = {
   // Long-running material jobs (sidecar threads). Each returns {job_id}
   // immediately; consume progress/terminal via runJob (ipc/runJob.ts).
   startSetSource: (type: string, instance: string, source: AcquireSource) =>
-    type === "news_video"
-      ? materialBackend.startSetSource(instance, source)
-      : rpcCall<{ job_id: string }>("material.set_source", { type, instance, source }),
+    type === "news_video" ? materialBackend.startSetSource(instance, source) : unsupportedMaterial(type),
   startRunAsr: (type: string, instance: string, sourceLang?: string) =>
-    type === "news_video"
-      ? materialBackend.startRunAsr(instance, sourceLang)
-      : rpcCall<{ job_id: string }>("material.run_asr", {
-          type,
-          instance,
-          ...(sourceLang ? { source_lang: sourceLang } : {}),
-        }),
+    type === "news_video" ? materialBackend.startRunAsr(instance, sourceLang) : unsupportedMaterial(type),
   // sourceLang (news_video only): translate FROM this language's SRT instead of the
   // project source — lets each subtitle node offer "translate from itself". Defaults
   // to the project source when omitted.
   startRunTranslate: (type: string, instance: string, targetLang: string, sourceLang?: string) =>
     type === "news_video"
       ? materialBackend.startRunTranslate(instance, targetLang, sourceLang)
-      : rpcCall<{ job_id: string }>("material.run_translate", { type, instance, target_lang: targetLang }),
+      : unsupportedMaterial(type),
   startRunAnalysis: (type: string, instance: string, lang: string, analysisKind: string) =>
     type === "news_video"
       ? materialBackend.startRunAnalysis(instance, lang, analysisKind)
-      : rpcCall<{ job_id: string }>("material.run_analysis", {
-          type,
-          instance,
-          lang,
-          analysis_kind: analysisKind,
-        }),
+      : unsupportedMaterial(type),
   // news_video → generic capability.llm_extract (plugin builds the prompt); the
   // job result is the raw 15-field dict, which the caller persists via writeContext
-  // (capability does not write context.json). Other types → the Python job (writes).
+  // (capability does not write context.json).
   startAiFillContext: (type: string, instance: string) =>
-    type === "news_video"
-      ? materialBackend.startAiFill(instance)
-      : rpcCall<{ job_id: string }>("material.ai_fill_context", { type, instance }),
+    type === "news_video" ? materialBackend.startAiFill(instance) : unsupportedMaterial(type),
 
   // Cancel a running job by id (shared with the creation side; system.py).
   cancelJob: (jobId: string) => rpcCall<{ cancelled: boolean }>("job.cancel", { job_id: jobId }),
