@@ -17,6 +17,7 @@
 import { clipBackend } from "@creations/clip/clientBackend.js";
 import { newsDeskBackend } from "@creations/news_desk/clientBackend.js";
 import { materialBackend } from "@materials/news_video/clientBackend.js";
+import type { SlotId, SlotState } from "@materials/news_video/model.js";
 
 /** Mirrors the Python sidecar's JSON-RPC error (code + message + optional data). */
 export class RpcError extends Error {
@@ -75,13 +76,6 @@ export interface CreationTypeInfo {
   single_instance: boolean;
   description_zh: string;
   description_en: string;
-}
-
-export interface SlotState {
-  slot_id: string;
-  is_locked: boolean;
-  is_filled: boolean;
-  summary: string;
 }
 
 /** A creation component instance. id/kind are structural; the rest is style. */
@@ -458,8 +452,13 @@ export const rpc = {
   deleteInstance: (kind: "material" | "creation", type: string, instance: string) =>
     rpcCall<{ ok: boolean }>("project.delete_instance", { kind, type, instance }),
 
-  slotReadiness: (type: string, instance: string) =>
-    rpcCall<Record<string, SlotState>>("material.slot_readiness", { type, instance }),
+  // news_video (the only material type) → TS structured readiness; the data layer
+  // emits facts (isFilled/isLocked + source/context/subtitle descriptors), the UI
+  // formats any summary via tr(). Python fallback is dead (removed with material.py at B5).
+  slotReadiness: (type: string, instance: string): Promise<Record<SlotId, SlotState>> =>
+    type === "news_video"
+      ? materialBackend.slotReadinessStructured(instance)
+      : rpcCall<Record<SlotId, SlotState>>("material.slot_readiness", { type, instance }),
   getArtifact: (type: string, instance: string, key: string) =>
     type === "news_video"
       ? materialBackend.getArtifact(instance, key)
@@ -522,7 +521,11 @@ export const rpc = {
   // Per-creation preview inputs; the shape is owned by the matching TS assembler
   // (clip → ClipPreviewData), so it's opaque here.
   previewData: (type: string, instance: string) =>
-    rpcCall<unknown>("creation.preview_data", { type, instance }),
+    type === "clip"
+      ? clipBackend.previewData(instance)
+      : type === "news_desk"
+        ? newsDeskBackend.previewData(instance)
+        : rpcCall<unknown>("creation.preview_data", { type, instance }),
 
   // Component list management ([+ Add] menu / remove / reorder). add/remove/move
   // return the updated component list (list order = z-order).
@@ -563,22 +566,26 @@ export const rpc = {
   // the bound material offers; import_resource snapshots one into a component and
   // returns the updated component. news_desk: subtitle SRT + chapter schedule.
   listImports: (type: string, instance: string) =>
-    rpcCall<{ subtitleLangs: string[]; analyses: string[] }>("creation.list_imports", {
-      type,
-      instance,
-    }),
+    type === "news_desk"
+      ? newsDeskBackend.listImports(instance)
+      : rpcCall<{ subtitleLangs: string[]; analyses: string[] }>("creation.list_imports", {
+          type,
+          instance,
+        }),
   importResource: (
     type: string,
     instance: string,
     componentId: string,
     params: Record<string, unknown>,
   ) =>
-    rpcCall<Component>("creation.import_resource", {
-      type,
-      instance,
-      component_id: componentId,
-      params,
-    }),
+    type === "news_desk"
+      ? newsDeskBackend.importResource(instance, componentId, params)
+      : rpcCall<Component>("creation.import_resource", {
+          type,
+          instance,
+          component_id: componentId,
+          params,
+        }),
 
   // Render orchestration. plan_render returns output paths + geometry for the
   // selected candidates; the renderer encodes each to outputPath, writes it via
@@ -669,7 +676,9 @@ export const rpc = {
       ? materialBackend.writeContext(instance, context)
       : rpcCall<SourceContext>("material.write_context", { type, instance, context }),
   readBasicInfo: (type: string, instance: string) =>
-    rpcCall<SourceBasicInfo>("material.read_basic_info", { type, instance }),
+    type === "news_video"
+      ? materialBackend.readBasicInfo(instance)
+      : rpcCall<SourceBasicInfo>("material.read_basic_info", { type, instance }),
   writeBasicInfo: (type: string, instance: string, basicInfo: SourceBasicInfo) =>
     type === "news_video"
       ? materialBackend.writeBasicInfo(instance, basicInfo)

@@ -21,6 +21,9 @@ import { realFs } from "../../renderer/ipc/fs";
 import { rpcCall } from "../../renderer/ipc/client";
 import type { Component, PresetList, ProjectBrief, RenderPlan, RenderedClip } from "../../renderer/ipc/client";
 import { ClipConfigOwner } from "./configOwner";
+import { HotclipsRepo } from "./hotclipsRepo";
+import { buildClipPreview, emptyClipPreview, type ClipPreviewResult } from "./preview";
+import { loadNewsVideoModel } from "../../materials/news_video/resolve";
 import * as render from "./render";
 
 async function instanceDir(instance: string): Promise<string> {
@@ -33,13 +36,21 @@ async function withOwner<T>(instance: string, fn: (o: ClipConfigOwner, dir: stri
   return fn(owner, dir);
 }
 
-/** Candidates from the Python preview provider (Phase A bridge). */
-async function candidates(instance: string): Promise<Record<string, unknown>[]> {
-  const pd = await rpcCall<{ candidates?: Record<string, unknown>[] }>("creation.preview_data", {
-    type: "clip",
-    instance,
+/** Clip preview inputs (ADR-0008 B4): resolves the bound material via the TS
+ *  model, builds a HotclipsRepo over the per-instance snapshot, and delegates the
+ *  shape to buildClipPreview (preview.ts). No Python bridge. */
+async function loadPreview(instance: string): Promise<ClipPreviewResult> {
+  return withOwner(instance, async (owner, dir) => {
+    if (!owner.boundMaterial) return emptyClipPreview(owner.sourceSubtitle);
+    const model = await loadNewsVideoModel(owner.boundMaterial.instance_name);
+    const repo = new HotclipsRepo(realFs, dir, { subtitlesDir: async () => model.subtitlesDir });
+    return buildClipPreview(owner, repo);
   });
-  return Array.isArray(pd.candidates) ? pd.candidates : [];
+}
+
+/** Candidates for render planning — from the same TS snapshot as the preview. */
+async function candidates(instance: string): Promise<Record<string, unknown>[]> {
+  return (await loadPreview(instance)).candidates;
 }
 
 /** Project title + source language for publish docs (content follows the source). */
@@ -60,6 +71,8 @@ export const clipBackend = {
     }),
 
   listComponents: (instance: string) => withOwner(instance, (o) => o.components as unknown as Component[]),
+
+  previewData: (instance: string): Promise<unknown> => loadPreview(instance),
 
   updateComponent: (instance: string, componentId: string, patch: Record<string, unknown>) =>
     withOwner(instance, async (o) => {

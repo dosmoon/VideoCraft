@@ -10,6 +10,9 @@ import { realFs } from "../../renderer/ipc/fs";
 import { rpcCall } from "../../renderer/ipc/client";
 import type { Component, PresetList, ProjectBrief, RenderPlan, RenderedClip } from "../../renderer/ipc/client";
 import { NewsDeskConfigOwner } from "./configOwner";
+import { buildNewsDeskPreview, emptyNewsDeskPreview, type NewsDeskPreviewResult } from "./preview";
+import { importNewsDeskResource, listNewsDeskImports } from "./imports";
+import { loadNewsVideoModel } from "../../materials/news_video/resolve";
 import * as render from "./render";
 
 async function instanceDir(instance: string): Promise<string> {
@@ -22,13 +25,19 @@ async function withOwner<T>(instance: string, fn: (o: NewsDeskConfigOwner, dir: 
   return fn(owner, dir);
 }
 
-/** Full-source media ref + duration from the Python preview provider (Phase A). */
-async function previewMedia(instance: string): Promise<{ mediaRef: string | null; durationSec: number }> {
-  const pd = await rpcCall<{ mediaRef?: string | null; durationSec?: number }>("creation.preview_data", {
-    type: "news_desk",
-    instance,
+/** News-desk preview inputs (ADR-0008 B4): resolves the bound material + project
+ *  meta duration, then delegates the SRT resolution to buildNewsDeskPreview. */
+async function loadPreview(instance: string): Promise<NewsDeskPreviewResult> {
+  return withOwner(instance, async (owner, dir) => {
+    if (!owner.boundMaterial) return emptyNewsDeskPreview();
+    const model = await loadNewsVideoModel(owner.boundMaterial.instance_name);
+    // Duration from project meta.source (Python's model.get_source_meta() reads
+    // the same project-level descriptor; meta survives independent of the file).
+    const cur = await rpcCall<ProjectBrief | null>("project.current");
+    const s = ((cur?.meta as { source?: { duration_sec?: number } } | undefined)?.source ?? {});
+    const durationSec = Number(s.duration_sec) || 0;
+    return buildNewsDeskPreview(owner.components, dir, realFs, model.sourceVideoPath, durationSec);
   });
-  return { mediaRef: pd.mediaRef ?? null, durationSec: Number(pd.durationSec) || 0 };
 }
 
 /** Bound material context + project meta for publish.md (content follows source). */
@@ -71,6 +80,8 @@ export const newsDeskBackend = {
     }),
 
   listComponents: (instance: string) => withOwner(instance, (o) => o.components as unknown as Component[]),
+
+  previewData: (instance: string): Promise<unknown> => loadPreview(instance),
 
   updateComponent: (instance: string, componentId: string, patch: Record<string, unknown>) =>
     withOwner(instance, async (o) => {
@@ -131,9 +142,28 @@ export const newsDeskBackend = {
       return o.listPresets();
     }),
 
+  // Material-artifact imports (ADR-0008 B4 TS port of creations/news_desk/imports.py).
+  // list_imports reports the bound material's subtitle languages + analysis files;
+  // import_resource SNAPSHOTS one into a component (snapshot principle, ADR-0003):
+  // a subtitle copies the chosen language's SRT into the instance and points its
+  // srt_path at it; a chapter fills its schedule from an analysis.json envelope.
+  listImports: (instance: string): Promise<{ subtitleLangs: string[]; analyses: string[] }> =>
+    withOwner(instance, async (o) => {
+      if (!o.boundMaterial) return { subtitleLangs: [], analyses: [] };
+      return listNewsDeskImports(await loadNewsVideoModel(o.boundMaterial.instance_name));
+    }),
+
+  importResource: (instance: string, componentId: string, params: Record<string, unknown>): Promise<Component> =>
+    withOwner(instance, async (o, dir) => {
+      if (!o.boundMaterial) throw new Error("creation is not bound to a material");
+      const model = await loadNewsVideoModel(o.boundMaterial.instance_name);
+      const updated = await importNewsDeskResource(o, realFs, dir, model, componentId, params);
+      return updated as unknown as Component;
+    }),
+
   planRender: (instance: string): Promise<RenderPlan> =>
     withOwner(instance, async (_o, dir) => {
-      const { mediaRef, durationSec } = await previewMedia(instance);
+      const { mediaRef, durationSec } = await loadPreview(instance);
       return render.planRender(dir, mediaRef, durationSec) as unknown as RenderPlan;
     }),
 

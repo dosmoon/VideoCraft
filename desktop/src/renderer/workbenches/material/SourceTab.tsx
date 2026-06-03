@@ -70,7 +70,6 @@ const BTN_GHOST: React.CSSProperties = {
 export function SourceTab({ type, instance, refreshKey, onChanged }: MaterialTabProps) {
   const [meta, setMeta] = useState<SourceMeta | null>(null);
   const [filled, setFilled] = useState(false);
-  const [summary, setSummary] = useState("");
   const [srcUrl, setSrcUrl] = useState("");
   const [mode, setMode] = useState<"local" | "link">("local");
   const [url, setUrl] = useState("");
@@ -89,9 +88,8 @@ export function SourceTab({ type, instance, refreshKey, onChanged }: MaterialTab
         rpc.slotReadiness(type, instance),
       ]);
       setMeta(m);
-      const isFilled = r.source?.is_filled ?? false;
+      const isFilled = r.source?.isFilled ?? false;
       setFilled(isFilled);
-      setSummary(r.source?.summary ?? "");
       if (isFilled) {
         const path = await rpc.getArtifact(type, instance, "source");
         setSrcUrl(path ? window.vc.mediaUrl(path) : "");
@@ -175,7 +173,7 @@ export function SourceTab({ type, instance, refreshKey, onChanged }: MaterialTab
               meta?.origin === "link" ? meta.url : meta?.imported_from,
             ]
               .filter(Boolean)
-              .join("  ·  ") || summary}
+              .join("  ·  ")}
           </div>
           {srcUrl && (
             <video

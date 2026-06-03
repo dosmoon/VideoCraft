@@ -29,17 +29,10 @@ import type {
   SourceMeta,
   SubtitleCheck,
 } from "../../renderer/ipc/client";
-import { NewsVideoModel, type SlotId, type SlotState, type SourceMetaLike } from "./model";
+import { type NewsVideoModel, type SlotId, type SlotState, type SourceMetaLike } from "./model";
 import { readPlatformMetadata } from "./schema";
 import { NEWS_CONTEXT_SCHEMA, NEWS_CONTEXT_TASK, buildContextPrompt } from "./aiFill";
-
-async function loadModel(instance: string): Promise<NewsVideoModel> {
-  const dir = await rpcCall<string>("project.material_instance_dir", {
-    type: "news_video",
-    instance,
-  });
-  return new NewsVideoModel(realFs, dir);
-}
+import { loadNewsVideoModel as loadModel } from "./resolve";
 
 /** The project's source language (for the subtitle-check reference). Read from
  * project meta — the data layer doesn't carry it. "" when unset. */
@@ -69,6 +62,9 @@ function summaryToWire(s: Awaited<ReturnType<NewsVideoModel["analysisSummary"]>>
 export const materialBackend = {
   readContext: async (instance: string): Promise<SourceContext> =>
     (await loadModel(instance)).readContext() as Promise<SourceContext>,
+
+  readBasicInfo: async (instance: string): Promise<SourceBasicInfo> =>
+    (await loadModel(instance)).readBasicInfo() as Promise<SourceBasicInfo>,
 
   contextCompletion: async (instance: string): Promise<{ filled: number; total: number }> =>
     (await loadModel(instance)).contextCompletion(),
