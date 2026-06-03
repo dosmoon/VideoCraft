@@ -20,10 +20,6 @@ class Session:
         self._project: Optional[Any] = None
         # (type_name, instance_id) -> model object (e.g. NewsVideoModel)
         self._models: dict[tuple[str, str], Any] = {}
-        # (type_name, instance_id) -> (config owner, config.json path).
-        # The single in-memory owner of a creation's config (project rule:
-        # one dataclass owns config.json; writes mutate it then save()).
-        self._creations: dict[tuple[str, str], tuple[Any, str]] = {}
 
     # ── Project ───────────────────────────────────────────────────────────
 
@@ -42,12 +38,10 @@ class Session:
     def set_project(self, project: Any) -> None:
         self._project = project
         self._models.clear()  # models are project-scoped; drop stale handles
-        self._creations.clear()
 
     def close_project(self) -> None:
         self._project = None
         self._models.clear()
-        self._creations.clear()
 
     # ── Material models ───────────────────────────────────────────────────
 
@@ -75,50 +69,7 @@ class Session:
         self._models[key] = model
         return model
 
-    # ── Creation config owners ────────────────────────────────────────────
-
-    def creation_owner(self, type_name: str, instance_id: str) -> tuple[Any, str]:
-        """Resolve (and cache) the single in-memory config owner for a creation
-        instance, plus its config.json path. Loads via the type's registered
-        config_owner_cls (base layer never imports a creation by name — ADR-0004).
-
-        Returns (owner, path). Raises RpcError if the type is unknown or hasn't
-        opted into a config owner.
-        """
-        key = (type_name, instance_id)
-        cached = self._creations.get(key)
-        if cached is not None:
-            return cached
-
-        import os
-
-        import creations  # registry; plugins self-register on import
-
-        ctype = creations.get(type_name)
-        if ctype is None:
-            raise RpcError(-32602, f"unknown creation type: {type_name!r}")
-        owner_cls = ctype.config_owner_cls
-        if owner_cls is None:
-            raise RpcError(
-                -32603, f"creation type {type_name!r} has no config_owner_cls"
-            )
-        path = os.path.join(
-            self.project.creation_instance_dir(type_name, instance_id), "config.json"
-        )
-        owner = owner_cls.load(path)
-        self._creations[key] = (owner, path)
-        return owner, path
-
     def invalidate_material(self, type_name: str, instance_id: str) -> None:
         """Drop the cached material model handle (call after the instance is
         renamed/deleted out from under it)."""
         self._models.pop((type_name, instance_id), None)
-
-    def invalidate_creation(self, type_name: str, instance_id: str) -> None:
-        """Drop the cached config owner so the next creation_owner() reloads it
-        from disk. Call after a provider (import / render) writes config.json
-        out-of-band: every owner mutation saves immediately, so the cached owner
-        is otherwise stale after such a write — a later owner.save() would
-        clobber the provider's change, and reads (list_components) would miss it.
-        Re-syncing keeps the single-owner invariant ([[project_creation_config_owner]])."""
-        self._creations.pop((type_name, instance_id), None)

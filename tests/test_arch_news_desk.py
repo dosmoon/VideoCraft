@@ -61,17 +61,6 @@ def test_news_desk_register_idempotent():
     assert len(creations.all_types()) == before
 
 
-def test_news_desk_wires_new_arch_providers():
-    """The sidecar resolves preview/render/import providers + the single config
-    owner generically (ADR-0004). Wiring them on the CreationType is what makes
-    the whole RPC surface work without the base layer naming news_desk."""
-    ct = creations.get("news_desk")
-    assert ct.config_owner_cls is not None
-    assert ct.preview_provider is not None
-    assert ct.render_provider is not None
-    assert ct.import_provider is not None
-
-
 # ── B. File ownership / headlessness ─────────────────────────────────────────
 
 def test_news_desk_in_creations_dir():
@@ -100,20 +89,7 @@ def test_news_desk_is_headless_no_tkinter():
     assert not violations, f"news_desk still imports tkinter: {violations}"
 
 
-# ── C. ADR-0003 snapshot semantics (import path) ─────────────────────────────
-
-def test_imports_snapshot_subtitle_into_instance_dir():
-    """imports.py copies the imported SRT into <instance_dir>/, not a reference
-    to upstream — the snapshot decision the Tk subtitle spec used to make."""
-    with open(os.path.join(NEWS_DESK_DIR, "imports.py"),
-              "r", encoding="utf-8") as f:
-        src = f.read()
-    assert re.search(r"shutil\.(copy|copyfile)", src), (
-        "imports.py doesn't snapshot the SRT (no shutil.copy*)")
-    assert "inst_dir" in src
-
-
-# ── D. Decoupling ────────────────────────────────────────────────────────────
+# ── C. Decoupling ────────────────────────────────────────────────────────────
 
 def test_news_desk_does_not_import_other_creation_plugins():
     """news_desk MUST NOT import other creation plugins. Each is independent."""

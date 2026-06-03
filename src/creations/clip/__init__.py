@@ -2,14 +2,16 @@
 subtitle-derived hotclips.
 
 Importing this package self-registers the CreationType.
+
+ADR-0008: this plugin's logic lives entirely in TS (desktop/src/creations/clip/);
+the sidecar only needs the type metadata for the framework directory lifecycle
+(create/rename/delete instance, dir resolution). No Python config owner / preview
+/ render / preset providers remain.
 """
 
 from __future__ import annotations
 
 from creations import CreationType, register
-from creations.clip.config import ClipInstanceConfig
-from creations.clip.preview import preview_data as _preview_data
-from creations.clip import export as _export
 
 register(CreationType(
     type_name="clip",
@@ -19,7 +21,4 @@ register(CreationType(
     single_instance=False,
     description_zh="基于字幕热点片段，批量切出短视频",
     description_en="Batch-cut short clips from subtitle hotclips",
-    config_owner_cls=ClipInstanceConfig,
-    preview_provider=_preview_data,
-    render_provider=_export,
 ))

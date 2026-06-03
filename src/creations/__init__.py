@@ -16,16 +16,19 @@ Replaces the old core/derivative_types.py REGISTRY (slice E retires it).
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Optional
 
 
 @dataclass(frozen=True)
 class CreationType:
     """Metadata describing one creation plugin type.
 
-    Fields mirror the legacy DerivativeType so slice E is a 1:1 swap.
-    sidebar_renderer / icon are forward-looking and may be None until
-    slice H wires them.
+    ADR-0008: a creation plugin's logic (config owner / preview / render / preset
+    / import) lives entirely in TS (desktop/src/creations/<type>/). The sidecar
+    only carries this type metadata for the framework directory lifecycle
+    (create/rename/delete instance + dir resolution via project.*). The former
+    config_owner_cls / preview_provider / render_provider / import_provider fields
+    are gone — the per-plugin Python they delegated to was retired.
     """
     type_name: str               # folder under creations/ AND under <project>/derivatives/<type>/
     display_name_key: str        # i18n key for the type's user-facing label
@@ -34,34 +37,7 @@ class CreationType:
     single_instance: bool        # True ⇒ menu offers [open existing] vs [new]
     description_zh: str          # subtitle in the type-picker dialog (zh)
     description_en: str          # subtitle in the type-picker dialog (en)
-    sidebar_renderer: Optional[Callable] = None   # filled by slice H
     icon: Optional[str] = None
-    # Config-owner class for this creation's config.json — the single
-    # in-memory owner ([[project_creation_config_owner]]). Contract: a
-    # classmethod load(path) -> owner, an instance save(path), the owner is a
-    # dataclass (asdict-able) carrying `components: list[dict]`. The core_rpc
-    # sidecar resolves writes through this so the base layer never imports a
-    # creation by name (ADR-0004). None until the plugin opts in.
-    config_owner_cls: Optional[type] = None
-    # Preview-data provider: (project, instance_id) -> JSON-able dict consumed by
-    # this creation's matching TS assembler (Python provider + TS builder are a
-    # per-creation pair). For clip it returns the hotclip candidates + selected
-    # index + snapshot SRT path. Optional; only creations with a workbench
-    # preview implement it. core_rpc.creation.preview_data calls it generically.
-    preview_provider: Optional[Callable] = None
-    # Render orchestration provider: an object exposing plan_render(project,
-    # instance) / commit_render(project, instance, src_idx, out_idx, dur) /
-    # delete_render(project, instance, out_idx). The GPU render runs in the
-    # renderer; this side owns output paths/naming, the sidecar JSON, stale
-    # cleanup, and the persisted rendered[] state. core_rpc.creation.* call it
-    # generically (ADR-0004). Optional; only creations with export implement it.
-    render_provider: Optional[object] = None
-    # Import provider: an object exposing list_imports(project, instance) ->
-    # {importable resources} and import_resource(project, instance, component_id,
-    # params) -> updated component, snapshotting material artifacts into a
-    # component (e.g. news_desk subtitle SRT / chapter schedule). Both shapes are
-    # provider-defined + opaque to core_rpc.creation.* (ADR-0004). Optional.
-    import_provider: Optional[object] = None
 
 
 # Module-private registry. Plugins call register() at import time.
