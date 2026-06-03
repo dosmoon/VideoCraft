@@ -1,0 +1,30 @@
+# Sidecar packaging — BASE runtime closure (P3, packaging-design.md §2.1).
+#
+# This is the PyInstaller freeze input: non-AI core + engine deps only. It is
+# built into a CLEAN uv venv (packaging/build_sidecar.ps1), never the 7GB
+# polluted dev myenv.
+#
+# Embedded-AI native deps (faster-whisper, llama-cpp-python) are intentionally
+# EXCLUDED here — they are opt-in and installed at runtime into a writable
+# user_data/runtimes/py-extra (packaging-design.md §5.3), not frozen into the
+# sealed onedir. Keep every version pin in lockstep with requirements.txt.
+
+# Core
+yt-dlp==2026.3.17
+requests==2.32.5
+srt==3.5.3
+
+# AI provider SDKs (cloud — small clients, no local model runtime)
+google-genai==1.55.0
+fish-audio-sdk==1.3.0
+openai==2.30.0
+json-repair==0.59.9
+
+# Edge TTS — Microsoft Edge Read-Aloud endpoint, free + no key.
+edge-tts==7.2.8
+
+# Media
+Pillow==12.0.0
+
+# Windows-only
+pywin32==311; sys_platform == 'win32'
