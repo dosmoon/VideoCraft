@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { tr } from "../../i18n/tr";
-import { rpc, rpcCall, RpcError, type Component } from "../../ipc/client";
+import { rpc, RpcError, type Component } from "../../ipc/client";
 import { buildNewsDeskTimeline } from "@creations/news_desk/assemble.js";
 import type { NewsDeskComponentConfig } from "@creations/news_desk/types.js";
 import { Backend } from "../../engine/gpu/Backend";
@@ -112,7 +112,9 @@ export function ExportTab(props: {
     setError("");
     try {
       const [p, cfg] = await Promise.all([
-        rpcCall<NewsDeskRenderPlan>("creation.plan_render", { type, instance }),
+        // TS-routed render plan (newsDeskBackend.planRender); the old raw
+        // creation.plan_render RPC was deleted with the plugin Python in A6.
+        rpc.planRender(type, instance) as unknown as Promise<NewsDeskRenderPlan>,
         rpc.loadConfig(type, instance),
       ]);
       setPlan(p);
@@ -166,7 +168,7 @@ export function ExportTab(props: {
     let reader: ClipReader | null = null;
     try {
       // Fresh plan from disk (config may have changed in the Style tab).
-      const p = await rpcCall<NewsDeskRenderPlan>("creation.plan_render", { type, instance });
+      const p = (await rpc.planRender(type, instance)) as unknown as NewsDeskRenderPlan;
       setPlan(p);
       if (!p.mediaRef) throw new Error(tr("news_desk.export.no_material_error"));
 
