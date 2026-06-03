@@ -30,10 +30,18 @@
 
 ---
 
-## ▶▶ 新会话从这读起(2026-06-01 更新,接力点)
+## ▶▶ 新会话从这读起(2026-06-03 更新,接力点)
+
+> **▶▶ 本会话(2026-06-03)= 导出引擎可选 + 导出参数(NLE 式)+ 导出提速/收尾。全部 commit + push 到 `main`(`ddf64cf`→`7e15665`)。下一步回到本文件最上方的 P2 Tk 退役。**
+> - **起因**:P2 删 Tk 前真机验导出 → news_desk 全源撞 OOM「Array buffer allocation failed」(整文件攒内存+IPC 整份拷)。修=`StreamTarget` 16MiB 流式写盘(新 `vc:writeStream:*`,`.part`→rename),`ddf64cf`。
+> - **提速 ~4.5x(30→135fps)**:去每帧 GPU→CPU 读回,改 `new VideoFrame(backend.canvasElement)` 直抓 canvas(免 mapAsync 阻塞+CPU 重建)。深挖确认 **WebCodecs 软件 H.264 在本 Chromium 进程级单线程、并行(realm/worker/prefer-*)全无效、Chromium 不暴露 NVENC**(0 编码档位)——记忆 [[reference_webcodecs_encode_cap]]。
+> - **导出设置框架(新功能)**:每创作持久化 **引擎/分辨率/帧率/码率**(config.json)。`encode.ts` 拆共享 `runRenderLoop` + 可插拔 `EncodeSink`(`engine/export/types.ts`);`webcodecsSink.ts`/`ffmpegSink.ts`;`creations/exportSettings.ts`(纯模型+归一化+单测)+ `workbenches/common/ExportSettingsBar.tsx`(两 tab 共用)。clip 分辨率复用 `output_short_edge`(9:16×短边),news_desk 用 `export_resolution` 降采样。**真机+ffprobe 验过 clip+news_desk(720/2M/30fps,分辨率/码率/帧率/编码/音频全对)。** 198 vitest 绿。
+> - **ffmpeg+NVENC 引擎 = 能跑但暂缓**:`electron/ffmpeg.ts` + `vc:ffmpegEncode:*`(spawn/stdin 背压/`.part`/`-f mp4`/nvenc 探测 testsrc 256²)。实测 ~27fps < WebCodecs 135 —— 瓶颈是每帧 8MB 的 GPU→CPU 读回(15ms)+ IPC 拷贝(21ms)搬运税 > 硬件编码省的。**用户拍板暂缓**:`defaultEngine` 恒 chromium(auto=WebCodecs),ffmpeg 留显式 opt-in(能跑、画面/音画/参数都对、只是慢)。**未来提速三级流水线方案(读回环+异步写+MessagePort 零拷贝,目标 ~150-300fps)完整存档** = `adr-0008-migration-tasks.md`「⚡ 导出速度」。代码全保留(含 `renderOffscreenToBytes` 作读回基础)。
+> - **commit 链**:`ddf64cf`(读回+流式)→`1be739c`(文档)→`551c1d2`(拆 sink)→Phase2(导出设置)→`4387574`(ffmpeg IPC)→`8622cc2`(ffmpeg 接线)→`7e15665`(修复+默认 WebCodecs+文档),均已 push。
+> - **欠**:WebCodecs 默认下 clip+news_desk 各再导一次的轻量回归(低风险,Phase1 是零行为重构,且本会话已 ffprobe 验过两 tab 输出正确)。
 
 > **🚩 重大架构转向进行中 = 三个本体收敛为纯 TS 插件,Python 退成 plugin-agnostic 能力网关(ADR-0008,已立)。** 起因:为 news_desk 恢复 publish.md(续 36)暴露"双语插件不可维护"。**权威设计 = `docs/draft/electron-migration-design.md` 顶部「🚩 架构转向」节 + `docs/adr/0008-plugins-ts-python-capability-gateway.md`。** **▶ 持久任务追踪(跨会话防遗忘,勾选进度看这个)= [`docs/draft/adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md)。** 进度:**Phase A 完成——clip + news_desk 两个创作都迁到纯 TS 路径并验过**(2026-06-01)。两者 config/preset/render 走 TS owner + `render.ts`、经 `vc.fs` 落盘;`client.ts` 按 `type==="clip"|"news_desk"` 分发到各自 `clientBackend.ts`(工作台 tabs **零改动**);`preview_data`/`get_artifact`/news_desk `imports` 仍走 Python(Phase A 桥,defer 到 Phase B)。commit `ad1352d`→`9077cfd`,**165 vitest 全绿**,clip+news_desk GUI 均验过(news_desk 导出能产出 mp4+publish.md)。
-> **⚡ 遗留高优(用户拍板:迁移收尾后做)= 导出速度**:news_desk 全源 3 分钟视频导出 ~2 分钟,无法接受。**非 A4/A5 回归**(encode 逐帧循环未碰),瓶颈=每帧 GPU→CPU 读回 + exact 逐帧解码;**最大优化线索 = `Backend.canvasElement` 直接建 VideoFrame 免读回(半成品没接上)**。详见 `adr-0008-migration-tasks.md` 顶「⚡ 导出速度」。**下一步先验是否回归(git stash 对比)再优化。**
+> **⚡ 导出速度 = 已收尾(2026-06-03,见上方本会话块)**:读回那刀已砍 → 135fps;WebCodecs 软件编码即性价比上限,ffmpeg+NVENC 因搬运税暂缓。权威 `adr-0008-migration-tasks.md`「⚡ 导出速度」。
 
 **下一步(迁移)**:**Phase B1 + B2 + B3.1 + B3.2(读+写+job+ai_fill)已完成**(2026-06-01/02,commit `b1ea0ad`→`13e9ef1`)。**B1**=TS 素材数据层。**B2**=能力网关 `capability.py`(路径式 job + 通用 `llm_extract`;`subtitle_pipeline` 加 plugin-free `*_paths`)。**B3.1**=news prompt+schema 移 TS(`aiFill.ts`)。**B3.2**=素材工作台接线:`client.ts` 按 `type==="news_video"` 把读/写/job 全分发到 `materials/news_video/clientBackend.ts`(走 `NewsVideoModel` + `capability.*`);变更通知用 `emitLocal`(client.ts 本地总线,`onNotification` 合并 server+local,Hub 零改动);job 完成后 tab 经新 `project.*` meta RPC(commit_source/set_source_language/add_translated_language)持久化 source/语言;ai_fill = 插件拼 prompt → `capability.llm_extract` → ContextTab 写回。**🚩 ai_fill=纯通用**(capability 零领域知识)。
 > **⚠️ ASR 死锁排查(本会话大坑,已修+已记忆 [[reference_sidecar_native_import_deadlock]])**:真机验 B3.2 时发现 ASR 永远卡「正在加载本地模型」。根因=**daemon 线程首次 import ctranslate2(faster-whisper)C 扩展 + 有线程 park 在 stdin 阻塞读 = 死锁**(跟 GPU/模型/路径/迁移代码无关)。修=`core/ai/warmup.py` 启动时主线程预热原生 import(`674b5c3`)。**实测证伪**:挪 stdin、env 变量(OMP/ORT)都无效,预热是唯一解。详见记忆。
