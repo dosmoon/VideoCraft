@@ -25,7 +25,14 @@ export function ComponentEditor(props: {
 }) {
   const { component, disabled, onPatch, enums } = props;
   const specs = (fieldsForKind(component.kind) ?? []).filter((s) => {
-    if (!fieldPresent(component, s)) return false;
+    // A flat field is part of the kind's schema — always show it, reading a
+    // missing key as the control's empty default (the user edit then writes
+    // the key). Pre-normalisation instances may lack a flat key, e.g. an old
+    // image watermark with no `image_path`; the row must still appear so the
+    // field is reachable instead of silently vanishing. Nested leaves stay
+    // presence-gated, since their parent sub-object can be legitimately absent
+    // (e.g. an optional chapter mode block).
+    if (s.path && !fieldPresent(component, s)) return false;
     if (s.visibleWhen && !s.visibleWhen(component)) return false;
     return true;
   });

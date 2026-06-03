@@ -176,7 +176,10 @@ function createMainWindow(): BrowserWindow {
   const devServerUrl = process.env["ELECTRON_RENDERER_URL"];
   if (!app.isPackaged && devServerUrl) {
     void win.loadURL(devServerUrl);
-    win.webContents.openDevTools({ mode: "detach" });
+    // `activate: false` — open DevTools in the background. A detached DevTools
+    // window that grabs focus on launch steals keyboard focus from the main
+    // window, so its <input>s can't be focused/typed until DevTools is closed.
+    win.webContents.openDevTools({ mode: "detach", activate: false });
   } else {
     void win.loadFile(resolve(here, "../renderer/index.html"));
   }
