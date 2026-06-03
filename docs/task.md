@@ -17,7 +17,7 @@
 
 ---
 
-## ▶▶ 本会话(2026-06-03 下午)= P2 整个 Tk app 退役(✅ 完成,待 commit)
+## ▶▶ 本会话(2026-06-03 下午)= P2 整个 Tk app 退役 + 2 dogfood 修复(✅ 完成,已 commit + push `5d41293`/`5585f2b`)
 
 > 用户拍板:**整个 Tk app 退役**(非只退 clip+素材)+ **信任既有验证直接删**(不再删前真机验,P0/P1/A4/A5 已验过)。这是 ADR-0008 转向的「先退 Tk」前提阶段;A6/B5 由此解锁。
 
@@ -27,7 +27,8 @@
 - **de-register**:`materials/news_video/__init__.py` 去 `sidebar_renderer`/`create_handler`/`_create_handler`(素材 [+] 创建现走 RPC `project.create_material_instance`);保留 `instance_factory`/`suggest_name`。
 - **测试**:删 `tests/composition/`(含 composition golden-CRLF 两个 pre-existing failed,随之消失)+ `tests/creations/test_clip_{components,hook_outro,composer,watermark,subtitle,render_queue}.py` + `tests/test_arch_clip.py`;`test_arch_{materials,news_desk}` + `test_registration` 裁到存活的 headless/sidecar 不变量(去 Hub/sidebar/create_handler 守卫);`test_clip_presets` 的 kind 校验从删掉的 `components.spec_for_kind` 改成 `component_defs._FACTORIES`。
 - **stale 注释刷新**:`core_rpc/methods/__init__.py`/`core/paths.py`/`creations/__init__.py` 去掉对已删 `VideoCraftHub.py` 的引用。**未碰 desktop TS**(删除全在 Python/Tk 侧)。
-- **验证**:sidecar `load_plugins()` + 三插件 register 干净;`pytest tests/` 仅剩 `test_clip_config::test_load_full_roundtrip`(stale-id pre-existing,[[project_pytest_preexisting_failures]];config.py 未碰)。
+- **验证**:sidecar `load_plugins()` + 三插件 register 干净;`pytest tests/` 仅剩 `test_clip_config::test_load_full_roundtrip`(stale-id pre-existing,[[project_pytest_preexisting_failures]];config.py 未碰)。commit `5d41293`,已 push。
+- **🐛 2 dogfood 真机修复(commit `5585f2b`,已 push)**:删 Tk 后真机验 Electron 新壳(news_desk 图片水印),抓出两个 **pre-existing renderer bug**(非 P2 引入,desktop TS 零改动;是续35 统一 ComponentEditor 后欠的真机验):① **属性面板缺行**——`ComponentEditor` 之前只渲染「实例磁盘上有的 key」,归一化前的 image_watermark 缺 `image_path` → 该行消失(两实例字段不一致);改成按 kind **完整 FieldSpec schema** 渲染(扁平恒显示+缺值给空默认,嵌套仍按存在性过滤)。② **输入框点不进焦点(clip+news_desk)**——`main.ts` 启动自动开的 **detached DevTools 抢键盘焦点**(Electron 怪癖,关掉 DevTools 即恢复);改 `openDevTools({mode:"detach", activate:false})` 后台开、不抢焦点。typecheck + 198 vitest 绿,真机验过两 bug 都好了。**注**:旧未归一化实例的旧 wire 值仍读不到=显示默认,需重填/重建(不写迁移器)。
 - **欠**:A6/B5(下一任务,见最上方)。
 
 ---

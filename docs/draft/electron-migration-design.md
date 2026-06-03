@@ -9,7 +9,7 @@
 
 ## ★ 实现进度 / Implementation Status(2026-05-31,新会话从这读起)
 
-> **🚩 2026-06-01 架构转向(权威,先读下方「架构转向」节):三个本体(clip / news_desk 创作 + news_video 素材)收敛为纯 TS 插件;Python 退成 plugin-agnostic 能力网关。** 这 supersede 本文档里"Python 留 per-plugin 业务面 + provider dispatch"的旧口径(ADR-0004 的 provider 部分退役)。下面凡标 ~~删除线/⛔已废口径~~ 的段落即被它取代。**实施前提 = 先完成 P2 Tk 退役**(clip Tk 仍依赖 `clip/config.py` 等)。
+> **🚩 2026-06-01 架构转向(权威,先读下方「架构转向」节):三个本体(clip / news_desk 创作 + news_video 素材)收敛为纯 TS 插件;Python 退成 plugin-agnostic 能力网关。** 这 supersede 本文档里"Python 留 per-plugin 业务面 + provider dispatch"的旧口径(ADR-0004 的 provider 部分退役)。下面凡标 ~~删除线/⛔已废口径~~ 的段落即被它取代。**实施前提 P2 整个 Tk app 退役 = ✅ 已完成(2026-06-03,commit `5d41293`,见「剩余工作计划」P2)→ A6/B5 现可开工。**
 >
 > **clip + news_desk 两个创作工作台均已在新架构(Electron renderer + 自建 GPU 合成器 + Python sidecar)端到端实现并真机验过**(均含导出渲染;news_desk 含 preset + 素材绑定 + 详情列表 + 章节属性编辑;Tk news_desk 已退役)。本节是后续工作的**接力入口**;实现细节集中在此(task.md 只保留接力指针 + 逐次进展「续 N」,不堆架构细节)。下面"实际实现"凡与本文档正文不同的,以本节为准(正文写于迁移启动期,部分已被实现推翻——另见 §0.5)。
 >
@@ -178,7 +178,7 @@ news_desk 与 clip 走同一套契约,正面验证「公共组件库 + provider 
 - **显示单位 `FieldSpec.display`**(`{factor,step,decimals?,suffix?}`):存储恒规范,编辑器 UI 边界换算——字号/描边/卡片内边距显示 **px@1080**、边距/块边距/图片缩放显示 **%**、不透明度 %、时长 s。还原 Tk 直觉单位 + 统一观感(字幕分数 fontsize 与章节 px fontsize 都显示成 px)。clamp 仍只在 mapping,`display.min/max` 仅提示。
 - **候选预览**:切候选/nudge 起止点时按 window-key 暂停+进度归零(防旧位置越界短 clip)。
 - **文字水印 draw-key 修(潜在 bug)**:`drawOverlayClip` 原把所有非字幕文字按卡片 key 读(`color`/`size_pct`),但文字水印 emit `text_color`/`text_fontsize_pct`/`text_opacity` → 颜色/字号永远默认、透明度没生效、还误描边。改为按 kind 选 key + `text_opacity` 作 fill alpha + 不描边。
-- **欠真机肉眼验**:各控件小数输入/步进/**显示单位(px/%)**/anchor 下拉/中文标签/chapter mode 门控+嵌套改值不丢兄弟/**取色器+吸管**/**文字水印颜色·字号·透明度生效**。
+- **✅ P2 dogfood 真机验(2026-06-03,commit `5585f2b`)**:上述控件肉眼过;抓出并修两 bug——① 编辑器只渲染「实例磁盘上有的 key」→ 归一化前的 image_watermark 缺 `image_path` 行消失(两实例字段不一致),改为按 kind 完整 FieldSpec schema 渲染(扁平恒显示、缺值给空默认,嵌套仍按存在性过滤)② 自动开的 detached DevTools 抢键盘焦点致 clip+news_desk 属性输入框打不进字,`main.ts` DevTools 改 `activate:false`。**注**:归一化前旧实例的旧 wire key 值(`scale_pct`/`opacity`)仍读不到=显示默认值,需重建或重填(不写迁移器,[[feedback_pre_alpha_no_legacy]])。
 
 ### 与本文档正文不同的关键实现决策
 
@@ -223,9 +223,12 @@ TS:`pnpm typecheck` + `pnpm test`(132,含 ir/timemap/components/clip/news_desk/c
   - **✅ P1-d Settings(⚙)已落(2026-06-01)**:`settings/Settings.tsx`——三段:**语言**(`LanguageToggle` 唯一归宿,已从 Hub launcher+顶栏删除——语言=set-once 偏好,活动栏 ⚙ 永远 1 click 可达含 launcher,不在每页留常驻控件)+ **运行环境**(`core_rpc/methods/env.py`:`env.components` 元数据 + `env.detect_all`/`env.detect`/`env.install` 走 job——检测跑 version 子进程、安装 shell 出 pip/Node 下载;install log 经 `progress.env.install` 流式)+ **about**。新 IPC `vc:openExternal`(http(s) 白名单,装指引外链)。换掉 `shell.settings_soon` 占位。`test_env.py`(3,检测/安装 monkeypatch),共 134 sidecar 测;+25 i18n key(399 对)。**defer**:GPU CUDA wheel dialog、change-models-dir、File 项目管理菜单。
   - ⇒ **活动栏 4 格(📁🤖📦⚙)全部落地**,新壳框架服务齐了(AI 配置 / 模型安装 / 环境依赖 / 语言均可在新壳内自助)。
 
-**P2 — Tk 退役**(前提 = P0+P1 新壳功能对等):
-- clip 工作台退役 → `creations/clip/component_defs` 与 `components/*` Tk specs 合并单一源(news_desk 已退)。
-- 素材 Tk sidebar 退役;`src/ui/` tkinter 工作台/预览大幅瘦身删除。
+**P2 — 整个 Tk app 退役 ✅ 已完成(2026-06-03,commit `5d41293`,已 push)**(用户拍板「整个 Tk app 退」+「信任既有验证直接删」):
+- 删 `launcher.py`/`VideoCraftHub.py`/`operations.py` + `src/tools/`(全部遗留独立工具:下载/语音/翻译/视频/text2video/发布/preferences/ai_console/prompt_console/model_manager,§0.5「砍了」落地)+ `src/ui/`(全部 Tk 对话框/预览)+ clip Tk(`clip_tool`/`clip_editor`/`style_panel`/`composer`/`render_queue`/`components/`)+ `creations/material_binding.py` + 素材 Tk(`sidebar.py`+`ui/`)+ **dead `core/composition/`**(老 Python 引擎,grep 实证只被 Tk 删除集消费;词汇已在 TS catalog 复用)+ Tk 打包(`build_portable.py`/`RunVideoCraft.bat`/`build-portable.yml`)。`materials/news_video/__init__.py` 去 `sidebar_renderer`/`create_handler`(创建走 RPC `project.create_material_instance`)。
+- 测试裁剪:删 `tests/composition/`(含 composition golden-CRLF 两个 pre-existing)+ clip-component/composer/render_queue/subtitle 测 + `test_arch_clip.py`;`test_arch_{materials,news_desk}`/`test_registration`/`test_clip_presets` 裁到存活的 headless/sidecar 不变量。
+- 验证:sidecar 三插件 import 干净;`pytest tests/` 仅剩 1 个 pre-existing(`test_clip_config::test_load_full_roundtrip` stale-id)。**未碰 desktop TS。**
+- **dogfood 真机修复(commit `5585f2b`,已 push)**:① 属性面板缺行——`ComponentEditor` 改为按 kind 完整 FieldSpec schema 渲染(旧未归一化 image_watermark 缺 `image_path` key 时该行不再消失;扁平字段恒显示、缺值给空默认,嵌套仍按存在性过滤)② 输入框点不进焦点——`main.ts` DevTools 改 `activate:false`(自动开的 detached DevTools 抢键盘焦点的 Electron 怪癖)。
+- ⇒ **A6/B5 解锁**(keep 的 sidecar 业务文件不再有 Tk 兄弟 import;详见 [`adr-0008-migration-tasks.md`](adr-0008-migration-tasks.md) Phase A/B + 顶部「🚩 架构转向」节)。
 
 **P2.5 — 插件全 TS / Python = 能力网关**(权威细节见顶部「🚩 架构转向」节;前提 = P2 已退役 Tk,因 clip Tk 仍依赖 `clip/config.py`):
 - **Phase A**:clip+news_desk 创作的 per-plugin Python(config/presets/component_defs/preview/export/import/publish)全 port 成 TS;新增 `vc.fs.*` 主进程持久化;退役 `core_rpc/methods/creation.py` provider dispatch + `Session.creation_owner`。
