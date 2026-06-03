@@ -30,11 +30,9 @@ from core.chapters_io import (
 from core.subtitle_pipeline import ProgressInfo
 from core.ai.cancellation import CancellationToken
 from core.subtitle_ops import read_srt, srt_end_seconds as _srt_end_seconds
-# TODO(ADR-0004): core/ should not import from a specific material plugin.
-# Cleanest fix: parameterize the runner so callers (which know the material
-# type) inject the context prompt block. Documented wart until a second
-# material type lands and forces the abstraction.
-from materials.news_video.schema import context_prompt_block as _context_prompt_block
+# ADR-0008: core/ no longer imports any material plugin. The news-context prompt
+# block is built plugin-side (TS materials/news_video) and injected here as the
+# `context_block` argument — these runners stay material-agnostic.
 
 
 # ── Shared output helpers ────────────────────────────────────────────────────
@@ -89,47 +87,32 @@ def _derive_chapters(pack_segments: list[dict], srt_path: str,
 # `<iso>.analysis.json` — see core.chapters_io.save_analysis. The legacy
 # split into titles.json + chapters.json + chapter_refined.md is gone.
 
-def _source_dir_for(subtitles_dir: str) -> str:
-    """Sibling source/ given the project's subtitles/ dir."""
-    return os.path.join(os.path.dirname(subtitles_dir), "source")
-
-
-def _context_block(subtitles_dir: str) -> str:
-    """Render context.json as a prompt prefix block. Empty when AI Fill
-    hasn't run (context.json missing or blank)."""
-    try:
-        return _context_prompt_block(_source_dir_for(subtitles_dir))
-    except Exception:
-        return ""
-
-
 def _run_pack(srt_path: str, subtitles_dir: str,
-              progress_cb, cancel_token) -> dict:
+              progress_cb, cancel_token, context_block: str = "") -> dict:
     """Call generate_subtitle_pack with progress + cancel plumbing.
 
-    Prepends the project's source context (if any) to the prompt so the
-    AI has situational signal (topic, host, audience) when picking
-    titles and chapter boundaries.
+    Prepends the caller-supplied source context block (if any) to the prompt so
+    the AI has situational signal (topic, host, audience) when picking titles and
+    chapter boundaries. The block is built plugin-side (ADR-0008) and passed in.
     """
     from core import prompts as _prompts
     from core.srt_ops import generate_subtitle_pack
     _say(progress_cb, "transcribing", "正在调用 AI 生成结构化分析...", None)
-    ctx_block = _context_block(subtitles_dir)
-    if ctx_block:
+    if context_block:
         base = _prompts.get("subtitle.pack")
-        prompt = ctx_block + "\n\n" + base
+        prompt = context_block + "\n\n" + base
         return generate_subtitle_pack(srt_path, prompt=prompt,
                                       cancel_token=cancel_token)
     return generate_subtitle_pack(srt_path, cancel_token=cancel_token)
 
 
 def run_pack_analysis(srt_path: str, subtitles_dir: str, lang_iso: str,
-                       progress_cb, cancel_token) -> dict:
+                       progress_cb, cancel_token, context_block: str = "") -> dict:
     """Run the AI subtitle pack and persist a single analysis.json envelope
     (titles + chapters with refined + key_points). One AI call, one file."""
     from core.subtitle_analysis import analysis_path
 
-    pack = _run_pack(srt_path, subtitles_dir, progress_cb, cancel_token)
+    pack = _run_pack(srt_path, subtitles_dir, progress_cb, cancel_token, context_block)
     _say(progress_cb, "transcribing", "正在写入产物...", 95)
 
     titles = pack.get("titles") or []
@@ -242,8 +225,9 @@ def build_chapter_transcript_text(srt_path: str, chapters: list[dict],
 
 
 def run_transcript(srt_path: str, subtitles_dir: str, lang_iso: str,
-                   progress_cb, cancel_token) -> dict:
-    """Plain text dump, one cue per line. Non-AI; near-instant."""
+                   progress_cb, cancel_token, context_block: str = "") -> dict:
+    """Plain text dump, one cue per line. Non-AI; near-instant.
+    (context_block accepted for a uniform runner signature; unused here.)"""
     from core.subtitle_analysis import analysis_path
     _say(progress_cb, "transcribing", "正在提取全文...", 50)
     path = analysis_path(subtitles_dir, lang_iso, "transcript")
@@ -252,7 +236,7 @@ def run_transcript(srt_path: str, subtitles_dir: str, lang_iso: str,
 
 
 def run_chapter_transcript(srt_path: str, subtitles_dir: str, lang_iso: str,
-                           progress_cb, cancel_token) -> dict:
+                           progress_cb, cancel_token, context_block: str = "") -> dict:
     """Group cues into the existing chapter boundaries. Requires
     analysis.json (which contains the chapter list); if missing, cascade
     through the AI pack to produce it.
@@ -264,7 +248,7 @@ def run_chapter_transcript(srt_path: str, subtitles_dir: str, lang_iso: str,
         _say(progress_cb, "transcribing",
              "未发现章节，先调用 AI 生成...", None)
         run_pack_analysis(srt_path, subtitles_dir, lang_iso,
-                            progress_cb, cancel_token)
+                            progress_cb, cancel_token, context_block)
 
     with open(analysis_pth, "r", encoding="utf-8") as f:
         ch_data = json.load(f)
@@ -386,7 +370,7 @@ def _call_hotclips_ai(slice_text: str, ctx_block: str,
 
 
 def run_hotclips(srt_path: str, subtitles_dir: str, lang_iso: str,
-                 progress_cb, cancel_token,
+                 progress_cb, cancel_token, context_block: str = "",
                  *,
                  strategy: str = "auto",
                  desired_count: int = 10,
@@ -408,7 +392,7 @@ def run_hotclips(srt_path: str, subtitles_dir: str, lang_iso: str,
     if strategy == "per_chapter" and not has_chapters:
         raise ValueError("strategy=per_chapter 但 analysis.json 不存在")
 
-    ctx_block = _context_block(subtitles_dir)
+    ctx_block = context_block
 
     # Build (chapter_label, slice_text) pairs.
     slices: list[tuple[str, str]] = []
@@ -491,9 +475,13 @@ RUNNERS: dict[str, Callable[..., dict]] = {
 
 
 def run(kind: str, srt_path: str, subtitles_dir: str, lang_iso: str,
-        progress_cb, cancel_token) -> dict:
-    """Run a registered analysis kind. Raises KeyError on unknown kind."""
+        progress_cb, cancel_token, context_block: str = "") -> dict:
+    """Run a registered analysis kind. Raises KeyError on unknown kind.
+
+    `context_block` is the caller-built source-context prompt prefix (ADR-0008:
+    built plugin-side; "" when none). Threaded into the AI runners (pack/hotclips);
+    ignored by the non-AI transcript runner."""
     runner = RUNNERS.get(kind)
     if runner is None:
         raise KeyError(f"No runner for analysis kind: {kind}")
-    return runner(srt_path, subtitles_dir, lang_iso, progress_cb, cancel_token)
+    return runner(srt_path, subtitles_dir, lang_iso, progress_cb, cancel_token, context_block)

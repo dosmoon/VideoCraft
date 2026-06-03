@@ -171,12 +171,18 @@ def translate(
 
 @rpc_method("capability.analyze")
 def analyze(
-    ctx: Context, kind: str, srt_path: str, subtitles_dir: str, lang: str
+    ctx: Context, kind: str, srt_path: str, subtitles_dir: str, lang: str,
+    context_block: str = "",
 ) -> dict[str, Any]:
     """Run a registered analysis kind over a subtitle → subtitles_dir/<lang>.<suffix>
     (long job). `kind` is a core.subtitle_analysis kind (analysis / transcript /
-    chapter_transcript / hotclips)."""
+    chapter_transcript / hotclips).
+
+    `context_block` is an optional source-context prompt prefix. Capability stays
+    plugin-agnostic (ADR-0008): the news-domain block is built by the caller (the
+    news_video TS plugin) and passed through; "" means no context injection."""
     srt_path, subtitles_dir = _in_project(ctx, srt_path, subtitles_dir)
+    block = str(context_block or "")
 
     def work(job: Any) -> Any:
         from core import subtitle_analysis_runners
@@ -185,6 +191,7 @@ def analyze(
         return subtitle_analysis_runners.run(
             kind, srt_path, subtitles_dir, lang,
             pipeline_progress_to_job(job), AiCancelBridge(job),
+            block,
         )
 
     return {"job_id": ctx.jobs.start("capability.analyze", work)}

@@ -1,15 +1,19 @@
 """News-video material plugin: a source video plus its AI-derived
 context (15-field news schema), subtitles, chapters, and hot clips.
 
-Importing this package self-registers the MaterialType. The material is
-driven by the Electron workbench via the core_rpc sidecar; the Tk sidebar
-renderer / create-handler were retired with the Tk app (P2).
+Importing this package self-registers the MaterialType.
+
+ADR-0008: the material's data model lives entirely in TS
+(desktop/src/materials/news_video/); long-running capabilities (ASR / translate /
+analysis / acquire) run via the plugin-agnostic capability.* gateway. The sidecar
+only carries this type metadata for the framework directory lifecycle (create/
+rename/delete instance + dir resolution). The Python model / schema / paths /
+ai_fill + the instance_factory were retired.
 """
 
 from __future__ import annotations
 
 from materials import MaterialType, register
-from materials.news_video.model import NewsVideoModel
 
 
 def _suggest_instance_name(existing: list[str]) -> str:
@@ -23,10 +27,6 @@ def _suggest_instance_name(existing: list[str]) -> str:
         n += 1
 
 
-def _instance_factory(project, instance_id: str) -> NewsVideoModel:
-    return NewsVideoModel(project, instance_id)
-
-
 register(MaterialType(
     type_name="news_video",
     display_name_key="material.news_video",
@@ -38,6 +38,5 @@ register(MaterialType(
     # 2nd instance. See core/subtitle_pipeline.py TODO(ADR-0005).
     single_instance=True,
     icon="📺",
-    instance_factory=_instance_factory,
     suggest_name=_suggest_instance_name,
 ))

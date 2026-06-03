@@ -42,9 +42,9 @@ class MaterialType:
     # (hub) -> None; creates a NEW empty instance, triggers refresh.
     # The 素材 tab [+] popup menu invokes this per type.
     create_handler: Optional[Callable] = None
-    # (project, instance_id) -> model object exposing get_artifact(key) etc.
-    # Slice Q uses this from creation plugins to resolve material artifacts.
-    instance_factory: Optional[Callable] = None
+    # ADR-0008 B5: the Python instance_factory (project, instance_id) -> model was
+    # retired — the material data model lives in TS (desktop/src/materials/) and
+    # creations resolve artifacts via the TS model, not a sidecar factory.
     # (existing: list[str]) -> str; the plugin's preferred auto-name scheme.
     # When None, suggest_instance_name() falls back to default_basename / type.
     suggest_name: Optional[Callable] = None

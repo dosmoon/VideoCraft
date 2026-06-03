@@ -31,7 +31,7 @@ import type {
 } from "../../renderer/ipc/client";
 import { type NewsVideoModel, type SlotId, type SlotState, type SourceMetaLike } from "./model";
 import { readPlatformMetadata } from "./schema";
-import { NEWS_CONTEXT_SCHEMA, NEWS_CONTEXT_TASK, buildContextPrompt } from "./aiFill";
+import { NEWS_CONTEXT_SCHEMA, NEWS_CONTEXT_TASK, buildContextBlock, buildContextPrompt } from "./aiFill";
 import { loadNewsVideoModel as loadModel } from "./resolve";
 
 /** The project's source language (for the subtitle-check reference). Read from
@@ -231,11 +231,15 @@ export const materialBackend = {
     analysisKind: string,
   ): Promise<{ job_id: string }> => {
     const m = await loadModel(instance);
+    // Build the news-context prompt prefix plugin-side and inject it (ADR-0008:
+    // capability.analyze is material-agnostic). "" when AI Fill hasn't run.
+    const contextBlock = buildContextBlock(await m.readContext());
     return rpcCall<{ job_id: string }>("capability.analyze", {
       kind: analysisKind,
       srt_path: m.subtitlePath(lang),
       subtitles_dir: m.subtitlesDir,
       lang,
+      context_block: contextBlock,
     });
   },
 

@@ -1,21 +1,22 @@
-"""Project-level subtitle pipeline (P4.4).
+"""Subtitle pipeline (P4.4) — plugin-free path-based core.
 
-Two operations that always read from / write to a project's canonical
-locations (no manual file picking, no merged "bilingual.srt"):
+Two operations that read/write explicit paths (no manual file picking, no merged
+"bilingual.srt"):
 
-  run_asr(project, source_lang=...) → subtitles/<src>.srt
-      Calls core.asr.transcribe_audio on _nv_paths.source_video_path(project),
-      writes the result into _nv_paths.subtitles_dir(project)/<lang>.srt, and
-      updates project.meta.language.source.
+  run_asr_paths(source_video_path=..., subtitles_dir=..., source_lang=...)
+      → subtitles_dir/<lang>.srt + the detected lang_iso (caller stamps meta).
 
-  run_translate(project, target_lang=...) → subtitles/<target>.srt
-      Translates from the source SRT (named after meta.language.source)
-      into <target>.srt, and adds target_lang to
-      project.meta.language.translated_to.
+  run_translate_paths(subtitles_dir=..., source_lang_iso=..., target_lang_iso=...)
+      → subtitles_dir/<target>.srt (caller stamps meta.language.translated_to).
 
-Both honor a CancellationToken (core.ai) and report progress through a
-unified ProgressInfo callback. Per the design discussion: each language
-is an independent file; no merged bilingual format.
+Both honor a CancellationToken (core.ai) and report progress through a unified
+ProgressInfo callback. Each language is an independent file; no merged bilingual
+format.
+
+ADR-0008: these take injected paths and update no project meta — the news_video
+callers (the capability gateway) supply the paths and stamp meta themselves, so
+core/ carries no material-plugin dependency (the old TODO(ADR-0005) cross-plugin
+import is gone with the retired (project) shims).
 """
 
 from __future__ import annotations
@@ -26,14 +27,6 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from core.ai.cancellation import CancellationToken
-
-# ADR-0005/0008 note: the path-based core below (run_asr_paths / run_translate_paths)
-# is plugin-free — callers inject source_video_path / subtitles_dir and update
-# project.meta themselves. The legacy (project) shims at the bottom still resolve
-# paths via materials.news_video.paths (lazy import inside the shim, NOT at module
-# scope) and stamp project.meta; they survive only until the Tk app + NewsVideoModel
-# retire. Keeping the import shim-local is what removes the top-level cross-plugin
-# dependency that the old TODO(ADR-0005) flagged.
 
 
 @dataclass
@@ -256,34 +249,6 @@ def run_asr_paths(
     }
 
 
-def run_asr(
-    project,
-    *,
-    source_lang_iso: str | None = None,
-    provider: str | None = None,
-    progress_cb: ProgressCb = None,
-    cancel_token: CancellationToken | None = None,
-) -> dict:
-    """Legacy (project)-based shim over run_asr_paths (transitional — kept until
-    the Tk app + NewsVideoModel retire). Resolves the news_video instance paths
-    and stamps project.meta.language.source from the ASR result."""
-    from materials.news_video import paths as _nv_paths
-
-    result = run_asr_paths(
-        source_video_path=_nv_paths.source_video_path(project),
-        subtitles_dir=_nv_paths.subtitles_dir(project),
-        source_lang_iso=source_lang_iso,
-        provider=provider,
-        progress_cb=progress_cb,
-        cancel_token=cancel_token,
-    )
-    meta = project.meta
-    if result["lang_iso"]:
-        meta.language.source = result["lang_iso"]
-    project.update_meta(meta)
-    return result
-
-
 # ── Translate ────────────────────────────────────────────────────────────────
 
 def run_translate_paths(
@@ -371,32 +336,6 @@ def run_translate_paths(
         "lang_iso": target_lang_iso,
         "srt_path": final_path,
     }
-
-
-def run_translate(
-    project,
-    *,
-    target_lang_iso: str,
-    progress_cb: ProgressCb = None,
-    cancel_token: CancellationToken | None = None,
-) -> dict:
-    """Legacy (project)-based shim over run_translate_paths (transitional — kept
-    until the Tk app + NewsVideoModel retire). Resolves the news_video instance
-    paths + source language and stamps project.meta.language.translated_to."""
-    from materials.news_video import paths as _nv_paths
-
-    result = run_translate_paths(
-        subtitles_dir=_nv_paths.subtitles_dir(project),
-        source_lang_iso=project.meta.language.source,
-        target_lang_iso=target_lang_iso,
-        progress_cb=progress_cb,
-        cancel_token=cancel_token,
-    )
-    meta = project.meta
-    if target_lang_iso not in meta.language.translated_to:
-        meta.language.translated_to = list(meta.language.translated_to) + [target_lang_iso]
-    project.update_meta(meta)
-    return result
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

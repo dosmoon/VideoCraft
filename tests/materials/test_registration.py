@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import inspect
-
 import materials
 import materials.news_video  # noqa: F401  triggers self-register
 from materials import MaterialType
-from materials.news_video.model import NewsVideoModel
 
 
 # ── Registry mechanism ───────────────────────────────────────────────────────
@@ -35,8 +32,9 @@ def test_get_unknown_returns_none():
 
 # ── MaterialType field contract ──────────────────────────────────────────────
 # Post-P2 (Tk app retired): sidebar_renderer / create_handler were the Tk-hub
-# hooks; they are de-registered. The Electron shell creates instances via the
-# project.create_material_instance RPC (covered by tests/core_rpc/test_material).
+# hooks; they are de-registered. Post-ADR-0008 B5: the Python instance_factory /
+# model were retired too — the material data model lives in TS and instances are
+# created via the project.create_material_instance RPC. Only type metadata remains.
 
 def test_news_video_has_required_fields():
     mt = materials.get("news_video")
@@ -45,7 +43,8 @@ def test_news_video_has_required_fields():
     assert mt.icon == "📺"
     assert mt.description_zh
     assert mt.description_en
-    assert callable(mt.instance_factory)
+    assert mt.single_instance is True
+    assert callable(mt.suggest_name)
 
 
 def test_has_instance_field_retired_from_dataclass():
@@ -54,16 +53,6 @@ def test_has_instance_field_retired_from_dataclass():
     assert "has_instance" not in MaterialType.__dataclass_fields__
 
 
-# ── Signatures (what the sidecar expects to call) ────────────────────────────
-
-def test_instance_factory_signature():
-    mt = materials.get("news_video")
-    params = list(inspect.signature(mt.instance_factory).parameters.keys())
-    assert params == ["project", "instance_id"]
-
-
-def test_instance_factory_returns_news_video_model(tmp_project):
-    mt = materials.get("news_video")
-    m = mt.instance_factory(tmp_project, "news-1")
-    assert isinstance(m, NewsVideoModel)
-    assert m.instance_id == "news-1"
+def test_instance_factory_retired_from_dataclass():
+    """ADR-0008 B5 retired the Python instance_factory (model lives in TS)."""
+    assert "instance_factory" not in MaterialType.__dataclass_fields__

@@ -51,10 +51,12 @@ async function publishInputs(owner: NewsDeskConfigOwner): Promise<{
   const bm = owner.boundMaterial;
   if (bm) {
     try {
-      context = await rpcCall<Record<string, unknown>>("material.read_context", {
-        type: bm.type_name,
-        instance: bm.instance_name,
-      });
+      // Read the bound material's context via the TS model (ADR-0008 B5: creations
+      // access material data through the TS model, never the Python sidecar).
+      context = (await (await loadNewsVideoModel(bm.instance_name)).readContext()) as Record<
+        string,
+        unknown
+      >;
     } catch {
       context = {};
     }

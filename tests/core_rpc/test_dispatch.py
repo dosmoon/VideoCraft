@@ -158,57 +158,7 @@ def test_create_creation_instance_duplicate_name(ctx, tmp_project):
     resp = call(ctx, "project.create_creation_instance", {"type": "news_desk", "name": "dup"})
     assert resp["error"]["code"] == -32602
 
-
-# ── Material domain (requires the news_video plugin registered) ───────────────
-
-@pytest.fixture
-def project_with_news(tmp_project):
-    """tmp Project holding one empty news_video instance + the plugin loaded."""
-    methods.load_plugins()  # registers the news_video MaterialType
-    tmp_project.create_material_instance(
-        "news_video",
-        "news-1",
-        initial_config={
-            "schema_version": 1,
-            "type_name": "news_video",
-            "instance_name": "news-1",
-            "display_name": "news-1",
-        },
-        config_filename="instance.json",
-    )
-    inst_dir = tmp_project.material_instance_dir("news_video", "news-1")
-    os.makedirs(os.path.join(inst_dir, "source"), exist_ok=True)
-    os.makedirs(os.path.join(inst_dir, "subtitles"), exist_ok=True)
-    return tmp_project
-
-
-def test_slot_readiness_serializes_dataclasses(ctx, project_with_news):
-    open_project_in(ctx, project_with_news)
-    resp = call(
-        ctx, "material.slot_readiness", {"type": "news_video", "instance": "news-1"}
-    )
-    states = resp["result"]
-    # SlotState dataclasses became plain dicts with the expected keys.
-    assert isinstance(states, dict) and states
-    any_state = next(iter(states.values()))
-    assert set(any_state) >= {"slot_id", "is_locked", "is_filled", "summary"}
-
-
-def test_get_artifact_absent_source_is_null(ctx, project_with_news):
-    open_project_in(ctx, project_with_news)
-    resp = call(
-        ctx,
-        "material.get_artifact",
-        {"type": "news_video", "instance": "news-1", "key": "source"},
-    )
-    assert resp["result"] is None  # no source video imported yet
-
-
-def test_get_artifact_unknown_type(ctx, project_with_news):
-    open_project_in(ctx, project_with_news)
-    resp = call(
-        ctx,
-        "material.get_artifact",
-        {"type": "no_such_type", "instance": "x", "key": "source"},
-    )
-    assert resp["error"]["code"] == -32602
+# Material-domain dispatch tests were retired with the material.* RPC surface
+# (ADR-0008 B5): material data reads/writes now run TS-side over the news_video
+# model, not the Python sidecar. Framework dir ops (project.create_material_instance
+# / material_instance_dir) are covered by tests/core_rpc/test_project*.

@@ -15,7 +15,6 @@ from . import ai as ai  # noqa: F401
 from . import capability as capability  # noqa: F401
 from . import env as env  # noqa: F401
 from . import gpu as gpu  # noqa: F401
-from . import material as material  # noqa: F401
 from . import models as models  # noqa: F401
 from . import project as project  # noqa: F401
 from . import system as system  # noqa: F401

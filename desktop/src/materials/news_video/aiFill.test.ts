@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { NEWS_CONTEXT_SCHEMA, NEWS_CONTEXT_TASK, buildContextPrompt } from "./aiFill";
-import { basicInfoFromDict } from "./schema";
+import { NEWS_CONTEXT_SCHEMA, NEWS_CONTEXT_TASK, buildContextBlock, buildContextPrompt } from "./aiFill";
+import { basicInfoFromDict, contextFromDict } from "./schema";
 
 describe("news_video aiFill", () => {
   it("schema constrains all 15 fields as required strings", () => {
@@ -43,5 +43,22 @@ describe("news_video aiFill", () => {
     const prompt = buildContextPrompt(basicInfoFromDict({}), { tags });
     expect(prompt).toContain("t19");
     expect(prompt).not.toContain("t20");
+  });
+});
+
+describe("buildContextBlock", () => {
+  it("is empty when the context is blank", () => {
+    expect(buildContextBlock(contextFromDict({}))).toBe("");
+  });
+
+  it("renders only filled fields, header first, in label order", () => {
+    const block = buildContextBlock(
+      contextFromDict({ host: "JD Vance", host_bio: "美国副总统", notes: "" }),
+    );
+    expect(block).toBe(
+      "以下是源视频的内容背景，请在生成时充分考虑：\n- 主讲人: JD Vance\n- 身份: 美国副总统",
+    );
+    // Empty fields (notes) are omitted.
+    expect(block).not.toContain("备注");
   });
 });

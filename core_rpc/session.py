@@ -44,32 +44,13 @@ class Session:
         self._models.clear()
 
     # ── Material models ───────────────────────────────────────────────────
-
-    def material_model(self, type_name: str, instance_id: str) -> Any:
-        """Resolve (and cache) a material model via its registered factory.
-
-        Raises RpcError if the type is unknown or has no instance_factory.
-        Caching keeps subscribe() callbacks alive across RPC calls.
-        """
-        key = (type_name, instance_id)
-        cached = self._models.get(key)
-        if cached is not None:
-            return cached
-
-        import materials  # registry; plugins self-register on import
-
-        mtype = materials.get(type_name)
-        if mtype is None:
-            raise RpcError(-32602, f"unknown material type: {type_name!r}")
-        if mtype.instance_factory is None:
-            raise RpcError(
-                -32603, f"material type {type_name!r} has no instance_factory"
-            )
-        model = mtype.instance_factory(self.project, instance_id)
-        self._models[key] = model
-        return model
+    #
+    # ADR-0008 B5: material data lives in TS (desktop/src/materials/news_video/);
+    # the sidecar no longer resolves Python material models. The model cache +
+    # invalidate_material are kept (now a no-op cache) because project.rename/
+    # delete_instance still call invalidate_material defensively.
 
     def invalidate_material(self, type_name: str, instance_id: str) -> None:
-        """Drop the cached material model handle (call after the instance is
-        renamed/deleted out from under it)."""
+        """Drop any cached material model handle for the instance (no-op now that
+        models live in TS; kept for project.rename/delete_instance callers)."""
         self._models.pop((type_name, instance_id), None)

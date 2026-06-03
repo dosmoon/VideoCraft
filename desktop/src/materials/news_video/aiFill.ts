@@ -17,7 +17,45 @@
  * AI's fresh output fully replaces prior context.json) are preserved by the caller.
  */
 
-import { CONTEXT_FIELDS, type SourceBasicInfo } from "./schema";
+import { CONTEXT_FIELDS, type SourceBasicInfo, type SourceContext } from "./schema";
+
+/** Field → zh label, in the rendering order the downstream-analysis context block
+ *  uses (faithful port of schema.py `_CONTEXT_LABELS`). Distinct from the AI-fill
+ *  INPUT prompt above: this renders an ALREADY-FILLED context.json as a markdown
+ *  prefix for downstream analysis prompts (chapters / hotclips). */
+const CONTEXT_BLOCK_LABELS: readonly (readonly [keyof SourceContext, string])[] = [
+  ["host", "主讲人"],
+  ["host_bio", "身份"],
+  ["host_affiliation", "所属机构"],
+  ["guests", "嘉宾 / 在场人物"],
+  ["event_date", "事件日期"],
+  ["event_time", "事件时间"],
+  ["event_location", "事件地点"],
+  ["show_type", "节目类型"],
+  ["episode_topic", "整集主题"],
+  ["event_summary", "事件概述"],
+  ["key_points", "核心要点"],
+  ["background", "背景"],
+  ["audience", "观众"],
+  ["platform_tone", "发布平台"],
+  ["notes", "备注"],
+];
+
+/** Render a filled context as the analysis-prompt prefix block (port of
+ *  schema.py `context_prompt_block`). Empty fields omitted; "" when the whole
+ *  context is blank (AI Fill not run). The caller (startRunAnalysis) passes the
+ *  result to capability.analyze, keeping core/ material-agnostic (ADR-0008). */
+export function buildContextBlock(context: SourceContext): string {
+  const get = (f: keyof SourceContext): string =>
+    String((context as Record<string, unknown>)[f] ?? "").trim();
+  if (!CONTEXT_BLOCK_LABELS.some(([f]) => get(f))) return "";
+  const lines = ["以下是源视频的内容背景，请在生成时充分考虑："];
+  for (const [f, zh] of CONTEXT_BLOCK_LABELS) {
+    const v = get(f);
+    if (v) lines.push(`- ${zh}: ${v}`);
+  }
+  return lines.join("\n");
+}
 
 /** Routing task for the realtime-news LLM (cloud + web-search grounding). */
 export const NEWS_CONTEXT_TASK = "news.realtime";

@@ -156,11 +156,15 @@ def test_analyze_job(inline_jobs, tmp_project, emit, monkeypatch):
     _write(srt, _CLEAN_SRT)
     monkeypatch.setattr(
         "core.subtitle_analysis_runners.run",
-        lambda kind, srt_path, subtitles_dir, lang, pcb, ct: {"kind": kind, "lang": lang},
+        lambda kind, srt_path, subtitles_dir, lang, pcb, ct, context_block="": {
+            "kind": kind, "lang": lang, "ctx": context_block,
+        },
     )
+    # context_block is built plugin-side and threaded through capability (ADR-0008).
     call(ctx, "capability.analyze",
-         {"kind": "analysis", "srt_path": srt, "subtitles_dir": subs, "lang": "en"})
-    assert _terminal(emit)["result"] == {"kind": "analysis", "lang": "en"}
+         {"kind": "analysis", "srt_path": srt, "subtitles_dir": subs, "lang": "en",
+          "context_block": "BG"})
+    assert _terminal(emit)["result"] == {"kind": "analysis", "lang": "en", "ctx": "BG"}
 
 
 def test_llm_extract_job(inline_jobs, tmp_project, emit, monkeypatch):
