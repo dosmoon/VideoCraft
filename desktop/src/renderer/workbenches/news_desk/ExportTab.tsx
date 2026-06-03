@@ -24,10 +24,19 @@ import { ClipReader } from "../../engine/source/ClipReader";
 import { AudioReader } from "../../engine/source/AudioReader";
 import { preloadImageOverlay } from "../../engine/overlay/canvas2d";
 import { exportTimelineToMp4, ExportCancelled } from "../../engine/export/encode";
+import { resolveBitrate } from "../../engine/export/types";
+import { ExportSettingsBar } from "../common/ExportSettingsBar";
+import {
+  DEFAULT_EXPORT_SETTINGS,
+  FULL_RESOLUTIONS,
+  downscaleToShortEdge,
+  exportSettingsFromConfig,
+  normalizeResolution,
+  type ExportSettings,
+} from "@creations/exportSettings";
 import { useNewsDeskPreview } from "./useNewsDeskPreview";
 
 const SOURCE_REF = "source";
-const FPS = 30;
 
 /** news_desk render plan (creation.plan_render — single full-source output). */
 interface NewsDeskRenderPlan {
@@ -79,7 +88,10 @@ export function ExportTab(props: {
   const [renderStatus, setRenderStatus] = useState<RenderStatus>("idle");
   const [progress, setProgress] = useState(0); // 0..1 while rendering
   const [error, setError] = useState("");
+  const [settings, setSettings] = useState<ExportSettings>(DEFAULT_EXPORT_SETTINGS);
   const cancelRef = useRef(false);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   const hiddenCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const refresh = useCallback(async () => {
@@ -87,15 +99,34 @@ export function ExportTab(props: {
     try {
       const [p, cfg] = await Promise.all([
         rpcCall<NewsDeskRenderPlan>("creation.plan_render", { type, instance }),
-        rpcCall<Record<string, unknown>>("creation.load_config", { type, instance }),
+        rpc.loadConfig(type, instance),
       ]);
       setPlan(p);
       const r = cfg["rendered"];
       setRendered(Array.isArray(r) ? (r as RenderedEntry[]) : []);
+      setSettings({
+        ...exportSettingsFromConfig(cfg),
+        resolution: normalizeResolution(cfg["export_resolution"]),
+      });
     } catch (err) {
       setError(fmtErr(err));
     }
   }, [type, instance]);
+
+  // Persist a settings change (engine/resolution/fps/bitrate) to config.json.
+  const onSettingsChange = useCallback(
+    (patch: Partial<ExportSettings>) => {
+      setSettings((prev) => ({ ...prev, ...patch }));
+      const wire: Record<string, unknown> = {};
+      if (patch.engine !== undefined) wire["export_engine"] = patch.engine;
+      if (patch.resolution !== undefined) wire["export_resolution"] = patch.resolution;
+      if (patch.fps !== undefined) wire["export_fps"] = patch.fps;
+      if (patch.bitrateMode !== undefined) wire["export_bitrate_mode"] = patch.bitrateMode;
+      if (patch.bitrateMbps !== undefined) wire["export_bitrate_mbps"] = patch.bitrateMbps;
+      void rpc.updateConfig(type, instance, wire).catch((e) => setError(fmtErr(e)));
+    },
+    [type, instance],
+  );
 
   // Refresh plan/rendered + preview inputs when this tab becomes active (the
   // Style tab may have changed config / imported new subtitles meanwhile).
@@ -132,9 +163,14 @@ export function ExportTab(props: {
       backend = new Backend();
       await backend.init(canvas);
 
-      // Full-source render → target = source dimensions (even for the encoder).
-      const srcW = even(ms.width || 1280);
-      const srcH = even(ms.height || 720);
+      // Full-source render. Output dims = source, optionally downscaled by the
+      // resolution preset (preserving aspect, never upscaling).
+      const cfg = settingsRef.current;
+      const { width: srcW, height: srcH } = downscaleToShortEdge(
+        even(ms.width || 1280),
+        even(ms.height || 720),
+        cfg.resolution,
+      );
       const durationSec = ms.durationUs / 1_000_000 || data.durationSec;
       backend.resize(srcW, srcH);
       const overlayCanvas = new OffscreenCanvas(srcW, srcH);
@@ -193,7 +229,8 @@ export function ExportTab(props: {
           backend,
           width: srcW,
           height: srcH,
-          fps: FPS,
+          fps: cfg.fps,
+          bitrate: resolveBitrate(cfg.bitrateMode, cfg.bitrateMbps, srcW, srcH, cfg.fps),
           durationSec: tl.durationSec,
           onProgress: (d, t) => setProgress(d / t),
           cancelCheck: () => cancelRef.current,
@@ -255,6 +292,14 @@ export function ExportTab(props: {
   return (
     <div style={{ padding: 16 }}>
       <canvas ref={hiddenCanvasRef} style={{ display: "none" }} />
+
+      <ExportSettingsBar
+        settings={settings}
+        probe={null}
+        resolutionOptions={FULL_RESOLUTIONS}
+        disabled={rendering}
+        onChange={onSettingsChange}
+      />
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
         <button onClick={() => void runRender()} disabled={!canRender} style={primaryBtn}>

@@ -33,6 +33,8 @@ export interface ExportOptions {
   width: number;
   height: number;
   fps: number;
+  /** Target video bitrate (bps). Omit for the resolution-scaled auto formula. */
+  bitrate?: number;
   durationSec: number;
   /** Reframe offset crop ({x,y,w,h} normalized source coords); omit for passthrough/full. */
   cropRect?: { x: number; y: number; w: number; h: number };
@@ -90,7 +92,7 @@ export async function exportTimelineToMp4(opts: ExportOptions): Promise<Uint8Arr
     width: opts.width,
     height: opts.height,
     fps: opts.fps,
-    bitrate: resolveBitrate("auto", 0, opts.width, opts.height, opts.fps),
+    bitrate: opts.bitrate ?? resolveBitrate("auto", 0, opts.width, opts.height, opts.fps),
   };
   const sink = await createWebCodecsSink(opts, params);
   return runRenderLoop(opts, sink);

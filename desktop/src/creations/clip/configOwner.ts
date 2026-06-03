@@ -16,6 +16,14 @@
 import type { Fs } from "../../renderer/ipc/fs";
 import { ADDABLE, type AddableKind, type ComponentDict, defaultInstance } from "./componentDefs";
 import * as presets from "./presets";
+import {
+  normalizeBitrateMode,
+  normalizeEngine,
+  normalizeFps,
+  normalizeMbps,
+  type BitrateMode,
+  type ExportEngineChoice,
+} from "../exportSettings";
 
 export interface BoundMaterial {
   type_name: string;
@@ -46,6 +54,11 @@ export class ClipConfigOwner {
   outputShortEdge = 1080;
   outputMode = "reframe";
   encodePreset = "medium";
+  // Export settings (engine + params); resolution reuses outputShortEdge above.
+  exportEngine: ExportEngineChoice = "";
+  exportFps = 30;
+  exportBitrateMode: BitrateMode = "auto";
+  exportBitrateMbps = 12;
   /** keyed by candidate index (decimal string, matching on-disk str keys). */
   clipsOverrides: Record<string, ComponentDict> = {};
   rendered: ComponentDict[] = [];
@@ -86,6 +99,10 @@ export class ClipConfigOwner {
     self.outputShortEdge = Number.isFinite(shortEdge) ? Math.trunc(shortEdge) : 1080;
     self.outputMode = String(raw["output_mode"] ?? "reframe");
     self.encodePreset = String(raw["encode_preset"] ?? "medium");
+    self.exportEngine = normalizeEngine(raw["export_engine"]);
+    self.exportFps = normalizeFps(raw["export_fps"] ?? 30);
+    self.exportBitrateMode = normalizeBitrateMode(raw["export_bitrate_mode"]);
+    self.exportBitrateMbps = normalizeMbps(raw["export_bitrate_mbps"]);
 
     const comps = raw["components"];
     self.components = Array.isArray(comps)
@@ -130,6 +147,10 @@ export class ClipConfigOwner {
       const n = Number(patch["output_short_edge"]);
       if (Number.isFinite(n)) this.outputShortEdge = Math.trunc(n);
     }
+    if ("export_engine" in patch) this.exportEngine = normalizeEngine(patch["export_engine"]);
+    if ("export_fps" in patch) this.exportFps = normalizeFps(patch["export_fps"]);
+    if ("export_bitrate_mode" in patch) this.exportBitrateMode = normalizeBitrateMode(patch["export_bitrate_mode"]);
+    if ("export_bitrate_mbps" in patch) this.exportBitrateMbps = normalizeMbps(patch["export_bitrate_mbps"]);
     if (Array.isArray(patch["selected_clip_indices"])) {
       this.selectedClipIndices = (patch["selected_clip_indices"] as unknown[]).filter(
         (i): i is number => Number.isInteger(i),
@@ -262,6 +283,10 @@ export class ClipConfigOwner {
       output_short_edge: Math.trunc(this.outputShortEdge),
       output_mode: this.outputMode,
       encode_preset: this.encodePreset,
+      export_engine: this.exportEngine,
+      export_fps: Math.trunc(this.exportFps),
+      export_bitrate_mode: this.exportBitrateMode,
+      export_bitrate_mbps: Math.trunc(this.exportBitrateMbps),
       clips_overrides: { ...this.clipsOverrides },
       rendered: [...this.rendered],
     };

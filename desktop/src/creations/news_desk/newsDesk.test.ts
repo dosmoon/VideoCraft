@@ -88,6 +88,29 @@ describe("NewsDeskConfigOwner", () => {
     o.bindMaterial("news_video", "n1");
     expect(o.boundMaterial?.instance_name).toBe("n1");
   });
+
+  it("applyPatch honors export settings (engine/resolution/fps/bitrate); round-trips", async () => {
+    const fs = makeFs();
+    const o = await NewsDeskConfigOwner.load(fs, CONFIG);
+    expect(o.exportEngine).toBe("");
+    expect(o.exportResolution).toBe("source");
+    o.applyPatch({
+      export_engine: "chromium",
+      export_resolution: "720",
+      export_fps: 24,
+      export_bitrate_mode: "mbps",
+      export_bitrate_mbps: 9,
+    });
+    expect(o.exportEngine).toBe("chromium");
+    expect(o.exportResolution).toBe("720");
+    expect(o.exportFps).toBe(24);
+    expect(o.exportBitrateMode).toBe("mbps");
+    expect(o.exportBitrateMbps).toBe(9);
+    await o.save();
+    const o2 = await NewsDeskConfigOwner.load(fs, CONFIG);
+    expect(o2.exportResolution).toBe("720");
+    expect(o2.exportFps).toBe(24);
+  });
 });
 
 describe("NewsDeskConfigOwner — presets", () => {

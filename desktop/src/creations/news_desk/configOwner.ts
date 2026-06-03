@@ -13,6 +13,15 @@
 import type { Fs } from "../../renderer/ipc/fs";
 import { ADDABLE, type AddableKind, type ComponentDict, defaultInstance } from "./componentDefs";
 import * as presets from "./presets";
+import {
+  normalizeBitrateMode,
+  normalizeEngine,
+  normalizeFps,
+  normalizeMbps,
+  normalizeResolution,
+  type BitrateMode,
+  type ExportEngineChoice,
+} from "../exportSettings";
 
 export interface BoundMaterial {
   type_name: string;
@@ -37,6 +46,13 @@ export class NewsDeskConfigOwner {
   presetName = "";
   components: ComponentDict[] = [];
   rendered: ComponentDict[] = [];
+  // Export settings (engine + params). News_desk is full-source, so resolution
+  // is a downscale-from-source preset ("source" | short-edge px).
+  exportEngine: ExportEngineChoice = "";
+  exportResolution = "source";
+  exportFps = 30;
+  exportBitrateMode: BitrateMode = "auto";
+  exportBitrateMbps = 12;
 
   private constructor(
     private readonly fs: Fs,
@@ -62,6 +78,11 @@ export class NewsDeskConfigOwner {
       };
     }
     self.presetName = String(raw["preset_name"] ?? "");
+    self.exportEngine = normalizeEngine(raw["export_engine"]);
+    self.exportResolution = normalizeResolution(raw["export_resolution"]);
+    self.exportFps = normalizeFps(raw["export_fps"] ?? 30);
+    self.exportBitrateMode = normalizeBitrateMode(raw["export_bitrate_mode"]);
+    self.exportBitrateMbps = normalizeMbps(raw["export_bitrate_mbps"]);
     const comps = raw["components"];
     self.components = Array.isArray(comps)
       ? comps.filter((c): c is ComponentDict => typeof c === "object" && c !== null)
@@ -74,10 +95,15 @@ export class NewsDeskConfigOwner {
     return self;
   }
 
-  /** Only preset_name is patchable at top level (full-source, no geometry). */
+  /** preset_name + export settings are patchable (full-source, no reframe geometry). */
   applyPatch(patch: Record<string, unknown>): void {
     if (!patch || typeof patch !== "object") return;
     if ("preset_name" in patch) this.presetName = String(patch["preset_name"]);
+    if ("export_engine" in patch) this.exportEngine = normalizeEngine(patch["export_engine"]);
+    if ("export_resolution" in patch) this.exportResolution = normalizeResolution(patch["export_resolution"]);
+    if ("export_fps" in patch) this.exportFps = normalizeFps(patch["export_fps"]);
+    if ("export_bitrate_mode" in patch) this.exportBitrateMode = normalizeBitrateMode(patch["export_bitrate_mode"]);
+    if ("export_bitrate_mbps" in patch) this.exportBitrateMbps = normalizeMbps(patch["export_bitrate_mbps"]);
   }
 
   bindMaterial(materialType: string, materialInstance: string): void {
@@ -160,6 +186,11 @@ export class NewsDeskConfigOwner {
   toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = {
       preset_name: this.presetName,
+      export_engine: this.exportEngine,
+      export_resolution: this.exportResolution,
+      export_fps: Math.trunc(this.exportFps),
+      export_bitrate_mode: this.exportBitrateMode,
+      export_bitrate_mbps: Math.trunc(this.exportBitrateMbps),
       components: [...this.components],
       rendered: [...this.rendered],
     };

@@ -21,11 +21,19 @@ import { ClipReader } from "../../engine/source/ClipReader";
 import { AudioReader } from "../../engine/source/AudioReader";
 import { preloadImageOverlay } from "../../engine/overlay/canvas2d";
 import { exportTimelineToMp4, ExportCancelled } from "../../engine/export/encode";
+import { resolveBitrate } from "../../engine/export/types";
+import { ExportSettingsBar } from "../common/ExportSettingsBar";
+import {
+  CLIP_RESOLUTIONS,
+  DEFAULT_EXPORT_SETTINGS,
+  exportSettingsFromConfig,
+  presetToShortEdge,
+  type ExportSettings,
+} from "@creations/exportSettings";
 import { useClipPreview } from "./useClipPreview";
 import { centerCropRect, parseAspect, targetDimsForAspect, type CropRect } from "./cropEditor";
 
 const SOURCE_REF = "source";
-const FPS = 30;
 
 type RowStatus = "queued" | "rendering" | "done" | "failed";
 interface Row {
@@ -58,8 +66,29 @@ export function ExportTab(props: {
   const [rows, setRows] = useState<Row[]>([]);
   const [rendering, setRendering] = useState(false);
   const [err, setErr] = useState("");
+  const [settings, setSettings] = useState<ExportSettings>(DEFAULT_EXPORT_SETTINGS);
   const cancelRef = useRef(false);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   const hiddenCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Persist a settings change to config.json. Clip resolution is the reframe
+  // short-edge → writes output_short_edge (single source, shared with Style tab).
+  const onSettingsChange = useCallback(
+    (patch: Partial<ExportSettings>) => {
+      setSettings((prev) => ({ ...prev, ...patch }));
+      const wire: Record<string, unknown> = {};
+      if (patch.engine !== undefined) wire["export_engine"] = patch.engine;
+      if (patch.resolution !== undefined) wire["output_short_edge"] = presetToShortEdge(patch.resolution);
+      if (patch.fps !== undefined) wire["export_fps"] = patch.fps;
+      if (patch.bitrateMode !== undefined) wire["export_bitrate_mode"] = patch.bitrateMode;
+      if (patch.bitrateMbps !== undefined) wire["export_bitrate_mbps"] = patch.bitrateMbps;
+      void rpc.updateConfig(type, instance, wire).catch((e) =>
+        setErr(e instanceof RpcError ? `[${e.code}] ${e.message}` : String(e)),
+      );
+    },
+    [type, instance],
+  );
 
   // Build the queue (selected candidates) merged with prior rendered[] state.
   // Preserve a row's live failed/rendering state across reloads — those aren't
@@ -103,10 +132,16 @@ export function ExportTab(props: {
   const refresh = useCallback(async () => {
     setErr("");
     try {
-      const p = await rpc.planRender(type, instance);
+      const [p, cfg] = await Promise.all([rpc.planRender(type, instance), rpc.loadConfig(type, instance)]);
       setPlan(p);
       reload(); // refresh overrides/selection/rendered in the shared data
       rebuildRows(p, data?.rendered ?? []);
+      // Clip resolution is the reframe short-edge (output_short_edge), not a
+      // separate field — surface it as the resolution preset.
+      setSettings({
+        ...exportSettingsFromConfig(cfg),
+        resolution: String(Number(cfg["output_short_edge"]) || 1080),
+      });
     } catch (e) {
       setErr(e instanceof RpcError ? `[${e.code}] ${e.message}` : String(e));
     }
@@ -221,13 +256,15 @@ export function ExportTab(props: {
             const cropRect: CropRect | undefined = isPassthrough
               ? undefined
               : (clip.cropRect ?? centerCropRect(srcW, srcH, aspect.aw, aspect.ah));
+            const cfg = settingsRef.current;
             const bytes = await exportTimelineToMp4({
               timeline: tl,
               drawDeps,
               backend,
               width: target.width,
               height: target.height,
-              fps: FPS,
+              fps: cfg.fps,
+              bitrate: resolveBitrate(cfg.bitrateMode, cfg.bitrateMbps, target.width, target.height, cfg.fps),
               durationSec: tl.durationSec,
               ...(cropRect ? { cropRect } : {}),
               onProgress: (d, t) =>
@@ -300,6 +337,14 @@ export function ExportTab(props: {
   return (
     <div style={{ padding: 16, display: "flex", flexDirection: "column", gap: 10, height: "100%" }}>
       <canvas ref={hiddenCanvasRef} style={{ display: "none" }} />
+
+      <ExportSettingsBar
+        settings={settings}
+        probe={null}
+        resolutionOptions={CLIP_RESOLUTIONS}
+        disabled={rendering}
+        onChange={onSettingsChange}
+      />
 
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <button onClick={() => void runRender()} disabled={rendering || rows.length === 0} style={primaryBtn}>

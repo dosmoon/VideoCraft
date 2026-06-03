@@ -94,6 +94,33 @@ describe("ClipConfigOwner — applyPatch", () => {
     expect((o as unknown as Record<string, unknown>)["unknown_x"]).toBeUndefined();
   });
 
+  it("export settings: engine/fps/bitrate patch, normalize, round-trip", async () => {
+    const fs = makeFs();
+    const o = await ClipConfigOwner.load(fs, CONFIG);
+    // defaults
+    expect(o.exportEngine).toBe("");
+    expect(o.exportFps).toBe(30);
+    expect(o.exportBitrateMode).toBe("auto");
+    o.applyPatch({
+      export_engine: "ffmpeg",
+      export_fps: 60,
+      export_bitrate_mode: "mbps",
+      export_bitrate_mbps: 18,
+    });
+    expect(o.exportEngine).toBe("ffmpeg");
+    expect(o.exportFps).toBe(60);
+    expect(o.exportBitrateMode).toBe("mbps");
+    expect(o.exportBitrateMbps).toBe(18);
+    // bad values normalize to defaults
+    o.applyPatch({ export_engine: "bogus", export_bitrate_mode: "weird" });
+    expect(o.exportEngine).toBe(""); // unknown engine → auto
+    expect(o.exportBitrateMode).toBe("auto");
+    await o.save();
+    const o2 = await ClipConfigOwner.load(fs, CONFIG);
+    expect(o2.exportFps).toBe(60);
+    expect(o2.exportBitrateMbps).toBe(18);
+  });
+
   it("clips_overrides_merge: set, null-deletes a key, drops emptied override", async () => {
     const fs = makeFs();
     const o = await ClipConfigOwner.load(fs, CONFIG);
