@@ -26,6 +26,7 @@ import {
 import { dirname, join, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { Sidecar, SidecarError } from "./sidecar";
+import { resolveAppPaths } from "./paths";
 import * as ffmpeg from "./ffmpeg";
 
 // Extension → MIME for the vc-media:// server (video for <video>/mp4box, images
@@ -49,13 +50,13 @@ function mediaMime(path: string): string {
 
 // CJS bundle (see electron.vite.config.ts) — __dirname is available.
 const here = __dirname;
-// here = out/main in both dev and packaged; ../../ is the desktop repo dir,
-// ../../../ is the VideoCraft repo root (where core_rpc/ + myenv/ live).
-const repoRoot = resolve(here, "../../../");
+// Resolve the dev↔packaged filesystem layout (sidecar launch + userData) in one
+// place (packaging-design.md §4). `here` = out/main in both dev and packaged.
+const appPaths = resolveAppPaths(here);
 
 // Single Python sidecar for the whole app (migration doc §2.3: one in-memory
 // owner of project/material state; disk is the source of truth).
-const sidecar = new Sidecar({ repoRoot });
+const sidecar = new Sidecar(appPaths.sidecar);
 
 // ── Generic file I/O for the renderer (ADR-0008 architecture pivot) ──────────
 // Plugins are moving to pure TS: their config/preset/data files are read+written
@@ -94,7 +95,7 @@ const isENOENT = (err: unknown): boolean =>
 // inside the repo, never %APPDATA%. Also gives a fresh GPU shader cache, which
 // dodges the access-denied/corruption seen when a crashed instance left a
 // locked cache in %APPDATA%.
-app.setPath("userData", resolve(here, "../../user_data"));
+app.setPath("userData", appPaths.userData);
 app.commandLine.appendSwitch("disable-gpu-shader-disk-cache");
 // The GPU process intermittently crashed at startup with "Buffer handle is
 // null / SharedImage failed" (a GPU-sandbox shared-memory failure in this

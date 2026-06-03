@@ -14,13 +14,15 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { existsSync } from "node:fs";
-import { join } from "node:path";
 
-export interface SidecarOptions {
-  /** Repo root — where core_rpc/ and myenv/ live. */
-  repoRoot: string;
-}
+import type { SidecarLaunch } from "./paths";
+
+/**
+ * How to launch the sidecar. Resolved once by `resolveAppPaths` (paths.ts) so
+ * the dev↔packaged seam lives there, not here — this class just spawns whatever
+ * command/args/cwd it is handed and speaks JSON-RPC over the child's stdio.
+ */
+export type SidecarOptions = SidecarLaunch;
 
 type Pending = {
   resolve: (value: unknown) => void;
@@ -66,22 +68,12 @@ export class Sidecar extends EventEmitter {
     super();
   }
 
-  /** Resolve the python interpreter: prefer the repo's uv-managed venv. */
-  private pythonPath(): string {
-    const venvPy =
-      process.platform === "win32"
-        ? join(this.opts.repoRoot, "myenv", "Scripts", "python.exe")
-        : join(this.opts.repoRoot, "myenv", "bin", "python");
-    return existsSync(venvPy) ? venvPy : process.platform === "win32" ? "python" : "python3";
-  }
-
   start(): void {
     if (this.child) return;
-    const py = this.pythonPath();
-    // Run as a module from the repo root so package-relative imports resolve
-    // and the sidecar can bootstrap src/ onto sys.path itself.
-    this.child = spawn(py, ["-u", "-m", "core_rpc.server"], {
-      cwd: this.opts.repoRoot,
+    // command/args/cwd are pre-resolved (dev: venv python -m core_rpc.server
+    // from repo root; packaged: resources/sidecar/core_rpc.exe).
+    this.child = spawn(this.opts.command, this.opts.args, {
+      cwd: this.opts.cwd,
       // ELECTRON_RUN_AS_NODE leaks into child env in this launch context and is
       // irrelevant to a plain python child, but strip it to be safe; force
       // UTF-8 I/O so the JSON-RPC framing is byte-clean on Windows.

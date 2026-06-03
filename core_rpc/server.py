@@ -23,7 +23,13 @@ import os
 import sys
 
 # ── sys.path bootstrap (must precede importing .methods, which pulls src/) ────
-_REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Dev: repo root is two levels up from this file (core_rpc/server.py → repo).
+# Packaged (PyInstaller onedir): there is no repo — the bundled src/ tree sits
+# under sys._MEIPASS, so anchor there instead (packaging-design.md §5.1).
+if getattr(sys, "frozen", False):
+    _REPO = sys._MEIPASS  # type: ignore[attr-defined]
+else:
+    _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SRC = os.path.join(_REPO, "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)

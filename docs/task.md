@@ -19,6 +19,16 @@
 
 ---
 
+## ▶▶ 本会话(2026-06-03 续)= P3 打包启动:方案定稿 + 路径 seam(step 1-2 ✅ build-green)
+
+> 用户「push P6 → 然后 P3」。P3 起手先定方案(纪律)。**权威方案 = 新建 [`packaging-design.md`](draft/packaging-design.md)**(深度细节都在那,task.md 只留指针)。两个地基分叉用户已拍板:**① sidecar = PyInstaller onedir ② 瘦装包 + 引导下载**。
+
+- **关键摸底**:`myenv` = **7.0GB 污染态**(装了 requirements.txt 明令移除的 torch/sherpa/nvidia/wandb/pandas)→ **绝不能整包 ship**;打包输入必须从 `requirements.txt` 用 uv 重建干净 CPU 档闭包。引导下载已有机制可复用(`user_data/{runtimes,models}` + `env`/`models`/`gpu` RPC 域)。
+- **step 1+2 已落(build-green)**:① `desktop/electron/paths.ts` 新建 = **单一 dev↔packaged seam**(`app.isPackaged` 分发 sidecar `{command,args,cwd}` + userData);`sidecar.ts` 改吃注入式 launch 描述符(去 repo 布局假设);`main.ts` 接线。**dev 行为字节等价**。② `core_rpc/server.py` 冻结态根解析(`sys.frozen`→`_MEIPASS`,dev 不变)。**验证**:typecheck + build + **212 vitest** 绿;sidecar dev-seam 冒烟(boot + load_plugins + native warmup + `system.get_locale`→`{lang:zh}` + clean shutdown)全过。
+- **下一步 = step 3**:拆 `requirements-base.txt`(base 非 AI 随包 / embedded-ai-extra 运行时装)+ `packaging/{build_sidecar.ps1,core_rpc.spec}`;uv 建干净 env → PyInstaller 出 `resources/sidecar/core_rpc.exe`,命令行验 echo 往返。step 4-8(ffmpeg 随包 / electron-builder / userData install-local / 嵌入 AI opt-in / 打磨)见 packaging-design.md §8。
+
+---
+
 ## ▶▶ 本会话(2026-06-03 下午续)= ADR-0008 B4 + A6 + B5 + 收尾 — 三插件零 Python(✅ 完成,commit `cc15d95`/`57e102b`/`ea08bd4`/`01ce780`/`71f0e1e`/`11ac7ed`,**已 push**)
 
 > 用户「启动 tasks、一步步走、重要步骤手工验证后继续」。摸清发现 task.md 旧口径(A6 一次删 preview/imports)与代码现实冲突:preview/imports 仍走 Python 桥、依赖 model.py,**必须先 B4 接到 TS 才能删干净**。故按 B4 → 真机验 → A6 → B5 推进,验证门停两次(B4 后、B5 后),均「正常」。
