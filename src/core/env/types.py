@@ -10,7 +10,7 @@ from typing import Callable, Optional
 class DetectResult:
     available: bool
     version: Optional[str] = None    # e.g. "7.1" or "v22.11.0"
-    source: Optional[str] = None     # 'system' | 'managed' | 'pip' | None
+    source: Optional[str] = None     # 'system' | 'managed' | 'pip' | 'bundled' | None
     path: Optional[str] = None       # absolute path to binary, or None
 
 

@@ -160,9 +160,14 @@ function EnvRow({
         <span style={{ fontWeight: 600, fontSize: 13 }}>{tr(`env.component.${meta.id}`)}</span>
         <span style={{ fontSize: 11, color: "#777" }}>{meta.category}</span>
         <span style={{ marginLeft: "auto", fontSize: 12, color: ok ? "#7fd17f" : "#d98b8b" }}>{status}</span>
-        {!ok && meta.installable && (
+        {meta.installable && (
+          // Available installable components (e.g. the bundled yt-dlp) still get a
+          // button — it re-runs the install, which always upgrades into py-extra so
+          // the user can track upstream releases (yt-dlp vs YouTube changes).
           <button onClick={install} disabled={installing} style={{ ...BTN, background: "#2d6cdf", color: "#fff", border: "none" }}>
-            {installing ? tr("settings.installing") : tr("settings.install")}
+            {installing
+              ? tr(ok ? "settings.updating" : "settings.installing")
+              : tr(ok ? "settings.update" : "settings.install")}
           </button>
         )}
         {meta.info_url && (
