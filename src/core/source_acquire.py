@@ -244,10 +244,16 @@ def _build_link_opts(
     })
 
     if clip_range is not None:
-        # Use literal HH:MM:SS form — yt-dlp accepts it for download_sections.
-        # "*" prefix anchors to absolute time, not chapter names.
-        opts["download_sections"] = [f"*{clip_range.start}-{clip_range.end}"]
-        opts["force_keyframes_at_cuts"] = True  # accurate sub-second cuts
+        # yt-dlp's PYTHON-API key is `download_ranges` (a callable), NOT the CLI
+        # name `download_sections` — setting the latter is silently ignored and
+        # the WHOLE video downloads (the "clip range had no effect" bug). Build
+        # the callable from absolute seconds; force_keyframes_at_cuts re-encodes
+        # for frame-accurate bounds (needs ffmpeg, which is bundled).
+        from yt_dlp.utils import download_range_func
+        opts["download_ranges"] = download_range_func(
+            None, [(parse_hms(clip_range.start), parse_hms(clip_range.end))]
+        )
+        opts["force_keyframes_at_cuts"] = True
 
     # Progress hook bridge: translate yt-dlp's progress dict into ProgressInfo.
     def _hook(d: dict) -> None:
