@@ -56,13 +56,29 @@ def _parse_version_token(version_text: str) -> str:
 # ── Binary detectors ─────────────────────────────────────────────────────────
 
 
+def _bin_source(path: str) -> str:
+    """'bundled' when `path` lives inside the packaged resources dir
+    (VC_BUNDLED_BIN, injected by the Electron launcher for the frozen build where
+    ffmpeg/ffprobe ship beside the sidecar), else 'system'. Lets the env UI label
+    a shipped binary as 内置 rather than 系统. No VC_BUNDLED_BIN (dev) → 'system'."""
+    bundled = os.environ.get("VC_BUNDLED_BIN")
+    if bundled and path:
+        try:
+            root = os.path.realpath(bundled)
+            if os.path.commonpath([os.path.realpath(path), root]) == root:
+                return "bundled"
+        except (ValueError, OSError):
+            pass
+    return "system"
+
+
 def detect_ffmpeg() -> DetectResult:
     path = shutil.which("ffmpeg") or shutil.which("ffmpeg.exe")
     if not path:
         return DetectResult(available=False)
     raw = _run_version([path, "-version"])
     version = _parse_version_token(raw) if raw else None
-    return DetectResult(available=True, version=version, source="system", path=path)
+    return DetectResult(available=True, version=version, source=_bin_source(path), path=path)
 
 
 def detect_ffprobe() -> DetectResult:
@@ -71,7 +87,7 @@ def detect_ffprobe() -> DetectResult:
         return DetectResult(available=False)
     raw = _run_version([path, "-version"])
     version = _parse_version_token(raw) if raw else None
-    return DetectResult(available=True, version=version, source="system", path=path)
+    return DetectResult(available=True, version=version, source=_bin_source(path), path=path)
 
 
 def detect_node() -> DetectResult:

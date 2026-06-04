@@ -70,8 +70,10 @@ export function resolveAppPaths(mainDir: string): AppPaths {
         args: [],
         cwd: join(res, "sidecar"),
         // Unify the frozen sidecar's user_data with Electron's — install-local,
-        // writable, survives updates (the resources/ tree does not).
-        env: { VC_USER_DATA: userData },
+        // writable, survives updates (the resources/ tree does not). VC_BUNDLED_BIN
+        // lets the env detectors label ffmpeg/ffprobe found here as 内置 (bundled),
+        // not 系统.
+        env: { VC_USER_DATA: userData, VC_BUNDLED_BIN: res },
         // Bundled ffmpeg/ffprobe sit directly under resources/ (extraResources).
         extraPath: res,
       },

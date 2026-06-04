@@ -170,7 +170,9 @@ function EnvRow({
               : tr(ok ? "settings.update" : "settings.install")}
           </button>
         )}
-        {meta.info_url && (
+        {meta.info_url && !ok && (
+          // "Guide" = where to get it; only useful when it's missing. A present
+          // binary (e.g. bundled ffmpeg) needs no install guide.
           <button onClick={() => void window.vc.openExternal(meta.info_url!)} style={BTN}>
             {tr("settings.guide")}
           </button>
