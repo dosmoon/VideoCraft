@@ -18,11 +18,26 @@ import shutil
 
 
 def user_data_dir() -> str:
-    """Return absolute path to <repo>/user_data/, creating it on demand."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    # src/core -> src -> <repo root>
-    root = os.path.normpath(os.path.join(here, "..", ".."))
-    path = os.path.join(root, "user_data")
+    """Return absolute path to the user_data/ root, creating it on demand.
+
+    Resolution order:
+      1. ``VC_USER_DATA`` env var — set by the Electron host (paths.ts) to the
+         install-local user_data dir. REQUIRED in a packaged build: there the
+         sidecar is a frozen exe whose ``__file__`` resolves under the (sealed,
+         update-wiped) resources/ tree, so a relative guess would put models /
+         settings / py-extra somewhere that vanishes on upgrade. The host knows
+         the writable, install-local location and injects it.
+      2. ``<repo>/user_data`` — the dev default (this file is src/core/, two up
+         is the repo root), keeping a source checkout self-contained.
+    """
+    env_root = os.environ.get("VC_USER_DATA", "").strip()
+    if env_root:
+        path = os.path.abspath(env_root)
+    else:
+        here = os.path.dirname(os.path.abspath(__file__))
+        # src/core -> src -> <repo root>
+        root = os.path.normpath(os.path.join(here, "..", ".."))
+        path = os.path.join(root, "user_data")
     os.makedirs(path, exist_ok=True)
     return path
 

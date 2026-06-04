@@ -20,6 +20,13 @@ export interface SidecarLaunch {
   command: string;
   args: string[];
   cwd: string;
+  /**
+   * Extra env vars merged into the sidecar's environment. Carries VC_USER_DATA:
+   * the sidecar (core.user_data) resolves models / settings / py-extra under it.
+   * REQUIRED packaged — there the frozen exe's __file__ sits in the sealed,
+   * update-wiped resources/ tree, so it cannot guess the writable location.
+   */
+  env: Record<string, string>;
 }
 
 export interface AppPaths {
@@ -40,12 +47,16 @@ export function resolveAppPaths(mainDir: string): AppPaths {
     // user_data sits beside the app exe so all state stays install-local.
     const res = process.resourcesPath;
     const exeDir = dirname(app.getPath("exe"));
+    const userData = join(exeDir, "user_data");
     return {
-      userData: join(exeDir, "user_data"),
+      userData,
       sidecar: {
         command: join(res, "sidecar", "core_rpc.exe"),
         args: [],
         cwd: join(res, "sidecar"),
+        // Unify the frozen sidecar's user_data with Electron's — install-local,
+        // writable, survives updates (the resources/ tree does not).
+        env: { VC_USER_DATA: userData },
       },
     };
   }
@@ -65,6 +76,14 @@ export function resolveAppPaths(mainDir: string): AppPaths {
       : "python3";
   return {
     userData: resolve(mainDir, "../../user_data"),
-    sidecar: { command, args: ["-u", "-m", "core_rpc.server"], cwd: repoRoot },
+    sidecar: {
+      command,
+      args: ["-u", "-m", "core_rpc.server"],
+      cwd: repoRoot,
+      // Pin the sidecar's user_data to the repo root — its own default in dev
+      // (core.user_data resolves <repo>/user_data from __file__). Set explicitly
+      // so the dev↔packaged seam for VC_USER_DATA lives only here, not implicitly.
+      env: { VC_USER_DATA: join(repoRoot, "user_data") },
+    },
   };
 }

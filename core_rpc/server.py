@@ -34,6 +34,15 @@ _SRC = os.path.join(_REPO, "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
+# Make opt-in heavy extras importable: user_data/runtimes/py-extra is where the
+# CUDA wheels and embedded-AI runtimes (faster-whisper / llama-cpp) get installed
+# at runtime, because the frozen sidecar's own site-packages are sealed
+# (packaging-design.md §5.3). Must precede load_plugins() / native warm-up below,
+# both of which may import those extras. No-op in a fresh dev checkout (empty dir).
+from core.runtime_extras import ensure_on_sys_path  # noqa: E402
+
+ensure_on_sys_path()
+
 import json  # noqa: E402
 import queue  # noqa: E402
 import threading  # noqa: E402

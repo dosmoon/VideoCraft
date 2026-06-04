@@ -28,3 +28,9 @@ Pillow==12.0.0
 
 # Windows-only
 pywin32==311; sys_platform == 'win32'
+
+# pip — bundled so the frozen sidecar can install opt-in heavy extras (CUDA
+# wheels, faster-whisper / llama-cpp) into user_data/runtimes/py-extra at runtime
+# via `core_rpc.exe --vc-pip` (packaging-design.md §5.3). A uv venv has no pip by
+# default, so it must be declared here to enter the freeze.
+pip==26.1

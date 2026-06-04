@@ -9,7 +9,14 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { rpc, RpcError, type GpuStatus, type ModelCatalogEntry, type ModelJob } from "../ipc/client";
+import {
+  rpc,
+  RpcError,
+  type EmbeddedAiStatus,
+  type GpuStatus,
+  type ModelCatalogEntry,
+  type ModelJob,
+} from "../ipc/client";
 import { runJob } from "../ipc/runJob";
 import { tr } from "../i18n/tr";
 
@@ -135,6 +142,7 @@ export function ModelManager() {
           {tr("models.refresh")}
         </button>
       </div>
+      <EmbeddedAiCard />
       <GpuCard onChanged={loadCatalog} />
       {error && <p style={{ color: "#ff6b6b" }}>✗ {error}</p>}
       {catalog === null ? (
@@ -160,6 +168,98 @@ export function ModelManager() {
           </div>
         ))
       )}
+    </div>
+  );
+}
+
+// Embedded-AI runtime card. The native ASR/LLM runtimes (faster-whisper +
+// llama-cpp) are not frozen into the app — opt-in install into py-extra (a job
+// that streams pip log inline). Without it, ASR / local-LLM model downloads
+// still work but won't run. Two states: installed (green, uninstall) / missing
+// (offer install).
+function EmbeddedAiCard() {
+  const [status, setStatus] = useState<EmbeddedAiStatus | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [line, setLine] = useState("");
+  const [err, setErr] = useState("");
+
+  const detect = useCallback(async () => {
+    setLoading(true);
+    try {
+      const h = await runJob<EmbeddedAiStatus>(() => rpc.embeddedAiStatus());
+      setStatus(await h.promise);
+    } catch (e) {
+      setErr(fmtErr(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => void detect(), [detect]);
+
+  const run = async (action: "install" | "uninstall") => {
+    setBusy(true);
+    setErr("");
+    setLine("");
+    try {
+      const h = await runJob<EmbeddedAiStatus>(
+        () => (action === "install" ? rpc.embeddedAiInstall() : rpc.embeddedAiUninstall()),
+        (p) => p.line && setLine(String(p.line)),
+      );
+      setStatus(await h.promise);
+    } catch (e) {
+      setErr(fmtErr(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  let text = tr("models.embedded_ai.detecting");
+  let color = "#888";
+  let action: "install" | "uninstall" | null = null;
+  if (!loading && status) {
+    if (status.installed) {
+      text = tr("models.embedded_ai.installed");
+      color = "#7fd17f";
+      action = "uninstall";
+    } else {
+      text = tr("models.embedded_ai.missing");
+      color = "#d9b35b";
+      action = "install";
+    }
+  }
+
+  return (
+    <div style={{ ...CARD, marginBottom: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <span style={{ fontWeight: 600, fontSize: 13 }}>{tr("models.embedded_ai.title")}</span>
+        <span style={{ fontSize: 12, color }}>{text}</span>
+        {action && (
+          <button
+            onClick={() => void run(action)}
+            disabled={busy}
+            style={{
+              marginLeft: "auto",
+              ...BTN,
+              ...(action === "install" ? { background: "#2d6cdf", color: "#fff", border: "none" } : {}),
+            }}
+          >
+            {busy
+              ? action === "install"
+                ? tr("models.embedded_ai.installing")
+                : tr("models.embedded_ai.uninstalling")
+              : action === "install"
+                ? tr("models.embedded_ai.install")
+                : tr("models.embedded_ai.uninstall")}
+          </button>
+        )}
+      </div>
+      {busy && line && (
+        <div style={{ fontSize: 11, color: "#888", marginTop: 6, fontFamily: "monospace", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+          {line}
+        </div>
+      )}
+      {err && <div style={{ fontSize: 11, color: "#d98b8b", marginTop: 4 }}>✗ {err}</div>}
     </div>
   );
 }

@@ -13,6 +13,7 @@ from __future__ import annotations
 # Domain handler modules (order irrelevant; each self-registers).
 from . import ai as ai  # noqa: F401
 from . import capability as capability  # noqa: F401
+from . import embedded_ai as embedded_ai  # noqa: F401
 from . import env as env  # noqa: F401
 from . import gpu as gpu  # noqa: F401
 from . import models as models  # noqa: F401

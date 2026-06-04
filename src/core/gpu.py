@@ -29,6 +29,35 @@ _DLL_DIRS_ADDED: bool = False
 _CUDA_PROBE_RESULT: bool | None = None
 
 
+def _nvidia_roots() -> list[str]:
+    """Candidate ``nvidia/`` namespace dirs the CUDA wheels may live in.
+
+    Two sites, in import-priority order:
+      1. ``user_data/runtimes/py-extra/nvidia`` — where the runtime installer
+         (core.gpu_install) puts the wheels under freeze, since the frozen
+         sidecar's own site-packages are sealed (packaging-design.md §5.3).
+      2. ``<sys.prefix>/Lib/site-packages/nvidia`` — the dev venv install site.
+    Only dirs that actually exist are returned.
+    """
+    roots: list[str] = []
+    try:
+        from core.runtime_extras import py_extra_dir
+
+        roots.append(os.path.join(py_extra_dir(), "nvidia"))
+    except Exception:  # noqa: BLE001 — never let path resolution break detection
+        pass
+    roots.append(os.path.join(sys.prefix, "Lib", "site-packages", "nvidia"))
+    return [r for r in roots if os.path.isdir(r)]
+
+
+def _nvidia_bin_dirs() -> list[str]:
+    """All ``nvidia/<lib>/bin`` dirs across the candidate roots, sorted."""
+    bin_dirs: list[str] = []
+    for root in _nvidia_roots():
+        bin_dirs.extend(glob.glob(os.path.join(root, "*", "bin")))
+    return sorted(bin_dirs)
+
+
 def ensure_cuda_dlls() -> None:
     """Prepend NVIDIA pip-package bin dirs to PATH (Windows DLL search).
 
@@ -43,10 +72,7 @@ def ensure_cuda_dlls() -> None:
 
     if sys.platform != "win32":
         return  # On Linux the wheels rely on rpath / LD_LIBRARY_PATH conventions
-    nvidia_root = os.path.join(sys.prefix, "Lib", "site-packages", "nvidia")
-    if not os.path.isdir(nvidia_root):
-        return
-    bin_dirs = sorted(glob.glob(os.path.join(nvidia_root, "*", "bin")))
+    bin_dirs = _nvidia_bin_dirs()
     if not bin_dirs:
         return
     # Prepend so we win over any older system-wide CUDA install on PATH.
@@ -79,9 +105,7 @@ def cuda_available() -> bool:
         return _CUDA_PROBE_RESULT
     ensure_cuda_dlls()
 
-    nvidia_root = os.path.join(sys.prefix, "Lib", "site-packages", "nvidia")
-    has_runtime = (sys.platform == "win32" and os.path.isdir(nvidia_root)
-                   and bool(glob.glob(os.path.join(nvidia_root, "*", "bin"))))
+    has_runtime = sys.platform == "win32" and bool(_nvidia_bin_dirs())
 
     has_driver = False
     try:

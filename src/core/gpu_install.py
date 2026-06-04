@@ -4,19 +4,23 @@ faster-whisper (CTranslate2 CUDA build) and llama-cpp-python (CUDA build)
 both look for CUDA + cuDNN DLLs at load time.  We get those DLLs from
 the `nvidia-*-cu12` pip packages — see core/gpu.py for the runtime path
 setup.  This module is the install side: a single entry point for the
-Model Manager UI to download those wheels into the same site-packages
-as the running interpreter (portable Python or dev venv alike).
+Model Manager UI to download those wheels.
+
+Install target is `user_data/runtimes/py-extra` (core.runtime_extras), NOT the
+interpreter's own site-packages — the frozen sidecar's site-packages are sealed,
+and `sys.executable -m pip` is the install-hang trap there (packaging-design.md
+§5.3). The same py-extra path is used in dev for parity. gpu.py scans py-extra
+for the nvidia/ DLL roots so the providers find them at load time.
 
 ~1.5 GB total on disk; opt-in.
 """
 
 from __future__ import annotations
 
-import os
-import subprocess
-import sys
 import threading
 from typing import Callable
+
+from core import runtime_extras
 
 # Packages pip will resolve when CUDA is enabled.  The first four are the
 # top-level deps faster-whisper / llama-cpp-python need; pip will pull in
@@ -37,23 +41,27 @@ _ALL_PACKAGES = _TOP_LEVEL + [
 
 
 def is_installed() -> bool:
-    """True when the four top-level CUDA wheels are present in site-packages.
+    """True when the four top-level CUDA wheels are present in py-extra.
 
     Mirrors core.gpu.ensure_cuda_dlls()'s detection: presence of
-    `site-packages/nvidia/<lib>/bin/` is what the providers actually rely on.
+    `<root>/nvidia/<lib>/bin/` is what the providers actually rely on. Checks
+    every candidate root gpu.py scans (py-extra + the dev venv site-packages).
     """
-    nvidia_root = os.path.join(sys.prefix, "Lib", "site-packages", "nvidia")
-    if not os.path.isdir(nvidia_root):
-        return False
+    import os
+    from core import gpu
+
     # All four top-level packages drop their own subdir under nvidia/.
     expected = {"cublas", "cuda_runtime", "cudnn", "cufft"}
-    present = set(os.listdir(nvidia_root))
-    return expected.issubset(present)
+    for nvidia_root in gpu._nvidia_roots():
+        present = set(os.listdir(nvidia_root))
+        if expected.issubset(present):
+            return True
+    return False
 
 
 def install(on_line: Callable[[str], None] | None = None,
             cancel_token=None) -> int:
-    """Run `pip install` for the CUDA runtime wheels into the current interpreter.
+    """Install the CUDA runtime wheels into user_data/runtimes/py-extra.
 
     Args:
         on_line: called with each line of pip's combined stdout/stderr.
@@ -63,60 +71,17 @@ def install(on_line: Callable[[str], None] | None = None,
     Returns:
         pip's exit code (0 on success).
     """
-    cmd = [
-        sys.executable, "-m", "pip", "install",
-        "--disable-pip-version-check",
-        "--no-warn-script-location",
-        *_TOP_LEVEL,
-    ]
-    return _stream(cmd, on_line, cancel_token)
+    return runtime_extras.install(_TOP_LEVEL, on_line=on_line, cancel_token=cancel_token)
 
 
 def uninstall(on_line: Callable[[str], None] | None = None,
               cancel_token=None) -> int:
-    """Run `pip uninstall -y` for the CUDA runtime wheels.
+    """Remove the CUDA runtime wheels from py-extra.
 
-    Includes transitives so the rollback is clean (otherwise pip leaves
-    nvidia-cuda-nvrtc-cu12 / nvidia-nvjitlink-cu12 behind).
+    Includes transitives so the rollback is clean (pip-style uninstall leaves
+    nvidia-cuda-nvrtc-cu12 / nvidia-nvjitlink-cu12 behind otherwise).
     """
-    cmd = [
-        sys.executable, "-m", "pip", "uninstall",
-        "--disable-pip-version-check",
-        "-y",
-        *_ALL_PACKAGES,
-    ]
-    return _stream(cmd, on_line, cancel_token)
-
-
-def _stream(cmd: list[str], on_line, cancel_token) -> int:
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        # Suppress the console window when launched from a Tk app on Windows.
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
-    try:
-        assert proc.stdout is not None
-        for line in proc.stdout:
-            if on_line is not None:
-                try:
-                    on_line(line.rstrip())
-                except Exception:
-                    pass
-            if cancel_token is not None and getattr(cancel_token, "cancelled", False):
-                proc.terminate()
-                break
-        return proc.wait()
-    finally:
-        if proc.poll() is None:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+    return runtime_extras.uninstall(_ALL_PACKAGES, on_line=on_line)
 
 
 def run_in_background(action: str,

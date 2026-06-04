@@ -249,6 +249,11 @@ export interface GpuStatus {
   reason: string;
 }
 
+/** Embedded-AI runtime status (embedded_ai.status). */
+export interface EmbeddedAiStatus {
+  installed: boolean; // faster-whisper + llama-cpp present in py-extra
+}
+
 /** A registered material type for the 素材 [+] menu (project.list_material_types_info). */
 export interface MaterialTypeInfo {
   type_name: string;
@@ -419,6 +424,12 @@ export const rpc = {
   gpuStatus: () => rpcCall<{ job_id: string }>("gpu.status"),
   gpuInstall: () => rpcCall<{ job_id: string }>("gpu.install"),
   gpuUninstall: () => rpcCall<{ job_id: string }>("gpu.uninstall"),
+  // Embedded-AI runtime (faster-whisper + llama-cpp) — opt-in install into
+  // py-extra. All jobs; install/uninstall stream pip log via
+  // progress.embedded_ai.<action> (field `line`). status terminal = EmbeddedAiStatus.
+  embeddedAiStatus: () => rpcCall<{ job_id: string }>("embedded_ai.status"),
+  embeddedAiInstall: () => rpcCall<{ job_id: string }>("embedded_ai.install"),
+  embeddedAiUninstall: () => rpcCall<{ job_id: string }>("embedded_ai.uninstall"),
 
   // ── Environment dashboard (env.* domain) ────────────────────────────────────
   // Component metadata (sync) + detection/install jobs (subprocess/pip → off-thread).

@@ -5,19 +5,31 @@
 
 ---
 
-## ▶ 下一任务(新对话先读)= P3 step 7(嵌入 AI/GPU opt-in 装冻结包)+ step 8(打磨)
+## ▶ 下一任务(新对话先读)= P3 step 8(打磨)+ 打包态终验
 
-> **权威方案 = [`packaging-design.md`](draft/packaging-design.md)**(§5.3 = step 7 细节,§8 = 完整步骤,§9 = 待决)。**P3 steps 1-6 已完成 + push 到 `main`(commit `919895f`→`7d7565e`)**:dev↔packaged 路径 seam(`desktop/electron/paths.ts` 单一 `app.isPackaged` 分发)+ 冻结根(`core_rpc/server.py` `sys.frozen→_MEIPASS`)+ **PyInstaller onedir 66MB**(`packaging/{build_sidecar.ps1,core_rpc.spec,sidecar_entry.py}` + `requirements-base.txt`,干净 CPU 闭包,非 7GB 污染 myenv)+ **electron-builder NSIS 127MB**(`desktop/electron-builder.yml`)。真机验过:打包 app 启动 + sidecar 连上 + 模型管理 UI 正常 + dev 全 renderer 链路绿。
+> **权威方案 = [`packaging-design.md`](draft/packaging-design.md)**(§5.3 = step 7 已实现细节,§8 = 完整步骤,§9 = 待决)。**P3 steps 1-7 已完成**(steps 1-6 已 push `919895f`→`7d7565e`;**step 7 本会话完成,未 push**)。steps 1-6 = dev↔packaged 路径 seam + 冻结根 + PyInstaller onedir 66MB + electron-builder NSIS 127MB,真机验过(打包 app 启动 + sidecar 连上 + 模型管理 UI 正常)。
 
-**▶ step 7 = 让冻结包能装嵌入 AI / GPU**(用户真机踩到的缺口,见下方本会话块):
-- **根因**:`src/core/gpu_install.py` + 嵌入 AI 装包跑 `sys.executable -m pip install`,打包态 `sys.executable`=冻结 `core_rpc.exe`(无 pip、不解析 argv,反起第二个阻塞 sidecar)→「安装中…」卡死。
-- **修法(packaging-design.md §5.3)**:① bundle pip 进冻结包(加进 `requirements-base.txt` 或 spec hiddenimports)→ 进程内调 pip(`pip._internal` / `runpy`)`--target <user_data>/runtimes/py-extra` ② sidecar 启动 prepend `py-extra` 到 `sys.path`(`core_rpc/server.py`)③ `src/core/gpu.py` 的 `nvidia/*/bin` PATH 注入要同时认 `py-extra/nvidia` ④ 装位置=**user_data/模型目录旁**(用户直觉:可写 + 随模型迁移,[[feedback_portable_data]])。**有设计分叉,先定方案再动手。**
+**▶ step 7 = 嵌入 AI / GPU opt-in 装冻结包(✅ 本会话完成,见下方本会话块)。**
 
-**▶ step 8 = 打磨**:品牌图标(关 `signAndEditExecutable:false` 后默认 Electron 图标)+ 代码签名(关了 winCodeSign;CI 有符号链接权限可恢复,见下方坑)+ **ffmpeg pinned 随包**(gyan.dev 静态构建,step 4 defer 的)+ CI(GitHub Windows runner)+ 最后重打包做打包态终验。
+**▶ step 8 = 打磨**:品牌图标(关 `signAndEditExecutable:false` 后默认 Electron 图标)+ 代码签名(关了 winCodeSign;CI 有符号链接权限可恢复,见下方坑)+ **ffmpeg pinned 随包**(gyan.dev 静态构建,step 4 defer 的)+ CI(GitHub Windows runner)+ **最后重打包做打包态终验**(含 step 7 的 AI/GPU 安装真机验,见下方 ⚠️)。
 
 **⚠️ winCodeSign 坑(CI 必读)**:electron-builder 在 Windows eager 解压 winCodeSign(含 macOS 符号链接),非 admin/无 Developer Mode 建符号链接失败 → build 挂;现用 `win.signAndEditExecutable:false` 绕过(代价:默认图标 + 不签名)。CI runner 有符号链接权限可去掉这个 flag。
 
 **纪律**:[[feedback_pre_alpha_no_legacy]] 不留兼容层;改 Python 整重启 sidecar;每步 build-green(pytest + desktop typecheck/vitest/build);打包验证有 GUI 盲区,renderer 改动优先 dev 复验(`desktop/dev.ps1`,[[reference_electron_run_as_node]]),打包态终验单独一轮;**外部/远端写操作前先只读核对**([[feedback_external_actions]])。
+
+---
+
+## ▶▶ 本会话(2026-06-04)= P3 step 7:嵌入 AI / GPU opt-in 装冻结包(✅ 完成,**未 push**,未提交)
+
+> 用户「先读 task.md 顶部 + packaging-design.md §5.3 定方案再动手」。读后定方案,两个真分叉用 AskUserQuestion 让用户拍板:**Fork A = 冻结态 pip 走双入口自生子进程**(非进程内 runpy);**Fork B = dev+frozen 都装 py-extra + 恒 prepend**(非只冻结态走 py-extra)。深度细节全在 **[`packaging-design.md`](draft/packaging-design.md) §5.3**(已实现态),task.md 只留指针。
+
+- **根因证实**:`gpu_install`/嵌入 AI 跑 `sys.executable -m pip`,冻结态 `sys.executable`=`core_rpc.exe` 不解析 `-m pip` 反起阻塞 sidecar →「安装中…」卡死。
+- **改动(全 build-green,未 push)**:① 新 `core/runtime_extras.py` = py-extra seam(目标 `user_data/runtimes/py-extra` · `ensure_on_sys_path` · `pip_command` dev/frozen 分叉 · `install/uninstall` 含 `--target/--only-binary :all:`,uninstall 自读 RECORD 删)② `core_rpc/server.py` 启动 prepend(warmup 前)③ `packaging/sidecar_entry.py` 拦 `--vc-pip`→`runpy` 跑 bundled pip 后退出 ④ `requirements-base.txt` 加 `pip==26.1` + `core_rpc.spec` collect pip ⑤ `core/gpu.py`+`gpu_install.py` 经新 `_nvidia_roots()` 同认 py-extra/nvidia + dev site-packages ⑥ 新 `core/embedded_ai_install.py`(faster-whisper 1.2.1 + llama-cpp 0.3.22 CPU)⑦ `core_rpc/methods/embedded_ai.py` RPC(镜像 gpu.py)+ register ⑧ ModelManager `EmbeddedAiCard` + client.ts `embeddedAi*` + i18n zh/en。
+- **配套地基修(packaged 必需)= `VC_USER_DATA` 注入**:packaged 态 Python `user_data_dir()` 原 `__file__`-relative → 落 sealed/更新即抹的 `resources/` 下(models/settings/py-extra 全丢)。修:`paths.ts` 经新 `SidecarLaunch.env` 注入 `VC_USER_DATA`(packaged=`<exeDir>/user_data` 与 Electron 统一;dev=`<repo>/user_data` 不变)+ `sidecar.ts` 合并 env + `core/user_data.py` 优先认。**这才让「py-extra 可写+随 install 迁移」打包态真成立**(顺带修了 models/settings 同隐患)。**注**:py-extra 钉死 `user_data/runtimes`(跟 install 走),**不跟可 override 的 `models_dir`** —— 运行时绑 interpreter,模型数据才可漂到外置盘。
+- **测试 + build-green**:新 `tests/core/test_runtime_extras.py` + `tests/core_rpc/test_embedded_ai.py`;**pytest 108** · desktop typecheck + **212 vitest** + build · i18n **494×2 对称**。dev seam 真跑验过(`VC_USER_DATA` 被认、py-extra prepend 到 sys.path[0];`runtime_extras.install/uninstall` 用 `six` 走真 pip --target 全链路验过)。
+- **🐛 dev 真机修(检测语义)**:`embedded_ai_install.is_installed()` 原查「py-extra 里有没有 dist-info」→ dev 机器运行时本在 myenv、能跑,却误报「未安装」+ 触发几百 MB 重复下载。改为 **importability 检测**(`importlib.util.find_spec(faster_whisper/llama_cpp)`,先 `ensure_on_sys_path`):dev(venv 有)= 已安装不瞎装;打包态(base 冻结排除这俩)= 仅装 py-extra 后才 importable,检测照准、冻结解释器无 venv 故无假阳性。**与 `gpu_install.is_installed()`(扫 py-extra + site-packages 两处)语义对齐**。`runtime_extras.is_installed`(py-extra 专查)保留给 uninstall 按 dist-info 删。
+- **⚠️ 打包态终验未做(GUI/真机盲区,留 step 8 末)**:① 冻结 `core_rpc.exe --vc-pip install` 真能装出 wheel(llama-cpp CPU wheel / ctranslate2 binary wheel 在冻结 interpreter tag 下)② 装后 ASR/本地 LLM 真能跑 ③ CUDA wheels 装 py-extra 后 nvidia DLL 解析。**需重打包后真机走一遍。**
+- **下一步 = step 8 打磨**(图标/签名/ffmpeg pinned/CI)+ 上面的打包态终验。先 commit + 视用户意 push([[feedback_external_actions]])。
 
 ---
 
@@ -31,7 +43,7 @@
 - **决策(用户拍板)**:**ffmpeg 暂不随包**(step 4 defer)——`core.env` 的 ffmpeg/ffprobe 是 detect-only(`install=None`)、只探 PATH,随包需新源;`ffmpeg.ts` 已有 PATH 回退,开发机/装了 ffmpeg 的机器能跑,真分发前再补 pinned 下载。
 - **step 5(`26f2499`)= electron-builder NSIS 安装包**:`desktop/electron-builder.yml`(appId/productName/version 0.3.5;`files`=out/**+package.json **不打 node_modules**——electron/ 只用 electron+node: 内置,renderer 依赖 vite 已 bundle,绕开 pnpm 软链坑;`extraResources` 把 `resources/sidecar`→`<app>/resources/sidecar`)。**实测产出**:`VideoCraft-0.3.5-setup.exe` **127.7MB**(NSIS,LZMA 压)+ `release/win-unpacked/` **447.7MB**,**冻结 sidecar 正确随包在 `resources/sidecar/core_rpc.exe`**(恰 paths.ts packaged 分支找的位置)。**坑修(重要,CI 必读)**:electron-builder 在 Windows eager 解压 `winCodeSign`(含 macOS 符号链接),非 admin/无 Developer Mode 的机器建符号链接失败 → 整 build 挂;`win.signAndEditExecutable:false` 关掉签名+rcedit 编辑步即绕过(代价:默认 Electron 图标,真签名/图标留 step 8 或 CI——CI runner 有符号链接权限)。**step 6 折叠进此步**:NSIS `perMachine:false` 装到 `%LOCALAPPDATA%\Programs\VideoCraft`(可写)→ paths.ts 的 exe 旁 user_data 无需 admin 即可写,portable-data 满足。
 - **真机验(部分完成)**:打包态 app **启动成功 + sidecar(`resources/sidecar/core_rpc.exe`)连上 + 模型管理 UI 正常**(steps 1-6 真机站住)。验证中抓出 + 修了 **2 个 renderer bug(非打包专属,dev 也犯,均已 dev 复验 OK)**:① **`d1238f1`** news_desk 导出仍调已删 RPC `creation.plan_render`(A6 回归,导出全炸)→ 改走 TS 路由 `rpc.planRender` ② **`500baca`** clip 首候选裁剪框画成全幅(挂载竞态:timeline async 建好前 rectRef 还是初始全幅占位;**纯 cosmetic,数据+导出本就正确**)→ 在 timeline 作画前同步 rectRef。
-- **打包态已知缺口(step 7,用户真机踩到)**:GPU/嵌入 AI 安装在冻结包里会卡死——`gpu_install` 跑 `sys.executable -m pip`,而 `sys.executable`=冻结 `core_rpc.exe`(无 pip、不解析 argv,反而起第二个 sidecar 阻塞)。修法见 packaging-design.md §5.3:bundle pip 进冻结包 → 进程内 `pip --target user_data/runtimes/py-extra` + 启动 prepend sys.path;CUDA 的 `nvidia/*/bin` PATH 注入(`core/gpu.py`)也要认 py-extra。**用户直觉:py-extra 放模型目录/user_data 旁最顺**(可写 + 随模型迁移)。
+- **打包态已知缺口(step 7,用户真机踩到)**:GPU/嵌入 AI 安装在冻结包里会卡死——`gpu_install` 跑 `sys.executable -m pip`,而 `sys.executable`=冻结 `core_rpc.exe`(无 pip、不解析 argv,反而起第二个 sidecar 阻塞)。修法见 packaging-design.md §5.3:bundle pip 进冻结包 → 进程内 `pip --target user_data/runtimes/py-extra` + 启动 prepend sys.path;CUDA 的 `nvidia/*/bin` PATH 注入(`core/gpu.py`)也要认 py-extra。**用户直觉:py-extra 放 user_data 旁最顺**(可写)。〔step 7 落地修正:钉死 `user_data/runtimes/py-extra`,**不跟可 override 的 `models_dir`** —— 运行时绑 install,模型数据才可漂移。〕
 - **下一步 = step 7**(嵌入 AI opt-in 装 py-extra,新代码,有设计分叉)+ step 8 打磨(图标/签名/CI/ffmpeg pinned 随包)+ 最后重打包做打包态终验。完整计划 packaging-design.md §8。
 
 ---

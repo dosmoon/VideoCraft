@@ -76,8 +76,15 @@ export class Sidecar extends EventEmitter {
       cwd: this.opts.cwd,
       // ELECTRON_RUN_AS_NODE leaks into child env in this launch context and is
       // irrelevant to a plain python child, but strip it to be safe; force
-      // UTF-8 I/O so the JSON-RPC framing is byte-clean on Windows.
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: undefined, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
+      // UTF-8 I/O so the JSON-RPC framing is byte-clean on Windows. opts.env
+      // carries VC_USER_DATA (where the sidecar puts models / settings / py-extra).
+      env: {
+        ...process.env,
+        ELECTRON_RUN_AS_NODE: undefined,
+        PYTHONUTF8: "1",
+        PYTHONIOENCODING: "utf-8",
+        ...this.opts.env,
+      },
     }) as ChildProcessWithoutNullStreams;
 
     this.child.stdout.setEncoding("utf-8");

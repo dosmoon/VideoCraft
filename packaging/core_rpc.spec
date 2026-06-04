@@ -22,10 +22,18 @@ hiddenimports = (
     + collect_submodules("creations")
     + collect_submodules("materials")
     + collect_submodules("core_rpc")
+    # pip is bundled so `core_rpc.exe --vc-pip` can install opt-in extras at
+    # runtime (sidecar_entry.py / packaging-design.md §5.3). collect_submodules
+    # pulls pip._internal + its vendored deps that static analysis misses.
+    + collect_submodules("pip")
 )
 
 # Non-.py runtime data the modules read (e.g. i18n / language / catalog JSON).
-datas = collect_data_files("core", includes=["**/*.json", "**/*.txt"])
+# pip ships data files (vendored cacert.pem, etc.) it needs at runtime.
+datas = (
+    collect_data_files("core", includes=["**/*.json", "**/*.txt"])
+    + collect_data_files("pip")
+)
 
 a = Analysis(
     # Entry is a wrapper that imports core_rpc.server as a package member, so the
