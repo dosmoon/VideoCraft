@@ -29,11 +29,6 @@ _COMPONENTS: list[EnvComponent] = [
         info_url="https://nodejs.org/",
     ),
     EnvComponent(
-        id="vlc", label_key="env.label.vlc", category="binary",
-        detect=_d.detect_vlc, install=None,
-        info_url="https://www.videolan.org/vlc/",
-    ),
-    EnvComponent(
         id="claude_cli", label_key="env.label.claude_cli", category="binary",
         detect=_d.detect_claude_cli, install=None,
         info_url="https://docs.claude.com/en/docs/claude-code/overview",

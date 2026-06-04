@@ -400,7 +400,6 @@
   "env.component.ffmpeg": "FFmpeg",
   "env.component.ffprobe": "FFprobe",
   "env.component.node": "Node.js",
-  "env.component.vlc": "VLC",
   "env.component.claude_cli": "Claude CLI",
   "env.component.yt-dlp": "yt-dlp",
   "env.component.fish-audio-sdk": "Fish Audio SDK",
