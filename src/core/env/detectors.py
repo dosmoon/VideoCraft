@@ -120,16 +120,43 @@ def detect_claude_cli() -> DetectResult:
 # ── Python package detector factory ──────────────────────────────────────────
 
 
-def detect_pip(package_name: str):
-    """Return a detect function for a pip-installed package."""
+def detect_pip(package_name: str, import_name: str | None = None):
+    """Return a detect function for a pip-installed package.
+
+    Frozen-aware. The base bundle ships some of these (yt-dlp, openai, Pillow,
+    google-genai, fish-audio-sdk) inside the PyInstaller archive WITHOUT dist-info
+    metadata, so importlib.metadata can't see them and would falsely report "not
+    installed". So we:
+      1. make py-extra visible first (runtime upgrades install there),
+      2. try metadata for an exact version (hits a py-extra upgrade if present),
+      3. fall back to importability so a bundled-but-metadata-less copy still
+         reports available (version unknown).
+    `import_name` is the module to probe when it differs from the project name
+    (e.g. Pillow→PIL, google-genai→google.genai).
+    """
+    mod = import_name or package_name.replace("-", "_")
+
     def _detect() -> DetectResult:
         try:
-            from importlib.metadata import version, PackageNotFoundError
-            try:
-                v = version(package_name)
-                return DetectResult(available=True, version=v, source="pip")
-            except PackageNotFoundError:
-                return DetectResult(available=False)
+            from core.runtime_extras import ensure_on_sys_path
+            ensure_on_sys_path()
         except Exception:
-            return DetectResult(available=False)
+            pass
+        from importlib.metadata import version, PackageNotFoundError
+        try:
+            v = version(package_name)
+            return DetectResult(available=True, version=v, source="pip")
+        except PackageNotFoundError:
+            pass
+        except Exception:
+            pass
+        # Bundled into the frozen base (no dist-info) → importability is the truth.
+        import importlib.util
+        try:
+            if importlib.util.find_spec(mod) is not None:
+                return DetectResult(available=True, version=None, source="bundled")
+        except Exception:
+            pass
+        return DetectResult(available=False)
+
     return _detect

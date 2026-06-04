@@ -1,39 +1,28 @@
-"""pip install / upgrade helpers with streaming log callbacks."""
+"""pip install / upgrade helpers for env components.
+
+Routes through core.runtime_extras so installs work in a frozen build too: a
+plain `sys.executable -m pip` there re-spawns the frozen sidecar and hangs
+(packaging-design.md §5.3). The package lands in user_data/runtimes/py-extra and
+shadows any copy frozen into the base bundle — e.g. lets the user upgrade a stale
+bundled yt-dlp to keep up with YouTube changes.
+"""
 
 from __future__ import annotations
 
-import subprocess
-import sys
 from typing import Callable
 
-
-def _run_pip(args: list[str], on_log: Callable[[str], None]) -> None:
-    """Run pip with stdout streamed line-by-line to on_log. Raises on failure."""
-    cmd = [sys.executable, "-m", "pip"] + args + [
-        "--no-warn-script-location",
-        "--disable-pip-version-check",
-    ]
-    on_log(f"$ {' '.join(cmd)}")
-    proc = subprocess.Popen(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace",
-    )
-    for line in proc.stdout:
-        on_log(line.rstrip())
-    proc.wait()
-    if proc.returncode != 0:
-        raise RuntimeError(f"pip exited with code {proc.returncode}")
+from core import runtime_extras
 
 
 def install_pip(package: str):
-    """Return an install function that runs `pip install <package>`."""
+    """Return an install function that installs/upgrades `package` into py-extra."""
     def _do(on_log: Callable[[str], None]) -> None:
-        _run_pip(["install", package], on_log)
+        rc = runtime_extras.install([package], on_line=on_log)
+        if rc != 0:
+            raise RuntimeError(f"pip exited with code {rc}")
     return _do
 
 
-def upgrade_pip(package: str):
-    """Return an install function that runs `pip install --upgrade <package>`."""
-    def _do(on_log: Callable[[str], None]) -> None:
-        _run_pip(["install", "--upgrade", package], on_log)
-    return _do
+# upgrade is the same operation: runtime_extras.install always passes --upgrade,
+# which is the right semantics for these tool packages (track latest).
+upgrade_pip = install_pip

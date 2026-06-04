@@ -42,25 +42,25 @@ _COMPONENTS: list[EnvComponent] = [
     # ── Python packages ─────────────────────────────────────
     EnvComponent(
         id="yt-dlp", label_key="env.label.ytdlp", category="python",
-        detect=_d.detect_pip("yt-dlp"), install=upgrade_pip("yt-dlp"),
+        detect=_d.detect_pip("yt-dlp", "yt_dlp"), install=upgrade_pip("yt-dlp"),
     ),
     EnvComponent(
         id="fish-audio-sdk", label_key="env.label.fish_sdk", category="python",
-        detect=_d.detect_pip("fish-audio-sdk"), install=install_pip("fish-audio-sdk"),
+        detect=_d.detect_pip("fish-audio-sdk", "fish_audio_sdk"), install=install_pip("fish-audio-sdk"),
     ),
     EnvComponent(
         id="openai", label_key="env.label.openai_sdk", category="python",
-        detect=_d.detect_pip("openai"), install=upgrade_pip("openai"),
+        detect=_d.detect_pip("openai", "openai"), install=upgrade_pip("openai"),
     ),
     EnvComponent(
         id="Pillow", label_key="env.label.pillow", category="python",
-        detect=_d.detect_pip("Pillow"), install=upgrade_pip("Pillow"),
+        detect=_d.detect_pip("Pillow", "PIL"), install=upgrade_pip("Pillow"),
     ),
     # google-genai is a hidden detection — used by AI Console internally,
     # not surfaced as a top-level "tool" the user manages.
     EnvComponent(
         id="google-genai", label_key="env.label.google_genai", category="python",
-        detect=_d.detect_pip("google-genai"), install=upgrade_pip("google-genai"),
+        detect=_d.detect_pip("google-genai", "google.genai"), install=upgrade_pip("google-genai"),
         visible=False,
     ),
 ]
