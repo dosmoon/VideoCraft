@@ -479,88 +479,50 @@ def _ffmpeg_cut(
     progress_cb: ProgressCb,
     cancel_token: CancelToken | None,
 ) -> None:
-    """Fast stream-copy cut of src[start:dur] → dst (no re-encode).
+    """Fast stream-copy cut of src[start:dur] → dst, run with NO pipes:
+    stdin→devnull, stdout→devnull, stderr→a temp file.
 
-    `-ss` BEFORE `-i` is a fast keyframe seek; with `-c copy` the output starts
-    at the keyframe at-or-before `start` (≤ a few seconds of lead-in) and is
-    near-instant — re-encoding a long range would be minutes of ffmpeg with no
-    feedback. A source clip doesn't need frame-exact bounds; downstream editing
-    fine-trims. `-t` (duration) avoids the -ss/-to ordering ambiguity;
-    `-avoid_negative_ts make_zero` rebases timestamps to 0."""
+    Why no pipes (this is the real fix for the "stuck at ~100%" hang): a long
+    stream-copy floods ffmpeg's stderr with non-monotonous-DTS warnings. Reading
+    that through a pipe deadlocks in the FROZEN sidecar — the job worker thread
+    cannot keep the ~64KB pipe drained, so ffmpeg blocks mid-write and the whole
+    job hangs forever (reproduces only with frozen sidecar + a long cut; dev,
+    short clips, and non-frozen all drain fast enough to hide it). With no pipe
+    to fill, ffmpeg can never block on us. The cut is a fast stream-copy so live
+    progress isn't needed — the slow download already reported it.
+
+    `-ss` before `-i` = fast keyframe seek; `-c copy` starts at the keyframe
+    at-or-before `start` (≤ a few seconds lead-in, fine for a source clip);
+    `-t` (duration) avoids the -ss/-to ambiguity; `-avoid_negative_ts make_zero`
+    rebases timestamps to 0."""
+    import tempfile
+
     duration = max(0, parse_hms(clip_range.end) - parse_hms(clip_range.start))
     cmd = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
         "-ss", clip_range.start, "-i", src, "-t", str(duration),
         "-c", "copy", "-avoid_negative_ts", "make_zero",
-        "-progress", "pipe:1", "-nostats",
         dst,
     ]
-    _run_ffmpeg_with_progress(cmd, src, clip_range, progress_cb, cancel_token)
-
-
-def _run_ffmpeg_with_progress(
-    cmd: list[str],
-    src: str,
-    clip_range: ClipRange,
-    progress_cb: ProgressCb,
-    cancel_token: CancelToken | None,
-) -> None:
-    """Run ffmpeg with `-progress pipe:1` and translate to ProgressInfo.
-
-    stderr is MERGED into stdout and the read loop drains the whole stream. A
-    separate, undrained stderr PIPE deadlocks ffmpeg once its ~64KB buffer fills
-    — a long stream-copy floods stderr with non-monotonous-DTS warnings, so
-    ffmpeg blocks mid-write and the whole job hangs. We keep a tail of recent
-    non-progress lines for the failure message.
-    """
-    from collections import deque
-
-    # Compute total duration of the range (seconds) for percent.
-    total_us = _hms_to_us(clip_range.end) - _hms_to_us(clip_range.start)
-
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            encoding="utf-8", errors="replace",
-        )
-    except FileNotFoundError:
-        raise AcquireError(ERR_FFMPEG, "ffmpeg 未安装或不在 PATH",
-                           "PATH lookup failed for ffmpeg")
-    except OSError as e:
-        raise AcquireError(ERR_FFMPEG, "无法启动 ffmpeg", str(e)) from e
-
-    assert proc.stdout is not None
-    tail: deque[str] = deque(maxlen=30)
-    try:
-        for line in proc.stdout:
-            if cancel_token is not None and cancel_token.cancelled:
-                try:
-                    proc.terminate()
-                except OSError:
-                    pass
-                proc.wait(timeout=5)
-                _cleanup_partial(cmd[-1])
-                raise AcquireError(ERR_CANCELLED, "已取消", "User cancelled")
-            line = line.strip()
-            if not line:
-                continue
-            # ffmpeg -progress emits key=value lines on stdout; stderr (merged
-            # in) carries warnings/errors — keep a tail of those for diagnostics.
-            if line.startswith("out_time_ms="):
-                out_us = int(line.split("=", 1)[1] or 0)
-                pct = (100.0 * out_us / total_us) if total_us > 0 else None
-                _emit(progress_cb, ProgressInfo(phase="cutting", percent=pct))
-            elif not line.startswith(("frame=", "fps=", "bitrate=", "total_size=",
-                                      "out_time=", "out_time_us=", "dup_frames=",
-                                      "drop_frames=", "speed=", "progress=")):
-                tail.append(line)
-    finally:
-        retcode = proc.wait()
-
-    if retcode != 0:
-        _cleanup_partial(cmd[-1])
-        raise AcquireError(ERR_FFMPEG, "ffmpeg 切段失败", "\n".join(tail).strip())
+    _emit(progress_cb, ProgressInfo(phase="cutting", percent=None,
+                                    status_text="正在裁剪片段..."))
+    with tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as errf:
+        try:
+            proc = subprocess.run(
+                cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=errf, timeout=900,
+            )
+        except FileNotFoundError:
+            raise AcquireError(ERR_FFMPEG, "ffmpeg 未安装或不在 PATH",
+                               "PATH lookup failed for ffmpeg")
+        except subprocess.TimeoutExpired:
+            _cleanup_partial(dst)
+            raise AcquireError(ERR_FFMPEG, "ffmpeg 切段超时", "cut exceeded 900s")
+        if proc.returncode != 0:
+            errf.seek(0)
+            tail = errf.read()[-2000:]
+            _cleanup_partial(dst)
+            raise AcquireError(ERR_FFMPEG, "ffmpeg 切段失败", tail.strip())
 
 
 def _ffprobe(path: str) -> dict:

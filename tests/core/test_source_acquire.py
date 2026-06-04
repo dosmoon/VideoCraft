@@ -23,43 +23,36 @@ def test_link_opts_is_always_full_download():
     assert opts["overwrites"] is True  # re-import must actually re-download
 
 
-def test_run_ffmpeg_merges_stderr_to_avoid_deadlock(monkeypatch):
-    """Regression: stderr MUST be merged into stdout. A separate, undrained
-    stderr PIPE deadlocks ffmpeg once its ~64KB buffer fills (a long stream-copy
-    floods stderr with non-monotonous-DTS warnings) — the whole job hangs."""
+def test_ffmpeg_cut_uses_no_pipes_and_stream_copy(monkeypatch):
+    """The cut must run ffmpeg with NO output pipe (stdout→devnull, stderr→a
+    file, stdin→devnull) and stream-copy. Reading ffmpeg's output through a pipe
+    deadlocks in the frozen sidecar when a long copy floods stderr; a pipe-free
+    cut can't block on us. Also pin stream-copy (no re-encode) + -t duration."""
     import subprocess as _sp
 
     captured = {}
 
-    class _FakeProc:
-        stdout = iter(["out_time_ms=1000\n", "progress=end\n"])
+    class _FakeCompleted:
+        returncode = 0
 
-        def wait(self, timeout=None):
-            return 0
+    def _fake_run(cmd, **kw):
+        captured["cmd"] = cmd
+        captured["kw"] = kw
+        return _FakeCompleted()
 
-    def _fake_popen(cmd, **kw):
-        captured.update(kw)
-        return _FakeProc()
-
-    monkeypatch.setattr(sa.subprocess, "Popen", _fake_popen)
-    from core.source_acquire import _run_ffmpeg_with_progress
-
-    _run_ffmpeg_with_progress(
-        ["ffmpeg", "x"], "in.mp4",
-        ClipRange(start="00:00:00", end="00:00:10"), lambda p: None, None,
-    )
-    assert captured["stderr"] is _sp.STDOUT
-
-
-def test_ffmpeg_cut_is_fast_stream_copy(monkeypatch):
-    captured = {}
-    monkeypatch.setattr(sa, "_run_ffmpeg_with_progress",
-                        lambda cmd, *a, **k: captured.setdefault("cmd", cmd))
-    _ffmpeg_cut("in.mp4", "out.mp4", ClipRange(start="00:01:00", end="00:02:30"), None, None)
-    cmd = captured["cmd"]
-    assert "-c" in cmd and cmd[cmd.index("-c") + 1] == "copy"  # stream copy
-    assert "libx264" not in cmd                                # NOT re-encoded
-    assert cmd[cmd.index("-t") + 1] == "90"                    # duration = end-start sec
+    monkeypatch.setattr(sa.subprocess, "run", _fake_run)
+    _ffmpeg_cut("in.mp4", "out.mp4", ClipRange(start="00:01:00", end="00:02:30"),
+                lambda p: None, None)
+    cmd, kw = captured["cmd"], captured["kw"]
+    # No pipe ffmpeg can block on: stdin/stdout must be DEVNULL, stderr NOT a PIPE.
+    assert kw["stdin"] is _sp.DEVNULL
+    assert kw["stdout"] is _sp.DEVNULL
+    assert kw["stderr"] is not _sp.PIPE
+    # Stream copy, not a re-encode; -t carries the duration (end-start seconds).
+    assert "-c" in cmd and cmd[cmd.index("-c") + 1] == "copy"
+    assert "libx264" not in cmd
+    assert "-progress" not in cmd
+    assert cmd[cmd.index("-t") + 1] == "90"
 
 
 def test_parse_hms():
