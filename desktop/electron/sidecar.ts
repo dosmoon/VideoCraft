@@ -14,6 +14,7 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { delimiter } from "node:path";
 
 import type { SidecarLaunch } from "./paths";
 
@@ -72,19 +73,27 @@ export class Sidecar extends EventEmitter {
     if (this.child) return;
     // command/args/cwd are pre-resolved (dev: venv python -m core_rpc.server
     // from repo root; packaged: resources/sidecar/core_rpc.exe).
+    // ELECTRON_RUN_AS_NODE leaks into child env in this launch context and is
+    // irrelevant to a plain python child, but strip it to be safe; force UTF-8
+    // I/O so the JSON-RPC framing is byte-clean on Windows. opts.env carries
+    // VC_USER_DATA (where the sidecar puts models / settings / py-extra).
+    const env: Record<string, string | undefined> = {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: undefined,
+      PYTHONUTF8: "1",
+      PYTHONIOENCODING: "utf-8",
+      ...this.opts.env,
+    };
+    if (this.opts.extraPath) {
+      // Prepend the bundled-binary dir (ffmpeg/ffprobe) to PATH. Mutate the
+      // EXISTING key — on Windows that is "Path", and adding a separate "PATH"
+      // would leave the child with two conflicting entries.
+      const pathKey = Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+      env[pathKey] = `${this.opts.extraPath}${delimiter}${env[pathKey] ?? ""}`;
+    }
     this.child = spawn(this.opts.command, this.opts.args, {
       cwd: this.opts.cwd,
-      // ELECTRON_RUN_AS_NODE leaks into child env in this launch context and is
-      // irrelevant to a plain python child, but strip it to be safe; force
-      // UTF-8 I/O so the JSON-RPC framing is byte-clean on Windows. opts.env
-      // carries VC_USER_DATA (where the sidecar puts models / settings / py-extra).
-      env: {
-        ...process.env,
-        ELECTRON_RUN_AS_NODE: undefined,
-        PYTHONUTF8: "1",
-        PYTHONIOENCODING: "utf-8",
-        ...this.opts.env,
-      },
+      env,
     }) as ChildProcessWithoutNullStreams;
 
     this.child.stdout.setEncoding("utf-8");

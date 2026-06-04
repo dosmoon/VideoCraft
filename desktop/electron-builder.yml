@@ -21,10 +21,17 @@ files:
   - package.json
 
 # The frozen Python sidecar ships outside the asar, under <app>/resources/sidecar/
-# — exactly where paths.ts looks for it in packaged mode.
+# — exactly where paths.ts looks for it in packaged mode. The bundled ffmpeg /
+# ffprobe (packaging/fetch_ffmpeg.ps1) ship directly under <app>/resources/ so
+# they land on the sidecar's PATH (paths.ts extraPath = process.resourcesPath):
+# yt-dlp merges 1080p DASH streams via ffmpeg, source_acquire probes/cuts.
 extraResources:
   - from: resources/sidecar
     to: sidecar
+  - from: resources/ffmpeg.exe
+    to: ffmpeg.exe
+  - from: resources/ffprobe.exe
+    to: ffprobe.exe
 
 asar: true
 

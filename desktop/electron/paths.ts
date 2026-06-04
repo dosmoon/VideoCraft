@@ -27,6 +27,14 @@ export interface SidecarLaunch {
    * update-wiped resources/ tree, so it cannot guess the writable location.
    */
   env: Record<string, string>;
+  /**
+   * Directory prepended to the sidecar's PATH. Packaged: process.resourcesPath,
+   * where the bundled ffmpeg.exe / ffprobe.exe live (extraResources) — so the
+   * sidecar's `shutil.which("ffmpeg")` AND yt-dlp's auto FFmpegMerger (1080p =
+   * separate DASH streams merged via ffmpeg) find them without a system install.
+   * Omitted in dev: the dev machine's system ffmpeg on PATH is used.
+   */
+  extraPath?: string;
 }
 
 export interface AppPaths {
@@ -57,6 +65,8 @@ export function resolveAppPaths(mainDir: string): AppPaths {
         // Unify the frozen sidecar's user_data with Electron's — install-local,
         // writable, survives updates (the resources/ tree does not).
         env: { VC_USER_DATA: userData },
+        // Bundled ffmpeg/ffprobe sit directly under resources/ (extraResources).
+        extraPath: res,
       },
     };
   }
