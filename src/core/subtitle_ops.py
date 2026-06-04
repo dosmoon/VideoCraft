@@ -1,31 +1,15 @@
 """
-core/subtitle_ops.py - 字幕分割与样式工具函数
+core/subtitle_ops.py - SRT read / split utilities
 
-无任何 UI 依赖，供 SubtitleTool、text2Video 等模块共用。
+No UI dependency. The ffmpeg subtitle-burn styling helpers were removed with
+the retired Python compose path (video_compose.py); burning now lives in the TS
+composition engine.
 """
 
 import os
 import re
 import srt
 from datetime import timedelta
-
-# ── 布局默认参数（16:9 / 9:16）──────────────────────────────────────────────
-
-LAYOUT_DEFAULTS = {
-    "horizontal": {          # 16:9
-        "max_chars_zh": 20,
-        "max_chars_en": 50,
-        "fontsize":     28,
-        "margin_v":     80,
-    },
-    "vertical": {            # 9:16
-        "max_chars_zh": 10,
-        "max_chars_en": 25,
-        "fontsize":     20,
-        "margin_v":     60,
-    },
-}
-
 
 # ── 编码自动检测 ──────────────────────────────────────────────────────────────
 
@@ -146,64 +130,3 @@ def split_srt_to_file(input_path: str, max_chars: int,
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(srt.compose(subs))
     return output_path
-
-
-# ── 颜色转换 ─────────────────────────────────────────────────────────────────
-
-def hex_color_to_ass(color: str) -> str:
-    """#RRGGBB → ASS 格式 &H00BBGGRR&"""
-    color = color.lstrip('#')
-    if len(color) != 6:
-        color = "FFFFFF"
-    r, g, b = color[0:2], color[2:4], color[4:6]
-    return f"&H00{b}{g}{r}&"
-
-
-def hex_color_to_drawtext(color: str) -> str:
-    """#RRGGBB → drawtext 格式 #RRGGBB"""
-    color = color.lstrip('#')
-    if len(color) != 6:
-        color = "FFFFFF"
-    return f"#{color}"
-
-
-# ── FFmpeg 路径转义 ───────────────────────────────────────────────────────────
-
-def escape_ffmpeg_path(path: str) -> str:
-    """将文件路径转为 ffmpeg 滤镜参数可用的格式（正斜杠 + 转义冒号）"""
-    path = os.path.abspath(path).replace("\\", "/")
-    path = path.replace(":", "\\:")
-    return path
-
-
-# ── 字幕样式构建 ──────────────────────────────────────────────────────────────
-
-def build_subtitle_style(orientation: str,
-                         fontsize: int = None,
-                         color: str = "#FFFFFF",
-                         margin_v: int = None,
-                         bold: bool = False) -> str:
-    """
-    构建 ffmpeg subtitles 滤镜的 force_style 字符串。
-
-    Args:
-        orientation: "horizontal" | "vertical"
-        fontsize:    字号（None 时按方向取默认值）
-        color:       十六进制颜色 "#RRGGBB"
-        margin_v:    距底部边距（None 时按方向取默认值）
-        bold:        是否粗体
-    """
-    defaults = LAYOUT_DEFAULTS.get(orientation, LAYOUT_DEFAULTS["horizontal"])
-    fs = fontsize if fontsize is not None else defaults["fontsize"]
-    mv = margin_v if margin_v is not None else defaults["margin_v"]
-    ass_color = hex_color_to_ass(color)
-    return (
-        f"Fontname=Microsoft YaHei,"
-        f"Fontsize={fs},"
-        f"PrimaryColour={ass_color},"
-        f"OutlineColour=&H00000000&,"
-        f"BorderStyle=1,Outline=2,Shadow=0,"
-        f"Bold={1 if bold else 0},"
-        f"Alignment=2,"
-        f"MarginV={mv}"
-    )
