@@ -5,17 +5,19 @@
 
 ---
 
-## ▶ 下一任务(新对话先读)= P3 打包 / 分发
+## ▶ 下一任务(新对话先读)= P3 step 7(嵌入 AI/GPU opt-in 装冻结包)+ step 8(打磨)
 
-> **🎉 ADR-0008 终态 + 全部收尾完成(2026-06-03,已 push 到 `main`,commit `cc15d95`→`11ac7ed`):** clip + news_desk + news_video 三插件**零插件专属 Python**;Python = plugin-agnostic 能力网关 `capability.*` + 框架目录生命周期 `project.*` + AI/models/env/gpu 框架服务;`core/` 零 material import(最后一个 `TODO(ADR-0005)` 越界已消除)。B4/A6/B5 + client.ts 死 fallback 清理 + 文档治理全做完。细节见下方本会话块 + [`adr-0008-migration-tasks.md`](draft/adr-0008-migration-tasks.md)。
+> **权威方案 = [`packaging-design.md`](draft/packaging-design.md)**(§5.3 = step 7 细节,§8 = 完整步骤,§9 = 待决)。**P3 steps 1-6 已完成 + push 到 `main`(commit `919895f`→`7d7565e`)**:dev↔packaged 路径 seam(`desktop/electron/paths.ts` 单一 `app.isPackaged` 分发)+ 冻结根(`core_rpc/server.py` `sys.frozen→_MEIPASS`)+ **PyInstaller onedir 66MB**(`packaging/{build_sidecar.ps1,core_rpc.spec,sidecar_entry.py}` + `requirements-base.txt`,干净 CPU 闭包,非 7GB 污染 myenv)+ **electron-builder NSIS 127MB**(`desktop/electron-builder.yml`)。真机验过:打包 app 启动 + sidecar 连上 + 模型管理 UI 正常 + dev 全 renderer 链路绿。
 
-**P3 = 打包 / 分发**(权威 = [`electron-migration-design.md`](draft/electron-migration-design.md)「剩余工作计划」P3 + §7.3 待决;目前纯 dev 模式、零分发产物):
-- **sidecar**:PyInstaller onedir(推荐)bundle `core_rpc.server` + myenv 依赖。
-- **Electron**:electron-builder 出 Win 安装包;userData repo-local([[feedback_portable_data]]);Win11 26200 sandbox 兜底已在 `main.ts`([[project_electron_version_policy]])。
-- **二进制依赖**:ffmpeg/ffprobe、yt-dlp 的 Node.js runtime 随包或引导。
-- **起手**:**先定打包方案**(sidecar onedir 目录结构 / myenv 依赖打包 / 二进制随包 vs 引导下载 / dev↔packaged 路径解析)再动手;启动陷阱见 [[reference_electron_run_as_node]]。之后 P4 打磨 → P5 转场/录播自动剪辑。
+**▶ step 7 = 让冻结包能装嵌入 AI / GPU**(用户真机踩到的缺口,见下方本会话块):
+- **根因**:`src/core/gpu_install.py` + 嵌入 AI 装包跑 `sys.executable -m pip install`,打包态 `sys.executable`=冻结 `core_rpc.exe`(无 pip、不解析 argv,反起第二个阻塞 sidecar)→「安装中…」卡死。
+- **修法(packaging-design.md §5.3)**:① bundle pip 进冻结包(加进 `requirements-base.txt` 或 spec hiddenimports)→ 进程内调 pip(`pip._internal` / `runpy`)`--target <user_data>/runtimes/py-extra` ② sidecar 启动 prepend `py-extra` 到 `sys.path`(`core_rpc/server.py`)③ `src/core/gpu.py` 的 `nvidia/*/bin` PATH 注入要同时认 `py-extra/nvidia` ④ 装位置=**user_data/模型目录旁**(用户直觉:可写 + 随模型迁移,[[feedback_portable_data]])。**有设计分叉,先定方案再动手。**
 
-**纪律**:[[feedback_pre_alpha_no_legacy]] 不留兼容层;改 Python 整重启 sidecar;每步 build-green(pytest + desktop typecheck/vitest/build);[[feedback_faithful_port_not_invent]]。**外部/远端写操作前先只读核对**([[feedback_external_actions]])。
+**▶ step 8 = 打磨**:品牌图标(关 `signAndEditExecutable:false` 后默认 Electron 图标)+ 代码签名(关了 winCodeSign;CI 有符号链接权限可恢复,见下方坑)+ **ffmpeg pinned 随包**(gyan.dev 静态构建,step 4 defer 的)+ CI(GitHub Windows runner)+ 最后重打包做打包态终验。
+
+**⚠️ winCodeSign 坑(CI 必读)**:electron-builder 在 Windows eager 解压 winCodeSign(含 macOS 符号链接),非 admin/无 Developer Mode 建符号链接失败 → build 挂;现用 `win.signAndEditExecutable:false` 绕过(代价:默认图标 + 不签名)。CI runner 有符号链接权限可去掉这个 flag。
+
+**纪律**:[[feedback_pre_alpha_no_legacy]] 不留兼容层;改 Python 整重启 sidecar;每步 build-green(pytest + desktop typecheck/vitest/build);打包验证有 GUI 盲区,renderer 改动优先 dev 复验(`desktop/dev.ps1`,[[reference_electron_run_as_node]]),打包态终验单独一轮;**外部/远端写操作前先只读核对**([[feedback_external_actions]])。
 
 ---
 
