@@ -19,6 +19,18 @@
 
 ---
 
+## ▶▶ 本会话(2026-06-04 续2)= 依赖管理迁正统 uv 项目(✅ 完成,commit `2b6b1fb`,**未 push**)
+
+> 起因:从「内置 yt-dlp 可更新」延伸——用户问打包给什么版本、uv 怎么设。摸出两个真问题(冻结闭包传递依赖浮动不可复现 + pin 散 3+ 处手动同步),立 **[ADR-0009](adr/0009-uv-project-dependency-management.md)**。两分叉用户拍板:运行时档 pin = **R2**(收进 pyproject extras + pytest 防漂移);dev myenv = **净化重建**。
+
+- **`pyproject.toml` 做全部 pin 单源 + `uv.lock` 锁全闭包**:base=`[project.dependencies]`(含 pip)、embedded-ai/gpu=`[optional-dependencies]` extras、build(pyinstaller)/dev(pytest)=`[dependency-groups]`;`[tool.uv] package=false` + llama-cpp 走 abetlen cpu index(`[tool.uv.sources]`)。`requires-python>=3.12`。**删 `requirements.txt`+`requirements-base.txt`**。
+- **`build_sidecar.ps1`** 改 `uv sync --frozen --no-default-groups --group build`(base+pyinstaller 从 lock,无 extras/dev ⇒ 冻结天然排 faster-whisper/llama-cpp)。
+- **运行时档 R2**:`embedded_ai_install._PACKAGES`/`gpu_install._TOP_LEVEL` 保留常量但镜像 pyproject extras,新 `tests/core/test_dependency_pins.py` 防漂移;**gpu nvidia-* 这次钉版本**(对 ctranslate2 4.7.1 验过的)。
+- **验证全绿**:`uv lock` 92 包(pydantic 现已锁);myenv 净化重建(`uv sync --extra embedded-ai`,**7GB→391MB**,faster_whisper/llama_cpp 可 import);pytest 全绿(含 mirror);build_sidecar 经 uv 重产冻结 sidecar(warmup 证 embedded-ai 排除、pip 含);冻结 E2E 绿(yt-dlp bundled→`--vc-pip`→pip 2026.3.17)。
+- **欠**:win-unpacked 仍带上一份(08:29 requirements 构建,行为等价)sidecar——用户当时开着 app 没重打包;方便时 `pnpm build:win` 同步即可(或留下次发布)。**发布 checklist 见 packaging-design.md §10**(切版前 bump yt-dlp latest)。commit `2b6b1fb` 未 push。
+
+---
+
 ## ▶▶ 本会话(2026-06-04)= P3 step 7:嵌入 AI / GPU opt-in 装冻结包(✅ 完成,**未 push**,未提交)
 
 > 用户「先读 task.md 顶部 + packaging-design.md §5.3 定方案再动手」。读后定方案,两个真分叉用 AskUserQuestion 让用户拍板:**Fork A = 冻结态 pip 走双入口自生子进程**(非进程内 runpy);**Fork B = dev+frozen 都装 py-extra + 恒 prepend**(非只冻结态走 py-extra)。深度细节全在 **[`packaging-design.md`](draft/packaging-design.md) §5.3**(已实现态),task.md 只留指针。
