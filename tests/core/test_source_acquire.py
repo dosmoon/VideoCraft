@@ -23,6 +23,34 @@ def test_link_opts_is_always_full_download():
     assert opts["overwrites"] is True  # re-import must actually re-download
 
 
+def test_run_ffmpeg_merges_stderr_to_avoid_deadlock(monkeypatch):
+    """Regression: stderr MUST be merged into stdout. A separate, undrained
+    stderr PIPE deadlocks ffmpeg once its ~64KB buffer fills (a long stream-copy
+    floods stderr with non-monotonous-DTS warnings) — the whole job hangs."""
+    import subprocess as _sp
+
+    captured = {}
+
+    class _FakeProc:
+        stdout = iter(["out_time_ms=1000\n", "progress=end\n"])
+
+        def wait(self, timeout=None):
+            return 0
+
+    def _fake_popen(cmd, **kw):
+        captured.update(kw)
+        return _FakeProc()
+
+    monkeypatch.setattr(sa.subprocess, "Popen", _fake_popen)
+    from core.source_acquire import _run_ffmpeg_with_progress
+
+    _run_ffmpeg_with_progress(
+        ["ffmpeg", "x"], "in.mp4",
+        ClipRange(start="00:00:00", end="00:00:10"), lambda p: None, None,
+    )
+    assert captured["stderr"] is _sp.STDOUT
+
+
 def test_ffmpeg_cut_is_fast_stream_copy(monkeypatch):
     captured = {}
     monkeypatch.setattr(sa, "_run_ffmpeg_with_progress",

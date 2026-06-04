@@ -505,14 +505,23 @@ def _run_ffmpeg_with_progress(
     progress_cb: ProgressCb,
     cancel_token: CancelToken | None,
 ) -> None:
-    """Run ffmpeg with `-progress pipe:1` and translate to ProgressInfo."""
+    """Run ffmpeg with `-progress pipe:1` and translate to ProgressInfo.
+
+    stderr is MERGED into stdout and the read loop drains the whole stream. A
+    separate, undrained stderr PIPE deadlocks ffmpeg once its ~64KB buffer fills
+    — a long stream-copy floods stderr with non-monotonous-DTS warnings, so
+    ffmpeg blocks mid-write and the whole job hangs. We keep a tail of recent
+    non-progress lines for the failure message.
+    """
+    from collections import deque
+
     # Compute total duration of the range (seconds) for percent.
     total_us = _hms_to_us(clip_range.end) - _hms_to_us(clip_range.start)
 
     try:
         proc = subprocess.Popen(
             cmd,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             encoding="utf-8", errors="replace",
         )
     except FileNotFoundError:
@@ -522,7 +531,7 @@ def _run_ffmpeg_with_progress(
         raise AcquireError(ERR_FFMPEG, "无法启动 ffmpeg", str(e)) from e
 
     assert proc.stdout is not None
-    last_emit = 0.0
+    tail: deque[str] = deque(maxlen=30)
     try:
         for line in proc.stdout:
             if cancel_token is not None and cancel_token.cancelled:
@@ -533,23 +542,25 @@ def _run_ffmpeg_with_progress(
                 proc.wait(timeout=5)
                 _cleanup_partial(cmd[-1])
                 raise AcquireError(ERR_CANCELLED, "已取消", "User cancelled")
-            # ffmpeg -progress emits key=value lines, one per line.
             line = line.strip()
             if not line:
                 continue
+            # ffmpeg -progress emits key=value lines on stdout; stderr (merged
+            # in) carries warnings/errors — keep a tail of those for diagnostics.
             if line.startswith("out_time_ms="):
                 out_us = int(line.split("=", 1)[1] or 0)
                 pct = (100.0 * out_us / total_us) if total_us > 0 else None
-                _emit(progress_cb, ProgressInfo(
-                    phase="cutting", percent=pct,
-                ))
+                _emit(progress_cb, ProgressInfo(phase="cutting", percent=pct))
+            elif not line.startswith(("frame=", "fps=", "bitrate=", "total_size=",
+                                      "out_time=", "out_time_us=", "dup_frames=",
+                                      "drop_frames=", "speed=", "progress=")):
+                tail.append(line)
     finally:
         retcode = proc.wait()
 
     if retcode != 0:
-        stderr = (proc.stderr.read() if proc.stderr else "") or ""
         _cleanup_partial(cmd[-1])
-        raise AcquireError(ERR_FFMPEG, "ffmpeg 切段失败", stderr.strip())
+        raise AcquireError(ERR_FFMPEG, "ffmpeg 切段失败", "\n".join(tail).strip())
 
 
 def _ffprobe(path: str) -> dict:
