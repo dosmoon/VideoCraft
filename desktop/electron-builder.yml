@@ -32,10 +32,19 @@ extraResources:
     to: ffmpeg.exe
   - from: resources/ffprobe.exe
     to: ffprobe.exe
+  # Brand icon for the runtime BrowserWindow/taskbar (paths.ts iconPath →
+  # <app>/resources/icon.ico). buildResources/icon.ico is also auto-used by
+  # electron-builder for the NSIS installer UI.
+  - from: build/icon.ico
+    to: icon.ico
 
 asar: true
 
 win:
+  # Brand icon from the logo (desktop/build/icon.ico). Used for the NSIS
+  # installer + Start-Menu shortcut now; the exe-embedded icon also needs
+  # rcedit/winCodeSign (see signAndEditExecutable below) — that lands in CI.
+  icon: build/icon.ico
   target:
     - target: nsis
       arch:

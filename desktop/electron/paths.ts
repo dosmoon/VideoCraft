@@ -42,6 +42,12 @@ export interface AppPaths {
   userData: string;
   /** How to launch the Python sidecar. */
   sidecar: SidecarLaunch;
+  /**
+   * Brand icon (.ico) for the BrowserWindow / taskbar. Set at runtime (no
+   * winCodeSign needed, unlike the exe-embedded icon). Packaged: shipped under
+   * resources/ (extraResources); dev: desktop/build/icon.ico.
+   */
+  iconPath: string;
 }
 
 /**
@@ -58,6 +64,7 @@ export function resolveAppPaths(mainDir: string): AppPaths {
     const userData = join(exeDir, "user_data");
     return {
       userData,
+      iconPath: join(res, "icon.ico"),
       sidecar: {
         command: join(res, "sidecar", "core_rpc.exe"),
         args: [],
@@ -86,6 +93,7 @@ export function resolveAppPaths(mainDir: string): AppPaths {
       : "python3";
   return {
     userData: resolve(mainDir, "../../user_data"),
+    iconPath: resolve(mainDir, "../../build/icon.ico"),
     sidecar: {
       command,
       args: ["-u", "-m", "core_rpc.server"],

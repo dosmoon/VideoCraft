@@ -10,7 +10,7 @@
  */
 
 import { app, BrowserWindow, dialog, ipcMain, protocol, shell } from "electron";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import {
   copyFile,
   mkdir,
@@ -159,6 +159,10 @@ function createMainWindow(): BrowserWindow {
     minHeight: 600,
     show: false,
     title: "VideoCraft",
+    // Runtime window / taskbar icon (independent of the exe-embedded icon, which
+    // needs winCodeSign — disabled here, restored in CI). Guard so a missing
+    // build/icon.ico in a partial dev tree doesn't warn.
+    ...(existsSync(appPaths.iconPath) ? { icon: appPaths.iconPath } : {}),
     webPreferences: {
       preload: join(here, "../preload/index.cjs"),
       contextIsolation: true,

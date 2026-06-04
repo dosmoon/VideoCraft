@@ -9,6 +9,11 @@ __pycache__/
 # Distribution / packaging
 .Python
 build/
+# ...but keep the hand-authored brand icon (electron-builder buildResources).
+!desktop/build/
+desktop/build/*
+!desktop/build/icon.ico
+!desktop/build/icon.png
 dist/
 develop-eggs/
 dist/
