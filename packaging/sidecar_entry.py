@@ -19,6 +19,32 @@ Two responsibilities:
 import sys
 
 
+def _patch_distlib_finder() -> None:
+    """Let pip's vendored distlib locate its resources under PyInstaller.
+
+    pip install → distlib.scripts (module import) calls
+    distlib.resources.finder('pip._vendor.distlib'), which dispatches on the
+    package's __loader__ TYPE. PyInstaller's frozen loader isn't in distlib's
+    finder registry → DistlibException 'Unable to locate finder'. Register that
+    loader type to a filesystem ResourceFinder: in an onedir build the distlib
+    package dir physically exists under _internal (collect_data_files ships its
+    data), so the finder resolves via the module's __path__. Best-effort.
+    """
+    try:
+        import pip._vendor.distlib as distlib
+        from pip._vendor.distlib import resources
+
+        loader = getattr(distlib, "__loader__", None)
+        if loader is not None:
+            # register_finder(loader, maker) keys the registry on type(loader)
+            # internally — pass the loader INSTANCE, not its type.
+            resources.register_finder(
+                loader, lambda module: resources.ResourceFinder(module)
+            )
+    except Exception:
+        pass
+
+
 def _main() -> int:
     argv = sys.argv[1:]
     if argv and argv[0] == "--vc-pip":
@@ -26,6 +52,7 @@ def _main() -> int:
         # through to the stdio server.
         import runpy
 
+        _patch_distlib_finder()
         sys.argv = ["pip", *argv[1:]]
         try:
             runpy.run_module("pip", run_name="__main__")

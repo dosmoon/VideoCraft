@@ -14,7 +14,10 @@ $venv = Join-Path $repo ".build\sidecar-venv"
 $py = Join-Path $venv "Scripts\python.exe"
 
 Write-Host "[sidecar] creating clean build venv (uv, python 3.12) at $venv ..." -ForegroundColor Cyan
-uv venv $venv --python 3.12
+# --clear: always rebuild from scratch. Without it uv skips an existing venv, so a
+# stale one (e.g. missing a newly-pinned dep like pip) silently survives — the
+# freeze must reflect requirements-base.txt exactly.
+uv venv $venv --python 3.12 --clear
 
 Write-Host "[sidecar] installing base deps + pyinstaller ..." -ForegroundColor Cyan
 uv pip install --python $py -r (Join-Path $repo "requirements-base.txt")
