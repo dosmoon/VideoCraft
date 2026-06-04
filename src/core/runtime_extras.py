@@ -143,8 +143,20 @@ def _stream(cmd: list[str], on_line, cancel_token) -> int:
     with core.gpu_install._stream (cancel between lines, kill on exit)."""
     if on_line is not None:
         on_line(f"$ {' '.join(cmd)}")
+    env = None
+    if getattr(sys, "frozen", False):
+        # We are a frozen exe spawning another copy of the SAME frozen exe
+        # (core_rpc.exe --vc-pip). PyInstaller's bootloader marks its context
+        # with _PYI*/_MEIPASS2 env vars; if the child inherits them it thinks
+        # it is already inside the parent's frozen bootstrap and stalls instead
+        # of starting cleanly (the frozen-spawns-frozen pitfall — this is the
+        # GUI-only install hang). Strip them so the child bootstraps fresh.
+        env = {k: v for k, v in os.environ.items()
+               if not (k.startswith("_PYI") or k == "_MEIPASS2")}
     proc = subprocess.Popen(
         cmd,
+        # pip needs no input; never inherit the sidecar's JSON-RPC stdin.
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
@@ -152,6 +164,7 @@ def _stream(cmd: list[str], on_line, cancel_token) -> int:
         errors="replace",
         # Suppress a flashing console window on Windows.
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        env=env,
     )
     try:
         assert proc.stdout is not None
