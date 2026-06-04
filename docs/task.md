@@ -5,19 +5,33 @@
 
 ---
 
-## ▶ 下一任务(新对话先读)= P3 step 8(打磨)+ 打包态终验
+## ▶ 下一任务(新对话先读)= P3 收尾(CI/签名)+ 一轮干净打包态终验
 
-> **权威方案 = [`packaging-design.md`](draft/packaging-design.md)**(§5.3 = step 7 已实现细节,§8 = 完整步骤,§9 = 待决)。**P3 steps 1-7 已完成**(steps 1-6 已 push `919895f`→`7d7565e`;**step 7 本会话完成,未 push**)。steps 1-6 = dev↔packaged 路径 seam + 冻结根 + PyInstaller onedir 66MB + electron-builder NSIS 127MB,真机验过(打包 app 启动 + sidecar 连上 + 模型管理 UI 正常)。
+> **权威方案 = [`packaging-design.md`](draft/packaging-design.md)**(§8 步骤、§9 待决、§10 发布 checklist)。**P3 steps 1-8 实质完成并全部 push 到 `origin/main`(HEAD `7148483`)。** steps 1-7 = seam + 冻结 sidecar + NSIS + 嵌入 AI/GPU opt-in;step 8 已做:**ffmpeg 随包**(✅)、**品牌图标**(✅ 窗口/安装包图标;exe 内嵌图标待 CI)、env 页 bundled 呈现收口(✅)。
 
-**▶ step 7 = 嵌入 AI / GPU opt-in 装冻结包(✅ 本会话完成,见下方本会话块)。**
+**▶ 真正剩下的(都不阻塞日常)**:
+1. **CI(GitHub Windows runner)** —— runner 有符号链接权限,可去掉 `win.signAndEditExecutable:false`,恢复 **exe 内嵌图标 + 代码签名**(见下方 winCodeSign 坑)。
+2. **一轮干净打包态终验** —— 本会话 bug 都在命令行/冻结 E2E 钉死了,但**用户尚未在「带全部最新修复的重打包 app」里完整点一遍**(下载 clip + 嵌入 AI 装 + ASR)。win-unpacked 的 sidecar 一直手动同步到最新,但 **env 页「内置」标签 + 最新 renderer 要重打包才进 win-unpacked**。下次开个干净轮:`build_sidecar.ps1` + `fetch_ffmpeg.ps1` + `pnpm build:win` → 用户 GUI 终验。
+3. **backlog**:`src/i18n` Tk 孤儿大扫除(VLC 已清,还有别的);env-screen 其它打磨。
 
-**▶ step 8 = 打磨**:品牌图标(关 `signAndEditExecutable:false` 后默认 Electron 图标)+ 代码签名(关了 winCodeSign;CI 有符号链接权限可恢复,见下方坑)+ **ffmpeg pinned 随包**(gyan.dev 静态构建,step 4 defer 的)+ CI(GitHub Windows runner)+ **最后重打包做打包态终验**(含 step 7 的 AI/GPU 安装真机验,见下方 ⚠️)。
+**⚠️ winCodeSign 坑(CI 必读)**:electron-builder 在 Windows eager 解压 winCodeSign(含 macOS 符号链接),非 admin/无 Developer Mode 建符号链接失败 → build 挂;现用 `win.signAndEditExecutable:false` 绕过(代价:exe 默认图标 + 不签名;窗口/安装包图标已经是品牌图标)。CI runner 有符号链接权限可去掉这个 flag。
 
-**⚠️ winCodeSign 坑(CI 必读)**:electron-builder 在 Windows eager 解压 winCodeSign(含 macOS 符号链接),非 admin/无 Developer Mode 建符号链接失败 → build 挂;现用 `win.signAndEditExecutable:false` 绕过(代价:默认图标 + 不签名)。CI runner 有符号链接权限可去掉这个 flag。
-
-**纪律**:[[feedback_pre_alpha_no_legacy]] 不留兼容层;改 Python 整重启 sidecar;每步 build-green(pytest + desktop typecheck/vitest/build);打包验证有 GUI 盲区,renderer 改动优先 dev 复验(`desktop/dev.ps1`,[[reference_electron_run_as_node]]),打包态终验单独一轮;**外部/远端写操作前先只读核对**([[feedback_external_actions]])。
+**纪律**:[[feedback_pre_alpha_no_legacy]] 不留兼容层;改 Python 整重启 sidecar;每步 build-green(pytest + desktop typecheck/vitest/build);**冻结态 bug 不能只在 dev 验**(本会话血泪:clip 死锁只在「冻结 + 长 cut」现,dev/短视频/非冻结全测不出——要用驱动真 `core_rpc.exe` 的冻结 E2E 复现,见下方本会话块);**外部/远端写操作前先只读核对**([[feedback_external_actions]])。
 
 ---
+
+## ▶▶ 本会话(2026-06-04 大轮)= P3 step 7→8 收尾 + clip/re-import 五连 bug(✅ 全 push 到 `origin/main` `4ef3956`→`7148483`)
+
+> 从崩溃恢复接力开始,一路做完 step 7/8 + 一堆打包态真机 bug。**全部 push。** 实现细节在各 commit message + packaging-design.md + ADR-0009;这里只留路标。
+
+- **env 冻结态 detect/install 修复**(`62409df`)+ **env「更新」按钮 + bundled i18n**(`77bad35`):普通 pip 组件(yt-dlp 等)冻结态 detect 误报/install 卡死(同 step7 根因)修了;env 页已装可装组件给「更新」按钮(让内置 yt-dlp 能升级)。
+- **依赖管理迁正统 uv 项目**(`2b6b1fb`,**ADR-0009**):`pyproject.toml` 单源 + `uv.lock` 锁全闭包;base/embedded-ai/gpu/dev 分档;`build_sidecar.ps1` 走 `uv sync --frozen`;myenv 净化重建 7GB→391MB;删 `requirements*.txt`;运行时档 pin 由 `test_dependency_pins` 防漂移。
+- **删 VLC 死项**(`5360f23`)+ **删 Tk 时代死代码**(`39aee1a`:`video_compose`/`srt_from_text`/`core/tts.py` + subtitle_ops 的 ffmpeg-burn helpers;**edge_tts 是活的 TTS provider,没删**)+ dev.cmd 启动器(`2ed5f2f`)。
+- **ffmpeg 随包**(`9256a4c`):`fetch_ffmpeg.ps1` 拉 pinned gyan essentials 7.1.1 → resources;extraResources;`paths.ts` extraPath 注入 sidecar PATH。ffmpeg 是主线 1080p 硬依赖(yt-dlp 合并 DASH)。安装包 137→182MB。
+- **品牌图标**(`abdeee2`):`Logo/Logo.png` → `desktop/build/icon.ico`;窗口/安装包图标已上;exe 内嵌待 CI。
+- **🐛 clip/re-import 五连 bug(`61b65de`→`ce64168`)** —— ① clip_range 用错 yt-dlp key(`download_sections`→`download_ranges`)② re-import 失败/取消删原 source(数据丢失)→ **staging + 成功才原子替换** ③ clip 改「整段下载(有进度)+ 本地快切」绕开无进度的 FFmpegFD ④ stderr 排空 ⑤ **根因 = 冻结 sidecar 里 cut 的 ffmpeg 输出管道死锁**(长 cut 刷海量 DTS 警告填满 64KB 管道,冻结进程排不空 → ffmpeg 阻塞)→ **cut 改成完全不开管道(stdin/stdout=DEVNULL,stderr=临时文件)**。**冻结态实测**:长 cut 3.7s、完整 link+clip E2E 26.1s succeeded。
+- **env 页 bundled 呈现收口**(`7148483`):ffmpeg/ffprobe 经 `VC_BUNDLED_BIN` 标记报 `source="bundled"` → 显示「内置」;Guide 按钮只在缺失时显示。
+- **欠**:见上方「下一任务」(CI/签名 + 干净打包态终验 + i18n 大扫除)。
 
 ## ▶▶ 本会话(2026-06-04 续2)= 依赖管理迁正统 uv 项目(✅ 完成,commit `2b6b1fb`,**未 push**)
 
