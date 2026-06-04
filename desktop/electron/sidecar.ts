@@ -1,15 +1,19 @@
 /**
- * Python sidecar manager (migration doc §2-3).
+ * Python sidecar manager (ADR-0010 — HTTP transport).
  *
- * Spawns the core_rpc sidecar (`python -m core_rpc.server`) as a child and
- * speaks newline-delimited JSON-RPC 2.0 over its stdio:
- *   - requests  : call(method, params) → Promise, correlated by integer id
- *   - responses : matched back to the pending promise by id
- *   - notifications (no id) : emitted to `onNotification` listeners
+ * Spawns the core_rpc sidecar and talks to it over HTTP instead of the legacy
+ * newline-JSON-over-stdio loop (which deadlocked when a native C-extension was
+ * first imported on a job thread while the main thread was parked in a blocking
+ * stdin read). The sidecar is a FastAPI/uvicorn server:
+ *   - requests       : call(method, params) → POST /rpc (one JSON-RPC object)
+ *   - notifications  : onNotification(cb)   ← GET /events (Server-Sent Events)
  *
- * The sidecar reserves stdout for JSON-RPC only; its stderr is logged here.
- * Framing is line-based — stdout is decoded as UTF-8 and split on '\n'
- * (the sidecar writes one compact JSON object per line).
+ * Startup handshake: the sidecar binds an ephemeral 127.0.0.1 port and prints a
+ * single `VC_RPC_PORT <n>` line to stdout; we read it to learn the base URL, then
+ * open the SSE stream. After that line, stdout is unused; stderr is logged here.
+ *
+ * Public API (start / call / onNotification / dispose / SidecarError) is identical
+ * to the old stdio implementation, so main.ts / preload / renderer are unchanged.
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -21,14 +25,9 @@ import type { SidecarLaunch } from "./paths";
 /**
  * How to launch the sidecar. Resolved once by `resolveAppPaths` (paths.ts) so
  * the dev↔packaged seam lives there, not here — this class just spawns whatever
- * command/args/cwd it is handed and speaks JSON-RPC over the child's stdio.
+ * command/args/cwd it is handed and speaks HTTP+SSE to the resulting server.
  */
 export type SidecarOptions = SidecarLaunch;
-
-type Pending = {
-  resolve: (value: unknown) => void;
-  reject: (err: Error) => void;
-};
 
 interface RpcError {
   code: number;
@@ -60,22 +59,32 @@ export class SidecarError extends Error {
 export class Sidecar extends EventEmitter {
   private child: ChildProcessWithoutNullStreams | null = null;
   private nextId = 1;
-  private readonly pending = new Map<number, Pending>();
+  private baseUrl: string | null = null;
   private stdoutBuf = "";
   private stderrBuf = "";
   private disposed = false;
+  private sseAbort: AbortController | null = null;
+
+  // Resolves once the port handshake arrives; call() awaits it so requests
+  // issued during the brief spawn→listen window don't race a missing baseUrl.
+  private readonly ready: Promise<void>;
+  private resolveReady!: () => void;
+  private rejectReady!: (err: Error) => void;
 
   constructor(private readonly opts: SidecarOptions) {
     super();
+    this.ready = new Promise<void>((resolve, reject) => {
+      this.resolveReady = resolve;
+      this.rejectReady = reject;
+    });
   }
 
   start(): void {
     if (this.child) return;
-    // command/args/cwd are pre-resolved (dev: venv python -m core_rpc.server
-    // from repo root; packaged: resources/sidecar/core_rpc.exe).
-    // ELECTRON_RUN_AS_NODE leaks into child env in this launch context and is
-    // irrelevant to a plain python child, but strip it to be safe; force UTF-8
-    // I/O so the JSON-RPC framing is byte-clean on Windows. opts.env carries
+    // command/args/cwd are pre-resolved (dev: venv python -m core_rpc.server from
+    // repo root; packaged: resources/sidecar/core_rpc.exe). ELECTRON_RUN_AS_NODE
+    // leaks into child env in this launch context and is irrelevant to a plain
+    // python child, but strip it to be safe; force UTF-8 I/O. opts.env carries
     // VC_USER_DATA (where the sidecar puts models / settings / py-extra).
     const env: Record<string, string | undefined> = {
       ...process.env,
@@ -103,21 +112,35 @@ export class Sidecar extends EventEmitter {
 
     this.child.on("exit", (code, signal) => {
       const err = new Error(`sidecar exited (code=${code} signal=${signal})`);
-      for (const p of this.pending.values()) p.reject(err);
-      this.pending.clear();
+      // Died before announcing its port → unblock anyone awaiting readiness.
+      if (!this.baseUrl) this.rejectReady(err);
+      this.baseUrl = null;
       this.child = null;
+      if (this.sseAbort) {
+        this.sseAbort.abort();
+        this.sseAbort = null;
+      }
       if (!this.disposed) this.emit("exit", code, signal);
     });
     this.child.on("error", (err) => this.emit("error", err));
   }
 
+  /** Parse the one-line `VC_RPC_PORT <n>` handshake from stdout, then ignore it. */
   private onStdout(chunk: string): void {
+    if (this.baseUrl) return; // post-handshake stdout is unused
     this.stdoutBuf += chunk;
     let nl: number;
     while ((nl = this.stdoutBuf.indexOf("\n")) >= 0) {
       const line = this.stdoutBuf.slice(0, nl).trim();
       this.stdoutBuf = this.stdoutBuf.slice(nl + 1);
-      if (line) this.handleMessage(line);
+      const m = line.match(/^VC_RPC_PORT (\d+)$/);
+      if (m) {
+        this.baseUrl = `http://127.0.0.1:${m[1]}`;
+        this.resolveReady();
+        void this.openEvents();
+        return;
+      }
+      if (line) console.error("[sidecar] (stdout)", line);
     }
   }
 
@@ -132,42 +155,93 @@ export class Sidecar extends EventEmitter {
     }
   }
 
-  private handleMessage(line: string): void {
-    let msg: RpcResponse;
+  /** Open the SSE notification stream and translate frames into "notification"
+   *  events. Reconnects on an unexpected drop while the child is still alive. */
+  private async openEvents(): Promise<void> {
+    if (!this.baseUrl || this.disposed) return;
+    this.sseAbort = new AbortController();
+    let resp: Response;
     try {
-      msg = JSON.parse(line) as RpcResponse;
+      resp = await fetch(`${this.baseUrl}/events`, {
+        headers: { Accept: "text/event-stream" },
+        signal: this.sseAbort.signal,
+      });
     } catch {
-      console.error("[sidecar] non-JSON line:", line);
+      this.scheduleEventsReconnect();
       return;
     }
-    // Notification (server→client event): no id, has a method.
-    if ((msg.id === undefined || msg.id === null) && typeof msg.method === "string") {
-      this.emit("notification", msg.method, msg.params);
+    if (!resp.ok || !resp.body) {
+      this.scheduleEventsReconnect();
       return;
     }
-    const id = msg.id;
-    if (typeof id !== "number") return;
-    const pend = this.pending.get(id);
-    if (!pend) return;
-    this.pending.delete(id);
-    if (msg.error) pend.reject(new SidecarError(msg.error));
-    else pend.resolve(msg.result ?? null);
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    let opened = false;
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (!opened) {
+          // First bytes (the server's ": connected" frame) prove our subscriber
+          // is registered server-side. Lifecycle signal — harmless to ignore.
+          opened = true;
+          this.emit("sse-open");
+        }
+        buf += decoder.decode(value, { stream: true });
+        let idx: number;
+        while ((idx = buf.indexOf("\n\n")) >= 0) {
+          this.handleSseFrame(buf.slice(0, idx));
+          buf = buf.slice(idx + 2);
+        }
+      }
+    } catch {
+      // aborted (dispose) or connection dropped — fall through to reconnect.
+    }
+    this.scheduleEventsReconnect();
   }
 
-  /** Issue a JSON-RPC request; resolves with `result` or rejects (SidecarError). */
-  call(method: string, params?: Record<string, unknown>): Promise<unknown> {
-    if (!this.child) return Promise.reject(new Error("sidecar not running"));
-    const id = this.nextId++;
-    const req = JSON.stringify({ jsonrpc: "2.0", method, params: params ?? {}, id });
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.child!.stdin.write(req + "\n", "utf-8", (err) => {
-        if (err) {
-          this.pending.delete(id);
-          reject(err);
-        }
-      });
+  private scheduleEventsReconnect(): void {
+    // Only retry if the process is still up and we're not tearing down. If the
+    // child exited, its "exit" handler already cleared baseUrl → no retry.
+    if (this.disposed || !this.child || !this.baseUrl) return;
+    setTimeout(() => void this.openEvents(), 500);
+  }
+
+  private handleSseFrame(frame: string): void {
+    const data: string[] = [];
+    for (const line of frame.split("\n")) {
+      if (line.startsWith("data:")) data.push(line.slice(5).trim());
+      // ": ..." comment frames (connected / keepalive) carry no data → ignored.
+    }
+    if (data.length === 0) return;
+    let msg: RpcResponse;
+    try {
+      msg = JSON.parse(data.join("\n")) as RpcResponse;
+    } catch {
+      return;
+    }
+    if (typeof msg.method === "string") {
+      this.emit("notification", msg.method, msg.params);
+    }
+  }
+
+  /** Issue a JSON-RPC request over POST /rpc; resolves with `result` or rejects
+   *  (SidecarError on a JSON-RPC error, Error on a transport failure). */
+  async call(method: string, params?: Record<string, unknown>): Promise<unknown> {
+    await this.ready;
+    if (!this.baseUrl || this.disposed) throw new Error("sidecar not running");
+    const body = JSON.stringify({ jsonrpc: "2.0", method, params: params ?? {}, id: this.nextId++ });
+    const resp = await fetch(`${this.baseUrl}/rpc`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
     });
+    if (resp.status === 204) return null; // notification — no reply (call always has an id)
+    if (!resp.ok) throw new Error(`sidecar /rpc HTTP ${resp.status}`);
+    const msg = (await resp.json()) as RpcResponse;
+    if (msg.error) throw new SidecarError(msg.error);
+    return msg.result ?? null;
   }
 
   /** Subscribe to server→client notifications (events + job progress). */
@@ -177,9 +251,17 @@ export class Sidecar extends EventEmitter {
 
   dispose(): void {
     this.disposed = true;
+    if (this.sseAbort) {
+      this.sseAbort.abort();
+      this.sseAbort = null;
+    }
+    // Best-effort graceful stop (force_exit on the server side), then kill so the
+    // child is gone regardless of whether /shutdown was received.
+    if (this.baseUrl) {
+      void fetch(`${this.baseUrl}/shutdown`, { method: "POST" }).catch(() => {});
+    }
+    this.baseUrl = null;
     if (this.child) {
-      // Closing stdin ends the sidecar's read loop → clean shutdown.
-      this.child.stdin.end();
       this.child.kill();
       this.child = null;
     }

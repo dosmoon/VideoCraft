@@ -26,7 +26,11 @@ Write-Host "[sidecar] syncing locked base tier into clean build venv (uv) at $ve
 # --clear on the venv guarantees a from-scratch env so no stale package survives.
 $env:UV_PROJECT_ENVIRONMENT = $venv
 uv venv $venv --python 3.12 --clear
+if ($LASTEXITCODE -ne 0) { throw "uv venv failed (exit $LASTEXITCODE)" }
+# NOTE: uv is a native exe — a non-zero exit does NOT trip $ErrorActionPreference,
+# so guard $LASTEXITCODE explicitly or a half-synced venv silently feeds PyInstaller.
 uv sync --frozen --no-default-groups --group build
+if ($LASTEXITCODE -ne 0) { throw "uv sync failed (exit $LASTEXITCODE)" }
 
 Write-Host "[sidecar] running PyInstaller (onedir) ..." -ForegroundColor Cyan
 & $py -m PyInstaller --noconfirm --clean (Join-Path $repo "packaging\core_rpc.spec")
@@ -38,6 +42,36 @@ New-Item -ItemType Directory -Force -Path (Split-Path $out) | Out-Null
 Copy-Item -Recurse (Join-Path $repo "dist\core_rpc") $out
 
 Write-Host "[sidecar] done -> $out" -ForegroundColor Green
-Write-Host "[sidecar] smoke test:" -ForegroundColor Cyan
-$req = '{"jsonrpc":"2.0","method":"system.get_locale","params":{},"id":1}'
-$req | & (Join-Path $out "core_rpc.exe")
+
+# Smoke test the frozen exe over its HTTP transport (ADR-0010): start it, read the
+# VC_RPC_PORT stdout handshake, ping over POST /rpc, then shut it down. (The old
+# test piped JSON to stdin — that hangs now: the server ignores stdin and serves.)
+Write-Host "[sidecar] smoke test (HTTP):" -ForegroundColor Cyan
+$psi = New-Object System.Diagnostics.ProcessStartInfo
+$psi.FileName = Join-Path $out "core_rpc.exe"
+$psi.RedirectStandardOutput = $true
+$psi.RedirectStandardError = $true
+$psi.UseShellExecute = $false
+$psi.CreateNoWindow = $true
+$p = [System.Diagnostics.Process]::Start($psi)
+try {
+    $port = $null
+    $deadline = (Get-Date).AddSeconds(30)
+    while ((Get-Date) -lt $deadline) {
+        $line = $p.StandardOutput.ReadLine()   # blocks until a line or stream close
+        if ($null -eq $line) { break }          # process exited without handshake
+        if ($line -match '^VC_RPC_PORT (\d+)') { $port = [int]$Matches[1]; break }
+    }
+    if (-not $port) { throw "sidecar smoke: no VC_RPC_PORT handshake" }
+    $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$port/rpc" -Method Post `
+        -Body '{"jsonrpc":"2.0","method":"system.ping","params":{},"id":1}' `
+        -ContentType "application/json" -TimeoutSec 10
+    if (-not $resp.result.ok) { throw "sidecar smoke: ping failed: $($resp | ConvertTo-Json -Compress)" }
+    Write-Host "[sidecar] smoke OK -> port $port, ping: $($resp.result | ConvertTo-Json -Compress)" -ForegroundColor Green
+    try {
+        Invoke-RestMethod -Uri "http://127.0.0.1:$port/shutdown" -Method Post -Body '{}' `
+            -ContentType "application/json" -TimeoutSec 3 | Out-Null
+    } catch {}
+} finally {
+    if (-not $p.HasExited) { $p.Kill() }
+}

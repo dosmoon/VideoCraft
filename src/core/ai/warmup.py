@@ -1,20 +1,20 @@
-"""Warm native C-extension imports on the MAIN thread (sidecar startup).
+"""Warm native C-extension imports at sidecar startup — now a latency hint, not a
+deadlock fix.
 
-Confirmed deadlock: importing a native CUDA C-extension (ctranslate2, pulled in by
-faster-whisper) for the FIRST time on a job *daemon thread* — while the sidecar's
-main thread is blocked in `sys.stdin.buffer.read()` (its request loop) — hangs the
-extension's initialization indefinitely. The model never loads, the ASR job never
-finishes, and the UI sits forever on "loading model".
+History: under the old stdio transport, the sidecar's main thread blocked forever in
+`sys.stdin.buffer.read()` between requests. Importing a native CUDA C-extension
+(ctranslate2 via faster-whisper, or llama_cpp) for the FIRST time on a job *daemon
+thread* while that blocking read was parked hung the extension's init indefinitely —
+the ASR "loading model" hang. The fix then was to import these on the main thread
+before the stdin loop. But that only covered extras present at startup, so a runtime
+install into py-extra (packaged base tier) reopened the hole.
 
-Reproduced minimally: daemon-thread `import faster_whisper` + main-thread
-`stdin.read()` → hang; doing the import on the main thread first → 0.6s, no hang.
-
-So the sidecar calls warm_native_extensions() on the main thread BEFORE entering
-its stdin loop. Later jobs then hit already-initialized (cached) imports on their
-daemon threads, so no first-time C-ext init races with the blocked main thread.
-
-Only the import is warmed (not a model load) — that alone resolves the deadlock and
-keeps startup cheap. Best-effort: optional deps absent on some setups are skipped.
+ADR-0010 removed the root cause: the transport is now FastAPI/uvicorn (HTTP + SSE),
+which has NO blocking stdin read anywhere, so a first-time native import on a worker
+thread no longer deadlocks (aistack already runs ctranslate2 under uvicorn worker
+threads fine). This warm-up is therefore no longer load-bearing — it is kept only as
+a best-effort first-ASR latency optimization, run on a background thread at startup.
+Absent extras (packaged base tier) are skipped; no checklist obligation remains.
 """
 
 from __future__ import annotations

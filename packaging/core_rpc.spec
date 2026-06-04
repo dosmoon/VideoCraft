@@ -26,6 +26,13 @@ hiddenimports = (
     # runtime (sidecar_entry.py / packaging-design.md §5.3). collect_submodules
     # pulls pip._internal + its vendored deps that static analysis misses.
     + collect_submodules("pip")
+    # HTTP transport (ADR-0010). uvicorn loads its protocol/loop/lifespan
+    # implementations by dotted-string at runtime — static analysis misses them,
+    # so collect the whole packages. fastapi/starlette are mostly static but
+    # collected for safety (and to pull starlette's optional bits we touch).
+    + collect_submodules("uvicorn")
+    + collect_submodules("fastapi")
+    + collect_submodules("starlette")
 )
 
 # Non-.py runtime data the modules read (e.g. i18n / language / catalog JSON).
@@ -69,7 +76,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="core_rpc",
-    console=True,  # stdio is the JSON-RPC channel; keep a console subsystem.
+    console=True,  # stdout carries the VC_RPC_PORT handshake + stderr logs.
     disable_windowed_traceback=False,
 )
 

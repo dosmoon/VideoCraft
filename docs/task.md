@@ -5,6 +5,19 @@
 
 ---
 
+## ▶▶ 本会话(2026-06-05 大轮)= 传输层重构:stdio JSON-RPC → FastAPI HTTP + SSE(✅ 实现+全验,**未 commit**)
+
+> 起因:用户在打包态真机点 ASR 卡死「正在加载本地模型」,怒斥「到处都是这种死锁,别当鸵鸟,换 fastapi」。审视后确认一连串死锁同根 = sidecar 主线程永久阻塞读 stdin + job 在 daemon 线程,native C-ext 首次 import 撞阻塞 stdin → 死锁(warmup 人肉清单在打包态 runtime-install 的 native 漏掉)。**权威 = [ADR-0010](adr/0010-sidecar-http-transport.md)**(why + 不变量 + gotchas)。task.md 只留路标。
+
+- **壳替换,非重写**:Python `dispatch/registry/protocol/methods(63 方法)/jobs/session` **零改动**(全 transport-agnostic);`sidecar.ts` 内部换 HTTP+SSE 但**公共 API(call/onNotification/dispose/SidecarError)不变** → `main.ts`/`preload.ts`/renderer(`ipc/client.ts`/`runJob.ts`/40+ 组件)**零改动**。
+- **server.py**:`POST /rpc`(→`dispatch_message`)+ `GET /events`(SSE,emit→`call_soon_threadsafe`→队列)+ `POST /shutdown`(force_exit);绑临时 loopback 端口,**listening 后**打 stdout 握手 `VC_RPC_PORT <n>`;请求串行(`dispatch_lock`,保旧顺序保证)、job 仍并发。
+- **sidecar.ts**:读握手建 baseUrl → `fetch` POST /rpc + SSE 流(`fetch`+`ReadableStream`,Node 22 全局);新 `sse-open` 生命周期事件。
+- **配套**:`runtime_extras.install` 后补 `invalidate_caches()`;`warmup` 降级为延迟优化(非死锁修法,后台线程);`pyproject` base 加 `fastapi==0.136.3`+`uvicorn==0.49.0`;`core_rpc.spec` collect_submodules uvicorn/fastapi/starlette;`build_sidecar.ps1` 烟测改 HTTP(旧 stdin 喂法现在会挂)。
+- **验证全绿**:pytest **125**(新 `test_http_server.py` TestClient + 重写 `test_server_subprocess.py` 真子进程 HTTP/SSE)· desktop typecheck + vitest **213**(新 `sidecar.integration.test.ts` = 真 `Sidecar` 类 vs 真子进程,CI 无 myenv 自动 skip)· build · **冻结 E2E**(重打 frozen `core_rpc.exe` → HTTP+SSE smoke PASS,uvicorn 冻结打包 OK)。**抓修一个真 race**:握手早于 uvicorn listening → `ECONNREFUSED`(TS boot 会炸)→ 改 `server.started` 后再打握手。
+- **欠 / 下一步**:① **决定性 GUI 终验(用户)** = 打包 app 装嵌入 AI → 跑 ASR → 不再死锁(installer 本会话 `build:win` 重打,带新传输 + 顺带完成下方「干净打包态终验」)。② 未 commit —— 视用户意([[feedback_external_actions]])。③ memory `reference_sidecar_native_import_deadlock` 应更新指向 ADR-0010(根因已结构性消除)。
+
+---
+
 ## ▶ 下一任务(新对话先读)= P3 收尾(CI/签名)+ 一轮干净打包态终验
 
 > **权威方案 = [`packaging-design.md`](draft/packaging-design.md)**(§8 步骤、§9 待决、§10 发布 checklist)。**P3 steps 1-8 实质完成并全部 push 到 `origin/main`(HEAD `7148483`)。** steps 1-7 = seam + 冻结 sidecar + NSIS + 嵌入 AI/GPU opt-in;step 8 已做:**ffmpeg 随包**(✅)、**品牌图标**(✅ 窗口/安装包图标;exe 内嵌图标待 CI)、env 页 bundled 呈现收口(✅)。

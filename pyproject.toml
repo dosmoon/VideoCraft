@@ -32,6 +32,15 @@ dependencies = [
     # extras (CUDA wheels, embedded-AI) into py-extra at runtime. A uv venv has no
     # pip by default, so it must be a declared dependency to enter the freeze.
     "pip==26.1",
+    # Sidecar transport. The Electron host talks to this sidecar over HTTP
+    # (POST /rpc) + SSE (GET /events) instead of the legacy newline-JSON-over-stdio
+    # loop, which deadlocked when a native C-extension was first imported on a job
+    # thread while the main thread was parked in a blocking stdin read (ADR-0010).
+    # uvicorn is the ASGI server; plain (not uvicorn[standard]) on purpose — uvloop
+    # is Linux-only and httptools is an optional speedup the asyncio loop lives
+    # without. Base tier: the sidecar cannot start without them.
+    "fastapi==0.136.3",
+    "uvicorn==0.49.0",
 ]
 
 # ── runtime opt-in tiers ──────────────────────────────────────────────────────

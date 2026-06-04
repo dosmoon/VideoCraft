@@ -27,6 +27,7 @@ no packaged-only blind spot — and it keeps the dev venv clean of opt-in extras
 
 from __future__ import annotations
 
+import importlib
 import os
 import shutil
 import subprocess
@@ -109,7 +110,14 @@ def install(packages: Iterable[str],
         *(extra_args or []),
         *pkgs,
     ]
-    return _stream(pip_command(args), on_line, cancel_token)
+    rc = _stream(pip_command(args), on_line, cancel_token)
+    if rc == 0:
+        # py-extra is already on sys.path (ensure_on_sys_path at startup), but the
+        # import system caches directory listings — a finder that scanned the dir
+        # while it was empty won't see the just-written package. Invalidate so the
+        # freshly installed extra is importable in THIS running sidecar, no restart.
+        importlib.invalidate_caches()
+    return rc
 
 
 def is_installed(packages: Iterable[str]) -> bool:
