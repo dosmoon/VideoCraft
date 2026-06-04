@@ -203,10 +203,13 @@ def _acquire_link(
     ))
     _check_cancel(cancel_token)
 
-    # We use the same opt builder as the existing youtube_download module
-    # but with a fixed outtmpl (the literal dest path) and inject a
-    # progress hook bridge plus optional download_sections.
-    opts = _build_link_opts(dest_video_path, clip_range, progress_cb, cancel_token)
+    # Always download the FULL stream with yt-dlp's native downloader (has real
+    # progress + is the proven path). We do NOT use yt-dlp's download_ranges for
+    # clipping: for YouTube it routes through the ffmpeg section downloader
+    # (FFmpegFD), which reports no progress through our hook and is slow — it looks
+    # frozen. Instead we clip the finished file locally below (fast stream-copy,
+    # with progress).
+    opts = _build_link_opts(dest_video_path, progress_cb, cancel_token)
 
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
@@ -228,9 +231,38 @@ def _acquire_link(
         except OSError as e:
             raise AcquireError(ERR_DISK, "无法重命名下载文件", str(e)) from e
 
+    # Clip the downloaded file to the requested range (fast keyframe stream-copy).
+    if clip_range is not None:
+        cut_tmp = dest_video_path + ".cut.mp4"
+        try:
+            _ffmpeg_cut(dest_video_path, cut_tmp, clip_range, progress_cb, cancel_token)
+        except BaseException:
+            try:
+                os.remove(cut_tmp)
+            except OSError:
+                pass
+            _cleanup_partial(dest_video_path)
+            raise
+        os.replace(cut_tmp, dest_video_path)
+
     # Persist info.json next to the video for downstream tools.
     if dest_meta_path:
         _write_info_json(info, dest_meta_path)
+
+    # When clipped, re-probe so duration/dimensions reflect the CLIP, not the
+    # full video that yt-dlp's info describes.
+    if clip_range is not None:
+        probe = _ffprobe(dest_video_path)
+        fmt = probe.get("format") or {}
+        vstream = next((s for s in (probe.get("streams") or [])
+                        if s.get("codec_type") == "video"), {})
+        return AcquireResult(
+            title=info.get("title"),
+            duration_sec=_coerce_float(fmt.get("duration")),
+            width=_coerce_int(vstream.get("width")),
+            height=_coerce_int(vstream.get("height")),
+            info_json=info if isinstance(info, dict) else {},
+        )
 
     return AcquireResult(
         title=info.get("title"),
@@ -247,11 +279,15 @@ class _CancelledByHook(Exception):
 
 def _build_link_opts(
     dest_path: str,
-    clip_range: ClipRange | None,
     progress_cb: ProgressCb,
     cancel_token: CancelToken | None,
 ) -> dict:
-    """Compose yt-dlp opts: fixed outtmpl, range, JS runtime, progress hook."""
+    """Compose yt-dlp opts: fixed outtmpl, JS runtime, progress hook.
+
+    Always a FULL download — clipping is done locally after (see _acquire_link),
+    not via yt-dlp's download_ranges (the FFmpegFD section downloader has no
+    progress + is slow for YouTube).
+    """
     from core import youtube_download
 
     opts = youtube_download._base_opts()  # reuses JS runtime injection etc.
@@ -268,22 +304,6 @@ def _build_link_opts(
         # already overwrite (shutil copy / ffmpeg -y).
         "overwrites": True,
     })
-
-    if clip_range is not None:
-        # yt-dlp's PYTHON-API key is `download_ranges` (a callable), NOT the CLI
-        # name `download_sections` — setting the latter is silently ignored and
-        # the WHOLE video downloads (the "clip range had no effect" bug). Build
-        # the callable from absolute seconds.
-        #
-        # NO force_keyframes_at_cuts: that re-encodes the whole range for
-        # frame-exact bounds, which on a long range is minutes of ffmpeg with no
-        # progress feedback (looks frozen). A source clip is fine cut at the
-        # nearest keyframe (≤ a few seconds of lead-in) — fast, stream-copy, and
-        # downstream editing fine-trims anyway.
-        from yt_dlp.utils import download_range_func
-        opts["download_ranges"] = download_range_func(
-            None, [(parse_hms(clip_range.start), parse_hms(clip_range.end))]
-        )
 
     # Progress hook bridge: translate yt-dlp's progress dict into ProgressInfo.
     def _hook(d: dict) -> None:
@@ -459,18 +479,19 @@ def _ffmpeg_cut(
     progress_cb: ProgressCb,
     cancel_token: CancelToken | None,
 ) -> None:
-    """ffmpeg -ss/-to to cut src[start:end] → dst. Uses stream copy when
-    possible (much faster), falls back to re-encode if cuts don't align.
+    """Fast stream-copy cut of src[start:dur] → dst (no re-encode).
 
-    For accuracy at cut boundaries we put -ss/-to AFTER -i (slower but
-    frame-accurate), and avoid -c copy here since the user explicitly
-    wants those exact bounds for downstream tools."""
+    `-ss` BEFORE `-i` is a fast keyframe seek; with `-c copy` the output starts
+    at the keyframe at-or-before `start` (≤ a few seconds of lead-in) and is
+    near-instant — re-encoding a long range would be minutes of ffmpeg with no
+    feedback. A source clip doesn't need frame-exact bounds; downstream editing
+    fine-trims. `-t` (duration) avoids the -ss/-to ordering ambiguity;
+    `-avoid_negative_ts make_zero` rebases timestamps to 0."""
+    duration = max(0, parse_hms(clip_range.end) - parse_hms(clip_range.start))
     cmd = [
         "ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-        "-i", src,
-        "-ss", clip_range.start, "-to", clip_range.end,
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
-        "-c:a", "aac", "-b:a", "192k",
+        "-ss", clip_range.start, "-i", src, "-t", str(duration),
+        "-c", "copy", "-avoid_negative_ts", "make_zero",
         "-progress", "pipe:1", "-nostats",
         dst,
     ]

@@ -1,33 +1,37 @@
-"""Regression tests for source_acquire link-download options.
+"""Regression tests for source_acquire.
 
-The clip-range bug: yt-dlp's Python-API key is `download_ranges` (a callable),
-NOT the CLI name `download_sections`. Setting the latter is silently ignored and
-the whole video downloads. These tests pin the correct key + resolved seconds so
-the wrong-key regression can't come back.
+Clip-range history: clipping a YouTube download via yt-dlp's section downloader
+(download_ranges/FFmpegFD) reports no progress + is slow → looks frozen. The link
+path now ALWAYS does a full download (proven, with progress) and clips the result
+locally with a fast stream-copy cut. These tests pin: (1) link opts never carry a
+section-download key, (2) the cut is stream-copy (no re-encode), (3) a failed
+import never destroys the existing source (staging + atomic swap).
 """
 
-from core.source_acquire import _build_link_opts, parse_hms, acquire
+import core.source_acquire as sa
+from core.source_acquire import _build_link_opts, _ffmpeg_cut, parse_hms, acquire
 from core.project_schema import ClipRange, Source, ORIGIN_LINK
 
 
-def test_link_opts_clip_range_uses_download_ranges():
-    opts = _build_link_opts(
-        "out.mp4", ClipRange(start="00:01:00", end="00:02:00"), None, None
-    )
-    # The CLI name must NOT leak into the Python API (silently ignored there).
-    assert "download_sections" not in opts
-    # The real key is a callable resolving to absolute-second ranges.
-    fn = opts["download_ranges"]
-    resolved = list(fn({}, None))
-    assert [(r["start_time"], r["end_time"]) for r in resolved] == [(60, 120)]
-    # Fast keyframe cut — no whole-range re-encode (would look frozen on long ranges).
-    assert "force_keyframes_at_cuts" not in opts
-
-
-def test_link_opts_no_clip_range_omits_ranges():
-    opts = _build_link_opts("out.mp4", None, None, None)
+def test_link_opts_is_always_full_download():
+    opts = _build_link_opts("out.mp4", None, None)
+    # No section-download key (neither the Python-API callable nor the CLI name)
+    # — clipping is a separate local step now.
     assert "download_ranges" not in opts
     assert "download_sections" not in opts
+    assert "force_keyframes_at_cuts" not in opts
+    assert opts["overwrites"] is True  # re-import must actually re-download
+
+
+def test_ffmpeg_cut_is_fast_stream_copy(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(sa, "_run_ffmpeg_with_progress",
+                        lambda cmd, *a, **k: captured.setdefault("cmd", cmd))
+    _ffmpeg_cut("in.mp4", "out.mp4", ClipRange(start="00:01:00", end="00:02:30"), None, None)
+    cmd = captured["cmd"]
+    assert "-c" in cmd and cmd[cmd.index("-c") + 1] == "copy"  # stream copy
+    assert "libx264" not in cmd                                # NOT re-encoded
+    assert cmd[cmd.index("-t") + 1] == "90"                    # duration = end-start sec
 
 
 def test_parse_hms():
