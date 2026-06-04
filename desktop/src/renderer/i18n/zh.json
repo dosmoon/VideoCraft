@@ -408,7 +408,7 @@
   "env.component.Pillow": "Pillow",
   "env.source.system": "系统",
   "env.source.managed": "内置",
-  "env.source.bundled": "随包",
+  "env.source.bundled": "内置",
   "env.source.pip": "pip",
   "ai.providers.models_selected": "已选 {n}",
   "ai.providers.fetch_all": "拉取全部",

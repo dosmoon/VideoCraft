@@ -408,7 +408,7 @@
   "env.component.Pillow": "Pillow",
   "env.source.system": "System",
   "env.source.managed": "Managed",
-  "env.source.bundled": "Bundled",
+  "env.source.bundled": "Built-in",
   "env.source.pip": "pip",
   "ai.providers.models_selected": "{n} selected",
   "ai.providers.fetch_all": "Fetch all",
