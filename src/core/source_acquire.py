@@ -125,21 +125,47 @@ def acquire(
     """
     os.makedirs(os.path.dirname(dest_video_path), exist_ok=True)
 
-    if source.origin == ORIGIN_LINK:
-        if not source.url:
-            raise AcquireError(ERR_URL_INVALID, "未提供视频链接", "Source.url is empty")
-        return _acquire_link(source.url, dest_video_path, dest_meta_path,
-                             source.clip_range, progress_cb, cancel_token)
-    elif source.origin == ORIGIN_LOCAL:
-        if not source.imported_from:
-            raise AcquireError(ERR_OTHER, "未指定本地文件",
-                               "Source.imported_from is empty")
-        return _acquire_local(source.imported_from, dest_video_path,
-                              dest_meta_path, source.clip_range,
-                              progress_cb, cancel_token)
-    else:
-        raise AcquireError(ERR_OTHER, f"未知源类型: {source.origin}",
-                           "Source.origin must be 'link' or 'local'")
+    # Stage into a sibling temp file so a failed/cancelled (re-)import can NEVER
+    # destroy the existing source video. We download/copy into `staging` and only
+    # replace the live file on full success; on any failure the original is
+    # untouched. (Previously the acquire wrote straight to dest_video_path and
+    # _cleanup_partial() removed it on cancel — a cancelled re-import wiped the
+    # user's source. This is the fix.)
+    base, ext = os.path.splitext(dest_video_path)
+    staging = f"{base}.incoming{ext or '.mp4'}"
+    _cleanup_partial(staging)  # clear any stale staging from a prior aborted run
+
+    try:
+        if source.origin == ORIGIN_LINK:
+            if not source.url:
+                raise AcquireError(ERR_URL_INVALID, "未提供视频链接", "Source.url is empty")
+            result = _acquire_link(source.url, staging, dest_meta_path,
+                                   source.clip_range, progress_cb, cancel_token)
+        elif source.origin == ORIGIN_LOCAL:
+            if not source.imported_from:
+                raise AcquireError(ERR_OTHER, "未指定本地文件",
+                                   "Source.imported_from is empty")
+            result = _acquire_local(source.imported_from, staging,
+                                    dest_meta_path, source.clip_range,
+                                    progress_cb, cancel_token)
+        else:
+            raise AcquireError(ERR_OTHER, f"未知源类型: {source.origin}",
+                               "Source.origin must be 'link' or 'local'")
+    except BaseException:
+        # Any failure/cancel: drop only the staging artifacts, leave dest intact.
+        _cleanup_partial(staging)
+        raise
+
+    # Success → atomically swap the new file in. os.replace is atomic on the same
+    # filesystem (staging is a sibling). If dest is locked (e.g. the renderer is
+    # previewing the old video) the swap raises and the ORIGINAL stays intact — a
+    # recoverable failure, never a lost source.
+    try:
+        os.replace(staging, dest_video_path)
+    except OSError as e:
+        _cleanup_partial(staging)
+        raise AcquireError(ERR_DISK, "无法替换原视频(文件可能正被占用)", str(e)) from e
+    return result
 
 
 def fetch_link_info(url: str) -> dict:
@@ -247,13 +273,17 @@ def _build_link_opts(
         # yt-dlp's PYTHON-API key is `download_ranges` (a callable), NOT the CLI
         # name `download_sections` — setting the latter is silently ignored and
         # the WHOLE video downloads (the "clip range had no effect" bug). Build
-        # the callable from absolute seconds; force_keyframes_at_cuts re-encodes
-        # for frame-accurate bounds (needs ffmpeg, which is bundled).
+        # the callable from absolute seconds.
+        #
+        # NO force_keyframes_at_cuts: that re-encodes the whole range for
+        # frame-exact bounds, which on a long range is minutes of ffmpeg with no
+        # progress feedback (looks frozen). A source clip is fine cut at the
+        # nearest keyframe (≤ a few seconds of lead-in) — fast, stream-copy, and
+        # downstream editing fine-trims anyway.
         from yt_dlp.utils import download_range_func
         opts["download_ranges"] = download_range_func(
             None, [(parse_hms(clip_range.start), parse_hms(clip_range.end))]
         )
-        opts["force_keyframes_at_cuts"] = True
 
     # Progress hook bridge: translate yt-dlp's progress dict into ProgressInfo.
     def _hook(d: dict) -> None:
