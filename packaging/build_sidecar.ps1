@@ -1,9 +1,12 @@
 # Build the VideoCraft core_rpc sidecar into a PyInstaller onedir (P3).
 # packaging-design.md §2. Output: desktop/resources/sidecar/core_rpc.exe (+ _internal/).
 #
-# Uses a CLEAN uv venv built from requirements-base.txt — NOT the polluted 7GB dev
-# myenv. Embedded-AI native deps (faster-whisper / llama-cpp-python) are excluded
-# on purpose (opt-in at runtime, packaging-design.md §5.3).
+# The freeze input is the locked BASE tier only — pyproject.toml [project.dependencies]
+# + the `build` dependency-group (pyinstaller), installed FROM uv.lock for a
+# byte-reproducible closure. NOT the polluted dev myenv. Embedded-AI / GPU runtimes
+# (the `embedded-ai` / `gpu` extras) are excluded on purpose — they install at
+# runtime into user_data/runtimes/py-extra (packaging-design.md §5.3). See
+# docs/adr/0009-uv-project-dependency-management.md.
 #
 # Usage:  ./packaging/build_sidecar.ps1
 $ErrorActionPreference = "Stop"
@@ -13,15 +16,17 @@ Set-Location $repo
 $venv = Join-Path $repo ".build\sidecar-venv"
 $py = Join-Path $venv "Scripts\python.exe"
 
-Write-Host "[sidecar] creating clean build venv (uv, python 3.12) at $venv ..." -ForegroundColor Cyan
-# --clear: always rebuild from scratch. Without it uv skips an existing venv, so a
-# stale one (e.g. missing a newly-pinned dep like pip) silently survives — the
-# freeze must reflect requirements-base.txt exactly.
+Write-Host "[sidecar] syncing locked base tier into clean build venv (uv) at $venv ..." -ForegroundColor Cyan
+# Point uv's project environment at the dedicated build venv (not myenv / .venv),
+# then sync EXACTLY the base closure from uv.lock:
+#   --frozen              use uv.lock as-is, no re-resolution (reproducible)
+#   --no-default-groups   drop the default `dev` group (pytest, …)
+#   --group build         add only pyinstaller
+#   (no --extra)          embedded-ai / gpu extras stay out of the freeze
+# --clear on the venv guarantees a from-scratch env so no stale package survives.
+$env:UV_PROJECT_ENVIRONMENT = $venv
 uv venv $venv --python 3.12 --clear
-
-Write-Host "[sidecar] installing base deps + pyinstaller ..." -ForegroundColor Cyan
-uv pip install --python $py -r (Join-Path $repo "requirements-base.txt")
-uv pip install --python $py "pyinstaller==6.16.0"
+uv sync --frozen --no-default-groups --group build
 
 Write-Host "[sidecar] running PyInstaller (onedir) ..." -ForegroundColor Cyan
 & $py -m PyInstaller --noconfirm --clean (Join-Path $repo "packaging\core_rpc.spec")

@@ -2,12 +2,13 @@
 
 The embedded-AI providers — faster-whisper (CTranslate2 ASR) and llama-cpp-python
 (local GGUF LLM) — are heavy native deps the base sidecar deliberately does NOT
-freeze (requirements-base.txt excludes them). The user opts in from the Model
-Manager; we install them at runtime into user_data/runtimes/py-extra via
-core.runtime_extras (the only writable, frozen-safe install site — see
-packaging-design.md §5.3). gpu_install adds the optional CUDA wheels on top.
+freeze (they live in the `embedded-ai` extra, not [project.dependencies], so the
+freeze excludes them). The user opts in from the Model Manager; we install them at
+runtime into user_data/runtimes/py-extra via core.runtime_extras (the only
+writable, frozen-safe install site — see packaging-design.md §5.3). gpu_install
+adds the optional CUDA wheels on top.
 
-CPU profile only here (mirrors requirements.txt's default profile). The GPU path
+CPU profile only here (mirrors pyproject's `embedded-ai` extra). The GPU path
 is the separate nvidia-*-cu12 wheels installed by core.gpu_install; CTranslate2
 auto-selects fp16/CUDA at load time once those DLLs are present, and the CPU
 llama-cpp-python wheel is replaced by the CUDA one when the user enables GPU.
@@ -20,7 +21,9 @@ from typing import Callable
 
 from core import runtime_extras
 
-# Pins MUST stay in lockstep with requirements.txt (the default CPU profile).
+# These pins MIRROR pyproject.toml's [project.optional-dependencies].embedded-ai
+# — the single source of truth (ADR-0009). tests/core/test_dependency_pins.py
+# fails if they drift.
 _FASTER_WHISPER = "faster-whisper==1.2.1"
 _LLAMA_CPP = "llama-cpp-python==0.3.22"
 
@@ -42,10 +45,11 @@ def is_installed() -> bool:
 
     Importability — NOT a py-extra dist-info check — is the right question, and
     mirrors gpu_install.is_installed() (which accepts either site):
-      - dev: faster-whisper / llama-cpp live in the venv (full requirements.txt)
+      - dev: faster-whisper / llama-cpp live in the venv (uv sync --extra embedded-ai)
         → importable → "installed", so the UI never offers a redundant download.
-      - packaged: the base freeze EXCLUDES them (requirements-base.txt), so they
-        become importable ONLY after the opt-in install into py-extra (on sys.path
+      - packaged: the base freeze EXCLUDES them (they are an extra, not a base
+        dependency), so they become importable ONLY after the opt-in install into
+        py-extra (on sys.path
         via runtime_extras.ensure_on_sys_path). The frozen interpreter has no venv,
         so there is no false positive to worry about.
     """

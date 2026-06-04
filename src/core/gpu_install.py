@@ -22,19 +22,30 @@ from typing import Callable
 
 from core import runtime_extras
 
-# Packages pip will resolve when CUDA is enabled.  The first four are the
-# top-level deps faster-whisper / llama-cpp-python need; pip will pull in
-# nvidia-cuda-nvrtc-cu12 and nvidia-nvjitlink-cu12 as transitive deps.
+# Pinned CUDA runtime wheels installed when GPU is enabled. The first four are
+# the top-level deps faster-whisper / llama-cpp-python need; pip pulls in
+# nvidia-cuda-nvrtc-cu12 and nvidia-nvjitlink-cu12 as transitives.
+#
+# These pins MIRROR pyproject.toml's [project.optional-dependencies].gpu — the
+# single source of truth (ADR-0009). tests/core/test_dependency_pins.py fails if
+# they drift. ABI-sensitive: bump in lockstep with ctranslate2 (a major cudnn /
+# cublas change must match what CTranslate2 was built against).
 _TOP_LEVEL = [
-    "nvidia-cublas-cu12",
-    "nvidia-cuda-runtime-cu12",
-    "nvidia-cudnn-cu12",
-    "nvidia-cufft-cu12",
+    "nvidia-cublas-cu12==12.9.2.10",
+    "nvidia-cuda-runtime-cu12==12.9.79",
+    "nvidia-cudnn-cu12==9.22.0.52",
+    "nvidia-cufft-cu12==11.4.1.4",
 ]
 
-# All packages we remove on uninstall — includes the transitives so the
-# user gets a clean rollback (pip won't auto-remove deps).
-_ALL_PACKAGES = _TOP_LEVEL + [
+
+def _bare(spec: str) -> str:
+    """Strip the ``==version`` pin → bare distribution name."""
+    return spec.split("==", 1)[0]
+
+
+# Bare names removed on uninstall — RECORD-based removal is version-agnostic.
+# Includes the transitives so rollback is clean (pip won't auto-remove deps).
+_ALL_PACKAGES = [_bare(s) for s in _TOP_LEVEL] + [
     "nvidia-cuda-nvrtc-cu12",
     "nvidia-nvjitlink-cu12",
 ]
