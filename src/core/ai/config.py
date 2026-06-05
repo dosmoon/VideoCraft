@@ -3,9 +3,9 @@
 Split out from AIRouter so the router only orchestrates runtime state; this
 module owns the on-disk format and provider catalog defaults.
 
-Path resolution: `keys_dir()` walks up from this file's location to the
-project root, then into `keys/`. Original code in src/ai_router.py went up
-one level; since we're now at src/core/ai/config.py, we go up three levels.
+Path resolution: `keys_dir()` is the repo's `keys/` in dev, and the
+install-local `user_data/keys` in a packaged (frozen) build — see keys_dir()
+for why the frozen case must NOT be `__file__`-relative.
 """
 
 import os
@@ -305,7 +305,20 @@ def canonicalize_provider_name(name: str) -> str:
 
 
 def keys_dir() -> str:
-    """Return absolute path to the repo's keys/ directory."""
+    """Return absolute path to the dir holding providers.json + .key files.
+
+    Dev: the repo's ``keys/`` (this file is src/core/ai/config.py; three up is
+    the repo root). Packaged (frozen): ``user_data/keys`` via core.user_data —
+    deliberately NOT ``__file__``-relative, which in a PyInstaller build resolves
+    inside the sealed resources/ tree. That tree is wiped on every reinstall /
+    update, so keys + routing would silently vanish. user_data sits beside the
+    exe and is preserved across updates by the NSIS customRemoveFiles macro
+    (desktop/build/installer.nsh). See docs/draft/packaging-design.md §4.
+    """
+    import sys
+    if getattr(sys, "frozen", False):
+        from core.user_data import path as _user_data_path
+        return _user_data_path("keys")
     here = os.path.dirname(os.path.abspath(__file__))
     # src/core/ai -> src/core -> src -> <repo root>
     return os.path.normpath(os.path.join(here, "..", "..", "..", "keys"))

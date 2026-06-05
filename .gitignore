@@ -14,6 +14,9 @@ build/
 desktop/build/*
 !desktop/build/icon.ico
 !desktop/build/icon.png
+# ...and the hand-authored NSIS customRemoveFiles include (preserves user_data
+# across update; electron-builder auto-includes it from buildResources).
+!desktop/build/installer.nsh
 dist/
 develop-eggs/
 dist/
