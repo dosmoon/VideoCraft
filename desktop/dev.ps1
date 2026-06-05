@@ -19,6 +19,14 @@ Set-Location -Path $PSScriptRoot
 Write-Host "[dev] killing leftover electron.exe ..." -ForegroundColor Cyan
 Get-Process electron -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
+# Kill orphaned sidecars too. The HTTP-transport sidecar self-terminates when its
+# parent dies (server._start_parent_watch), but sweep any stragglers from a hard
+# kill / older build so dev restarts don't accumulate zombie pythons.
+Write-Host "[dev] killing leftover sidecars (core_rpc.server) ..." -ForegroundColor Cyan
+Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.CommandLine -like '*core_rpc.server*' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+
 Write-Host "[dev] freeing dev port 5174 ..." -ForegroundColor Cyan
 try {
     Get-NetTCPConnection -LocalPort 5174 -ErrorAction Stop |

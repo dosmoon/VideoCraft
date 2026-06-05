@@ -80,6 +80,38 @@ def _log(*args: Any) -> None:
     print("[core_rpc]", *args, file=sys.stderr, flush=True)
 
 
+def _start_parent_watch() -> None:
+    """Self-terminate when the parent (Electron) process dies.
+
+    The old stdio transport got this for free: closing the child's stdin gave the
+    read loop EOF, so the sidecar exited and never orphaned. HTTP has no stdin
+    dependency, so a crashed/killed parent would otherwise leave the sidecar
+    running forever (zombie pythons piling up across dev restarts). We must NOT
+    detect parent death by blocking on a stdin read — a thread parked in stdin
+    while a job thread does a first-time native C-extension import deadlocks (the
+    exact hazard ADR-0010 removed). Instead, wait on a handle to the parent
+    process. Windows-only (the project's target); POSIX dev relies on dispose/kill.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    ppid = os.getppid()
+    SYNCHRONIZE = 0x00100000
+    INFINITE = 0xFFFFFFFF
+    kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+    handle = kernel32.OpenProcess(SYNCHRONIZE, False, ppid)
+    if not handle:
+        return
+
+    def _wait() -> None:
+        kernel32.WaitForSingleObject(handle, INFINITE)
+        _log(f"parent process {ppid} exited — sidecar self-terminating")
+        os._exit(0)
+
+    threading.Thread(target=_wait, name="parent-watch", daemon=True).start()
+
+
 class NotificationHub:
     """Bridges synchronous ``emit(method, params)`` calls — made from handlers
     and job daemon threads — to the async SSE subscribers running on the event
@@ -216,6 +248,9 @@ def main() -> int:
             _log("native warm-up error (non-fatal):", exc)
 
     threading.Thread(target=_warm, name="native-warmup", daemon=True).start()
+
+    # Exit if the parent (Electron) dies — HTTP has no stdin-EOF auto-cleanup.
+    _start_parent_watch()
 
     # uvicorn/our logs → stderr; stdout is reserved for the ONE handshake line.
     logging.basicConfig(stream=sys.stderr, level=logging.WARNING)
