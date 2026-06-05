@@ -33,6 +33,9 @@ hiddenimports = (
     + collect_submodules("uvicorn")
     + collect_submodules("fastapi")
     + collect_submodules("starlette")
+    # i18n.py is a top-level module (src/i18n.py), not under a collected package;
+    # core.subtitle_check / translate / asr import it lazily for their messages.
+    + ["i18n"]
 )
 
 # Non-.py runtime data the modules read (e.g. i18n / language / catalog JSON).
@@ -40,6 +43,14 @@ hiddenimports = (
 datas = (
     collect_data_files("core", includes=["**/*.json", "**/*.txt"])
     + collect_data_files("pip")
+    # i18n locale tables — read at runtime by i18n.tr (src/i18n/<code>.json).
+    # Without these the frozen sidecar returns raw keys for every tr() message
+    # (e.g. the subtitle-check report). Land them at <_MEIPASS>/i18n/ to match
+    # i18n.LOCALE_DIR's frozen branch.
+    + [
+        (os.path.join(SRC, "i18n", "zh.json"), "i18n"),
+        (os.path.join(SRC, "i18n", "en.json"), "i18n"),
+    ]
 )
 
 a = Analysis(

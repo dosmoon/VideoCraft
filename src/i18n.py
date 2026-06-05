@@ -12,11 +12,19 @@ Fallback chain for any given key:
 
 import json
 import os
+import sys
 
 from core import user_data
 
 
-LOCALE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "i18n")
+# Locale JSONs live in src/i18n/<code>.json next to this module in dev. In the
+# frozen sidecar (PyInstaller onedir) this module is in the PYZ — there is no
+# src/ tree — so the JSONs are bundled as data under sys._MEIPASS/i18n
+# (packaging/core_rpc.spec datas). Anchor there when frozen.
+if getattr(sys, "frozen", False):
+    LOCALE_DIR = os.path.join(sys._MEIPASS, "i18n")  # type: ignore[attr-defined]
+else:
+    LOCALE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "i18n")
 SETTINGS_FILE = user_data.path("settings.json")
 # Factory default is English: the first wave of open-source users is expected
 # to be English-speaking. Users can switch to Chinese via File > Preferences.

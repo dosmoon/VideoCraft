@@ -6,7 +6,7 @@
  * height instead of a fixed maxHeight.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { rpc, RpcError, type SubtitleCheck } from "../../ipc/client";
 import { tr } from "../../i18n/tr";
 import { color, radius, font, state as st } from "../../ui/tokens";
@@ -37,6 +37,29 @@ const SEV_COLOR: Record<string, string> = {
   advisory: color.textMuted,
 };
 
+type Cue = { timing: string; content: string };
+
+// Parse raw SRT into cues, indexed BY POSITION (0-based) to match
+// subtitle_check's enumerate(cues, start=1) cue_index — not the SRT sequence
+// number, which can drift from position in malformed files.
+function parseCues(srt: string): Cue[] {
+  const out: Cue[] = [];
+  for (const block of srt.replace(/\r\n/g, "\n").trim().split(/\n\n+/)) {
+    if (!block.trim()) continue;
+    const lines = block.split("\n");
+    let i = 0;
+    if (/^\d+$/.test((lines[i] ?? "").trim())) i++; // SRT sequence number
+    let timing = "";
+    const tline = lines[i] ?? "";
+    if (tline.includes("-->")) {
+      timing = tline.trim();
+      i++;
+    }
+    out.push({ timing, content: lines.slice(i).join("\n") });
+  }
+  return out;
+}
+
 export function SubtitleViewer(props: {
   type: string;
   instance: string;
@@ -49,6 +72,19 @@ export function SubtitleViewer(props: {
   const [check, setCheck] = useState<SubtitleCheck | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [highlight, setHighlight] = useState(0); // 1-based cue currently flashed
+
+  const cues = useMemo(() => (text ? parseCues(text) : []), [text]);
+  const cueRefs = useRef<(HTMLDivElement | null)[]>([]);
+
+  // Clicking a check issue scrolls its cue into view + flashes it. cue_index is
+  // 1-based; file-level issues (cue_index 0) aren't jumpable.
+  const jumpTo = useCallback((cueIndex: number) => {
+    if (cueIndex <= 0) return;
+    cueRefs.current[cueIndex - 1]?.scrollIntoView({ block: "center", behavior: "smooth" });
+    setHighlight(cueIndex);
+    window.setTimeout(() => setHighlight((h) => (h === cueIndex ? 0 : h)), 1500);
+  }, []);
 
   const load = useCallback(async () => {
     setError("");
@@ -120,22 +156,36 @@ export function SubtitleViewer(props: {
 
       {check && check.issues.length > 0 && (
         <div style={{ marginBottom: 10, display: "flex", flexDirection: "column", gap: 2, flexShrink: 0, maxHeight: "30%", overflowY: "auto" }}>
-          {check.issues.slice(0, 30).map((iss, i) => (
-            <div key={i} style={{ fontSize: font.xs, color: SEV_COLOR[iss.severity_class] ?? color.textSecondary }}>
-              {iss.cue_index > 0 ? `#${iss.cue_index} ` : ""}
-              {iss.message}
-            </div>
-          ))}
+          {check.issues.slice(0, 30).map((iss, i) => {
+            const jumpable = iss.cue_index > 0;
+            return (
+              <div
+                key={i}
+                onClick={jumpable ? () => jumpTo(iss.cue_index) : undefined}
+                title={jumpable ? tr("material.subtitles.jump_to_cue", { n: iss.cue_index }) : undefined}
+                style={{
+                  fontSize: font.xs,
+                  color: SEV_COLOR[iss.severity_class] ?? color.textSecondary,
+                  cursor: jumpable ? "pointer" : "default",
+                  textDecoration: jumpable ? "underline dotted" : "none",
+                  textUnderlineOffset: 2,
+                }}
+              >
+                {jumpable ? `#${iss.cue_index} ` : ""}
+                {iss.message}
+              </div>
+            );
+          })}
           {check.issues.length > 30 && (
             <div style={{ fontSize: font.xs, color: color.textMuted }}>…{tr("material.subtitles.issues_total", { count: check.issues.length })}</div>
           )}
         </div>
       )}
 
-      <pre
+      <div
         style={{
           margin: 0,
-          padding: 12,
+          padding: 8,
           flex: 1,
           minHeight: 0,
           background: color.bgInset,
@@ -143,14 +193,34 @@ export function SubtitleViewer(props: {
           borderRadius: radius.sm,
           overflow: "auto",
           fontSize: font.md,
-          color: color.textSecondary,
-          whiteSpace: "pre-wrap",
-          fontFamily: "ui-monospace, monospace",
           lineHeight: 1.5,
         }}
       >
-        {text ?? tr("common.loading")}
-      </pre>
+        {text === null ? (
+          <span style={{ color: color.textMuted }}>{tr("common.loading")}</span>
+        ) : (
+          cues.map((c, i) => (
+            <div
+              key={i}
+              ref={(el) => {
+                cueRefs.current[i] = el;
+              }}
+              style={{
+                padding: "4px 6px",
+                borderRadius: radius.sm,
+                background: highlight === i + 1 ? color.bgHover : "transparent",
+                transition: "background 0.3s",
+              }}
+            >
+              <div style={{ fontSize: font.xs, color: color.textMuted, fontFamily: "ui-monospace, monospace" }}>
+                #{i + 1}
+                {c.timing ? `  ${c.timing}` : ""}
+              </div>
+              <div style={{ color: color.textSecondary, whiteSpace: "pre-wrap" }}>{c.content}</div>
+            </div>
+          ))
+        )}
+      </div>
     </DetailScaffold>
   );
 }

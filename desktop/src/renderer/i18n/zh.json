@@ -242,6 +242,7 @@
   "material.subtitles.no_hard_issues": "无硬伤",
   "material.subtitles.quick_fix_btn": "一键修复可修复项",
   "material.subtitles.issues_total": "共 {count} 条",
+  "material.subtitles.jump_to_cue": "跳转到第 {n} 条字幕",
   "material.lang.auto_detect": "自动检测",
   "material.lang.no_match": "无匹配语言",
   "material.subtitles_tab.asr_lang_placeholder": "语言 (留空=自动)",

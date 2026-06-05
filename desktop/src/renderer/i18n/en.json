@@ -242,6 +242,7 @@
   "material.subtitles.no_hard_issues": "No hard issues",
   "material.subtitles.quick_fix_btn": "Auto-fix fixable issues",
   "material.subtitles.issues_total": "{count} total",
+  "material.subtitles.jump_to_cue": "Jump to cue {n}",
   "material.lang.auto_detect": "Auto-detect",
   "material.lang.no_match": "No matching language",
   "material.subtitles_tab.asr_lang_placeholder": "Language (blank = auto)",
