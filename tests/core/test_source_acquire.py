@@ -23,6 +23,20 @@ def test_link_opts_is_always_full_download():
     assert opts["overwrites"] is True  # re-import must actually re-download
 
 
+def test_link_opts_prefers_h264_aac():
+    """The format selector must prefer H.264 (avc1) video + AAC (m4a) audio. The
+    renderer <video>/WebCodecs preview and the GPU compositor/export pipeline
+    assume H.264; YouTube's default bestvideo at >=1080p is AV1/VP9 + Opus, which
+    crashes the in-app <video> decode on some GPUs. Guards that regression."""
+    opts = _build_link_opts("out.mp4", None, None)
+    fmt = opts["format"]
+    assert "vcodec^=avc1" in fmt
+    assert "bestaudio[ext=m4a]" in fmt
+    # avc1 must be preferred BEFORE the generic (codec-agnostic) fallback.
+    assert fmt.index("vcodec^=avc1") < fmt.index("bestvideo[height<=1080]+bestaudio")
+    assert opts["merge_output_format"] == "mp4"
+
+
 def test_ffmpeg_cut_uses_no_pipes_and_stream_copy(monkeypatch):
     """The cut must run ffmpeg with NO output pipe (stdout→devnull, stderr→a
     file, stdin→devnull) and stream-copy. Reading ffmpeg's output through a pipe

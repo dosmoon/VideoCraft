@@ -294,7 +294,18 @@ def _build_link_opts(
     opts.update({
         # Fixed filename — no template interpolation, dest_path is literal.
         "outtmpl": dest_path,
-        "format": "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best",
+        # Pin H.264 (avc1) video + AAC (m4a) audio. The whole downstream pipeline
+        # assumes H.264: the renderer's <video> preview / WebCodecs decode and the
+        # GPU compositor + export. YouTube's default `bestvideo` at >=1080p is
+        # AV1/VP9 + Opus — AV1 decode crashes the in-app <video> on some GPUs
+        # (renderer process dies), and Opus-in-mp4 is non-standard for the browser
+        # demuxer. Degrade progressively if avc1/m4a aren't offered for a video.
+        "format": (
+            "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/"
+            "bestvideo[height<=1080][vcodec^=avc1]+bestaudio/"
+            "best[height<=1080][vcodec^=avc1]/"
+            "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
+        ),
         "merge_output_format": "mp4",
         "noplaylist": True,
         "file_access_retries": 5,
