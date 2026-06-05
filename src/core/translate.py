@@ -129,6 +129,8 @@ def translate_srt_file(
         log_cb(f"分成 {total} 个批次进行翻译")
 
     translated_subs: dict[int, str] = {}
+    any_success = False               # flips True once any batch's AI call returns
+    last_err: Exception | None = None  # the most recent per-batch failure
 
     for batch_idx, batch in enumerate(batches):
         # Cooperative cancel: between batches the user can bail and we stop
@@ -163,11 +165,13 @@ def translate_srt_file(
                 task="translate",
                 tier=tier,
             )
+            any_success = True
         except Exception as e:
             # Cancellation must propagate, not fall back to original text.
             from core.ai.errors import AIError, Kind
             if isinstance(e, AIError) and e.kind == Kind.CANCELLED:
                 raise
+            last_err = e
             if log_cb:
                 log_cb(f"❌ 批次 {batch_idx+1} AI 调用失败: {e}")
             # Fall back to original text so the overall task keeps going.
@@ -210,6 +214,14 @@ def translate_srt_file(
 
         if batch_idx < total - 1:
             time.sleep(0.5)
+
+    # Every batch's AI call failed → the failure is systematic (a disabled or
+    # misconfigured provider, a missing API key, or a total outage), not a
+    # transient per-batch hiccup. Surface the real error instead of silently
+    # writing an all-original "translation" that then trips confusing downstream
+    # subtitle checks (count-mismatch / length warnings on untranslated text).
+    if not any_success:
+        raise RuntimeError(f"翻译失败：所有批次的 AI 调用都失败了。原因：{last_err}")
 
     # Apply translated content (originals kept for any subtitle still missing).
     untranslated_count = 0

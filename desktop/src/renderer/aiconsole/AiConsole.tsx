@@ -127,7 +127,11 @@ function routingTierOf(provider: string, dtMap: Record<string, string>): string 
 }
 function providersForTier(snap: AiSnapshot, tier: string, category: AiCategory): string[] {
   if (tier === "aistack") return ["aistack"];
-  const list = snap.providers[category];
+  // Only offer providers the user has ENABLED — a disabled provider must not be
+  // routable (the router rejects it at call time anyway, so offering it just
+  // produces a failed translate). Previously disabled providers (e.g. an
+  // un-enabled Claude Code) leaked into this dropdown.
+  const list = snap.providers[category].filter((p) => p.enabled);
   if (tier === "embedded")
     return list.filter((p) => p.deploy_tier === "local" || p.deploy_tier === "free_online").map((p) => p.name);
   if (tier === "cloud") return list.filter((p) => p.deploy_tier === "cloud").map((p) => p.name);
@@ -256,7 +260,11 @@ function TierRow(props: {
   const provOptions = providersForTier(snap, tier, category);
   // The cell's current pick: stored per-tier pref, else a sensible default.
   const pref = snap.task_tier_prefs[task]?.[tier];
-  const provider = pref?.provider ?? provOptions[0] ?? "";
+  // Fall back to the first available option when the stored pick is no longer
+  // offered (e.g. its provider was just disabled) so the <select> never shows a
+  // value absent from its options, and the user can't keep a disabled pick.
+  const picked = pref?.provider ?? "";
+  const provider = provOptions.includes(picked) ? picked : provOptions[0] ?? "";
   const modelOptions = modelsForTier(snap, tier, category, provider);
   const model = pref?.model ?? modelOptions[0] ?? "";
 
