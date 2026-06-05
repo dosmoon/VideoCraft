@@ -5,27 +5,28 @@
 
 ---
 
-## ▶▶ 本会话(2026-06-05 大轮)= 传输层重构:stdio JSON-RPC → FastAPI HTTP + SSE(✅ 实现+全验,**未 commit**)
+## ▶▶ 本会话(2026-06-05 大轮)= FastAPI 传输重构 + 4 个 GUI 真机 bug(✅ 全 push,`b1ed7fd`→`fd7edbf`)
 
-> 起因:用户在打包态真机点 ASR 卡死「正在加载本地模型」,怒斥「到处都是这种死锁,别当鸵鸟,换 fastapi」。审视后确认一连串死锁同根 = sidecar 主线程永久阻塞读 stdin + job 在 daemon 线程,native C-ext 首次 import 撞阻塞 stdin → 死锁(warmup 人肉清单在打包态 runtime-install 的 native 漏掉)。**权威 = [ADR-0010](adr/0010-sidecar-http-transport.md)**(why + 不变量 + gotchas)。task.md 只留路标。
+> 起因:打包态真机 ASR 卡死「正在加载本地模型」→ 用户怒「到处都是死锁,别当鸵鸟,换 fastapi」。一路做完传输重构,又在 GUI 验收里抓出一串 bug。**全部 commit + push 到 `origin/main`(HEAD `fd7edbf`)。** 传输权威 = **[ADR-0010](adr/0010-sidecar-http-transport.md)**;其余细节在各 commit message。task.md 只留路标。
 
-- **壳替换,非重写**:Python `dispatch/registry/protocol/methods(63 方法)/jobs/session` **零改动**(全 transport-agnostic);`sidecar.ts` 内部换 HTTP+SSE 但**公共 API(call/onNotification/dispose/SidecarError)不变** → `main.ts`/`preload.ts`/renderer(`ipc/client.ts`/`runJob.ts`/40+ 组件)**零改动**。
-- **server.py**:`POST /rpc`(→`dispatch_message`)+ `GET /events`(SSE,emit→`call_soon_threadsafe`→队列)+ `POST /shutdown`(force_exit);绑临时 loopback 端口,**listening 后**打 stdout 握手 `VC_RPC_PORT <n>`;请求串行(`dispatch_lock`,保旧顺序保证)、job 仍并发。
-- **sidecar.ts**:读握手建 baseUrl → `fetch` POST /rpc + SSE 流(`fetch`+`ReadableStream`,Node 22 全局);新 `sse-open` 生命周期事件。
-- **配套**:`runtime_extras.install` 后补 `invalidate_caches()`;`warmup` 降级为延迟优化(非死锁修法,后台线程);`pyproject` base 加 `fastapi==0.136.3`+`uvicorn==0.49.0`;`core_rpc.spec` collect_submodules uvicorn/fastapi/starlette;`build_sidecar.ps1` 烟测改 HTTP(旧 stdin 喂法现在会挂)。
-- **验证全绿**:pytest **125**(新 `test_http_server.py` TestClient + 重写 `test_server_subprocess.py` 真子进程 HTTP/SSE)· desktop typecheck + vitest **213**(新 `sidecar.integration.test.ts` = 真 `Sidecar` 类 vs 真子进程,CI 无 myenv 自动 skip)· build · **冻结 E2E**(重打 frozen `core_rpc.exe` → HTTP+SSE smoke PASS,uvicorn 冻结打包 OK)。**抓修一个真 race**:握手早于 uvicorn listening → `ECONNREFUSED`(TS boot 会炸)→ 改 `server.started` 后再打握手。
-- **欠 / 下一步**:① **决定性 GUI 终验(用户)** = 打包 app 装嵌入 AI → 跑 ASR → 不再死锁(installer 本会话 `build:win` 重打,带新传输 + 顺带完成下方「干净打包态终验」)。② 未 commit —— 视用户意([[feedback_external_actions]])。③ memory `reference_sidecar_native_import_deadlock` 应更新指向 ADR-0010(根因已结构性消除)。
+- **`b1ed7fd` 传输重构(ADR-0010)= stdio JSON-RPC → FastAPI HTTP + SSE**。一连串死锁同根 = sidecar 主线程永久阻塞读 stdin + job 在 daemon 线程,native C-ext 首次 import 撞阻塞 stdin → 死锁。换 HTTP 后无阻塞 stdin → **整类消除**(aistack 同栈实证)。**壳替换非重写**:`dispatch/registry/protocol/methods(63)/jobs/session` 零改动;`sidecar.ts` 公共 API 不变 → `main.ts`/preload/renderer 零改动。`server.py`=`POST /rpc`+`GET /events`(SSE,emit→`call_soon_threadsafe`)+`/shutdown`(force_exit),临时端口 **listening 后**打 `VC_RPC_PORT` 握手,请求串行(`dispatch_lock`)、job 并发。配套:`invalidate_caches()`、warmup 降级、`pyproject`+fastapi/uvicorn、spec collect uvicorn/fastapi/starlette、`build_sidecar.ps1` 烟测改 HTTP。验证:pytest **125** + vitest **213**(新 `sidecar.integration.test.ts` 真 Sidecar vs 真子进程)+ 冻结 E2E。抓修 race:握手早于 uvicorn listening → `ECONNREFUSED`,改 `server.started` 后再打。
+- **`8034c40` AI 路由/翻译**:① 路由下拉(`providersForTier`)漏过滤 `enabled` → 禁用的 Claude Code 可选 → 加 `.filter(p=>p.enabled)` + stale-pick 兜回第一个可用。② `translate_srt_file` 把「provider disabled」逐批 `except` 吞掉、静默回退原文 → 下游质检对未翻译文本报莫名 `count_mismatch` → 改:**无任一批成功就 raise 真错**(单批偶发仍回退)。回归测 `tests/test_translate.py`。
+- **`32f9461` i18n 打包 + 质检点击跳转**:① 裸 key 根因 = 冻结包**没带 `src/i18n/*.json`**(模块带了、数据没带)→ 打包态**所有** sidecar `tr()` 退回裸 key → spec 把 JSON 打进 `_MEIPASS/i18n/` + `i18n.py` LOCALE_DIR 加冻结分支;**冻结实测返回本地化文本**。② `SubtitleViewer` 字幕从单块 `<pre>` 改**按条渲染带 ref**,质检 issue 可点 → 滚动+高亮对应 cue;新 i18n key `material.subtitles.jump_to_cue`(zh/en)。
+- **`fd7edbf` 僵尸 sidecar**:HTTP transport 丢了 stdio 的「stdin EOF 自动退出」→ Electron 崩了 sidecar 不死、攒僵尸。修:① `server._start_parent_watch()` 等**父进程句柄**(`OpenProcess`+`WaitForSingleObject`,**绝不读 stdin** 以避 ADR-0010 死锁)→ 父死 `os._exit`(打包态实测 PASS);② `dev.ps1` 启动顺手扫 `core_rpc.server` 残留。
+- **memory 已更新**:`reference_sidecar_native_import_deadlock` 顶部加横幅指向 ADR-0010(根因已结构性消除,warmup 退为非承重)。
+
+**▶ 欠 / 下一步(新对话从这接)= 带全部最新修复的 installer 还没重打**。本会话改了 sidecar(i18n 数据 + parent-watch)+ renderer(路由过滤 + 质检点击),但 **win-unpacked / installer 仍是旧的**(上次 `build:win` 在传输重构前)。下次开干净轮:`build_sidecar.ps1` + `fetch_ffmpeg.ps1` + `pnpm build:win` → **用户 GUI 终验**:① 嵌入 AI 装 + ASR **不再卡死**(决定性验传输修复)② 路由配置**不列禁用 provider** ③ 质检报告**本地化文本 + 点 #N 跳转** ④ 翻译选了禁用 provider **报清晰错**。这同时收口下方「干净打包态终验」。
 
 ---
 
 ## ▶ 下一任务(新对话先读)= P3 收尾(CI/签名)+ 一轮干净打包态终验
 
-> **权威方案 = [`packaging-design.md`](draft/packaging-design.md)**(§8 步骤、§9 待决、§10 发布 checklist)。**P3 steps 1-8 实质完成并全部 push 到 `origin/main`(HEAD `7148483`)。** steps 1-7 = seam + 冻结 sidecar + NSIS + 嵌入 AI/GPU opt-in;step 8 已做:**ffmpeg 随包**(✅)、**品牌图标**(✅ 窗口/安装包图标;exe 内嵌图标待 CI)、env 页 bundled 呈现收口(✅)。
+> **权威方案 = [`packaging-design.md`](draft/packaging-design.md)**(§8 步骤、§9 待决、§10 发布 checklist)。**P3 steps 1-8 实质完成,push 时 HEAD `7148483`;之后本会话(2026-06-05)又叠了传输重构+4 修复到 `fd7edbf`(见最上方)。** steps 1-7 = seam + 冻结 sidecar + NSIS + 嵌入 AI/GPU opt-in;step 8 已做:**ffmpeg 随包**(✅)、**品牌图标**(✅ 窗口/安装包图标;exe 内嵌图标待 CI)、env 页 bundled 呈现收口(✅)。
 
 **▶ 真正剩下的(都不阻塞日常)**:
 1. **CI(GitHub Windows runner)** —— runner 有符号链接权限,可去掉 `win.signAndEditExecutable:false`,恢复 **exe 内嵌图标 + 代码签名**(见下方 winCodeSign 坑)。
-2. **一轮干净打包态终验** —— 本会话 bug 都在命令行/冻结 E2E 钉死了,但**用户尚未在「带全部最新修复的重打包 app」里完整点一遍**(下载 clip + 嵌入 AI 装 + ASR)。win-unpacked 的 sidecar 一直手动同步到最新,但 **env 页「内置」标签 + 最新 renderer 要重打包才进 win-unpacked**。下次开个干净轮:`build_sidecar.ps1` + `fetch_ffmpeg.ps1` + `pnpm build:win` → 用户 GUI 终验。
-3. **backlog**:`src/i18n` Tk 孤儿大扫除(VLC 已清,还有别的);env-screen 其它打磨。
+2. **一轮干净打包态终验 = 见最上方本会话块「欠/下一步」**(现在它要带的不只 env 标签 + renderer,还有传输重构 + i18n 数据 + parent-watch + 路由/质检修复 —— 必须 `build:win` 重打才进 win-unpacked)。
+3. **backlog**:`src/i18n` Tk 孤儿大扫除(VLC 已清,还有别的;注意≠本会话的 i18n **打包**修复,那是把 JSON 打进冻结包,孤儿清扫是删死 key);env-screen 其它打磨。
 
 **⚠️ winCodeSign 坑(CI 必读)**:electron-builder 在 Windows eager 解压 winCodeSign(含 macOS 符号链接),非 admin/无 Developer Mode 建符号链接失败 → build 挂;现用 `win.signAndEditExecutable:false` 绕过(代价:exe 默认图标 + 不签名;窗口/安装包图标已经是品牌图标)。CI runner 有符号链接权限可去掉这个 flag。
 

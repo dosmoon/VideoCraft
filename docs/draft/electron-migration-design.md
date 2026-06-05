@@ -321,6 +321,8 @@ VideoCraft = Tier1 框架 + **素材模块** + **创作模块** 两条插件轴(
 
 ### 2.1 传输层选型:stdio JSON-RPC 2.0(推荐)
 
+> ⚠️ **已被取代(2026-06-05,[ADR-0010](../adr/0010-sidecar-http-transport.md))**:传输从 stdio JSON-RPC 换成 FastAPI/uvicorn HTTP + SSE。下面这套 stdio + reader/writer 线程模型不再是现实 —— 它的「主线程阻塞读 stdin」正是 native-import 死锁的根因,HTTP 模型把它整类消除。本节留作历史决策记录;现状看 ADR-0010 + `core_rpc/server.py` / `desktop/electron/sidecar.ts`。
+
 | 候选 | 取舍 |
 |---|---|
 | **stdio JSON-RPC 2.0** ✅ | Electron 主进程 spawn python child,天然持有 stdin/stdout。单一双工通道,request/response + notification(服务端推送)都覆盖。无端口、无防火墙弹窗、无端口冲突。**推荐。** |
