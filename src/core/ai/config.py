@@ -88,7 +88,9 @@ _DEFAULT_PROVIDERS = {
     "ClaudeCode": {
         "type":       "claude_code",
         "key_file":   "",           # No API key — local `claude` CLI handles auth
-        "enabled":    False,        # Off by default; user ticks Enable in Router Manager
+        "enabled":    True,         # On by default like other built-ins; no key needed
+                                    # (claude CLI owns auth — see has_auth). Unlike Custom,
+                                    # nothing must be filled in first before it can dispatch.
         "priority":   3,            # Between DeepSeek(2) and Custom(4)
         "executable": "claude",     # CLI binary name or full path
         "extra_args": [],           # Advanced: additional flags for `claude -p`
