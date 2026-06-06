@@ -195,13 +195,12 @@ function createMainWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      // DO NOT set `backgroundThrottling: false` here. It was tried (a3669ff) to
-      // keep backgrounded exports at full speed, but in this Electron build it
-      // breaks requestAnimationFrame cadence: the rAF-driven GPU preview (clip /
-      // news_desk CropPreview / NewsDeskPreview) drops to ~1 frame / 10 s, while
-      // the native <video> source preview (its own media clock, no rAF) stays
-      // smooth — which is exactly how the regression presented. Reverted. If
-      // backgrounded-export speed needs solving, do it WITHOUT this flag.
+      // backgroundThrottling was tried (a3669ff) to keep backgrounded exports at
+      // full speed, then reverted (acf066a) and left at the Electron default.
+      // NOTE: it was NOT the cause of the 60fps preview stutter — that was the
+      // preview wrongly using the blocking frameAtExact (fixed in the preview
+      // components). If backgrounded-export speed ever matters, measure first;
+      // don't reach for a global throttling flag without evidence.
     },
   });
 
