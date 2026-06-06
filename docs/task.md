@@ -5,7 +5,7 @@
 
 ---
 
-## ▶▶ 本会话(2026-06-06 dogfood)= 一串真机修复(✅ push)+ ⚠️ **60fps 导出慢未解(交接重点,新对话先做)**
+## ▶▶ 本会话(2026-06-06 dogfood)= 一串真机修复(✅ push)+ ✅ **60fps 导出慢已破案+已修+单测钉死+真机 dogfood 复验通过**
 
 > 用户跑 dogfood 抓出一串 bug。**已修+push 的见下;唯一悬而未决 = 60fps AV1 导出 ~0.5fps。** ⚠️ **本轮血泪**:我在 60fps 问题上反复瞎猜(错怪 AV1→backgroundThrottling→ring→硬解→队列背压,全错),直到装探针拿数据才排除。**纪律(务必遵守)**:遇到「dev 正常/装版异常」或「改了没反应」**先上探针拿数据,别猜**;**renderer 改动必须 `desktop/dev.ps1` 整重启**(本环境 HMR 发旧 bundle,Ctrl+R 一直在喂旧代码、害我对着旧 bundle 瞎调)。
 
@@ -17,13 +17,11 @@
 - **✅ 更改路径提示**(`24e025f`)+ **backgroundThrottling 试了又撤**(`a3669ff`/`acf066a`,与卡顿无关)。
 - **✅ 导出进度计数器 + 撤队列背压**(`3ce7e0b`):导出按钮旁显示 `framesDone/framesTotal`(旧的四舍五入 0% 让慢渲染像卡死);撤掉我加的 `MAX_DECODE_QUEUE`(下述)。
 
-### ⚠️⚠️ 未解 = 60fps AV1 **导出** ~0.5fps(用户点名:**「去查资料,仔细查 60帧 vs 30帧到底发生了什么」**)
-- **现象**:导出 60fps AV1 源 = **~2-4 秒/帧**(19 分钟源 34576 帧 ≈ **19 小时**);**30fps AV1 导出正常 ~135fps**(43 分钟 `川普签署行政令` 已导完)。导出必须 `frameAtExact`(逐帧精确,不能用预览那个非阻塞 `frameAt`)。
-- **`[EXACT]` 探针实测(本会话,已删)**:前 ~6 帧快(0-10ms,吃启动预填队列),之后**每帧 2-4 秒**;`reseek=false`(**不是**重 seek);`took` 是 `frameAtExact`(解码取帧)耗时、**不是编码**。慢从 `decodeQueueSize` 顶到 48(我加的 cap)起 —— **但去掉 cap 也没变快**,故 cap 是 red herring 非真因。
-- **已排除**:AV1 codec、re-seek、队列背压(`MAX_DECODE_QUEUE` 已撤)、ring 大小(8/24 都试)、`prefer-hardware`(WebCodecs 似乎不给 AV1 硬解;原生 `<video>` 给)。
-- **研究方向 + 最强假设 = WebCodecs `VideoDecoder` 输出帧池耗尽**:解码器输出 `VideoFrame` 池有限,若 `VideoFrame`(含 `FrameRingBuffer.pickAt` 返的 **clone**)不及时 `close()` → 解码器背压停产;60fps 帧流量 2 倍 → 池更快耗尽/卡更死,30fps 不触发。**下一步:查 [ClipReader.ts](../desktop/src/renderer/engine/source/ClipReader.ts)/[draw.ts](../desktop/src/renderer/engine/compositor/draw.ts)/[encode.ts](../desktop/src/renderer/engine/export/encode.ts) 全链路 VideoFrame(环里原帧 + pickAt clone + draw 用完的)是否都 close,解码器是否卡在输出池背压。** 查 WebCodecs VideoDecoder 1080p60 吞吐/输出池/`close()` 契约。次要假设:逐帧 GPU 合成+读回与解码争用。
-- **兜底(用户不满意,非首选)**:下载限 `fps<=30`(保留 AV1)绕开;用户要治本。
-- **代码现状**:ClipReader 回到 pre-cap 原始基线(`3ce7e0b`);导出有帧数计数器可观察速率。**未重打包**(这些 renderer 修复要 `build:win` 才进装版;17:44 那个 installer 含预览修复但不含本块最后的 `3ce7e0b`)。
+### ✅ 已破案 = `ClipReader` 环缓冲淘汰策略 vs 高帧率源的**解码泵死锁**(被 3000ms 超时伪装成"慢")
+- **真因(代码静态分析 + Plan agent 对抗复核 + 确定性单测三重确认)**:[ClipReader.ts](../desktop/src/renderer/engine/source/ClipReader.ts) 环只存 `RING_CAPACITY=8` 帧,`frameAtExact` 保留 `TRIM_BEHIND_US=200ms` 历史窗口。环里是**源 native pts 帧**,200ms 窗口内帧数 = `0.2×源fps`:30fps=6<8 ✓;**60fps=12>8 ✗**。当 `frameAtExact` 需越过 >8 帧才够到目标(seek 落在 keyframe 远处、或解码器瞬时落后)时,满环全落在 200ms 内 → `trimBefore` 一个都不丢、不 `signalSpace` → 泵卡 `awaitSpace()` → 循环爬到 `EXACT_WAIT_BUDGET_MS=3000` 返回滞后帧 ≈ **2-4s/帧**。**临界点 = 40fps**(0.2×40=8),完美对上 30 好/60 炸。**是死锁被超时伪装,不是解码慢**——正应用户"慢到离谱一定是很严重的错误"。之前瞎猜(AV1/帧池/队列/ring 24)全错;"ring 24 没用"不可信(疑 HMR 旧 bundle)。
+- **修复(治本,对任意源 fps 鲁棒,~20 行;3 处)**:① [FrameRingBuffer.ts](../desktop/src/renderer/engine/source/FrameRingBuffer.ts) 新增 `dropOldest()`;② `frameAtExact` 等待循环:满环且仍落后目标时丢最旧帧打破死锁(前向导出永不回看,最旧帧必在目标后、可安全丢);③ 取帧后改用 `trimBefore(candidate.timestamp)`(而非 200ms 窗口)恢复 lookahead。**不加大 RING_CAPACITY**(只挪阈值+帧池耗尽风险),**不重加 `MAX_DECODE_QUEUE`**(`hasSpace()` 已是输出背压)。预期 0.5fps → 解码器吞吐上限(软解 AV1 1080p ~30-100fps)。
+- **单测钉死(对齐 engine-test-initiative;此前 ClipReader/FrameRingBuffer 零测试)**:`FrameRingBuffer.test.ts`(4) + `ClipReader.test.ts`(3)。**确定性复现**:mid-GOP seek 测在 revert Part 2 后**失败于 3074ms(=3000ms budget)返回滞后帧 26 而非目标 30** —— 真 guard 非 tautology。typecheck + 全 220 测绿。
+- **✅ 真机 dogfood 复验通过**(2026-06-06,用户确认导出已正常)。**待办**:进装版需 `build:win` 重打(随下一轮 dogfood)。兜底"下载限 fps<=30"已不需要。
 
 ---
 

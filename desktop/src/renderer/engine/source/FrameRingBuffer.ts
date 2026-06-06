@@ -76,6 +76,22 @@ export class FrameRingBuffer {
     return i;
   }
 
+  /**
+   * Drop the single oldest frame (closing it) and signal space. Returns true if
+   * one was dropped. The export-exact fetch uses this to guarantee forward
+   * progress: the time-based trimBefore() window can hold more frames than the
+   * ring can fit for high-fps sources (200ms × 60fps = 12 > capacity 8), which
+   * would otherwise leave a full ring with nothing trimmable and deadlock the
+   * decode pump on awaitSpace().
+   */
+  dropOldest(): boolean {
+    const f = this.frames.shift();
+    if (!f) return false;
+    f.close();
+    this.signalSpace();
+    return true;
+  }
+
   /** Drop everything (e.g., on seek). */
   clear(): void {
     for (const f of this.frames) f.close();

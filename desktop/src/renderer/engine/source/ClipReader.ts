@@ -139,6 +139,17 @@ export class ClipReader implements VideoSource {
       // has space to decode FORWARD toward the target — otherwise a full buffer
       // of sub-target frames deadlocks the pump and we'd spin to the budget.
       this.buffer.trimBefore(mediaTime - TRIM_BEHIND_US);
+      // High-fps sources pack more frames into the TRIM_BEHIND_US history window
+      // than the ring can hold (200ms × 60fps = 12 > RING_CAPACITY 8), so the
+      // time-based trim above frees nothing and the pump deadlocks here — every
+      // frameAtExact then crawls to EXACT_WAIT_BUDGET_MS (~3s/frame). The loop
+      // condition guarantees latestPts() < mediaTime, so every buffered frame is
+      // behind the target (the floor frame we'll pick is still undecoded); drop
+      // the oldest to let the pump decode toward the target. Robust to any source
+      // fps (unlike bumping RING_CAPACITY, which only moves the threshold).
+      if (!this.buffer.hasSpace() && this.buffer.latestPts() < mediaTime) {
+        this.buffer.dropOldest();
+      }
       this.startPumpIfIdle();
       // Wake on the next decoded frame (no 4ms poll clamp), with a short
       // fallback in case the pump momentarily stalls.
@@ -157,7 +168,11 @@ export class ClipReader implements VideoSource {
     }
 
     const candidate = this.buffer.pickAt(mediaTime) ?? this.buffer.pickEarliest();
-    if (candidate) this.buffer.trimBefore(mediaTime - TRIM_BEHIND_US);
+    // Forward-only export never re-reads earlier times, so drop everything
+    // before the frame just returned (not the 200ms window, which can't evict
+    // high-fps clusters). Frees the trailing slots so the pump rebuilds forward
+    // lookahead between calls instead of pacing one frame per call.
+    if (candidate) this.buffer.trimBefore(candidate.timestamp);
     return candidate;
   }
 
