@@ -195,13 +195,13 @@ function createMainWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      // Keep the renderer at full speed when the window is minimized/occluded.
-      // Chromium throttles a background renderer's timers (down to ~1/s after a
-      // few minutes hidden); the export loop yields via setTimeout between frames,
-      // so a backgrounded export crawls. Exports render to an offscreen texture
-      // (not the visible swapchain), so there's no reason to throttle them when
-      // the window isn't focused.
-      backgroundThrottling: false,
+      // DO NOT set `backgroundThrottling: false` here. It was tried (a3669ff) to
+      // keep backgrounded exports at full speed, but in this Electron build it
+      // breaks requestAnimationFrame cadence: the rAF-driven GPU preview (clip /
+      // news_desk CropPreview / NewsDeskPreview) drops to ~1 frame / 10 s, while
+      // the native <video> source preview (its own media clock, no rAF) stays
+      // smooth — which is exactly how the regression presented. Reverted. If
+      // backgrounded-export speed needs solving, do it WITHOUT this flag.
     },
   });
 
