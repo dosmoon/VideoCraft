@@ -36,6 +36,15 @@ const FRAME_WAIT_BUDGET_MS = 150;
 const FLUSH_TIMEOUT_MS = 2000;
 /** Max wait inside frameAtExact() for the pump to reach the target frame. */
 const EXACT_WAIT_BUDGET_MS = 3000;
+/**
+ * Cap on the decoder's INPUT queue (VideoDecoder.decodeQueueSize). The output
+ * ring drains as fast as playback consumes it, so the ring-based back-pressure
+ * alone can't stop the pump when the decode rate < playback rate (e.g. 1080p60
+ * software AV1): the pump then feeds the whole file into the decoder, ballooning
+ * queued encoded chunks to GBs. ~0.8 s of 60 fps work keeps the decoder saturated
+ * without unbounded growth.
+ */
+const MAX_DECODE_QUEUE = 48;
 
 interface SeekState {
   /** Sample index (decode order) the pump should feed next. */
@@ -224,6 +233,15 @@ export class ClipReader implements VideoSource {
         }
         if (this.disposed || this.generation !== myGeneration || !this.seek) {
           break;
+        }
+
+        // Input-queue back-pressure (complements the output-ring check above):
+        // the ring drains as playback consumes, so it alone can't stop the pump
+        // from flooding the decoder when decode rate < playback rate. Wait for the
+        // decoder to work its queue down before feeding more.
+        if (this.decoder.decodeQueueSize >= MAX_DECODE_QUEUE) {
+          await new Promise<void>((res) => setTimeout(res, 8));
+          continue;
         }
 
         const samples = this.mediaSource.samples;
