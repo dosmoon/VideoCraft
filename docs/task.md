@@ -5,6 +5,28 @@
 
 ---
 
+## ▶▶ 本会话(2026-06-06 dogfood)= 一串真机修复(✅ push)+ ⚠️ **60fps 导出慢未解(交接重点,新对话先做)**
+
+> 用户跑 dogfood 抓出一串 bug。**已修+push 的见下;唯一悬而未决 = 60fps AV1 导出 ~0.5fps。** ⚠️ **本轮血泪**:我在 60fps 问题上反复瞎猜(错怪 AV1→backgroundThrottling→ring→硬解→队列背压,全错),直到装探针拿数据才排除。**纪律(务必遵守)**:遇到「dev 正常/装版异常」或「改了没反应」**先上探针拿数据,别猜**;**renderer 改动必须 `desktop/dev.ps1` 整重启**(本环境 HMR 发旧 bundle,Ctrl+R 一直在喂旧代码、害我对着旧 bundle 瞎调)。
+
+- **✅ task.md 拆分归档**(`8cd8b89`):完成会话挪 `docs/_archive/`(本块的"已完成"部分以后也归档)。
+- **✅ 预览 60fps 卡 —— 真修,已验**(`13b0dc5`):clip/news_desk 预览**误用了导出专用的阻塞 `frameAtExact`**(三元 `frameAtExact?…:frameAt` 因 ClipReader 永远有该方法而恒走阻塞分支),应改用非阻塞 `frameAt`(导出走 [draw.ts](../desktop/src/renderer/engine/compositor/draw.ts) 的 `exact` 标志,不受影响)。30fps 解码跟得上没暴露,60fps 暴露成每 10s 一帧。
+- **✅ AV1 无辜,保留**(`d9e5223`):源下载 H.264 解钉→AV1+AAC。后续证明 **AV1 不是任何问题的根**(30fps AV1 预览+导出一路都好);别再 revert AV1。
+- **✅ 候选标题入 publish.md**(`f0a3afa`):章节导入漏拷信封 `titles[]` → 章节组件无 `titles` → publish 无候选标题段。**已有实例需重新导入章节**才回填。
+- **✅ 模型路径「更改」无效**(`ed1d145`):冻结态 keys-dir 漂移(`paths` 读封死 `_internal/keys`、`config` 写 `user_data/keys`)→ 收进 `core.user_data.keys_dir` 单源。memory [[reference_frozen_file_path_drift]]。
+- **✅ 更改路径提示**(`24e025f`)+ **backgroundThrottling 试了又撤**(`a3669ff`/`acf066a`,与卡顿无关)。
+- **✅ 导出进度计数器 + 撤队列背压**(`3ce7e0b`):导出按钮旁显示 `framesDone/framesTotal`(旧的四舍五入 0% 让慢渲染像卡死);撤掉我加的 `MAX_DECODE_QUEUE`(下述)。
+
+### ⚠️⚠️ 未解 = 60fps AV1 **导出** ~0.5fps(用户点名:**「去查资料,仔细查 60帧 vs 30帧到底发生了什么」**)
+- **现象**:导出 60fps AV1 源 = **~2-4 秒/帧**(19 分钟源 34576 帧 ≈ **19 小时**);**30fps AV1 导出正常 ~135fps**(43 分钟 `川普签署行政令` 已导完)。导出必须 `frameAtExact`(逐帧精确,不能用预览那个非阻塞 `frameAt`)。
+- **`[EXACT]` 探针实测(本会话,已删)**:前 ~6 帧快(0-10ms,吃启动预填队列),之后**每帧 2-4 秒**;`reseek=false`(**不是**重 seek);`took` 是 `frameAtExact`(解码取帧)耗时、**不是编码**。慢从 `decodeQueueSize` 顶到 48(我加的 cap)起 —— **但去掉 cap 也没变快**,故 cap 是 red herring 非真因。
+- **已排除**:AV1 codec、re-seek、队列背压(`MAX_DECODE_QUEUE` 已撤)、ring 大小(8/24 都试)、`prefer-hardware`(WebCodecs 似乎不给 AV1 硬解;原生 `<video>` 给)。
+- **研究方向 + 最强假设 = WebCodecs `VideoDecoder` 输出帧池耗尽**:解码器输出 `VideoFrame` 池有限,若 `VideoFrame`(含 `FrameRingBuffer.pickAt` 返的 **clone**)不及时 `close()` → 解码器背压停产;60fps 帧流量 2 倍 → 池更快耗尽/卡更死,30fps 不触发。**下一步:查 [ClipReader.ts](../desktop/src/renderer/engine/source/ClipReader.ts)/[draw.ts](../desktop/src/renderer/engine/compositor/draw.ts)/[encode.ts](../desktop/src/renderer/engine/export/encode.ts) 全链路 VideoFrame(环里原帧 + pickAt clone + draw 用完的)是否都 close,解码器是否卡在输出池背压。** 查 WebCodecs VideoDecoder 1080p60 吞吐/输出池/`close()` 契约。次要假设:逐帧 GPU 合成+读回与解码争用。
+- **兜底(用户不满意,非首选)**:下载限 `fps<=30`(保留 AV1)绕开;用户要治本。
+- **代码现状**:ClipReader 回到 pre-cap 原始基线(`3ce7e0b`);导出有帧数计数器可观察速率。**未重打包**(这些 renderer 修复要 `build:win` 才进装版;17:44 那个 installer 含预览修复但不含本块最后的 `3ce7e0b`)。
+
+---
+
 ## ▶▶ 本会话(2026-06-05 续→06-06)= 打包前预修 + 重打 installer + dogfood 抓修「点 source 崩」(✅ 全 push,`ef397f3`→`44ac68f`;installer 02:22 重打)
 
 > 接上一轮(FastAPI 传输)。先做 3 个打包前预修 → 重打 installer → 用户真机 dogfood 抓出「点 news source 直接崩」→ 定位+修复+验过。全部 commit+push 到 `origin/main`(HEAD `44ac68f`)。**下次 = 用户开新对话跑完整 dogfood。** task.md 只留路标,诊断细节在各 commit message + 记忆。
