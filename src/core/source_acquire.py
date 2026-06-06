@@ -294,17 +294,21 @@ def _build_link_opts(
     opts.update({
         # Fixed filename — no template interpolation, dest_path is literal.
         "outtmpl": dest_path,
-        # Pin H.264 (avc1) video + AAC (m4a) audio. The whole downstream pipeline
-        # assumes H.264: the renderer's <video> preview / WebCodecs decode and the
-        # GPU compositor + export. YouTube's default `bestvideo` at >=1080p is
-        # AV1/VP9 + Opus — AV1 decode crashes the in-app <video> on some GPUs
-        # (renderer process dies), and Opus-in-mp4 is non-standard for the browser
-        # demuxer. Degrade progressively if avc1/m4a aren't offered for a video.
+        # Pin AAC (m4a) audio; leave the video codec UNCONSTRAINED so YouTube
+        # serves its best stream at <=1080p (typically AV1, ~1/3 smaller than
+        # H.264). The whole decode path is codec-agnostic: the renderer's <video>
+        # preview decodes AV1 natively, the WebCodecs compositor (Demuxer accepts
+        # av01 + an isConfigSupported guard), and export re-encodes to H.264
+        # regardless of source. The earlier H.264 pin blamed AV1 for a preview
+        # crash that was actually the Win11 26200 sandbox bug (fixed app-wide with
+        # --no-sandbox), so that justification is gone. Audio stays AAC: the
+        # browser's decodeAudioData silently yields no sound for Opus-in-mp4, and
+        # the audio stream is only a few MB either way. Degrade progressively if
+        # m4a audio isn't offered.
         "format": (
-            "bestvideo[height<=1080][vcodec^=avc1]+bestaudio[ext=m4a]/"
-            "bestvideo[height<=1080][vcodec^=avc1]+bestaudio/"
-            "best[height<=1080][vcodec^=avc1]/"
-            "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best"
+            "bestvideo[height<=1080]+bestaudio[ext=m4a]/"
+            "bestvideo[height<=1080]+bestaudio/"
+            "best[height<=1080]/best"
         ),
         "merge_output_format": "mp4",
         "noplaylist": True,

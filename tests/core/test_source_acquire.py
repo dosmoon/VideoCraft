@@ -23,17 +23,20 @@ def test_link_opts_is_always_full_download():
     assert opts["overwrites"] is True  # re-import must actually re-download
 
 
-def test_link_opts_prefers_h264_aac():
-    """The format selector must prefer H.264 (avc1) video + AAC (m4a) audio. The
-    renderer <video>/WebCodecs preview and the GPU compositor/export pipeline
-    assume H.264; YouTube's default bestvideo at >=1080p is AV1/VP9 + Opus, which
-    crashes the in-app <video> decode on some GPUs. Guards that regression."""
+def test_link_opts_prefers_aac_audio_unconstrained_video():
+    """The format selector must prefer AAC (m4a) audio but leave the VIDEO codec
+    unconstrained, so YouTube serves its best stream at <=1080p (typically AV1,
+    ~1/3 smaller than H.264). The whole decode path is codec-agnostic (native
+    <video>, WebCodecs Demuxer accepts av01, export re-encodes to H.264), so the
+    earlier H.264 video pin was dropped once the "AV1 crashes preview" cause
+    turned out to be the Win11 sandbox bug, not the codec. Only audio is pinned:
+    decodeAudioData is silent on Opus-in-mp4. Guards that decision."""
     opts = _build_link_opts("out.mp4", None, None)
     fmt = opts["format"]
-    assert "vcodec^=avc1" in fmt
-    assert "bestaudio[ext=m4a]" in fmt
-    # avc1 must be preferred BEFORE the generic (codec-agnostic) fallback.
-    assert fmt.index("vcodec^=avc1") < fmt.index("bestvideo[height<=1080]+bestaudio")
+    assert "bestaudio[ext=m4a]" in fmt  # AAC audio preferred
+    assert "vcodec^=avc1" not in fmt  # video codec NOT pinned to H.264
+    # The AAC-preferred selector must come before the codec-agnostic audio fallback.
+    assert fmt.index("bestaudio[ext=m4a]") < fmt.index("bestvideo[height<=1080]+bestaudio/")
     assert opts["merge_output_format"] == "mp4"
 
 
