@@ -78,6 +78,7 @@ function chapter(): ComponentDict {
       },
     },
     schedule: [], // filled from material chapters at import
+    titles: [], // AI-suggested video titles, filled from analysis titles[] at import
   };
 }
 

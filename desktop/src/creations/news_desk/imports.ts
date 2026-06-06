@@ -83,6 +83,13 @@ export async function importNewsDeskResource(
         refined: String(r["refined"] ?? ""),
         key_points: Array.isArray(r["key_points"]) ? r["key_points"] : [],
       }));
+    // Snapshot the AI-suggested video titles too: the same analysis call emits
+    // both chapters and a top-level titles[]. publish.md's "Candidate Titles"
+    // section reads them off the chapter component (render.ts), so without this
+    // they silently never appear in the export.
+    comp["titles"] = Array.isArray(env["titles"])
+      ? (env["titles"] as unknown[]).map((t) => String(t).trim()).filter(Boolean)
+      : [];
     await owner.save();
     return comp;
   }

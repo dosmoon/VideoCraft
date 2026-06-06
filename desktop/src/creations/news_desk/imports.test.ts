@@ -57,6 +57,7 @@ const model: ImportMaterial = {
   },
   async readAnalysis() {
     return {
+      titles: ["Title A", "  Title B  ", ""], // trimmed + blank entries dropped
       chapters: [
         { start_sec: 1, end_sec: 2, title: "T", refined: "R", key_points: ["k"] },
         "junk", // non-dict rows are dropped
@@ -100,7 +101,7 @@ describe("importNewsDeskResource", () => {
     expect(reloaded.components.find((c) => c["id"] === "s1")?.["srt_path"]).toBe("subtitles/s1.srt");
   });
 
-  it("fills a chapter schedule from analysis.json, dropping non-dict rows", async () => {
+  it("fills a chapter schedule + candidate titles from analysis.json, dropping non-dict rows", async () => {
     const fs = makeFs();
     const owner = await loadOwner(fs);
     const updated = await importNewsDeskResource(owner, fs, DIR, model, "c1", {
@@ -110,6 +111,14 @@ describe("importNewsDeskResource", () => {
     expect(updated["schedule"]).toEqual([
       { start_sec: 1, end_sec: 2, title: "T", refined: "R", key_points: ["k"] },
     ]);
+    // Candidate titles must be snapshotted too (trimmed, blanks dropped) — they
+    // feed publish.md's "Candidate Titles" section via render.ts.
+    expect(updated["titles"]).toEqual(["Title A", "Title B"]);
+
+    // Persisted: a fresh load sees both schedule and titles.
+    const reloaded = await NewsDeskConfigOwner.load(fs, `${DIR}/config.json`);
+    const c1 = reloaded.components.find((c) => c["id"] === "c1");
+    expect(c1?.["titles"]).toEqual(["Title A", "Title B"]);
   });
 
   it("rejects unknown component, wrong kind, missing SRT, and unknown import kind", async () => {
