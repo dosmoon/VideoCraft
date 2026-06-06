@@ -218,9 +218,11 @@ export function CropPreview(props: CropPreviewProps) {
             if (isMediaKind(c.kind)) {
               if (!frame && ac.sourceTimeSec != null) {
                 const us = ac.sourceTimeSec * 1_000_000;
-                frame = eng.reader.frameAtExact
-                  ? await eng.reader.frameAtExact(us)
-                  : await eng.reader.frameAt(us);
+                // Preview is real-time playback/scrub → the NON-blocking reader.
+                // frameAtExact is EXPORT-only: it blocks up to 3 s waiting for the
+                // exact frame, which at 60 fps stalls the rAF loop to ~1 frame/10 s
+                // (30 fps decode kept up, so the wait was short and it looked fine).
+                frame = await eng.reader.frameAt(us);
               }
             } else if (isCanvas2dOverlay(c.kind)) {
               overlayClips.push(c);
