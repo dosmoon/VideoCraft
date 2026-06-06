@@ -10,7 +10,7 @@
  */
 
 import { app, BrowserWindow, dialog, ipcMain, protocol, shell } from "electron";
-import { createReadStream, existsSync } from "node:fs";
+import { createReadStream, existsSync, writeFileSync } from "node:fs";
 import {
   copyFile,
   mkdir,
@@ -24,6 +24,7 @@ import {
   type FileHandle,
 } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
+import { release } from "node:os";
 import { Readable } from "node:stream";
 import { Sidecar, SidecarError } from "./sidecar";
 import { resolveAppPaths } from "./paths";
@@ -106,14 +107,21 @@ app.commandLine.appendSwitch("disable-gpu-sandbox");
 // ── Win11 Build 26200 sandbox-incompat workaround (TEMPORARY) ────────────────
 // Windows 11 Build 26200 (2026-05 cumulative update) changed low-level sandbox
 // behaviour in a way incompatible with the Electron 39-42 process-sandbox
-// implementation: child (GPU/renderer) processes crash on launch with
-// exit_code -2147483645 (0x80000003) — "GPU process isn't usable. Goodbye." /
-// render-process-gone { reason:'crashed' }. It's a cross-app upstream incident
-// (VS Code / Notion / GitHub Desktop hit it too); no local fix, only bypass.
+// implementation: sandboxed child processes die with exit_code -2147483645
+// (0x80000003). It's INTERMITTENT and cross-app (VS Code / Notion / GitHub
+// Desktop hit it too); no local fix, only bypass.
 //
-// We do NOT drop the sandbox unconditionally (keep its security on healthy
-// boxes). Instead: when a process dies with that exact signature, relaunch ONCE
-// with --no-sandbox. A flag on the relaunch argv prevents an infinite loop.
+// It bites not only at launch (GPU process) but at RUNTIME: opening a <video>
+// source preview spawns an audio/video-decode Utility process that hits it, and
+// the reactive relaunch then restarts the whole app mid-action — losing the
+// user's project + open view, which reads as a hard crash (this is exactly the
+// "click source → app died" report). So instead of waiting for the crash, we
+// drop the sandbox UP-FRONT on the affected build family.
+//
+// Decision (any ⇒ start --no-sandbox; all win32-only):
+//   1. build >= 26200          — known-affected family; avoids the crash entirely
+//   2. no-sandbox.flag present  — a prior session already saw the signature
+//   3. relaunch argv flag       — we ARE the reactive relaunch (legacy safety net)
 // Remove this whole block once upstream Electron fixes the Build 26200 incompat.
 //   (Alternative considered: pin to a pre-incompat Electron major — rejected:
 //    that major is EOL and lags ~10 Chromium versions on the WebGPU/WebCodecs
@@ -121,15 +129,34 @@ app.commandLine.appendSwitch("disable-gpu-sandbox");
 const SANDBOX_CRASH_CODE = -2147483645;
 const RELAUNCHED_FLAG = "--vc-no-sandbox-relaunch";
 const isSandboxRelaunch = process.argv.includes(RELAUNCHED_FLAG);
+// Persisted across sessions in user_data (preserved by the NSIS macro) so an
+// affected box doesn't crash + relaunch on every single launch.
+const noSandboxFlag = join(appPaths.userData, "no-sandbox.flag");
 
-if (process.platform === "win32" && isSandboxRelaunch) {
-  // We are the relaunched instance: the sandbox is the suspected culprit, so
-  // run this session without it.
+function win11SandboxAffected(): boolean {
+  if (process.platform !== "win32") return false;
+  // os.release() → "10.0.26200" on Win11; the build is the 3rd dotted component.
+  const build = parseInt(release().split(".")[2] ?? "0", 10);
+  return build >= 26200;
+}
+
+if (
+  process.platform === "win32" &&
+  (isSandboxRelaunch || existsSync(noSandboxFlag) || win11SandboxAffected())
+) {
   app.commandLine.appendSwitch("no-sandbox");
 }
 
 function relaunchWithoutSandbox(tag: string): void {
   if (process.platform !== "win32" || isSandboxRelaunch) return; // retry once only
+  // Persist the decision so the NEXT launch starts unsandboxed up-front instead
+  // of crashing + relaunching again (build detection covers >= 26200; this also
+  // self-heals any other affected build we didn't anticipate).
+  try {
+    writeFileSync(noSandboxFlag, "1");
+  } catch {
+    /* best-effort: persistence is an optimization, not required for correctness */
+  }
   console.error(
     `[sandbox] ${tag} crashed (exit ${SANDBOX_CRASH_CODE}); relaunching with ` +
       "--no-sandbox (Win11 Build 26200 workaround)",
