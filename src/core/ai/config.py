@@ -307,21 +307,15 @@ def canonicalize_provider_name(name: str) -> str:
 def keys_dir() -> str:
     """Return absolute path to the dir holding providers.json + .key files.
 
-    Dev: the repo's ``keys/`` (this file is src/core/ai/config.py; three up is
-    the repo root). Packaged (frozen): ``user_data/keys`` via core.user_data —
-    deliberately NOT ``__file__``-relative, which in a PyInstaller build resolves
-    inside the sealed resources/ tree. That tree is wiped on every reinstall /
-    update, so keys + routing would silently vanish. user_data sits beside the
-    exe and is preserved across updates by the NSIS customRemoveFiles macro
-    (desktop/build/installer.nsh). See docs/draft/packaging-design.md §4.
+    Thin re-export of the single source in core.user_data — kept so existing
+    callers of core.ai.config.keys_dir keep working. Both the writer (here) and
+    the reader (core.paths) MUST resolve through that one function so they can't
+    drift; they did once, silently breaking the packaged models-dir override.
+    See core.user_data.keys_dir + docs/draft/packaging-design.md §4.
     """
-    import sys
-    if getattr(sys, "frozen", False):
-        from core.user_data import path as _user_data_path
-        return _user_data_path("keys")
-    here = os.path.dirname(os.path.abspath(__file__))
-    # src/core/ai -> src/core -> src -> <repo root>
-    return os.path.normpath(os.path.join(here, "..", "..", "..", "keys"))
+    from core.user_data import keys_dir as _keys_dir
+
+    return _keys_dir()
 
 
 def read_key(provider_cfg: dict) -> str | None:

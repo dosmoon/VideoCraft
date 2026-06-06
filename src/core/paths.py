@@ -17,14 +17,16 @@ from __future__ import annotations
 import json
 import os
 
-from core.user_data import user_data_dir
+from core.user_data import keys_dir, user_data_dir
 
 
 def _providers_json_path() -> str:
-    here = os.path.dirname(os.path.abspath(__file__))
-    # src/core -> src -> <repo root>
-    root = os.path.normpath(os.path.join(here, "..", ".."))
-    return os.path.join(root, "keys", "providers.json")
+    # MUST resolve through core.user_data.keys_dir — the same function the writer
+    # (core.ai.config.save_config) uses. A previous __file__-relative copy here
+    # pointed at the sealed resources/keys in frozen builds while the writer had
+    # moved to user_data/keys, so the models-dir override was written but never
+    # read back ("更改本地模型路径无效" in the packaged app).
+    return os.path.join(keys_dir(), "providers.json")
 
 
 def _read_models_dir_override() -> str | None:

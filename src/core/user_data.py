@@ -47,6 +47,31 @@ def path(*parts: str) -> str:
     return os.path.join(user_data_dir(), *parts)
 
 
+def keys_dir() -> str:
+    """Return absolute path to the dir holding providers.json + provider .key files.
+
+    Frozen (packaged): ``<user_data>/keys`` — beside the exe, preserved across
+    updates by the NSIS customRemoveFiles macro. Deliberately NOT
+    ``__file__``-relative: in a PyInstaller build that resolves inside the
+    sealed, update-wiped resources/ tree.
+    Dev: the repo's top-level ``keys/`` (this file is src/core/user_data.py; two
+    up is the repo root).
+
+    Single source for BOTH the writer (core.ai.config.save_config) and the
+    reader (core.paths models_dir override). They were once two separate
+    __file__-relative implementations that drifted: a fix moved the writer to
+    user_data/keys but left the reader pointing at the sealed resources/keys, so
+    in packaged builds the models-dir override was written but never read back.
+    """
+    import sys
+
+    if getattr(sys, "frozen", False):
+        return path("keys")
+    here = os.path.dirname(os.path.abspath(__file__))
+    # src/core -> src -> <repo root>
+    return os.path.normpath(os.path.join(here, "..", "..", "keys"))
+
+
 # ── Legacy migration ────────────────────────────────────────────────────────
 
 _LEGACY_DIR = os.path.join(os.path.expanduser("~"), ".videocraft")
