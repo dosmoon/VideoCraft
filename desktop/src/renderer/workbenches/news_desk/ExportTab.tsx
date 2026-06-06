@@ -89,6 +89,8 @@ export function ExportTab(props: {
   const [rendered, setRendered] = useState<RenderedEntry[]>([]);
   const [renderStatus, setRenderStatus] = useState<RenderStatus>("idle");
   const [progress, setProgress] = useState(0); // 0..1 while rendering
+  const [framesDone, setFramesDone] = useState(0);
+  const [framesTotal, setFramesTotal] = useState(0);
   const [error, setError] = useState("");
   const [settings, setSettings] = useState<ExportSettings>(DEFAULT_EXPORT_SETTINGS);
   const [probe, setProbe] = useState<FfmpegProbe | null>(null);
@@ -241,7 +243,11 @@ export function ExportTab(props: {
         fps: cfg.fps,
         bitrate: resolveBitrate(cfg.bitrateMode, cfg.bitrateMbps, srcW, srcH, cfg.fps),
         durationSec: tl.durationSec,
-        onProgress: (d: number, t: number) => setProgress(d / t),
+        onProgress: (d: number, t: number) => {
+          setFramesDone(d);
+          setFramesTotal(t);
+          setProgress(d / t);
+        },
         cancelCheck: () => cancelRef.current,
       };
 
@@ -329,12 +335,17 @@ export function ExportTab(props: {
 
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 12 }}>
         <button onClick={() => void runRender()} disabled={!canRender} style={primaryBtn}>
-          {rendering ? tr("news_desk.export.rendering_progress", { pct: Math.round(progress * 100) }) : tr("news_desk.export.render_btn")}
+          {rendering ? tr("news_desk.export.rendering_progress", { pct: (progress * 100).toFixed(1) }) : tr("news_desk.export.render_btn")}
         </button>
         {rendering && (
-          <button onClick={() => (cancelRef.current = true)} style={btn}>
-            {tr("common.cancel")}
-          </button>
+          <>
+            <span style={{ fontSize: 12, color: "#aaa", fontVariantNumeric: "tabular-nums" }}>
+              {framesDone} / {framesTotal}
+            </span>
+            <button onClick={() => (cancelRef.current = true)} style={btn}>
+              {tr("common.cancel")}
+            </button>
+          </>
         )}
         <button onClick={() => void refresh()} disabled={rendering} style={btn}>
           {tr("news_desk.export.refresh_btn")}
