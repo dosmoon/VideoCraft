@@ -938,9 +938,14 @@ class AIRouter:
         return self._models_dir or ""
 
     def set_models_dir(self, path: str) -> None:
-        """Persist a new override. Empty string reverts to default. Change
-        only takes effect on the next process start (env vars are read once
-        by torch / huggingface_hub at import time)."""
+        """Persist a new override (empty string reverts to default).
+
+        Takes effect immediately: both the model downloader
+        (core.models.manager → spec.file_path → models_dir()) and the embedded
+        loaders (faster-whisper / llama-cpp via core.paths.cache_subdir) recompute
+        models_dir() per call, and the HF_HOME-style cache-env bridge
+        (paths.apply_cache_env) is not wired into the sidecar. Existing models are
+        NOT migrated — weights already on disk under the old root stay there."""
         self._models_dir = (path or "").strip()
         self._persist()
 

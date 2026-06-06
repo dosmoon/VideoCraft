@@ -58,6 +58,7 @@ export function ModelManager() {
   const [jobs, setJobs] = useState<ModelJob[]>([]);
   const [rootDir, setRootDir] = useState("");
   const [error, setError] = useState("");
+  const [dirChanged, setDirChanged] = useState(false);
   const doneSeen = useRef<Set<string>>(new Set());
 
   const loadCatalog = useCallback(() => {
@@ -74,6 +75,7 @@ export function ModelManager() {
     try {
       const r = await rpc.modelsSetRootDir(dir);
       setRootDir(r.dir);
+      setDirChanged(true);
       loadCatalog();
     } catch (e) {
       setError(fmtErr(e));
@@ -142,6 +144,22 @@ export function ModelManager() {
           {tr("models.refresh")}
         </button>
       </div>
+      {dirChanged && (
+        <div
+          style={{
+            border: "1px solid #2d5a2d",
+            background: "#16261a",
+            borderRadius: 6,
+            padding: "8px 12px",
+            marginBottom: 12,
+            fontSize: 12,
+            lineHeight: 1.5,
+          }}
+        >
+          <div style={{ color: "#9bd99b" }}>{tr("models.dir_changed_note")}</div>
+          <div style={{ color: "#bbb", marginTop: 3 }}>{tr("models.dir_changed_migrate")}</div>
+        </div>
+      )}
       <EmbeddedAiCard />
       <GpuCard onChanged={loadCatalog} />
       {error && <p style={{ color: "#ff6b6b" }}>✗ {error}</p>}

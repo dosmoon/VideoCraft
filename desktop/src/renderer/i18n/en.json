@@ -421,6 +421,8 @@
   "models.dir_open": "Open",
   "models.dir_change": "Change",
   "models.refresh": "Refresh",
+  "models.dir_changed_note": "✅ Now using the new models directory. New downloads save here immediately — no app restart needed.",
+  "models.dir_changed_migrate": "Existing models are not migrated: models in the old directory show as \"not installed\" here; move or re-download them.",
   "models.open_folder": "Open folder",
   "models.gpu.title": "GPU acceleration",
   "models.gpu.detecting": "Detecting…",

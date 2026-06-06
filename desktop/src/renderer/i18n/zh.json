@@ -421,6 +421,8 @@
   "models.dir_open": "打开",
   "models.dir_change": "更改",
   "models.refresh": "刷新",
+  "models.dir_changed_note": "✅ 已改用新模型目录。新的下载会立即保存到这里，无需重启 app。",
+  "models.dir_changed_migrate": "已安装的模型不会自动迁移：旧目录中的模型在此显示为「未安装」，需手动移动或重新下载。",
   "models.open_folder": "打开文件夹",
   "models.gpu.title": "GPU 加速",
   "models.gpu.detecting": "检测中…",
