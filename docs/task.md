@@ -5,6 +5,20 @@
 
 ---
 
+## ▶▶ 本会话(2026-06-05 续→06-06)= 打包前预修 + 重打 installer + dogfood 抓修「点 source 崩」(✅ 全 push,`ef397f3`→`44ac68f`;installer 02:22 重打)
+
+> 接上一轮(FastAPI 传输)。先做 3 个打包前预修 → 重打 installer → 用户真机 dogfood 抓出「点 news source 直接崩」→ 定位+修复+验过。全部 commit+push 到 `origin/main`(HEAD `44ac68f`)。**下次 = 用户开新对话跑完整 dogfood。** task.md 只留路标,诊断细节在各 commit message + 记忆。
+
+- **`ef397f3` ClaudeCode 默认勾选**:`_DEFAULT_PROVIDERS["ClaudeCode"].enabled` False→True(claude CLI 自己管 auth、无需 key,没理由像 Custom 那样默认关;Custom 仍默认关)。只在全新安装暴露。
+- **`4126a13` 用户数据绿色化(P1)= 覆盖/更新安装不再抹 user_data**:① `keys_dir()` 冻结态→`user_data/keys`(原 `__file__`-relative 落 sealed `_internal/keys`、随包抹;dev 仍 `<repo>/keys`,不迁凭据)② 新 `desktop/build/installer.nsh` `customRemoveFiles` 宏:卸载时 user_data 挪同卷兄弟目录→清 `$INSTDIR`→挪回(electron-builder 自动从 buildResources 收;`.gitignore` 加 `!installer.nsh`)。**真机验**:种 models/keys/settings/py-extra→跑装好的卸载器→app 删净、user_data 全留。权威 packaging-design.md §4;memory [[reference_nsis_userdata_preservation]]。**⚠️ 只护「带宏的 build」往后;首次覆盖 pre-fix 旧版仍抹 → fixed build 先干净装一次**。
+- **`44ac68f`「点 news source 直接崩」真因+修复(本会话主战)**:根因 = **Win11 26200 sandbox 间歇崩**,**不是** AV1 / 不是装版专属 / 不是某 commit(走了几轮弯路才定位——血泪:dev/装版/unpacked/codec 全被错排查过,最后靠 `ELECTRON_ENABLE_LOGGING` 抓到 `child-process(Utility) exit -2147483645`)。机制:点 source 开 `<video>` 预览 → Chromium 音视频解码 Utility 子进程间歇撞 sandbox 不兼容 → 旧的「崩了被动 `--no-sandbox` 重启」把整 app 中途重启=丢现场=用户眼里的「崩」。修:main.ts **启动即主动 `--no-sandbox`**(`build>=26200` via `os.release()`)+ 持久化 `user_data/no-sandbox.flag` 自愈 + 旧被动重启留兜底。**真机验**:重装后正常启动点 source 不崩。memory [[project_electron_version_policy]] 已更新(此 bug 运行时点视频预览触发、伪装成崩、抓日志法)。
+- **`3f07a9d` 源下载钉 H.264/AAC —— ⚠️ 半成品,新对话重议,先冻结别动**:当初当成崩因钉的(实为 sandbox)。H.264 比 AV1 大~33%(本视频 314MB vs 236MB,高速画面差更大)→ 下载变慢。**保留的真理由只剩音频 AAC**(YouTube 默认 Opus 塞进 mp4,浏览器易没声);视频档 H.264 对 4060(本就 AV1 硬解)好处弱。**新对话决策**:先查合成器/导出能否吃 AV1 源 → 能则视频档回退 `AV1+AAC` 省 1/3 下载、不能则 H.264 保持。用户拍板「先这样,dogfood 后再说」。
+- **installer 重打**(`build_sidecar`+`fetch_ffmpeg`+`build:win`,02:22,174.9MB):带上面全部 + 上一轮传输/i18n/路由/质检修复。HTTP 烟测 + 真机均过。
+
+**▶ 下一任务(新对话先做)= 用户跑完整 dogfood**(重打的 installer 已装)。逐项验:① 嵌入 AI 装+ASR **不卡死** ② 路由**不列禁用 provider** ③ 质检**本地化+点 #N 跳转** ④ 翻译选禁用 provider **报清晰错** ⑤ ClaudeCode **默认勾选** ⑥ **覆盖安装不丢 user_data** ⑦ 点 source **不崩**(已验,复测即可)。dogfood 中顺带定 `3f07a9d` 的 H.264↔AV1 取舍。**之后**回下方「P3 收尾(CI/签名)」。
+
+---
+
 ## ▶▶ 本会话(2026-06-05 大轮)= FastAPI 传输重构 + 4 个 GUI 真机 bug(✅ 全 push,`b1ed7fd`→`fd7edbf`)
 
 > 起因:打包态真机 ASR 卡死「正在加载本地模型」→ 用户怒「到处都是死锁,别当鸵鸟,换 fastapi」。一路做完传输重构,又在 GUI 验收里抓出一串 bug。**全部 commit + push 到 `origin/main`(HEAD `fd7edbf`)。** 传输权威 = **[ADR-0010](adr/0010-sidecar-http-transport.md)**;其余细节在各 commit message。task.md 只留路标。
@@ -15,7 +29,7 @@
 - **`fd7edbf` 僵尸 sidecar**:HTTP transport 丢了 stdio 的「stdin EOF 自动退出」→ Electron 崩了 sidecar 不死、攒僵尸。修:① `server._start_parent_watch()` 等**父进程句柄**(`OpenProcess`+`WaitForSingleObject`,**绝不读 stdin** 以避 ADR-0010 死锁)→ 父死 `os._exit`(打包态实测 PASS);② `dev.ps1` 启动顺手扫 `core_rpc.server` 残留。
 - **memory 已更新**:`reference_sidecar_native_import_deadlock` 顶部加横幅指向 ADR-0010(根因已结构性消除,warmup 退为非承重)。
 
-**▶ 欠 / 下一步(新对话从这接)= 带全部最新修复的 installer 还没重打**。本会话改了 sidecar(i18n 数据 + parent-watch)+ renderer(路由过滤 + 质检点击),但 **win-unpacked / installer 仍是旧的**(上次 `build:win` 在传输重构前)。下次开干净轮:`build_sidecar.ps1` + `fetch_ffmpeg.ps1` + `pnpm build:win` → **用户 GUI 终验**:① 嵌入 AI 装 + ASR **不再卡死**(决定性验传输修复)② 路由配置**不列禁用 provider** ③ 质检报告**本地化文本 + 点 #N 跳转** ④ 翻译选了禁用 provider **报清晰错**。这同时收口下方「干净打包态终验」。
+**▶ ✅ 已收口(2026-06-06,见最上方本会话块)**:installer 已 `build:win` 重打(02:22)带全部修复并真机装过;原 ①②③④ 终验项已并入最上方块的完整 dogfood 清单(⑤⑥⑦ 新增)。
 
 ---
 
