@@ -195,6 +195,13 @@ function createMainWindow(): BrowserWindow {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
+      // Keep the renderer at full speed when the window is minimized/occluded.
+      // Chromium throttles a background renderer's timers (down to ~1/s after a
+      // few minutes hidden); the export loop yields via setTimeout between frames,
+      // so a backgrounded export crawls. Exports render to an offscreen texture
+      // (not the visible swapchain), so there's no reason to throttle them when
+      // the window isn't focused.
+      backgroundThrottling: false,
     },
   });
 
