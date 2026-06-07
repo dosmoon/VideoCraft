@@ -200,7 +200,7 @@ export function ClipWorkbench(props: { type: string; instance: string; onClose: 
         )}
         {visited.has("clips") && (
           <div style={{ display: tab === "clips" ? "contents" : "none" }}>
-            <ClipsTab type={type} instance={instance} components={components} refreshKey={bindRefreshKey} />
+            <ClipsTab type={type} instance={instance} components={components} active={tab === "clips"} refreshKey={bindRefreshKey} />
           </div>
         )}
         {visited.has("export") && (

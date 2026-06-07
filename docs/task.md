@@ -13,6 +13,7 @@
 - **#2b 原样(passthrough)下比例/短边置灰** —— 它们在 passthrough 本就不生效(输出=源尺寸),置灰+悬停提示,消除"原样+9:16 没反应"困惑。
 - **#2a 新增第三种模式「居中留边」(letterbox/contain)** —— 整 16:9 居中进 9:16 上下留黑边,解左右并排素材没法裁竖屏。export(target aspect+不裁+contain)+ preview(画布按 target aspect 重排,preview≡render)+ 类型贯通 + 中英文案。**parity 查证 = 全新功能(原 Tk 无),用户点名要求新建**(非误删恢复)。
 - **#3 news_desk 恢复「按章节分割视频」** —— **查证 = 刻意 deferred(写在 `src/creations/news_desk/export.py` docstring + electron-migration-design.md),非误删**。恢复:主进程 [ffmpeg.ts](../desktop/electron/ffmpeg.ts) 新 `splitChapters`(对 output.mp4 按章节 `-c copy` 流拷贝、关键帧对齐、逐段失败只跳过)+ IPC/preload/类型 + 导出页**默认关**勾选框(无章节灰) + 纯逻辑 `chapterSegments` 4 单测。实际切分走主进程**随包 ffmpeg**(dev 需 PATH 有 ffmpeg)。
+- **后续修复(dogfood)= 候选页切模式不更新**:clip 三 tab 各持**独立** `useClipPreview`;候选页缺 `active`+激活 reload(导出页早有),改模式后候选预览停在旧 mode。修:[ClipsTab.tsx](../desktop/src/renderer/workbenches/clip/ClipsTab.tsx) 加 `active`+激活 `reload()`,[ClipWorkbench.tsx](../desktop/src/renderer/workbenches/clip/ClipWorkbench.tsx) 传 `active`。dogfood 通过。
 - 全程 build-green:typecheck(renderer+electron)+ 224 vitest + electron-vite build。
 
 ---

@@ -33,11 +33,21 @@ export function ClipsTab(props: {
   type: string;
   instance: string;
   components: Component[] | null;
+  /** True when this tab is the visible one (tabs are kept mounted/hidden). */
+  active: boolean;
   /** Shared binding refresh key — reload source/candidates when (re-)bound. */
   refreshKey: number;
 }) {
-  const { type, instance, components, refreshKey } = props;
+  const { type, instance, components, active, refreshKey } = props;
   const { status, message, data, reload } = useClipPreview(type, instance, refreshKey);
+
+  // Output config (mode / aspect) is edited in the Style tab while this one stays
+  // mounted-but-hidden, so its preview data goes stale. Re-read config on
+  // activation so the candidate previews follow reframe/letterbox/passthrough
+  // (the lightweight reload patches mode/aspect in place — no engine reopen).
+  useEffect(() => {
+    if (active) reload();
+  }, [active, reload]);
 
   // Batch selection (selected_clip_indices) — local truth, mirrored to the
   // sidecar. Detail panel index — which candidate's editor is open.
