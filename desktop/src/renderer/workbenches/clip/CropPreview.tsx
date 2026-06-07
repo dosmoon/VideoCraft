@@ -44,7 +44,7 @@ import { AudioPlayback } from "../../engine/playback/AudioPlayback";
 import type { DecodedAudio } from "../../engine/source/sample-types";
 import { isCanvas2dOverlay, drawOverlayClip, preloadImageOverlay } from "../../engine/overlay/canvas2d";
 import type { Component } from "../../ipc/client";
-import { centerCropRect, clampCropRect, type CropRect } from "./cropEditor";
+import { centerCropRect, clampCropRect, type ClipMode, type CropRect } from "./cropEditor";
 
 const SOURCE_REF = "source";
 const FPS = 30;
@@ -53,6 +53,28 @@ const MAX_CANVAS = 1280;
 
 // Cards need candidate text — dropped when the host says not to show them.
 const CARD_KINDS = new Set(["clip_hook_card", "clip_outro_card"]);
+
+/**
+ * Preview canvas size for a mode. letterbox previews the OUTPUT frame (target
+ * aspect, source contained with bars), so its canvas takes the target aspect;
+ * reframe/passthrough preview the whole SOURCE (source aspect, the crop box /
+ * full frame marks the export region).
+ */
+function canvasDimsFor(
+  mode: ClipMode,
+  srcW: number,
+  srcH: number,
+  aw: number,
+  ah: number,
+): { w: number; h: number } {
+  if (mode === "letterbox" && aw > 0 && ah > 0) {
+    const w = aw >= ah ? MAX_CANVAS : Math.round((MAX_CANVAS * aw) / ah);
+    const h = aw >= ah ? Math.round((MAX_CANVAS * ah) / aw) : MAX_CANVAS;
+    return { w: Math.max(2, w), h: Math.max(2, h) };
+  }
+  const scale = Math.min(1, MAX_CANVAS / Math.max(srcW, srcH));
+  return { w: Math.max(2, Math.round(srcW * scale)), h: Math.max(2, Math.round(srcH * scale)) };
+}
 
 type EngineStatus = "loading" | "ready" | "error";
 
@@ -81,7 +103,7 @@ export interface CropPreviewProps {
   components: Component[];
   /** Host-parsed SRT cues per language, in source time. */
   srtByLang: Record<string, readonly SourceCue[]>;
-  mode: "reframe" | "passthrough";
+  mode: ClipMode;
   aspect: { aw: number; ah: number };
   /** Style tab: render [0, full duration] regardless of the candidate window. */
   fullSource: boolean;
@@ -114,20 +136,22 @@ function paintEditorLayer(
   canvasW: number,
   canvasH: number,
   rect: CropRect,
-  mode: "reframe" | "passthrough",
+  mode: ClipMode,
   overlayClips: Clip[],
 ): void {
   ctx.clearRect(0, 0, canvasW, canvasH);
 
+  // Only reframe shows a sub-frame crop box; letterbox/passthrough overlay the
+  // whole canvas (the canvas IS the output frame).
   const box =
-    mode === "passthrough"
-      ? { ox: 0, oy: 0, bw: canvasW, bh: canvasH }
-      : {
+    mode === "reframe"
+      ? {
           ox: rect.x * canvasW,
           oy: rect.y * canvasH,
           bw: rect.w * canvasW,
           bh: rect.h * canvasH,
-        };
+        }
+      : { ox: 0, oy: 0, bw: canvasW, bh: canvasH };
 
   if (mode === "reframe") {
     ctx.fillStyle = "rgba(0,0,0,0.45)";
@@ -343,9 +367,9 @@ export function CropPreview(props: CropPreviewProps) {
         const durationSec = ms.durationUs / 1_000_000;
         const srcW = ms.width || 1280;
         const srcH = ms.height || 720;
-        const scale = Math.min(1, MAX_CANVAS / Math.max(srcW, srcH));
-        const canvasW = Math.max(2, Math.round(srcW * scale));
-        const canvasH = Math.max(2, Math.round(srcH * scale));
+        // letterbox sizes the canvas to the OUTPUT aspect; a later mode/aspect
+        // change re-sizes via the dedicated effect below.
+        const { w: canvasW, h: canvasH } = canvasDimsFor(mode, srcW, srcH, aspect.aw, aspect.ah);
 
         const backend = new Backend();
         await backend.init(canvas);
@@ -399,16 +423,33 @@ export function CropPreview(props: CropPreviewProps) {
   }, [srcPath]);
 
   // Sync the live crop rect from the controlled prop (default = centered).
+  // Only reframe carries a crop; letterbox/passthrough use the full frame.
   useEffect(() => {
     const eng = engineRef.current;
     if (status !== "ready" || !eng) return;
-    if (mode === "passthrough") {
-      rectRef.current = { x: 0, y: 0, w: 1, h: 1 };
-    } else {
+    if (mode === "reframe") {
       rectRef.current = cropRect ?? centerCropRect(eng.srcW, eng.srcH, aspect.aw, aspect.ah);
+    } else {
+      rectRef.current = { x: 0, y: 0, w: 1, h: 1 };
     }
     void renderAt(tRef.current);
   }, [cropRect, status, mode, aspect.aw, aspect.ah, renderAt]);
+
+  // letterbox previews the OUTPUT frame, so the canvas must resize when the mode
+  // or aspect changes (reframe/passthrough keep the fixed source aspect). Resize
+  // the GPU canvas + the overlay scratch to match, then repaint.
+  useEffect(() => {
+    const eng = engineRef.current;
+    if (status !== "ready" || !eng) return;
+    const { w, h } = canvasDimsFor(mode, eng.srcW, eng.srcH, aspect.aw, aspect.ah);
+    if (w === eng.canvasW && h === eng.canvasH) return;
+    eng.backend.resize(w, h);
+    eng.overlayCanvas.width = w;
+    eng.overlayCanvas.height = h;
+    eng.canvasW = w;
+    eng.canvasH = h;
+    void renderAt(tRef.current);
+  }, [mode, aspect.aw, aspect.ah, status, renderAt]);
 
   // Reset the playback clock to 0 whenever the preview WINDOW changes — i.e.
   // switching candidates or nudging start/end. A stale position would overflow a
@@ -493,9 +534,9 @@ export function CropPreview(props: CropPreviewProps) {
       // full-frame placeholder. Re-deriving it here is the paint that actually
       // draws the box, so the first candidate never shows a full-frame crop.
       rectRef.current =
-        mode === "passthrough"
-          ? { x: 0, y: 0, w: 1, h: 1 }
-          : (cropRect ?? centerCropRect(eng.srcW, eng.srcH, aspect.aw, aspect.ah));
+        mode === "reframe"
+          ? (cropRect ?? centerCropRect(eng.srcW, eng.srcH, aspect.aw, aspect.ah))
+          : { x: 0, y: 0, w: 1, h: 1 };
       void renderAt(tRef.current);
     })();
     return () => {

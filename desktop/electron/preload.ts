@@ -59,6 +59,14 @@ const api = {
       return ipcRenderer.invoke("vc:ffmpegEncode:abort", id);
     },
   },
+  /** Stream-copy a rendered mp4 into one file per chapter (publish-side split). */
+  splitChapters(params: {
+    inputPath: string;
+    outDir: string;
+    segments: { name: string; startSec: number; durationSec: number }[];
+  }): Promise<{ written: string[]; failed: { name: string; error: string }[] }> {
+    return ipcRenderer.invoke("vc:splitChapters", params);
+  },
   /** Reveal a file in the OS file manager. */
   showInFolder(absPath: string): Promise<void> {
     return ipcRenderer.invoke("vc:showInFolder", absPath);

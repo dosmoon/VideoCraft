@@ -21,7 +21,7 @@ import type { SourceCue } from "@composition/components/index.js";
 import type { ClipOverride, HotclipCandidate } from "@creations/clip/types.js";
 import { rpc, RpcError, type RenderedClip } from "../../ipc/client";
 import { parseSrt } from "./srt";
-import { parseAspect } from "./cropEditor";
+import { parseAspect, parseClipMode, type ClipMode } from "./cropEditor";
 
 export type PreviewStatus = "loading" | "ready" | "nobind" | "nosrc" | "error";
 
@@ -32,7 +32,7 @@ export interface ClipPreviewData {
   candidates: HotclipCandidate[];
   /** preview_data's selected index (selected_clip_indices[0] or 0). */
   selectedIndex: number;
-  mode: "reframe" | "passthrough";
+  mode: ClipMode;
   aspect: { aw: number; ah: number };
   shortEdge: number;
   /** Per-candidate overrides keyed by candidate index. */
@@ -98,8 +98,7 @@ export function useClipPreview(type: string, instance: string, refreshKey = 0) {
           prev
             ? {
                 ...prev,
-                mode:
-                  (cfg["output_mode"] as string) === "passthrough" ? "passthrough" : "reframe",
+                mode: parseClipMode(cfg["output_mode"]),
                 aspect: parseAspect((cfg["output_aspect"] as string) || "9:16"),
                 shortEdge: Number(cfg["output_short_edge"]) || 1080,
                 overrides: parseOverrides(cfg["clips_overrides"]),
@@ -166,7 +165,7 @@ export function useClipPreview(type: string, instance: string, refreshKey = 0) {
           lang: pd.lang,
           candidates: pd.candidates,
           selectedIndex: pd.selectedIndex,
-          mode: (cfg["output_mode"] as string) === "passthrough" ? "passthrough" : "reframe",
+          mode: parseClipMode(cfg["output_mode"]),
           aspect: parseAspect((cfg["output_aspect"] as string) || "9:16"),
           shortEdge: Number(cfg["output_short_edge"]) || 1080,
           overrides: parseOverrides(cfg["clips_overrides"]),

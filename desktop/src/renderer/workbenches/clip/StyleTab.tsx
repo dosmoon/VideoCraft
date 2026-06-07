@@ -81,7 +81,6 @@ export function StyleTab(props: {
   instance: string;
   components: Component[] | null;
   selectedId: string | null;
-  savingId: string | null;
   /** Shared binding refresh key (owned by ClipWorkbench, shared across tabs). */
   refreshKey: number;
   /** Bump the shared key after (re-)binding so every tab's preview reloads. */
@@ -91,7 +90,7 @@ export function StyleTab(props: {
   /** Replace the whole component list (add / remove / reorder returns a new list). */
   onComponentsReplaced: (list: Component[]) => void;
 }) {
-  const { type, instance, components, selectedId, savingId, refreshKey, onMaterialBound, onSelect, onPatch, onComponentsReplaced } =
+  const { type, instance, components, selectedId, refreshKey, onMaterialBound, onSelect, onPatch, onComponentsReplaced } =
     props;
   const selected = components?.find((c) => c.id === selectedId) ?? null;
 
@@ -301,6 +300,10 @@ export function StyleTab(props: {
   const isReframe = data?.mode === "reframe";
 
   const aspectStr = data ? `${data.aspect.aw}:${data.aspect.ah}` : "9:16";
+  // 原样(passthrough) keeps the source frame verbatim, so the aspect + short-edge
+  // settings have no effect there — gray them out to kill the "原样 + 9:16 does
+  // nothing" confusion. reframe and letterbox both honour them.
+  const aspectInert = data?.mode === "passthrough";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
@@ -318,11 +321,11 @@ export function StyleTab(props: {
           color: "#999",
         }}
       >
-        <label>
+        <label title={aspectInert ? tr("clip.style.aspect_inert_hint") : undefined}>
           {tr("clip.style.tb_aspect")}{" "}
           <select
             value={aspectStr}
-            disabled={!data}
+            disabled={!data || aspectInert}
             onChange={(e) => void patchOutput({ output_aspect: e.target.value })}
             style={selStyle}
           >
@@ -333,11 +336,11 @@ export function StyleTab(props: {
             ))}
           </select>
         </label>
-        <label>
+        <label title={aspectInert ? tr("clip.style.aspect_inert_hint") : undefined}>
           {tr("clip.style.tb_short_edge")}{" "}
           <select
             value={String(data?.shortEdge ?? 1080)}
-            disabled={!data}
+            disabled={!data || aspectInert}
             onChange={(e) => void patchOutput({ output_short_edge: Number(e.target.value) })}
             style={selStyle}
           >
@@ -357,6 +360,7 @@ export function StyleTab(props: {
             style={selStyle}
           >
             <option value="reframe">{tr("clip.style.mode_reframe")}</option>
+            <option value="letterbox">{tr("clip.style.mode_letterbox")}</option>
             <option value="passthrough">{tr("clip.style.mode_passthrough")}</option>
           </select>
         </label>
@@ -580,7 +584,6 @@ export function StyleTab(props: {
                     <input
                       type="checkbox"
                       checked={c.enabled ?? true}
-                      disabled={savingId === c.id}
                       onChange={() => onPatch(c, { enabled: !(c.enabled ?? true) })}
                     />
                     <button
@@ -630,7 +633,7 @@ export function StyleTab(props: {
         {selected ? (
           <ComponentEditor
             component={selected}
-            disabled={savingId === selected.id}
+            disabled={false}
             onPatch={(fields) => onPatch(selected, fields)}
             enums={{ language: data?.subtitleLangs ?? [] }}
           />

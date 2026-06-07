@@ -135,6 +135,44 @@ function chaptersForPublish(schedule: unknown): PublishChapter[] {
   });
 }
 
+export interface ChapterSegment {
+  /** Output basename, e.g. "01-intro.mp4". */
+  name: string;
+  startSec: number;
+  durationSec: number;
+}
+
+/** Strip path-hostile chars + collapse whitespace for a chapter filename. */
+function sanitizeChapterTitle(title: string): string {
+  return title
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "")
+    .replace(/\s+/g, "_")
+    .slice(0, 60);
+}
+
+/**
+ * Per-chapter stream-copy segments from a chapter component's `schedule`.
+ * Names are "NN-<sanitized title>.mp4" (1-indexed over the schedule so they line
+ * up with publish.md's numbering); degenerate (≤0.1s) windows are dropped.
+ * Mirrors the legacy news_desk_tool._write_chapter_videos_artifact loop.
+ */
+export function chapterSegments(schedule: unknown): ChapterSegment[] {
+  if (!Array.isArray(schedule)) return [];
+  const out: ChapterSegment[] = [];
+  schedule.forEach((ch, i) => {
+    const c = ch as Record<string, unknown>;
+    const startSec = Number(c["start_sec"] ?? 0);
+    const endSec = Number(c["end_sec"] ?? 0);
+    const durationSec = endSec - startSec;
+    if (!(durationSec > 0.1)) return;
+    const safe = sanitizeChapterTitle(String(c["title"] ?? ""));
+    const idx = String(i + 1).padStart(2, "0");
+    out.push({ name: safe ? `${idx}-${safe}.mp4` : `${idx}.mp4`, startSec, durationSec });
+  });
+  return out;
+}
+
 async function readSubtitleCues(fs: Fs, instanceDir: string, comp: ComponentDict | undefined): Promise<TranscriptCue[]> {
   if (!comp) return [];
   const rel = String(comp["srt_path"] ?? "").trim();

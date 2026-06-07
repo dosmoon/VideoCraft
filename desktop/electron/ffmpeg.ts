@@ -198,6 +198,86 @@ export async function abortJob(id: number): Promise<void> {
   }
 }
 
+export interface ChapterSplitSegment {
+  /** Output basename, e.g. "01-intro.mp4". */
+  name: string;
+  startSec: number;
+  durationSec: number;
+}
+
+export interface SplitChaptersParams {
+  /** Rendered mp4 to cut (the main export). */
+  inputPath: string;
+  /** Directory the chapter mp4s are written into (created if missing). */
+  outDir: string;
+  segments: ChapterSplitSegment[];
+}
+
+export interface SplitChaptersResult {
+  /** Basenames written successfully. */
+  written: string[];
+  /** Segments that failed (collected, never thrown). */
+  failed: { name: string; error: string }[];
+}
+
+/** Run an ffmpeg invocation to completion, capturing the stderr tail. */
+function runFfmpeg(ff: string, args: string[]): Promise<{ code: number; stderr: string }> {
+  return new Promise((resolve) => {
+    const proc = spawn(ff, args, { stdio: ["ignore", "ignore", "pipe"] });
+    const tail: string[] = [];
+    proc.stderr?.setEncoding("utf-8");
+    proc.stderr?.on("data", (chunk: string) => {
+      for (const line of chunk.split("\n")) if (line.trim()) tail.push(line.trim());
+      if (tail.length > 20) tail.splice(0, tail.length - 20);
+    });
+    proc.on("error", (e) => resolve({ code: -1, stderr: String(e) }));
+    proc.on("close", (code) => resolve({ code: code ?? -1, stderr: tail.join("\n") }));
+  });
+}
+
+/**
+ * Stream-copy (no re-encode) the input mp4 into one file per chapter segment.
+ * `-ss` BEFORE `-i` input-seeks to the keyframe at-or-before the start, so each
+ * copy is keyframe-aligned (mirrors the legacy core/video_split KEYFRAME_SNAP).
+ * A segment that fails is collected and skipped — one bad chapter never aborts
+ * the rest. Publish-side artifact: best-effort, never blocks the main export.
+ */
+export async function splitChapters(p: SplitChaptersParams): Promise<SplitChaptersResult> {
+  const ff = resolveFfmpeg();
+  if (!ff) throw new Error("ffmpeg not found");
+  await mkdir(p.outDir, { recursive: true });
+  const written: string[] = [];
+  const failed: { name: string; error: string }[] = [];
+  for (const seg of p.segments) {
+    if (!(seg.durationSec > 0.1)) continue; // skip degenerate windows
+    const out = join(p.outDir, seg.name);
+    const tmp = out + ".part";
+    const args = [
+      "-y", "-hide_banner", "-loglevel", "error",
+      "-ss", String(seg.startSec),
+      "-i", p.inputPath,
+      "-t", String(seg.durationSec),
+      "-c", "copy",
+      "-avoid_negative_ts", "make_zero",
+      "-movflags", "+faststart",
+      "-f", "mp4", tmp,
+    ];
+    const r = await runFfmpeg(ff, args);
+    if (r.code === 0) {
+      try {
+        await rename(tmp, out);
+        written.push(seg.name);
+      } catch (e) {
+        failed.push({ name: seg.name, error: String(e) });
+      }
+    } else {
+      await rm(tmp).catch(() => {});
+      failed.push({ name: seg.name, error: r.stderr || `status=${r.code}` });
+    }
+  }
+  return { written, failed };
+}
+
 /** Kill every live job (app quit). */
 export function killAllFfmpeg(): void {
   for (const [, job] of jobs) {

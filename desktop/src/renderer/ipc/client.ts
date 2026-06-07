@@ -99,7 +99,7 @@ export interface RenderPlanClip {
 /** Render plan for the selected candidates (output paths + global geometry). */
 export interface RenderPlan {
   lang: string;
-  mode: "reframe" | "passthrough";
+  mode: "reframe" | "letterbox" | "passthrough";
   aspect: string;
   shortEdge: number;
   instanceDir: string;

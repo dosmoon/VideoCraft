@@ -34,11 +34,32 @@ function fmt(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Deep-merge a (possibly nested) field patch into a component for an optimistic
+ *  UI update — mirrors how the sidecar merges nested sub-objects, so an edit to
+ *  one nested leaf doesn't transiently blank its siblings. */
+function deepMerge(
+  base: Record<string, unknown>,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base };
+  for (const [k, v] of Object.entries(patch)) {
+    const cur = out[k];
+    if (
+      v && typeof v === "object" && !Array.isArray(v) &&
+      cur && typeof cur === "object" && !Array.isArray(cur)
+    ) {
+      out[k] = deepMerge(cur as Record<string, unknown>, v as Record<string, unknown>);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
 export function ClipWorkbench(props: { type: string; instance: string; onClose: () => void }) {
   const { type, instance, onClose } = props;
   const [components, setComponents] = useState<Component[] | null>(null);
   const [error, setError] = useState("");
-  const [savingId, setSavingId] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("style");
   // Tabs are mounted on first visit and kept alive (hidden via display) so
@@ -78,15 +99,26 @@ export function ClipWorkbench(props: { type: string; instance: string; onClose: 
   // back into state (no full reload, so editing stays snappy).
   const patch = useCallback(
     async (comp: Component, fields: Record<string, unknown>) => {
-      setSavingId(comp.id);
       setError("");
+      // Optimistic: reflect the edit locally at once so property fields never
+      // freeze waiting on the sidecar round-trip. The old code disabled the
+      // whole panel for the duration of updateComponent (`savingId`), which made
+      // inputs intermittently unclickable when the round-trip was slow. Reconcile
+      // with the server's canonical component on success; resync on failure.
+      setComponents(
+        (prev) => prev?.map((c) => (c.id === comp.id ? (deepMerge(c, fields) as Component) : c)) ?? null,
+      );
       try {
         const updated = await rpc.updateComponent(type, instance, comp.id, fields);
         setComponents((prev) => prev?.map((c) => (c.id === comp.id ? updated : c)) ?? null);
       } catch (err) {
         setError(fmt(err));
-      } finally {
-        setSavingId(null);
+        try {
+          const cs = await rpc.listComponents(type, instance);
+          setComponents(cs);
+        } catch {
+          /* keep the optimistic state if the resync also fails */
+        }
       }
     },
     [type, instance],
@@ -158,7 +190,6 @@ export function ClipWorkbench(props: { type: string; instance: string; onClose: 
               instance={instance}
               components={components}
               selectedId={selectedId}
-              savingId={savingId}
               refreshKey={bindRefreshKey}
               onMaterialBound={onMaterialBound}
               onSelect={setSelectedId}

@@ -210,6 +210,10 @@ export function ExportTab(props: {
         const srcH = ms.height || 720;
         const aspect = parseAspect(p.aspect);
         const isPassthrough = p.mode === "passthrough";
+        // letterbox keeps the whole source (no crop) but still renders into the
+        // chosen aspect frame, so the contain-fit adds the bars. passthrough
+        // keeps the source frame verbatim.
+        const isLetterbox = p.mode === "letterbox";
         const target = isPassthrough
           ? { width: even(srcW), height: even(srcH) }
           : targetDimsForAspect(p.aspect, p.shortEdge);
@@ -268,9 +272,10 @@ export function ExportTab(props: {
               frameAspect: target.width / target.height,
               ...(override ? { override } : {}),
             });
-            const cropRect: CropRect | undefined = isPassthrough
-              ? undefined
-              : (clip.cropRect ?? centerCropRect(srcW, srcH, aspect.aw, aspect.ah));
+            const cropRect: CropRect | undefined =
+              isPassthrough || isLetterbox
+                ? undefined
+                : (clip.cropRect ?? centerCropRect(srcW, srcH, aspect.aw, aspect.ah));
             const cfg = settingsRef.current;
             const base = {
               timeline: tl,

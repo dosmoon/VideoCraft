@@ -405,6 +405,8 @@ ipcMain.handle("vc:ffmpegEncode:start", (_e, params: ffmpeg.FfmpegStartParams) =
 ipcMain.handle("vc:ffmpegEncode:writeFrame", (_e, id: number, bytes: Uint8Array) => ffmpeg.writeFrame(id, bytes));
 ipcMain.handle("vc:ffmpegEncode:finish", (_e, id: number) => ffmpeg.finishJob(id));
 ipcMain.handle("vc:ffmpegEncode:abort", (_e, id: number) => ffmpeg.abortJob(id));
+// Publish-side per-chapter split: stream-copy the rendered mp4 into chapters/*.mp4.
+ipcMain.handle("vc:splitChapters", (_e, params: ffmpeg.SplitChaptersParams) => ffmpeg.splitChapters(params));
 
 // ── vc:fs:* — generic project-scoped file I/O (ADR-0008) ─────────────────────
 // readJson/readText/list/stat degrade to null/[]/{exists:false} on a missing

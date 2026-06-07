@@ -44,6 +44,11 @@ interface VcApi {
   closeWriteStream(id: number): Promise<string>;
   abortWriteStream(id: number): Promise<void>;
   ffmpegEncode: VcFfmpegEncodeApi;
+  splitChapters(params: {
+    inputPath: string;
+    outDir: string;
+    segments: { name: string; startSec: number; durationSec: number }[];
+  }): Promise<{ written: string[]; failed: { name: string; error: string }[] }>;
   showInFolder(absPath: string): Promise<void>;
   openPath(absPath: string): Promise<string>;
   openExternal(url: string): Promise<void>;

@@ -33,7 +33,7 @@ import {
   resolveCrop,
 } from "@creations/clip/mapping.js";
 import { CropPreview } from "./CropPreview";
-import type { CropRect } from "./cropEditor";
+import type { ClipMode, CropRect } from "./cropEditor";
 
 const NUDGE = 0.5; // seconds, mirrors clip_editor.py nudge buttons
 const MIN_LEN = 0.1; // start < end - 0.1 invariant
@@ -49,7 +49,7 @@ export interface ClipDetailPanelProps {
   srcPath: string;
   srtByLang: Record<string, readonly SourceCue[]>;
   lang: string;
-  mode: "reframe" | "passthrough";
+  mode: ClipMode;
   aspect: { aw: number; ah: number };
   /** Called after any write so the host reloads config (refreshes overrides). */
   onChanged: () => void;

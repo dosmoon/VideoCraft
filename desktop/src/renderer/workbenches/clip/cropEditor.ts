@@ -20,6 +20,21 @@ export interface CropRect {
 }
 
 /**
+ * Output framing modes:
+ *   - reframe    : crop a (draggable, output-aspect) window of the source — cover.
+ *   - letterbox  : keep the WHOLE source, centered in the output frame with bars
+ *                  (contain). For landscape content that can't be cropped to
+ *                  portrait (e.g. side-by-side speakers).
+ *   - passthrough: export the source frame verbatim; aspect/short-edge ignored.
+ */
+export type ClipMode = "reframe" | "letterbox" | "passthrough";
+
+/** Normalize a stored output_mode string to a known ClipMode (reframe default). */
+export function parseClipMode(v: unknown): ClipMode {
+  return v === "passthrough" ? "passthrough" : v === "letterbox" ? "letterbox" : "reframe";
+}
+
+/**
  * Output (w,h) at a 1080-class short edge, even dims for the encoder — faithful
  * port of render.py::_target_dims_for_aspect. The crop editor sizes its canvas
  * to the SOURCE (so the whole frame shows), but export crops the box and scales

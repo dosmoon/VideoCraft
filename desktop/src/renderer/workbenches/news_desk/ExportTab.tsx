@@ -17,6 +17,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { tr } from "../../i18n/tr";
 import { rpc, RpcError, type Component } from "../../ipc/client";
 import { buildNewsDeskTimeline } from "@creations/news_desk/assemble.js";
+import { chapterSegments } from "@creations/news_desk/render.js";
 import type { NewsDeskComponentConfig } from "@creations/news_desk/types.js";
 import { Backend } from "../../engine/gpu/Backend";
 import { MediaSource } from "../../engine/source/MediaSource";
@@ -94,6 +95,12 @@ export function ExportTab(props: {
   const [error, setError] = useState("");
   const [settings, setSettings] = useState<ExportSettings>(DEFAULT_EXPORT_SETTINGS);
   const [probe, setProbe] = useState<FfmpegProbe | null>(null);
+  // Off-by-default publish-side opt-in: after the main render, stream-copy the
+  // output into chapters/*.mp4 (legacy news_desk_tool's "chapter_videos").
+  const [splitByChapter, setSplitByChapter] = useState(false);
+  const [splitNote, setSplitNote] = useState("");
+  const splitByChapterRef = useRef(splitByChapter);
+  splitByChapterRef.current = splitByChapter;
   const cancelRef = useRef(false);
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
@@ -281,6 +288,30 @@ export function ExportTab(props: {
       setRendered(list as RenderedEntry[]);
       setRenderStatus("done");
       setProgress(1);
+
+      // Optional publish-side per-chapter split (off by default). Best-effort:
+      // a failure here never fails the (already committed) main export.
+      setSplitNote("");
+      if (splitByChapterRef.current) {
+        const chapterComp = (components ?? []).find((c) => c.kind === "chapter");
+        const segments = chapterComp ? chapterSegments(chapterComp["schedule"]) : [];
+        if (segments.length > 0) {
+          try {
+            const res = await window.vc.splitChapters({
+              inputPath: p.outputPath,
+              outDir: `${p.instanceDir}/chapters`,
+              segments,
+            });
+            setSplitNote(
+              res.failed.length
+                ? tr("news_desk.export.split_partial", { ok: res.written.length, fail: res.failed.length })
+                : tr("news_desk.export.split_done", { n: res.written.length }),
+            );
+          } catch (e) {
+            setSplitNote(tr("news_desk.export.split_failed", { err: fmtErr(e) }));
+          }
+        }
+      }
     } catch (e) {
       if (e instanceof ExportCancelled) {
         setRenderStatus("idle");
@@ -320,6 +351,8 @@ export function ExportTab(props: {
   const valStyle: React.CSSProperties = { color: "#ddd", wordBreak: "break-all" };
   const rendering = renderStatus === "rendering";
   const canRender = !rendering && !!plan?.mediaRef && previewStatus === "ready";
+  const chapterComp = (components ?? []).find((c) => c.kind === "chapter");
+  const canSplit = chapterComp ? chapterSegments(chapterComp["schedule"]).length > 0 : false;
 
   return (
     <div style={{ padding: 16 }}>
@@ -350,9 +383,22 @@ export function ExportTab(props: {
         <button onClick={() => void refresh()} disabled={rendering} style={btn}>
           {tr("news_desk.export.refresh_btn")}
         </button>
+        <label
+          title={canSplit ? undefined : tr("news_desk.export.split_chapters_hint")}
+          style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: canSplit ? "#bbb" : "#666" }}
+        >
+          <input
+            type="checkbox"
+            checked={splitByChapter}
+            disabled={!canSplit || rendering}
+            onChange={(e) => setSplitByChapter(e.target.checked)}
+          />
+          {tr("news_desk.export.split_chapters")}
+        </label>
         {renderStatus === "done" && !rendering && (
           <span style={{ color: "#3ecf8e", fontSize: 12 }}>✓ {tr("news_desk.export.done")}</span>
         )}
+        {splitNote && <span style={{ color: "#aaa", fontSize: 12 }}>{splitNote}</span>}
         {error && <span style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {error}</span>}
       </div>
 
