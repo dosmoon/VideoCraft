@@ -5,6 +5,18 @@
 
 ---
 
+## ▶▶ 本会话(2026-06-07 dogfood round 2)= clip/news_desk 4 项(✅ 全 dogfood 通过 + push `e0080ca` + installer 11:24 重打)
+
+> 用户第二轮 dogfood 抓出 4 项。全部修复+真机复验通过+commit+push origin/main(HEAD `e0080ca`)+ 重打 installer(11:24,174.9MB,复用未变冻结 sidecar+ffmpeg,仅重打 renderer/main/preload)。细节在 commit message,这里只留路标。
+
+- **#1 clip 编辑框偶发"点不动、过会儿好"** = 属性面板/勾选框在 `updateComponent` 往返期间被 `savingId` 整体 `disabled` 冻结(sidecar 一慢就锁)。修:[ClipWorkbench.tsx](../desktop/src/renderer/workbenches/clip/ClipWorkbench.tsx) 改**乐观更新**(本地 deepMerge 立即生效、后台静默存、失败 resync),删 disable-during-save。注:并行 agent 给的"await 阻塞主线程"理论是**错的**(await 让出事件循环;预览已是非阻塞 frameAt)。
+- **#2b 原样(passthrough)下比例/短边置灰** —— 它们在 passthrough 本就不生效(输出=源尺寸),置灰+悬停提示,消除"原样+9:16 没反应"困惑。
+- **#2a 新增第三种模式「居中留边」(letterbox/contain)** —— 整 16:9 居中进 9:16 上下留黑边,解左右并排素材没法裁竖屏。export(target aspect+不裁+contain)+ preview(画布按 target aspect 重排,preview≡render)+ 类型贯通 + 中英文案。**parity 查证 = 全新功能(原 Tk 无),用户点名要求新建**(非误删恢复)。
+- **#3 news_desk 恢复「按章节分割视频」** —— **查证 = 刻意 deferred(写在 `src/creations/news_desk/export.py` docstring + electron-migration-design.md),非误删**。恢复:主进程 [ffmpeg.ts](../desktop/electron/ffmpeg.ts) 新 `splitChapters`(对 output.mp4 按章节 `-c copy` 流拷贝、关键帧对齐、逐段失败只跳过)+ IPC/preload/类型 + 导出页**默认关**勾选框(无章节灰) + 纯逻辑 `chapterSegments` 4 单测。实际切分走主进程**随包 ffmpeg**(dev 需 PATH 有 ffmpeg)。
+- 全程 build-green:typecheck(renderer+electron)+ 224 vitest + electron-vite build。
+
+---
+
 ## ▶▶ 本会话(2026-06-06 dogfood)= 一串真机修复(✅ push)+ ✅ **60fps 导出慢已破案+已修+单测钉死+真机 dogfood 复验通过**
 
 > 用户跑 dogfood 抓出一串 bug。**已修+push 的见下;唯一悬而未决 = 60fps AV1 导出 ~0.5fps。** ⚠️ **本轮血泪**:我在 60fps 问题上反复瞎猜(错怪 AV1→backgroundThrottling→ring→硬解→队列背压,全错),直到装探针拿数据才排除。**纪律(务必遵守)**:遇到「dev 正常/装版异常」或「改了没反应」**先上探针拿数据,别猜**;**renderer 改动必须 `desktop/dev.ps1` 整重启**(本环境 HMR 发旧 bundle,Ctrl+R 一直在喂旧代码、害我对着旧 bundle 瞎调)。
