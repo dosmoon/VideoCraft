@@ -33,7 +33,7 @@ import {
   resolveCrop,
 } from "@creations/clip/mapping.js";
 import { CropPreview } from "./CropPreview";
-import type { ClipMode, CropRect } from "./cropEditor";
+import type { ClipMode, CropRect } from "@composition/crop.js";
 
 const NUDGE = 0.5; // seconds, mirrors clip_editor.py nudge buttons
 const MIN_LEN = 0.1; // start < end - 0.1 invariant

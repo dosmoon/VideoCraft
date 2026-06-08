@@ -5,8 +5,10 @@
  * The render runs here (the renderer owns the GPU); the sidecar owns
  * paths/naming/sidecar-JSON/rendered[] (creation.plan_render → encode →
  * vc:writeFile → creation.commit_render). Mirrors clip's ExportTab render loop
- * but for a single full-source output: no candidate iteration, no reframe crop,
- * target = source dimensions, out_idx pinned to 1 (src_idx unused).
+ * but for a single full-source output: no candidate iteration, out_idx pinned to
+ * 1 (src_idx unused). Output framing is a single instance-level reframe: default
+ * passthrough = source dims (whole frame); reframe/letterbox target a chosen
+ * aspect (the crop rides on the timeline clip via Clip.crop).
  *
  * One compositor feeds preview and export via buildNewsDeskTimeline →
  * resolveFrameAt → encode, so the exported mp4 ≡ what the Style-tab preview
@@ -19,6 +21,7 @@ import { rpc, RpcError, type Component } from "../../ipc/client";
 import { buildNewsDeskTimeline } from "@creations/news_desk/assemble.js";
 import { chapterSegments } from "@creations/news_desk/render.js";
 import type { NewsDeskComponentConfig } from "@creations/news_desk/types.js";
+import { centerCropRect, parseAspect, targetDimsForAspect, type CropRect } from "@composition/crop.js";
 import { Backend } from "../../engine/gpu/Backend";
 import { MediaSource } from "../../engine/source/MediaSource";
 import { ClipReader } from "../../engine/source/ClipReader";
@@ -188,17 +191,31 @@ export function ExportTab(props: {
       backend = new Backend();
       await backend.init(canvas);
 
-      // Full-source render. Output dims = source, optionally downscaled by the
-      // resolution preset (preserving aspect, never upscaling).
+      // Output dims + reframe rect by framing mode (default passthrough = today):
+      //   passthrough — source dims, optionally downscaled by the resolution
+      //                 preset (preserving aspect, never upscaling); whole frame.
+      //   reframe     — target aspect @ short-edge; crop the persisted (or
+      //                 centered) box and scale it to fill.
+      //   letterbox   — target aspect @ short-edge; whole source contained (bars).
       const cfg = settingsRef.current;
-      const { width: srcW, height: srcH } = downscaleToShortEdge(
-        even(ms.width || 1280),
-        even(ms.height || 720),
-        cfg.resolution,
-      );
+      const framing = data.framing;
+      const srcW0 = even(ms.width || 1280);
+      const srcH0 = even(ms.height || 720);
+      let outW: number;
+      let outH: number;
+      let cropRect: CropRect | undefined;
+      if (framing.mode === "passthrough") {
+        ({ width: outW, height: outH } = downscaleToShortEdge(srcW0, srcH0, cfg.resolution));
+      } else {
+        const a = parseAspect(framing.aspect);
+        ({ width: outW, height: outH } = targetDimsForAspect(framing.aspect, framing.shortEdge));
+        if (framing.mode === "reframe") {
+          cropRect = framing.cropRect ?? centerCropRect(srcW0, srcH0, a.aw, a.ah);
+        }
+      }
       const durationSec = ms.durationUs / 1_000_000 || data.durationSec;
-      backend.resize(srcW, srcH);
-      const overlayCanvas = new OffscreenCanvas(srcW, srcH);
+      backend.resize(outW, outH);
+      const overlayCanvas = new OffscreenCanvas(outW, outH);
       const overlayCtx = overlayCanvas.getContext("2d");
       if (!overlayCtx) throw new Error("failed to get 2d context");
       const drawDeps = {
@@ -238,17 +255,18 @@ export function ExportTab(props: {
         durationSec,
         cuesBySrtPath: data.cuesBySrtPath,
         mediaRef: SOURCE_REF,
-        frameAspect: srcW / srcH,
+        frameAspect: outW / outH,
+        ...(cropRect ? { cropRect } : {}),
       });
 
       const base = {
         timeline: tl,
         drawDeps,
         backend,
-        width: srcW,
-        height: srcH,
+        width: outW,
+        height: outH,
         fps: cfg.fps,
-        bitrate: resolveBitrate(cfg.bitrateMode, cfg.bitrateMbps, srcW, srcH, cfg.fps),
+        bitrate: resolveBitrate(cfg.bitrateMode, cfg.bitrateMbps, outW, outH, cfg.fps),
         durationSec: tl.durationSec,
         onProgress: (d: number, t: number) => {
           setFramesDone(d);

@@ -33,7 +33,7 @@ import {
   type FfmpegProbe,
 } from "@creations/exportSettings";
 import { useClipPreview } from "./useClipPreview";
-import { centerCropRect, parseAspect, targetDimsForAspect, type CropRect } from "./cropEditor";
+import { centerCropRect, parseAspect, targetDimsForAspect, type CropRect } from "@composition/crop.js";
 
 const SOURCE_REF = "source";
 
@@ -264,6 +264,12 @@ export function ExportTab(props: {
           if (!candidate) continue;
           const override = data.overrides[clip.srcIdx];
           try {
+            // Reframe rect rides on the timeline clip now (Clip.crop), not as a
+            // global export dep. passthrough/letterbox keep the whole source.
+            const cropRect: CropRect | undefined =
+              isPassthrough || isLetterbox
+                ? undefined
+                : (clip.cropRect ?? centerCropRect(srcW, srcH, aspect.aw, aspect.ah));
             const tl = buildClipTimeline({
               components: (components ?? []) as unknown as ClipComponentConfig[],
               candidate,
@@ -271,11 +277,8 @@ export function ExportTab(props: {
               mediaRef: SOURCE_REF,
               frameAspect: target.width / target.height,
               ...(override ? { override } : {}),
+              ...(cropRect ? { cropRect } : {}),
             });
-            const cropRect: CropRect | undefined =
-              isPassthrough || isLetterbox
-                ? undefined
-                : (clip.cropRect ?? centerCropRect(srcW, srcH, aspect.aw, aspect.ah));
             const cfg = settingsRef.current;
             const base = {
               timeline: tl,
@@ -286,7 +289,6 @@ export function ExportTab(props: {
               fps: cfg.fps,
               bitrate: resolveBitrate(cfg.bitrateMode, cfg.bitrateMbps, target.width, target.height, cfg.fps),
               durationSec: tl.durationSec,
-              ...(cropRect ? { cropRect } : {}),
               onProgress: (d: number, t: number) =>
                 setRows((rs) =>
                   rs.map((r) => (r.outIdx === clip.outIdx ? { ...r, progress: d / t } : r)),

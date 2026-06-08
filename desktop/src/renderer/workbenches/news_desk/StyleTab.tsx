@@ -21,6 +21,7 @@ import { NewsDeskPreview, type NewsDeskPreviewHandle } from "./NewsDeskPreview";
 import { useNewsDeskPreview } from "./useNewsDeskPreview";
 import { ComponentEditor } from "../shared/ComponentEditor";
 import { SubtitleCueList, ChapterScheduleList } from "./ComponentDetail";
+import { parseAspect, type CropRect } from "@composition/crop.js";
 
 // Friendly component labels — the UI must never show the internal kind name
 // ([[feedback_user_facing_naming]]). Matches the default_instance names in
@@ -43,6 +44,18 @@ const mgrBtn: React.CSSProperties = {
   padding: "2px 9px",
   fontSize: 12,
   cursor: "pointer",
+};
+
+// Output-framing toolbar. News is usually landscape → 16:9 first.
+const FRAMING_ASPECTS = ["16:9", "9:16", "1:1", "4:5"];
+const FRAMING_SHORT_EDGES = [720, 1080, 1440, 2160];
+const selStyle: React.CSSProperties = {
+  background: "#1a1a1e",
+  color: "#ddd",
+  border: "1px solid #333",
+  borderRadius: 4,
+  padding: "2px 4px",
+  fontSize: 12,
 };
 
 export function StyleTab(props: {
@@ -129,6 +142,36 @@ export function StyleTab(props: {
     setRefreshKey((k) => k + 1);
     preview.reload();
   }, [preview]);
+
+  // ── output framing (spatial reframe) ────────────────────────────────────────
+  const framing = preview.data?.framing ?? null;
+  // passthrough keeps the source frame verbatim, so aspect + short-edge have no
+  // effect there — gray them out (mirrors clip's "原样 + 9:16 does nothing" fix).
+  const framingInert = framing?.mode === "passthrough";
+
+  // Patch a framing field → reload the preview (mode/aspect/short-edge change the
+  // composed output, so the whole preview must re-fetch its geometry).
+  const patchFraming = useCallback(
+    async (patch: Record<string, unknown>) => {
+      setCompErr("");
+      try {
+        await rpc.updateConfig(type, instance, patch);
+        preview.reload();
+      } catch (err) {
+        setCompErr(fmtErr(err));
+      }
+    },
+    [type, instance, preview],
+  );
+
+  // Persist a dragged crop WITHOUT reloading — the live box already reflects it;
+  // a reload would tear down/rebuild the preview engine mid-edit.
+  const onCropChange = useCallback(
+    (rect: CropRect) => {
+      void rpc.updateConfig(type, instance, { crop_rect: rect }).catch((err) => setCompErr(fmtErr(err)));
+    },
+    [type, instance],
+  );
 
   // ── presets (component-list templates; news_desk has no output geometry) ────
   const [presets, setPresets] = useState<PresetList | null>(null);
@@ -346,6 +389,69 @@ export function StyleTab(props: {
         {presetErr && <span style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {presetErr}</span>}
       </div>
 
+      {/* Output framing — spatial reframe (mode / aspect / short-edge). Default
+          passthrough = whole source (unchanged behavior); reframe shows a
+          draggable crop box on the preview; letterbox contains the source with
+          bars. The crop itself rides on the timeline clip (Clip.crop). */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 10,
+          padding: "6px 16px 0",
+          flexWrap: "wrap",
+          fontSize: 12,
+          color: "#999",
+        }}
+      >
+        <label>
+          {tr("news_desk.style.tb_mode")}{" "}
+          <select
+            value={framing?.mode ?? "passthrough"}
+            disabled={!framing}
+            onChange={(e) => void patchFraming({ output_mode: e.target.value })}
+            style={selStyle}
+          >
+            <option value="passthrough">{tr("news_desk.style.mode_passthrough")}</option>
+            <option value="reframe">{tr("news_desk.style.mode_reframe")}</option>
+            <option value="letterbox">{tr("news_desk.style.mode_letterbox")}</option>
+          </select>
+        </label>
+        <label title={framingInert ? tr("news_desk.style.aspect_inert_hint") : undefined}>
+          {tr("news_desk.style.tb_aspect")}{" "}
+          <select
+            value={framing?.aspect ?? "16:9"}
+            disabled={!framing || framingInert}
+            onChange={(e) => void patchFraming({ output_aspect: e.target.value })}
+            style={selStyle}
+          >
+            {FRAMING_ASPECTS.map((a) => (
+              <option key={a} value={a}>
+                {a}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label title={framingInert ? tr("news_desk.style.aspect_inert_hint") : undefined}>
+          {tr("news_desk.style.tb_short_edge")}{" "}
+          <select
+            value={String(framing?.shortEdge ?? 1080)}
+            disabled={!framing || framingInert}
+            onChange={(e) => void patchFraming({ output_short_edge: Number(e.target.value) })}
+            style={selStyle}
+          >
+            {FRAMING_SHORT_EDGES.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+        </label>
+        {framing?.mode === "reframe" && (
+          <span style={{ fontSize: 11, color: "#777" }}>{tr("news_desk.style.crop_hint")}</span>
+        )}
+      </div>
+
       {/* Material binding — a persistent setting (not a one-time gate): shows the
           bound material and lets the user re-bind at any time. */}
       <MaterialBindingBar
@@ -375,6 +481,10 @@ export function StyleTab(props: {
               durationSec={preview.data.durationSec}
               components={components ?? []}
               cuesBySrtPath={preview.data.cuesBySrtPath}
+              mode={preview.data.framing.mode}
+              aspect={parseAspect(preview.data.framing.aspect)}
+              cropRect={preview.data.framing.cropRect}
+              onCropChange={onCropChange}
             />
           )}
         </div>

@@ -10,7 +10,7 @@
  * (strip + hero card), exercising the multi-track-per-component path.
  */
 
-import { clip, type Timeline, type Track } from "../../composition/ir.js";
+import { clip, type CropRect, type Timeline, type Track } from "../../composition/ir.js";
 import { identityTimeMap } from "../../composition/timemap.js";
 import type { CompileContext, SourceCue } from "../../composition/components/index.js";
 import { chapter, imageWatermark, subtitle, textWatermark } from "../../composition/components/index.js";
@@ -32,19 +32,37 @@ export interface BuildNewsDeskTimelineInput {
   /** Source media id/path for the video track. */
   mediaRef: string;
   /** Output frame aspect (W/H); enables subtitle one-line fitting when set.
-   *  news_desk renders the full source, so this is the source aspect. */
+   *  In passthrough this is the source aspect; in reframe/letterbox it's the
+   *  chosen output aspect (overlays position relative to the output frame). */
   frameAspect?: number;
+  /**
+   * Spatial reframe rect (normalized source coords) for the single full-source
+   * video clip. Omit for passthrough/letterbox (whole source); present = reframe.
+   */
+  cropRect?: CropRect;
 }
 
 export function buildNewsDeskTimeline(input: BuildNewsDeskTimelineInput): Timeline {
-  const { components, durationSec, cuesBySrtPath, mediaRef, frameAspect } = input;
+  const { components, durationSec, cuesBySrtPath, mediaRef, frameAspect, cropRect } = input;
 
   // Full-video track → identity TimeMap (no cut, source time === output time).
+  // crop (when set) is the per-clip spatial reframe carried on the IR Clip; a
+  // single instance-level rect since news_desk has one full-source video clip.
   const videoTrack: Track = {
     kind: "video",
     z: 0,
     enabled: true,
-    children: [clip({ kind: "video", durationSec, sourceStart: 0, mediaRef, style: {}, data: {} })],
+    children: [
+      clip({
+        kind: "video",
+        durationSec,
+        sourceStart: 0,
+        mediaRef,
+        ...(cropRect ? { crop: cropRect } : {}),
+        style: {},
+        data: {},
+      }),
+    ],
   };
   // Audio track: the full source audio (no cut), unity gain.
   const audioTrack: Track = {

@@ -129,6 +129,31 @@ describe("buildNewsDeskTimeline", () => {
     expect(videoClip.durationSec).toBe(120);
   });
 
+  it("omits crop by default (whole source)", () => {
+    const timeline = buildNewsDeskTimeline({
+      components: [subtitleConfig()],
+      durationSec: 120,
+      cuesBySrtPath,
+      mediaRef: "source.mp4",
+    });
+    expect(clipsOf(timeline.tracks[0]!)[0]!.crop).toBeUndefined();
+  });
+
+  it("sets crop on the full-source video clip when given (reframe)", () => {
+    const crop = { x: 0.1, y: 0, w: 0.8, h: 1 };
+    const timeline = buildNewsDeskTimeline({
+      components: [subtitleConfig()],
+      durationSec: 120,
+      cuesBySrtPath,
+      mediaRef: "source.mp4",
+      cropRect: crop,
+    });
+    // crop rides on the VIDEO clip only; the audio clip never carries one.
+    expect(clipsOf(timeline.tracks[0]!)[0]!.crop).toEqual(crop);
+    expect(clipsOf(timeline.tracks[1]!)[0]!.crop).toBeUndefined();
+    expect(validateTimeline(timeline, { sourceDurations: { "source.mp4": 120 } })).toEqual([]);
+  });
+
   // Regression guard: news_desk must emit a full-source audio track at unity
   // gain (no cut). Mirrors the clip lost-edit guard — see task.md 续16.
   it("emits a full-source audio track (lost-edit guard)", () => {

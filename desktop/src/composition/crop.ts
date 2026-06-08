@@ -1,6 +1,9 @@
 /**
- * Reframe crop geometry — pure, faithful port of the Tk clip's crop model so
- * the new GPU crop editor reproduces it exactly (no invention).
+ * Reframe crop geometry — pure, faithful port of the Tk clip's crop model so the
+ * GPU crop editor reproduces it exactly (no invention). Lives in composition/ as
+ * framework-level spatial math shared by every creation that reframes a video
+ * clip (clip, news_desk, …). The CropRect it operates on IS the IR's Clip.crop
+ * shape (composition/ir) — one source→output rectangle vocabulary everywhere.
  *
  *   - centerCropRect ≡ core/composition/render.py::_center_crop_rect
  *     (also the HTML preview's fitRectToAspect): the largest centered crop at
@@ -8,16 +11,12 @@
  *   - clampCropRect ≡ composition_preview.html::clampRect: a dragged box keeps
  *     the output aspect (height derived from width) and stays inside the source.
  *
- * crop_rect is {x,y,w,h} normalized to source-video coords [0..1] — the same
- * shape stored in config.clips_overrides[idx].crop_rect and consumed by render.
+ * CropRect is {x,y,w,h} normalized to source-video coords [0..1].
  */
 
-export interface CropRect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
+import type { CropRect } from "./ir.js";
+
+export type { CropRect };
 
 /**
  * Output framing modes:
@@ -34,11 +33,24 @@ export function parseClipMode(v: unknown): ClipMode {
   return v === "passthrough" ? "passthrough" : v === "letterbox" ? "letterbox" : "reframe";
 }
 
+/** Parse an arbitrary value (wire/config) into a valid CropRect, or null. */
+export function parseCropRect(v: unknown): CropRect | null {
+  if (!v || typeof v !== "object") return null;
+  const o = v as Record<string, unknown>;
+  const x = Number(o["x"]);
+  const y = Number(o["y"]);
+  const w = Number(o["w"]);
+  const h = Number(o["h"]);
+  if (![x, y, w, h].every((n) => Number.isFinite(n))) return null;
+  if (w <= 0 || h <= 0) return null;
+  return { x, y, w, h };
+}
+
 /**
  * Output (w,h) at a 1080-class short edge, even dims for the encoder — faithful
  * port of render.py::_target_dims_for_aspect. The crop editor sizes its canvas
  * to the SOURCE (so the whole frame shows), but export crops the box and scales
- * it to these dims; kept here as the geometry home for the Inc5 export tab.
+ * it to these dims.
  */
 export function targetDimsForAspect(aspect: string, shortEdge: number): { width: number; height: number } {
   const { aw, ah } = parseAspect(aspect);

@@ -24,7 +24,7 @@ import { MaterialBindingBar } from "../shared/MaterialBindingBar";
 import { ComponentEditor } from "../shared/ComponentEditor";
 import { CropPreview } from "./CropPreview";
 import { useClipPreview } from "./useClipPreview";
-import { centerCropRect, type CropRect } from "./cropEditor";
+import { centerCropRect, type CropRect } from "@composition/crop.js";
 import type { HotclipCandidate } from "@creations/clip/types.js";
 
 // Friendly component labels — mirrors style_panel.py::_KIND_LABELS. The UI must

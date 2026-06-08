@@ -160,6 +160,18 @@ describe("buildClipTimeline", () => {
     expect(videoClip.durationSec).toBe(30);
   });
 
+  it("sets crop on the video clip when a reframe rect is given (else omits it)", () => {
+    const base = { components: [subtitleConfig()], candidate, srtByLang, mediaRef: "source.mp4" };
+    // Default: no crop on the video clip (passthrough/letterbox).
+    expect(clipsOf(buildClipTimeline(base).tracks[0]!)[0]!.crop).toBeUndefined();
+    // Reframe: the rect rides on the video clip; the audio clip never carries one.
+    const crop = { x: 0.2, y: 0, w: 0.6, h: 1 };
+    const reframed = buildClipTimeline({ ...base, cropRect: crop });
+    expect(clipsOf(reframed.tracks[0]!)[0]!.crop).toEqual(crop);
+    expect(clipsOf(reframed.tracks[1]!)[0]!.crop).toBeUndefined();
+    expect(validateTimeline(reframed, { sourceDurations: { "source.mp4": 600 } })).toEqual([]);
+  });
+
   // Regression guard: the clip assembler MUST emit an audio track windowed to
   // the candidate. This exact edit was lost across a git-checkout and shipped
   // green (typecheck + tests passed) because nothing asserted the audio track

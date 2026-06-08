@@ -164,6 +164,42 @@ describe("invariant #5 — kind membership", () => {
   });
 });
 
+// --- invariant #7: media clip crop rect -----------------------------------
+
+describe("invariant #7 — media clip crop rect", () => {
+  function videoCrop(crop: { x: number; y: number; w: number; h: number }): ReturnType<typeof clip> {
+    return clip({ kind: "video", durationSec: 10, sourceStart: 0, mediaRef: "src", crop, style: {}, data: {} });
+  }
+
+  it("accepts an absent crop (whole source)", () => {
+    const tl = timeline([track("video", [videoClip(10)])]);
+    expect(validateTimeline(tl)).toEqual([]);
+  });
+
+  it("accepts a valid normalized sub-rectangle", () => {
+    const tl = timeline([track("video", [videoCrop({ x: 0.1, y: 0, w: 0.8, h: 1 })])]);
+    expect(validateTimeline(tl)).toEqual([]);
+  });
+
+  it("rejects a non-positive size", () => {
+    const tl = timeline([track("video", [videoCrop({ x: 0, y: 0, w: 0, h: 1 })])]);
+    const issues = validateTimeline(tl);
+    expect(issues.some((i) => i.invariant === 7 && /positive size/.test(i.message))).toBe(true);
+  });
+
+  it("rejects a rect that spills past the source bounds", () => {
+    const tl = timeline([track("video", [videoCrop({ x: 0.5, y: 0, w: 0.8, h: 1 })])]); // x+w = 1.3 > 1
+    const issues = validateTimeline(tl);
+    expect(issues.some((i) => i.invariant === 7 && /outside the source bounds/.test(i.message))).toBe(true);
+  });
+
+  it("rejects a non-finite component", () => {
+    const tl = timeline([track("video", [videoCrop({ x: 0, y: 0, w: NaN, h: 1 })])]);
+    const issues = validateTimeline(tl);
+    expect(issues.some((i) => i.invariant === 7 && /non-finite/.test(i.message))).toBe(true);
+  });
+});
+
 // --- assert wrapper -------------------------------------------------------
 
 describe("assertValidTimeline", () => {

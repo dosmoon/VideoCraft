@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { centerCropRect, clampCropRect, parseAspect, targetDimsForAspect } from "./cropEditor";
+import { centerCropRect, clampCropRect, parseAspect, targetDimsForAspect } from "./crop.js";
 
 describe("parseAspect", () => {
   it("parses w:h", () => {

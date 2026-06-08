@@ -1,15 +1,18 @@
 /**
- * NewsDeskPreview — full-source composition preview for the news_desk workbench.
+ * NewsDeskPreview — full-source composition preview + reframe crop EDITOR for the
+ * news_desk workbench.
  *
- * news_desk composes the WHOLE source (no candidate cut, no reframe crop), so
- * this is a simpler sibling of clip's CropPreview: same engine orchestration
- * (Backend + MediaSource/ClipReader + AudioReader/AudioPlayback + canvas2D
- * overlays + resolveFrameAt), but no draggable crop box — the overlays are drawn
- * across the whole frame and the only transport is play/pause + scrub.
+ * Sibling of clip's CropPreview: same engine orchestration (Backend +
+ * MediaSource/ClipReader + AudioReader/AudioPlayback + canvas2D overlays +
+ * resolveFrameAt) and the same draggable output-aspect crop box (shared
+ * cropEditorLayer). The only structural difference is the timeline source:
+ * buildNewsDeskTimeline composes the WHOLE source (no candidate cut), with a
+ * single instance-level crop. The box is the editing affordance — the export
+ * crops it via Clip.crop, so preview ≡ render. passthrough/letterbox show the
+ * whole frame (no box); only reframe shows the draggable box.
  *
- * One compositor feeds preview and (future) export via buildNewsDeskTimeline →
- * resolveFrameAt, so preview ≡ render. The source opens once per srcPath; the
- * timeline rebuilds when the live-edited components change (no GPU re-init).
+ * The source opens once per srcPath; the timeline rebuilds when the live-edited
+ * components OR the framing (mode/aspect/crop) change (no GPU re-init).
  */
 
 import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
@@ -17,6 +20,7 @@ import { resolveFrameAt } from "@composition/compositor/resolve.js";
 import { resolveAudioSegments } from "@composition/compositor/resolveAudio.js";
 import type { Timeline, Clip } from "@composition/ir.js";
 import { isMediaKind } from "@composition/catalog.js";
+import { centerCropRect, clampCropRect, type ClipMode, type CropRect } from "@composition/crop.js";
 import { buildNewsDeskTimeline } from "@creations/news_desk/assemble.js";
 import type { NewsDeskComponentConfig } from "@creations/news_desk/types.js";
 import type { SourceCue } from "@composition/components/index.js";
@@ -26,13 +30,13 @@ import { ClipReader } from "../../engine/source/ClipReader";
 import { AudioReader } from "../../engine/source/AudioReader";
 import { AudioPlayback } from "../../engine/playback/AudioPlayback";
 import type { DecodedAudio } from "../../engine/source/sample-types";
-import { isCanvas2dOverlay, drawOverlayClip, preloadImageOverlay } from "../../engine/overlay/canvas2d";
+import { isCanvas2dOverlay, preloadImageOverlay } from "../../engine/overlay/canvas2d";
+import { canvasDimsFor, paintEditorLayer } from "../shared/cropEditorLayer";
 import type { Component } from "../../ipc/client";
 import { tr } from "../../i18n/tr";
 
 const SOURCE_REF = "source";
 const FPS = 30;
-const MAX_CANVAS = 1280;
 
 type EngineStatus = "loading" | "ready" | "error";
 
@@ -58,6 +62,14 @@ export interface NewsDeskPreviewProps {
   components: Component[];
   /** Snapshot SRT cues keyed by each subtitle's srt_path. */
   cuesBySrtPath: Record<string, readonly SourceCue[]>;
+  /** Output framing mode (default passthrough = whole source). */
+  mode: ClipMode;
+  /** Output aspect; only used in reframe/letterbox. */
+  aspect: { aw: number; ah: number };
+  /** Controlled crop window (reframe); null → centered default. */
+  cropRect: CropRect | null;
+  /** Fired on drag release with the new crop window (host persists it). */
+  onCropChange: (rect: CropRect) => void;
   /** Optional handle the parent fills to drive the playhead (detail-list seek). */
   controlRef?: React.Ref<NewsDeskPreviewHandle>;
 }
@@ -68,30 +80,18 @@ export interface NewsDeskPreviewHandle {
   seek(sec: number): void;
 }
 
-/** Paint the overlay layer across the whole frame (no crop box for news_desk). */
-function paintOverlayLayer(
-  ctx: OffscreenCanvasRenderingContext2D,
-  canvasW: number,
-  canvasH: number,
-  overlayClips: Clip[],
-): void {
-  ctx.clearRect(0, 0, canvasW, canvasH);
-  for (const clip of overlayClips) {
-    ctx.save();
-    drawOverlayClip(ctx, clip, canvasW, canvasH);
-    ctx.restore();
-  }
-}
-
 export function NewsDeskPreview(props: NewsDeskPreviewProps) {
-  const { srcPath, durationSec: srcDuration, components, cuesBySrtPath, controlRef } = props;
+  const { srcPath, durationSec: srcDuration, components, cuesBySrtPath, mode, aspect, cropRect, onCropChange, controlRef } =
+    props;
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const engineRef = useRef<Engine | null>(null);
   const timelineRef = useRef<Timeline | null>(null);
+  const rectRef = useRef<CropRect>({ x: 0, y: 0, w: 1, h: 1 });
   const inFlight = useRef(false);
   const pending = useRef<number | null>(null);
   const tRef = useRef(0);
+  const drag = useRef<{ offX: number; offY: number } | null>(null);
   const audioRef = useRef<AudioPlayback | null>(null);
   const rafRef = useRef<number | null>(null);
   const playingRef = useRef(false);
@@ -103,8 +103,8 @@ export function NewsDeskPreview(props: NewsDeskPreviewProps) {
   const [playing, setPlaying] = useState(false);
   const [audioOn, setAudioOn] = useState(false);
 
-  // Render the frame at `sec`: GPU draws the source, the overlay layer draws the
-  // composited overlays on top. latest-wins so scrubbing stays live.
+  // Render the frame at `sec`: GPU draws the source, the editor layer draws the
+  // dim + crop box + overlays-in-box on top. latest-wins so scrub/drag stay live.
   const renderAt = useCallback(async (sec: number) => {
     const eng = engineRef.current;
     if (!eng || !timelineRef.current) return;
@@ -132,8 +132,7 @@ export function NewsDeskPreview(props: NewsDeskPreviewProps) {
                 const us = ac.sourceTimeSec * 1_000_000;
                 // Preview is real-time playback/scrub → the NON-blocking reader.
                 // frameAtExact is EXPORT-only: it blocks up to 3 s waiting for the
-                // exact frame, which at 60 fps stalls the rAF loop to ~1 frame/10 s
-                // (30 fps decode kept up, so the wait was short and it looked fine).
+                // exact frame, which at 60 fps stalls the rAF loop to ~1 frame/10 s.
                 frame = await eng.reader.frameAt(us);
               }
             } else if (isCanvas2dOverlay(c.kind)) {
@@ -142,7 +141,7 @@ export function NewsDeskPreview(props: NewsDeskPreviewProps) {
           }
         }
 
-        paintOverlayLayer(eng.overlayCtx, eng.canvasW, eng.canvasH, overlayClips);
+        paintEditorLayer(eng.overlayCtx, eng.canvasW, eng.canvasH, rectRef.current, mode, overlayClips);
 
         const rp = eng.backend.beginPass();
         if (rp) {
@@ -163,7 +162,7 @@ export function NewsDeskPreview(props: NewsDeskPreviewProps) {
     } finally {
       inFlight.current = false;
     }
-  }, []);
+  }, [mode]);
 
   // ── transport: play/pause with audio as master clock (wall-clock fallback) ──
   const stopLoop = useCallback(() => {
@@ -222,7 +221,6 @@ export function NewsDeskPreview(props: NewsDeskPreviewProps) {
   }, [pausePlayback, startPlayback]);
 
   // Expose seek to the detail lists (subtitle cue / chapter row → jump playhead).
-  // Mirrors the scrub handler: pause, clamp, sync audio, render the exact frame.
   useImperativeHandle(
     controlRef,
     () => ({
@@ -240,7 +238,7 @@ export function NewsDeskPreview(props: NewsDeskPreviewProps) {
     [pausePlayback, renderAt],
   );
 
-  // Open the source once per srcPath. Engine survives component edits.
+  // Open the source once per srcPath. Engine survives component/framing edits.
   useEffect(() => {
     let disposed = false;
     setStatus("loading");
@@ -265,9 +263,9 @@ export function NewsDeskPreview(props: NewsDeskPreviewProps) {
         const durationSec = ms.durationUs / 1_000_000 || srcDuration;
         const srcW = ms.width || 1280;
         const srcH = ms.height || 720;
-        const scale = Math.min(1, MAX_CANVAS / Math.max(srcW, srcH));
-        const canvasW = Math.max(2, Math.round(srcW * scale));
-        const canvasH = Math.max(2, Math.round(srcH * scale));
+        // letterbox sizes the canvas to the OUTPUT aspect; a later mode/aspect
+        // change re-sizes via the dedicated effect below.
+        const { w: canvasW, h: canvasH } = canvasDimsFor(mode, srcW, srcH, aspect.aw, aspect.ah);
 
         const backend = new Backend();
         await backend.init(canvas);
@@ -325,8 +323,35 @@ export function NewsDeskPreview(props: NewsDeskPreviewProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [srcPath]);
 
-  // Rebuild the timeline whenever the live-edited components change. Preload any
-  // image-watermark images first so they render on the first frame.
+  // Sync the live crop rect from the controlled prop (reframe = centered default;
+  // letterbox/passthrough use the whole frame).
+  useEffect(() => {
+    const eng = engineRef.current;
+    if (status !== "ready" || !eng) return;
+    rectRef.current =
+      mode === "reframe"
+        ? (cropRect ?? centerCropRect(eng.srcW, eng.srcH, aspect.aw, aspect.ah))
+        : { x: 0, y: 0, w: 1, h: 1 };
+    void renderAt(tRef.current);
+  }, [cropRect, status, mode, aspect.aw, aspect.ah, renderAt]);
+
+  // letterbox previews the OUTPUT frame, so the canvas must resize when the mode
+  // or aspect changes (reframe/passthrough keep the source aspect).
+  useEffect(() => {
+    const eng = engineRef.current;
+    if (status !== "ready" || !eng) return;
+    const { w, h } = canvasDimsFor(mode, eng.srcW, eng.srcH, aspect.aw, aspect.ah);
+    if (w === eng.canvasW && h === eng.canvasH) return;
+    eng.backend.resize(w, h);
+    eng.overlayCanvas.width = w;
+    eng.overlayCanvas.height = h;
+    eng.canvasW = w;
+    eng.canvasH = h;
+    void renderAt(tRef.current);
+  }, [mode, aspect.aw, aspect.ah, status, renderAt]);
+
+  // Rebuild the timeline whenever the live-edited components OR the framing
+  // change. Preload image-watermark assets first so they render on frame one.
   useEffect(() => {
     const eng = engineRef.current;
     if (status !== "ready" || !eng) return;
@@ -346,14 +371,20 @@ export function NewsDeskPreview(props: NewsDeskPreviewProps) {
       }
       if (cancelled) return;
 
+      // Subtitle/overlay fitting uses the OUTPUT aspect so preview ≡ render:
+      // reframe/letterbox → the chosen aspect; passthrough → the source aspect.
+      // The preview video is drawn whole ("contain") with the crop box on top —
+      // the box marks the export region — so the preview timeline carries no
+      // crop (the export applies it via Clip.crop). Mirrors clip's CropPreview.
+      const frameAspect = mode === "passthrough" ? eng.srcW / eng.srcH : aspect.aw / aspect.ah;
+      const reframe = mode === "reframe";
       try {
         const tl = buildNewsDeskTimeline({
           components: components as unknown as NewsDeskComponentConfig[],
           durationSec: eng.durationSec,
           cuesBySrtPath,
           mediaRef: SOURCE_REF,
-          // Full-source render → the subtitle one-line fit uses the source aspect.
-          frameAspect: eng.srcW / eng.srcH,
+          frameAspect,
         });
         timelineRef.current = tl;
         setDuration(tl.durationSec);
@@ -377,24 +408,86 @@ export function NewsDeskPreview(props: NewsDeskPreviewProps) {
           console.warn("[NewsDeskPreview] audio build failed:", e);
         }
       }
+      // Sync the crop box to the authoritative rect before this paint (the
+      // standalone crop effect may have no-op'd while the timeline was null).
+      rectRef.current = reframe
+        ? (cropRect ?? centerCropRect(eng.srcW, eng.srcH, aspect.aw, aspect.ah))
+        : { x: 0, y: 0, w: 1, h: 1 };
       void renderAt(tRef.current);
     })();
     return () => {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, components, cuesBySrtPath, renderAt]);
+  }, [status, components, cuesBySrtPath, mode, aspect.aw, aspect.ah, renderAt]);
+
+  // ── crop box drag (move-only; box is the max-fit output-aspect window) ──────
+  const pointInBox = (nx: number, ny: number): boolean => {
+    const r = rectRef.current;
+    return nx >= r.x && nx <= r.x + r.w && ny >= r.y && ny <= r.y + r.h;
+  };
+
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (mode !== "reframe") return;
+      const r = e.currentTarget.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return;
+      const nx = (e.clientX - r.left) / r.width;
+      const ny = (e.clientY - r.top) / r.height;
+      if (!pointInBox(nx, ny)) return;
+      drag.current = { offX: nx - rectRef.current.x, offY: ny - rectRef.current.y };
+      e.currentTarget.setPointerCapture(e.pointerId);
+    },
+    [mode],
+  );
+
+  const onPointerMove = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      const d = drag.current;
+      const eng = engineRef.current;
+      if (!d || !eng) return;
+      const r = e.currentTarget.getBoundingClientRect();
+      if (r.width <= 0 || r.height <= 0) return;
+      const nx = (e.clientX - r.left) / r.width;
+      const ny = (e.clientY - r.top) / r.height;
+      const moved = { ...rectRef.current, x: nx - d.offX, y: ny - d.offY };
+      rectRef.current = clampCropRect(moved, eng.canvasW, eng.canvasH, aspect.aw, aspect.ah);
+      void renderAt(tRef.current);
+    },
+    [aspect.aw, aspect.ah, renderAt],
+  );
+
+  const onPointerUp = useCallback(
+    (e: React.PointerEvent<HTMLCanvasElement>) => {
+      if (!drag.current) return;
+      drag.current = null;
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      } catch {
+        /* capture may already be gone */
+      }
+      onCropChange(rectRef.current);
+    },
+    [onCropChange],
+  );
+
+  const isReframe = mode === "reframe";
 
   return (
     <div>
       <canvas
         ref={canvasRef}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
         style={{
           maxWidth: "100%",
           maxHeight: 340,
           background: "#000",
           borderRadius: 6,
           display: status === "error" ? "none" : "block",
+          cursor: isReframe ? "grab" : "default",
+          touchAction: "none",
         }}
       />
       {status === "loading" && <p style={{ color: "#888", fontSize: 12 }}>{tr("news_desk.preview.loading_source")}</p>}

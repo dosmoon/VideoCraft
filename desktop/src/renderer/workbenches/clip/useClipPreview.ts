@@ -21,7 +21,7 @@ import type { SourceCue } from "@composition/components/index.js";
 import type { ClipOverride, HotclipCandidate } from "@creations/clip/types.js";
 import { rpc, RpcError, type RenderedClip } from "../../ipc/client";
 import { parseSrt } from "./srt";
-import { parseAspect, parseClipMode, type ClipMode } from "./cropEditor";
+import { parseAspect, parseClipMode, type ClipMode } from "@composition/crop.js";
 
 export type PreviewStatus = "loading" | "ready" | "nobind" | "nosrc" | "error";
 

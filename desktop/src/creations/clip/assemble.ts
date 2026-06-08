@@ -10,7 +10,7 @@
  * OTIO Timeline instead of the old overlay-only CompositionTimeline.
  */
 
-import { clip, type Timeline, type Track } from "../../composition/ir.js";
+import { clip, type CropRect, type Timeline, type Track } from "../../composition/ir.js";
 import { buildTimeMap } from "../../composition/timemap.js";
 import type { CompileContext, SourceCue, SubtitleInstance } from "../../composition/components/index.js";
 import {
@@ -43,20 +43,36 @@ export interface BuildClipTimelineInput {
   mediaRef: string;
   /** Output frame aspect (W/H); enables subtitle one-line fitting when set. */
   frameAspect?: number;
+  /**
+   * Spatial reframe rect (normalized source coords) for the video clip. Omit for
+   * passthrough/letterbox (whole source); present = reframe (cover the crop).
+   */
+  cropRect?: CropRect;
 }
 
 export function buildClipTimeline(input: BuildClipTimelineInput): Timeline {
-  const { components, candidate, override, srtByLang, mediaRef, frameAspect } = input;
+  const { components, candidate, override, srtByLang, mediaRef, frameAspect, cropRect } = input;
 
   const [start, end] = resolveStartEnd(candidate, override);
   const durationSec = Math.max(0, end - start);
 
   // Video track: a single media clip windowed to the candidate → TimeMap.
+  // crop (when set) is the per-clip spatial reframe carried on the IR Clip.
   const videoTrack: Track = {
     kind: "video",
     z: 0,
     enabled: true,
-    children: [clip({ kind: "video", durationSec, sourceStart: start, mediaRef, style: {}, data: {} })],
+    children: [
+      clip({
+        kind: "video",
+        durationSec,
+        sourceStart: start,
+        mediaRef,
+        ...(cropRect ? { crop: cropRect } : {}),
+        style: {},
+        data: {},
+      }),
+    ],
   };
   // Audio track: the source audio over the same window (synced 1:1 with video).
   // gainDb 0 = unity; preview/export read this via resolveAudioSegments.

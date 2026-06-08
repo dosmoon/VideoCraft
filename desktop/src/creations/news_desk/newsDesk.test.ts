@@ -70,12 +70,27 @@ describe("NewsDeskConfigOwner", () => {
     expect(reloaded.components.map((c: Record<string, unknown>) => c["kind"])).toContain("text_watermark");
   });
 
-  it("applyPatch only honors preset_name; CRUD + bind", async () => {
+  it("applyPatch honors preset_name + output framing; CRUD + bind", async () => {
     const fs = makeFs();
     const o = await NewsDeskConfigOwner.load(fs, CONFIG);
-    o.applyPatch({ preset_name: "极简", output_aspect: "9:16" });
+    // Framing defaults are a no-op = full-source passthrough.
+    expect(o.outputMode).toBe("passthrough");
+    expect(o.cropRect).toBeNull();
+    o.applyPatch({
+      preset_name: "极简",
+      output_mode: "reframe",
+      output_aspect: "9:16",
+      output_short_edge: 720,
+      crop_rect: { x: 0.1, y: 0, w: 0.8, h: 1 },
+    });
     expect(o.presetName).toBe("极简");
-    expect((o as unknown as Record<string, unknown>)["outputAspect"]).toBeUndefined();
+    expect(o.outputMode).toBe("reframe");
+    expect(o.outputAspect).toBe("9:16");
+    expect(o.outputShortEdge).toBe(720);
+    expect(o.cropRect).toEqual({ x: 0.1, y: 0, w: 0.8, h: 1 });
+    // A null crop_rect clears the rect (back to whole source).
+    o.applyPatch({ crop_rect: null });
+    expect(o.cropRect).toBeNull();
 
     o.addComponent("subtitle");
     o.addComponent("subtitle");

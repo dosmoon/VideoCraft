@@ -37,8 +37,6 @@ export interface ExportOptions {
   /** Target video bitrate (bps). Omit for the resolution-scaled auto formula. */
   bitrate?: number;
   durationSec: number;
-  /** Reframe offset crop ({x,y,w,h} normalized source coords); omit for passthrough/full. */
-  cropRect?: { x: number; y: number; w: number; h: number };
   onProgress?: (done: number, total: number) => void;
   /** Polled each frame; returning true aborts with ExportCancelled. */
   cancelCheck?: () => boolean;
@@ -66,14 +64,14 @@ export interface ExportOptions {
  * loop is engine-agnostic. On cancel/error the sink is aborted for cleanup.
  */
 async function runRenderLoop(opts: ExportOptions, sink: EncodeSink): Promise<Uint8Array> {
-  const { timeline, drawDeps, backend, fps, durationSec, cropRect, onProgress, cancelCheck } = opts;
-  const deps: DrawDeps = cropRect ? { ...drawDeps, cropRect } : drawDeps;
+  const { timeline, drawDeps, backend, fps, durationSec, onProgress, cancelCheck } = opts;
   const total = Math.max(1, Math.round(durationSec * fps));
   try {
     for (let i = 0; i < total; i++) {
       if (cancelCheck?.()) throw new ExportCancelled();
       const slice = resolveFrameAt(timeline, i / fps);
-      const prepared = await prepareFrame(slice, deps, /* exact */ true);
+      // Per-clip crop now rides on the timeline (Clip.crop); no global override.
+      const prepared = await prepareFrame(slice, drawDeps, /* exact */ true);
       try {
         await sink.consume(backend, prepared, i);
       } finally {

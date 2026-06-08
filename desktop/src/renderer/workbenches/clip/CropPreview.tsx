@@ -42,39 +42,16 @@ import { ClipReader } from "../../engine/source/ClipReader";
 import { AudioReader } from "../../engine/source/AudioReader";
 import { AudioPlayback } from "../../engine/playback/AudioPlayback";
 import type { DecodedAudio } from "../../engine/source/sample-types";
-import { isCanvas2dOverlay, drawOverlayClip, preloadImageOverlay } from "../../engine/overlay/canvas2d";
+import { isCanvas2dOverlay, preloadImageOverlay } from "../../engine/overlay/canvas2d";
 import type { Component } from "../../ipc/client";
-import { centerCropRect, clampCropRect, type ClipMode, type CropRect } from "./cropEditor";
+import { centerCropRect, clampCropRect, type ClipMode, type CropRect } from "@composition/crop.js";
+import { canvasDimsFor, paintEditorLayer } from "../shared/cropEditorLayer";
 
 const SOURCE_REF = "source";
 const FPS = 30;
-// Cap the working canvas resolution; the source aspect is preserved.
-const MAX_CANVAS = 1280;
 
 // Cards need candidate text — dropped when the host says not to show them.
 const CARD_KINDS = new Set(["clip_hook_card", "clip_outro_card"]);
-
-/**
- * Preview canvas size for a mode. letterbox previews the OUTPUT frame (target
- * aspect, source contained with bars), so its canvas takes the target aspect;
- * reframe/passthrough preview the whole SOURCE (source aspect, the crop box /
- * full frame marks the export region).
- */
-function canvasDimsFor(
-  mode: ClipMode,
-  srcW: number,
-  srcH: number,
-  aw: number,
-  ah: number,
-): { w: number; h: number } {
-  if (mode === "letterbox" && aw > 0 && ah > 0) {
-    const w = aw >= ah ? MAX_CANVAS : Math.round((MAX_CANVAS * aw) / ah);
-    const h = aw >= ah ? Math.round((MAX_CANVAS * ah) / aw) : MAX_CANVAS;
-    return { w: Math.max(2, w), h: Math.max(2, h) };
-  }
-  const scale = Math.min(1, MAX_CANVAS / Math.max(srcW, srcH));
-  return { w: Math.max(2, Math.round(srcW * scale)), h: Math.max(2, Math.round(srcH * scale)) };
-}
 
 type EngineStatus = "loading" | "ready" | "error";
 
@@ -123,54 +100,6 @@ function secToTimestamp(sec: number): string {
   const m = Math.floor((s % 3600) / 60);
   const rest = (s % 60).toFixed(3);
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${rest.padStart(6, "0")}`;
-}
-
-/**
- * Paint the composited editor layer: dim the frame, clear+outline the crop box,
- * then the overlays drawn inside the box (box dims act as the frame for overlay
- * layout — the same drawOverlayClip the export uses, so the box matches render).
- * In passthrough the box is the whole frame and dim/outline are skipped.
- */
-function paintEditorLayer(
-  ctx: OffscreenCanvasRenderingContext2D,
-  canvasW: number,
-  canvasH: number,
-  rect: CropRect,
-  mode: ClipMode,
-  overlayClips: Clip[],
-): void {
-  ctx.clearRect(0, 0, canvasW, canvasH);
-
-  // Only reframe shows a sub-frame crop box; letterbox/passthrough overlay the
-  // whole canvas (the canvas IS the output frame).
-  const box =
-    mode === "reframe"
-      ? {
-          ox: rect.x * canvasW,
-          oy: rect.y * canvasH,
-          bw: rect.w * canvasW,
-          bh: rect.h * canvasH,
-        }
-      : { ox: 0, oy: 0, bw: canvasW, bh: canvasH };
-
-  if (mode === "reframe") {
-    ctx.fillStyle = "rgba(0,0,0,0.45)";
-    ctx.fillRect(0, 0, canvasW, canvasH);
-    ctx.clearRect(box.ox, box.oy, box.bw, box.bh);
-    ctx.strokeStyle = "#00ff88";
-    ctx.lineWidth = Math.max(2, canvasW / 480);
-    ctx.strokeRect(box.ox, box.oy, box.bw, box.bh);
-  }
-
-  for (const clip of overlayClips) {
-    ctx.save();
-    ctx.translate(box.ox, box.oy);
-    ctx.beginPath();
-    ctx.rect(0, 0, box.bw, box.bh);
-    ctx.clip();
-    drawOverlayClip(ctx, clip, box.bw, box.bh);
-    ctx.restore();
-  }
 }
 
 export function CropPreview(props: CropPreviewProps) {

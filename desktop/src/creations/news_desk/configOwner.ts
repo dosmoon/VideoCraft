@@ -11,6 +11,8 @@
  */
 
 import type { Fs } from "../../renderer/ipc/fs";
+import type { CropRect } from "../../composition/ir.js";
+import { parseCropRect } from "../../composition/crop.js";
 import { ADDABLE, type AddableKind, type ComponentDict, defaultInstance } from "./componentDefs";
 import * as presets from "./presets";
 import {
@@ -46,6 +48,15 @@ export class NewsDeskConfigOwner {
   presetName = "";
   components: ComponentDict[] = [];
   rendered: ComponentDict[] = [];
+  // Output framing (spatial reframe). Defaults are a no-op = today's behavior:
+  // passthrough renders the full source verbatim and ignores aspect/short-edge;
+  // cropRect=null means whole source. aspect/short-edge/cropRect only bite in
+  // reframe/letterbox. (In passthrough, export_resolution below still drives the
+  // source downscale; in reframe/letterbox the target short-edge is outputShortEdge.)
+  outputMode = "passthrough";
+  outputAspect = "16:9";
+  outputShortEdge = 1080;
+  cropRect: CropRect | null = null;
   // Export settings (engine + params). News_desk is full-source, so resolution
   // is a downscale-from-source preset ("source" | short-edge px).
   exportEngine: ExportEngineChoice = "";
@@ -78,6 +89,11 @@ export class NewsDeskConfigOwner {
       };
     }
     self.presetName = String(raw["preset_name"] ?? "");
+    self.outputMode = String(raw["output_mode"] ?? "passthrough");
+    self.outputAspect = String(raw["output_aspect"] ?? "16:9");
+    const shortEdge = Number(raw["output_short_edge"]);
+    self.outputShortEdge = Number.isFinite(shortEdge) ? Math.trunc(shortEdge) : 1080;
+    self.cropRect = parseCropRect(raw["crop_rect"]);
     self.exportEngine = normalizeEngine(raw["export_engine"]);
     self.exportResolution = normalizeResolution(raw["export_resolution"]);
     self.exportFps = normalizeFps(raw["export_fps"] ?? 30);
@@ -99,6 +115,14 @@ export class NewsDeskConfigOwner {
   applyPatch(patch: Record<string, unknown>): void {
     if (!patch || typeof patch !== "object") return;
     if ("preset_name" in patch) this.presetName = String(patch["preset_name"]);
+    if ("output_mode" in patch) this.outputMode = String(patch["output_mode"]);
+    if ("output_aspect" in patch) this.outputAspect = String(patch["output_aspect"]);
+    if ("output_short_edge" in patch) {
+      const n = Number(patch["output_short_edge"]);
+      if (Number.isFinite(n)) this.outputShortEdge = Math.trunc(n);
+    }
+    // crop_rect is a single instance-level rect (no per-candidate merge); null clears it.
+    if ("crop_rect" in patch) this.cropRect = parseCropRect(patch["crop_rect"]);
     if ("export_engine" in patch) this.exportEngine = normalizeEngine(patch["export_engine"]);
     if ("export_resolution" in patch) this.exportResolution = normalizeResolution(patch["export_resolution"]);
     if ("export_fps" in patch) this.exportFps = normalizeFps(patch["export_fps"]);
@@ -186,6 +210,10 @@ export class NewsDeskConfigOwner {
   toJSON(): Record<string, unknown> {
     const out: Record<string, unknown> = {
       preset_name: this.presetName,
+      output_mode: this.outputMode,
+      output_aspect: this.outputAspect,
+      output_short_edge: Math.trunc(this.outputShortEdge),
+      crop_rect: this.cropRect ? { ...this.cropRect } : null,
       export_engine: this.exportEngine,
       export_resolution: this.exportResolution,
       export_fps: Math.trunc(this.exportFps),

@@ -29,8 +29,6 @@ export interface DrawDeps {
   /** Reused scratch canvas for 2D overlays (sized to the GPU canvas). */
   overlayCanvas: OffscreenCanvas;
   overlayCtx: OffscreenCanvasRenderingContext2D;
-  /** Reframe export offset crop ({x,y,w,h} normalized source coords). */
-  cropRect?: { x: number; y: number; w: number; h: number };
 }
 
 type Layer =
@@ -93,7 +91,10 @@ export async function prepareFrame(
         if (frame) {
           if (stats.videoTimestampUs == null) stats.videoTimestampUs = frame.timestamp;
           frames.push(frame);
-          layers.push({ kind: "video", frame, fit, ...(deps.cropRect ? { crop: deps.cropRect } : {}) });
+          // Spatial reframe is a per-clip transform carried on the IR Clip
+          // (Clip.crop), read here per clip — not a global render dep. Absent =
+          // whole source (aspect fit via `fit`).
+          layers.push({ kind: "video", frame, fit, ...(c.crop ? { crop: c.crop } : {}) });
         } else {
           stats.skipped++;
         }

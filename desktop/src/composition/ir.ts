@@ -28,6 +28,19 @@ import { isKnownClipKind, isMediaKind } from "./catalog.js";
 
 export type TrackKind = "video" | "audio" | "overlay";
 
+/**
+ * Normalized source rectangle (each component in [0,1], relative to the source
+ * frame) describing a clip's spatial reframe — the window of source pixels that
+ * maps onto the output frame. The same shape the GPU crop pipeline + the
+ * composition/crop geometry already speak.
+ */
+export interface CropRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
 /** A drawable item: source media (video/audio) or a generator (subtitle, card, …). */
 export interface Clip {
   readonly type: "clip";
@@ -38,6 +51,15 @@ export interface Clip {
   sourceStart?: number;
   /** Media clips only: source id / path. */
   mediaRef?: string;
+  /**
+   * Media clips only: spatial reframe — the normalized source rectangle that
+   * maps onto the output frame. Absent = whole source (no crop). This is a
+   * per-clip *transform* (where the media sits, sibling of sourceStart/mediaRef),
+   * NOT a "how to draw" style hint: the compositor reads it per clip and the GPU
+   * samples only this window (reframe = cover). Geometry helpers live in
+   * composition/crop. Invariant #7 bounds it.
+   */
+  crop?: CropRect;
   /** Visual fields — "how to draw" (inlined at compile time, no late lookup). */
   style: Record<string, unknown>;
   /** Kind-specific content — "what to draw". */
@@ -184,7 +206,10 @@ export function computeTimelineDuration(tracks: readonly Track[]): number {
 export interface ValidationIssue {
   /** Dotted path to the offending node, e.g. "tracks[1].children[3]". */
   path: string;
-  /** Which invariant was violated (1–6, see foundation doc §2.5). */
+  /**
+   * Which invariant was violated. 1–6 per foundation doc §2.5; #7 = media clip
+   * crop rect must be a valid sub-rectangle of the source in normalized coords.
+   */
   invariant: number;
   message: string;
 }
@@ -253,6 +278,27 @@ export function validateTimeline(
                 path: cp,
                 invariant: 2,
                 message: `source window [${start}, ${start + child.durationSec}] exceeds source duration ${srcDur}`,
+              });
+            }
+          }
+          // #7: spatial crop rect (when present) must be a positive-size
+          // sub-rectangle of the source frame in normalized [0,1] coords.
+          if (child.crop !== undefined) {
+            const { x, y, w, h } = child.crop;
+            if (![x, y, w, h].every((n) => Number.isFinite(n))) {
+              issues.push({ path: cp, invariant: 7, message: `crop has a non-finite component` });
+            } else if (w <= 0 || h <= 0) {
+              issues.push({ path: cp, invariant: 7, message: `crop must have positive size, got w=${w} h=${h}` });
+            } else if (
+              x < -DURATION_EPSILON ||
+              y < -DURATION_EPSILON ||
+              x + w > 1 + DURATION_EPSILON ||
+              y + h > 1 + DURATION_EPSILON
+            ) {
+              issues.push({
+                path: cp,
+                invariant: 7,
+                message: `crop rect [${x}, ${y}, ${w}, ${h}] is outside the source bounds [0,1]`,
               });
             }
           }

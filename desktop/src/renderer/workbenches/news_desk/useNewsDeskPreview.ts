@@ -12,16 +12,27 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { SourceCue } from "@composition/components/index.js";
+import { parseClipMode, parseCropRect, type ClipMode, type CropRect } from "@composition/crop.js";
 import { rpc, RpcError } from "../../ipc/client";
 import { parseSrt } from "../clip/srt";
 
 export type PreviewStatus = "loading" | "ready" | "nobind" | "nosrc" | "error";
+
+/** Output framing (spatial reframe) read from config.json. */
+export interface NewsDeskFraming {
+  mode: ClipMode;
+  aspect: string;
+  shortEdge: number;
+  cropRect: CropRect | null;
+}
 
 export interface NewsDeskPreviewData {
   srcPath: string;
   durationSec: number;
   /** Cues keyed by the subtitle component's srt_path (the assembler's key). */
   cuesBySrtPath: Record<string, readonly SourceCue[]>;
+  /** Output framing — passthrough (whole source) unless the user set a reframe. */
+  framing: NewsDeskFraming;
 }
 
 /** Shape returned by the news_desk preview_provider (Python preview.py). */
@@ -87,8 +98,16 @@ export function useNewsDeskPreview(type: string, instance: string) {
           }
         }
 
+        const shortEdge = Number(cfg["output_short_edge"]);
+        const framing: NewsDeskFraming = {
+          mode: parseClipMode(cfg["output_mode"]),
+          aspect: String(cfg["output_aspect"] ?? "16:9"),
+          shortEdge: Number.isFinite(shortEdge) ? Math.trunc(shortEdge) : 1080,
+          cropRect: parseCropRect(cfg["crop_rect"]),
+        };
+
         if (disposed) return;
-        setData({ srcPath, durationSec: pd.durationSec || 0, cuesBySrtPath });
+        setData({ srcPath, durationSec: pd.durationSec || 0, cuesBySrtPath, framing });
         setStatus("ready");
       } catch (err) {
         if (!disposed) {
