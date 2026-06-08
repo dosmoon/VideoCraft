@@ -66,8 +66,18 @@ function EnvSection() {
 
   const detectAll = useCallback(async () => {
     setDetecting(true);
+    setError("");
     try {
-      const h = await runJob<{ results: EnvDetect[] }>(() => rpc.envDetectAll());
+      const h = await runJob<{ results: EnvDetect[] }>(
+        () => rpc.envDetectAll(),
+        (p) => {
+          // Each component streams its result as it's detected — fill the row
+          // now instead of waiting for the whole batch (binary version probes
+          // can each block up to 5s).
+          const d = p.result as EnvDetect | undefined;
+          if (d?.id) setDetect((prev) => ({ ...prev, [d.id]: d }));
+        },
+      );
       const r = await h.promise;
       setDetect(Object.fromEntries(r.results.map((d) => [d.id, d])));
     } catch (e) {

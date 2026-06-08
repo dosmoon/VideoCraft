@@ -62,6 +62,7 @@ export function ModelManager() {
   const doneSeen = useRef<Set<string>>(new Set());
 
   const loadCatalog = useCallback(() => {
+    setError("");
     rpc
       .modelsCatalog()
       .then(setCatalog)
@@ -72,6 +73,7 @@ export function ModelManager() {
   const changeDir = async () => {
     const dir = await window.vc.pickFolder();
     if (!dir) return;
+    setError("");
     try {
       const r = await rpc.modelsSetRootDir(dir);
       setRootDir(r.dir);
@@ -104,11 +106,17 @@ export function ModelManager() {
   const jobByModel = new Map<string, ModelJob>();
   for (const j of jobs) jobByModel.set(j.model_id, j);
 
-  const download = (id: string) =>
-    rpc.modelsDownload(id).catch((e) => setError(fmtErr(e)));
-  const cancel = (jobId: string) => rpc.modelsCancel(jobId).catch((e) => setError(fmtErr(e)));
+  const download = (id: string) => {
+    setError("");
+    return rpc.modelsDownload(id).catch((e) => setError(fmtErr(e)));
+  };
+  const cancel = (jobId: string) => {
+    setError("");
+    return rpc.modelsCancel(jobId).catch((e) => setError(fmtErr(e)));
+  };
   const remove = (m: ModelCatalogEntry) => {
     if (!window.confirm(tr("models.remove_confirm", { name: m.name }))) return;
+    setError("");
     rpc
       .modelsRemove(m.id)
       .then(loadCatalog)

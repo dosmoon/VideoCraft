@@ -229,7 +229,7 @@ export interface EnvComponentMeta {
   info_url: string | null;
 }
 
-/** Detection result for one component (env.detect / env.detect_all). */
+/** Detection result for one component (env.detect_all). */
 export interface EnvDetect {
   id: string;
   available: boolean;
@@ -435,7 +435,6 @@ export const rpc = {
   // Component metadata (sync) + detection/install jobs (subprocess/pip → off-thread).
   envComponents: () => rpcCall<EnvComponentMeta[]>("env.components"),
   envDetectAll: () => rpcCall<{ job_id: string }>("env.detect_all"),
-  envDetect: (componentId: string) => rpcCall<{ job_id: string }>("env.detect", { component_id: componentId }),
   envInstall: (componentId: string) => rpcCall<{ job_id: string }>("env.install", { component_id: componentId }),
 
   recentList: () => rpcCall<ProjectBrief[]>("project.recent_list"),

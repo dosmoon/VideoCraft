@@ -53,6 +53,11 @@ def test_env_detect_all_job(ctx, emit, monkeypatch):
     assert _wait(lambda: emit.of("event.job"))
     res = emit.of("event.job")[-1]["result"]["results"]
     assert all(r["available"] for r in res) and len(res) >= 3
+    # Each component streams its result incrementally (UI fills rows as they
+    # arrive instead of waiting for the whole batch).
+    prog = emit.of("progress.env.detect_all")
+    assert prog and {p["result"]["id"] for p in prog} == {r["id"] for r in res}
+    assert all(p["result"]["available"] for p in prog)
 
 
 def test_env_install_streams_log_then_detects(ctx, emit, monkeypatch):

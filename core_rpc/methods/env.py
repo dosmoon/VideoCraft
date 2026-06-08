@@ -45,29 +45,25 @@ def components(ctx: Context) -> list[dict[str, Any]]:
 
 @rpc_method("env.detect_all")
 def detect_all(ctx: Context) -> dict[str, Any]:
-    """Detect every visible component (job — runs version subprocesses). Terminal
-    event carries {results: [{id, available, version, source, path}, ...]}."""
+    """Detect every visible component (job — runs version subprocesses). Streams
+    each component's result as `progress.env.detect_all` (field `result`) so the
+    UI fills rows incrementally; the terminal event carries the full
+    {results: [{id, available, version, source, path}, ...]}."""
 
     def work(job: Any) -> dict[str, Any]:
         from core.env import list_components
 
         out = []
         for c in list_components():
-            out.append(_detect(c.id))
-            job.progress(id=c.id)
+            d = _detect(c.id)
+            out.append(d)
+            # Stream each result so the UI fills rows as they arrive rather than
+            # waiting for the whole batch (each detect can spend up to 5s in a
+            # version subprocess timeout).
+            job.progress(result=d)
         return {"results": out}
 
     return {"job_id": ctx.jobs.start("env.detect_all", work)}
-
-
-@rpc_method("env.detect")
-def detect(ctx: Context, component_id: str) -> dict[str, Any]:
-    """Re-detect a single component (job). Used after an install completes."""
-
-    def work(_job: Any) -> dict[str, Any]:
-        return _detect(component_id)
-
-    return {"job_id": ctx.jobs.start("env.detect", work)}
 
 
 @rpc_method("env.install")

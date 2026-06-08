@@ -95,12 +95,14 @@ def detect_node() -> DetectResult:
     from core.env import node_manager
     managed = node_manager.managed_node_path()
     if managed:
-        version = _run_version([managed, "--version"])
+        raw = _run_version([managed, "--version"])
+        version = _parse_version_token(raw) if raw else None
         return DetectResult(available=True, version=version, source="managed", path=managed)
     system = shutil.which("node") or shutil.which("node.exe")
     if not system:
         return DetectResult(available=False)
-    version = _run_version([system, "--version"])
+    raw = _run_version([system, "--version"])
+    version = _parse_version_token(raw) if raw else None
     return DetectResult(available=True, version=version, source="system", path=system)
 
 
