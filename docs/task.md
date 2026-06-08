@@ -5,14 +5,10 @@
 
 ---
 
-## ✅ 出厂状态(2026-06-08）= 三轮 dogfood 全通过 + 已打包，无遗留 bug
+## ✅ 当前状态(2026-06-09）= 已打包，working tree 干净，无遗留 bug
 
-> 最近 installer = `desktop/release/VideoCraft-0.3.5-setup.exe`（**2026-06-08 21:10**，~175MB，HEAD `63a801d`）—— 含 news_desk 剪裁 + crop-on-Clip 重构（sidecar 未变，仅重打 renderer）。
-> 全部 commit+push 到 origin/main，working tree 干净。本会话三块：① i18n 孤儿清扫（`bc641dc`）② env-screen 4 项修复（`0c17cac`）③ **news_desk 剪裁 + crop-on-Clip 重构**（`3894fd7`；crop 落为 OTIO `Clip.crop` 一等字段、退役 DrawDeps 旁路、clip/news_desk 统一，权威 = [ADR-0011](adr/0011-spatial-crop-clip-transform.md)）。诊断/实现细节在各 commit message + 记忆 + 下方归档。
-
-已 dogfood 通过的三轮（详情见 [`_archive/task-archive-02`](_archive/task-archive-02_2026-06-05_2026-06-08.md)）：
-- **06-06**：7 项真机修复（嵌入 AI/路由/质检/翻译/ClaudeCode 默认勾选/覆盖装保 user_data/点 source 不崩）+ **60fps AV1 导出死锁破案修复**（`ClipReader` 环淘汰策略，被 3000ms 超时伪装成"慢"；单测钉死）。
-- **06-07~08**：clip/news_desk 4 项（编辑框冻结→乐观更新 / 新增「居中留边」letterbox 模式 / 原样下比例·短边置灰 / news_desk 恢复「按章节分割视频」）+ 候选页切模式实时更新。
+> 最近 installer = `desktop/release/VideoCraft-0.3.5-setup.exe`（**2026-06-08 21:10**，~175MB，HEAD `63a801d`，含 news_desk 剪裁）。全部 commit+push 到 origin/main。
+> 已关闭会话记录全部归档（见下「📦 已归档历史」）：三轮 dogfood → archive-02；i18n 清扫 / env 修复 / news_desk 剪裁(crop-on-Clip, ADR-0011) → archive-03。实现细节在各 commit message + ADR + 记忆。
 
 ---
 
@@ -22,8 +18,7 @@
 
 **▶ 真正剩下的（都不阻塞日常）**：
 1. **CI（GitHub Windows runner）** —— runner 有符号链接权限，可去掉 `win.signAndEditExecutable:false`，恢复 **exe 内嵌图标 + 代码签名**（见下方 winCodeSign 坑）。
-2. **backlog**：~~`src/i18n` Tk 孤儿大扫除~~ ✅ 2026-06-08（`bc641dc`，2156→28；AST 全量核验 tr() 调用点+字面量安全网，存活键只剩 subtitle.check/env.label/creation/material）；~~env-screen 打磨~~ ✅ 2026-06-08（`0c17cac`，扫描修 4 项：sticky error 清除 / detect_all 增量逐行 / 删 dead env.detect / node 版本解析）。env-screen 后续若有**具体痛点**再开（无具体锚点不做开放式优化，见 [[feedback_open_ended_llm_optimize]]）。
-3. **录播自动剪辑方向**（下一大功能候选）：source 加录播 → ASR → AI 全自动剪裁/章节/切废段/过渡；per-品类插件。见 memory [[project_recorded_autoedit]]。
+2. **录播自动剪辑方向**（下一大功能候选）：source 加录播 → ASR → AI 全自动剪裁/章节/切废段/过渡；per-品类插件。见 memory [[project_recorded_autoedit]]。（注：crop-on-Clip 已落地多段裁剪的 IR 地基，见 [ADR-0011](adr/0011-spatial-crop-clip-transform.md)）
 
 **⚠️ winCodeSign 坑（CI 必读）**：electron-builder 在 Windows eager 解压 winCodeSign（含 macOS 符号链接），非 admin/无 Developer Mode 建符号链接失败 → build 挂；现用 `win.signAndEditExecutable:false` 绕过（代价：exe 默认图标 + 不签名；窗口/安装包图标已是品牌图标）。CI runner 有符号链接权限可去掉这个 flag。
 
@@ -33,8 +28,9 @@
 
 ## 📦 已归档历史
 
-> 已完成会话记录移出本文件，按时间分两卷：
+> 已完成会话记录移出本文件，按时间分卷：
 > - [`_archive/task-archive-01_2026-05-19_2026-06-05.md`](_archive/task-archive-01_2026-05-19_2026-06-05.md)：FastAPI 传输重构、P3 打包/Tk 退役、续 6~37 OTIO/Electron 迁移史。
 > - [`_archive/task-archive-02_2026-06-05_2026-06-08.md`](_archive/task-archive-02_2026-06-05_2026-06-08.md)：三轮 dogfood（点 source 崩 / 60fps 导出死锁 / clip·news_desk 4 项 + 候选页跟随）。
+> - [`_archive/task-archive-03_2026-06-08_2026-06-09.md`](_archive/task-archive-03_2026-06-08_2026-06-09.md)：i18n 孤儿清扫 / env-screen 修复 / news_desk 剪裁 + crop-on-Clip 重构（ADR-0011）。
 >
 > 需要历史背景接力时去那里查；本文件只保留**仍在进行**的任务。
