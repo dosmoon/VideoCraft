@@ -7,8 +7,8 @@
 
 ## ✅ 出厂状态(2026-06-08）= 三轮 dogfood 全通过 + 已打包，无遗留 bug
 
-> 最近 installer = `desktop/release/VideoCraft-0.3.5-setup.exe`（**2026-06-08 00:52**，174.9MB，HEAD `1059db6`）。
-> working tree 干净。**注意**：installer 之后又落了 2 个本地 cleanup commit（未 push、未重打包）：`bc641dc` i18n 孤儿清扫、`0c17cac` env-screen 4 项修复（都是非打包改动，不影响出厂二进制）。诊断/实现细节在各 commit message + 记忆 + 下方归档。
+> 最近 installer = `desktop/release/VideoCraft-0.3.5-setup.exe`（**2026-06-08 10:56**，~175MB，HEAD `a6f1491`）。
+> 全部 commit+push 到 origin/main，working tree 干净。本轮新增 i18n 孤儿清扫（`bc641dc`）+ env-screen 4 项修复（`0c17cac`），**已重打包并验证**：冻结 sidecar i18n=28、HTTP smoke OK、packaged win-unpacked sidecar 携带清理后 i18n。诊断/实现细节在各 commit message + 记忆 + 下方归档。
 
 已 dogfood 通过的三轮（详情见 [`_archive/task-archive-02`](_archive/task-archive-02_2026-06-05_2026-06-08.md)）：
 - **06-06**：7 项真机修复（嵌入 AI/路由/质检/翻译/ClaudeCode 默认勾选/覆盖装保 user_data/点 source 不崩）+ **60fps AV1 导出死锁破案修复**（`ClipReader` 环淘汰策略，被 3000ms 超时伪装成"慢"；单测钉死）。
