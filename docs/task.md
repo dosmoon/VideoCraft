@@ -7,8 +7,8 @@
 
 ## ✅ 出厂状态(2026-06-08）= 三轮 dogfood 全通过 + 已打包，无遗留 bug
 
-> 最近 installer = `desktop/release/VideoCraft-0.3.5-setup.exe`（**2026-06-08 10:56**，~175MB，HEAD `a6f1491`）。
-> 全部 commit+push 到 origin/main，working tree 干净。本轮新增 i18n 孤儿清扫（`bc641dc`）+ env-screen 4 项修复（`0c17cac`），**已重打包并验证**：冻结 sidecar i18n=28、HTTP smoke OK、packaged win-unpacked sidecar 携带清理后 i18n。诊断/实现细节在各 commit message + 记忆 + 下方归档。
+> 最近 installer = `desktop/release/VideoCraft-0.3.5-setup.exe`（**2026-06-08 10:56**，~175MB，HEAD `a6f1491`）—— **此版不含 news_desk 剪裁**；重打包随本轮产出（installer 行待 build 后刷新）。
+> 全部 commit+push 到 origin/main，working tree 干净。本会话三块：① i18n 孤儿清扫（`bc641dc`）② env-screen 4 项修复（`0c17cac`）③ **news_desk 剪裁 + crop-on-Clip 重构**（`3894fd7`；crop 落为 OTIO `Clip.crop` 一等字段、退役 DrawDeps 旁路、clip/news_desk 统一，权威 = [ADR-0011](adr/0011-spatial-crop-clip-transform.md)）。诊断/实现细节在各 commit message + 记忆 + 下方归档。
 
 已 dogfood 通过的三轮（详情见 [`_archive/task-archive-02`](_archive/task-archive-02_2026-06-05_2026-06-08.md)）：
 - **06-06**：7 项真机修复（嵌入 AI/路由/质检/翻译/ClaudeCode 默认勾选/覆盖装保 user_data/点 source 不崩）+ **60fps AV1 导出死锁破案修复**（`ClipReader` 环淘汰策略，被 3000ms 超时伪装成"慢"；单测钉死）。

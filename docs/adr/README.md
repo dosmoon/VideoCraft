@@ -78,3 +78,4 @@ memory 里对应的 `project_*.md` 改成**指针**，正文不重复：
 - [0008 - 插件逻辑入 TS;Python = 能力网关](0008-plugins-ts-python-capability-gateway.md)（supersede 0004 的 provider-dispatch 部分）
 - [0009 - Python 依赖管理 = 正统 uv 项目（pyproject 单源 + uv.lock）](0009-uv-project-dependency-management.md)
 - [0010 - Electron↔Python sidecar 传输 = FastAPI HTTP + SSE](0010-sidecar-http-transport.md)（supersede stdio JSON-RPC）
+- [0011 - 空间裁剪 = per-clip `Clip.crop` 变换（退役 DrawDeps 旁路）](0011-spatial-crop-clip-transform.md)

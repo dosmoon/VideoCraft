@@ -91,8 +91,11 @@ interface Clip {
   durationSec: number;
   sourceStart?: number;    // 媒体 clip:源时间窗起点(窗长 = durationSec)
   mediaRef?: string;       // 媒体 clip:源 id/path
+  crop?: CropRect;         // 媒体 clip:空间取景(reframe);缺省=整源。per-clip 变换(ADR-0011)
   style: object; data: object;
 }
+
+interface CropRect { x: number; y: number; w: number; h: number }  // 归一化源坐标 [0,1]
 
 interface Gap { durationSec: number }
 
@@ -108,6 +111,7 @@ interface Transition { kind: string; inOffsetSec: number; outOffsetSec: number }
 4. `Timeline.durationSec = max over tracks(Σ children.durationSec − Σ transition 重叠)`。
 5. `Clip.kind ∈ 图元 catalog`;`Track.kind ∈ {video,audio,overlay}`。
 6. **overlay 轨派生**:把装配的 cut/ripple 施加到源锚定内容(SRT/分析)→ 合法 OTIO 序列(cue-clip + Gap 交替)。
+7. 媒体 Clip 的 `crop`(若有):归一化源矩形,各分量有限、`w,h>0` 且 `[x,y,x+w,y+h]⊆[0,1]`。空间取景是 per-clip 变换,不是叠加组件、不是全局属性(详见 [ADR-0011](../adr/0011-spatial-crop-clip-transform.md))。
 
 **TimeMap = 派生函数(源↔输出),不是存储的定位系统**:由视频轨装配算出,用来把源锚定内容 cut/ripple 成标准 OTIO overlay 轨。`outToSource` / `sourceToOut`,剪掉区返回 null。
 
@@ -278,5 +282,5 @@ OTIO 模型本就有 `Track.kind="audio"` 与 `Clip.kind="audio"`(catalog `MEDIA
 
 - ✅ **多 overlay 轨 alpha 叠加**:`draw.ts` 按 z 升序 paint,Backend overlay 管线 alpha-over。
 - ✅ **image_watermark**:`overlay/canvas2d.ts` `drawImageWatermark`(decode→`imageCache`→scale/opacity/position)+ `preloadImageOverlay`,预览/导出均在用。**非 TODO,已实装**。
-- ✅ 视频:外部纹理 + fit / 偏移 crop(reframe)。
+- ✅ 视频:外部纹理 + fit / 空间裁剪 crop(reframe)。**2026-06-08 升级为 per-clip `Clip.crop` IR 字段**(退役旧 `DrawDeps.cropRect` 渲染旁路;clip + news_desk 统一;见 [ADR-0011](../adr/0011-spatial-crop-clip-transform.md))。
 - ⏳ **转场(crossfade / dip_to_black)= 唯一缺口,本轮用户决定暂不做**。地基已就位:IR 有 `Transition` 结构类型 + 不变量,`resolveFrameAt` 已在重叠区返回两个 active clip(outgoing 先)。缺 GPU per-layer alpha blend + 创作产出转场 + UI。当前两形态(clip 单窗口 / news_desk 全片)语义上不需段间转场;真实需求来自未来录播自动剪辑(多段装配)。
