@@ -8,7 +8,7 @@
 ## ✅ 出厂状态(2026-06-08）= 三轮 dogfood 全通过 + 已打包，无遗留 bug
 
 > 最近 installer = `desktop/release/VideoCraft-0.3.5-setup.exe`（**2026-06-08 00:52**，174.9MB，HEAD `1059db6`）。
-> 全部 commit+push 到 origin/main，working tree 干净。诊断/实现细节在各 commit message + 记忆 + 下方归档。
+> working tree 干净。**注意**：installer 之后又落了 2 个本地 cleanup commit（未 push、未重打包）：`bc641dc` i18n 孤儿清扫、`0c17cac` env-screen 4 项修复（都是非打包改动，不影响出厂二进制）。诊断/实现细节在各 commit message + 记忆 + 下方归档。
 
 已 dogfood 通过的三轮（详情见 [`_archive/task-archive-02`](_archive/task-archive-02_2026-06-05_2026-06-08.md)）：
 - **06-06**：7 项真机修复（嵌入 AI/路由/质检/翻译/ClaudeCode 默认勾选/覆盖装保 user_data/点 source 不崩）+ **60fps AV1 导出死锁破案修复**（`ClipReader` 环淘汰策略，被 3000ms 超时伪装成"慢"；单测钉死）。
@@ -22,7 +22,7 @@
 
 **▶ 真正剩下的（都不阻塞日常）**：
 1. **CI（GitHub Windows runner）** —— runner 有符号链接权限，可去掉 `win.signAndEditExecutable:false`，恢复 **exe 内嵌图标 + 代码签名**（见下方 winCodeSign 坑）。
-2. **backlog**：`src/i18n` Tk 孤儿大扫除（VLC 已清，还有别的；注意≠ i18n **打包**修复——那是把 JSON 打进冻结包，孤儿清扫是删死 key）；env-screen 其它打磨。
+2. **backlog**：~~`src/i18n` Tk 孤儿大扫除~~ ✅ 2026-06-08（`bc641dc`，2156→28；AST 全量核验 tr() 调用点+字面量安全网，存活键只剩 subtitle.check/env.label/creation/material）；~~env-screen 打磨~~ ✅ 2026-06-08（`0c17cac`，扫描修 4 项：sticky error 清除 / detect_all 增量逐行 / 删 dead env.detect / node 版本解析）。env-screen 后续若有**具体痛点**再开（无具体锚点不做开放式优化，见 [[feedback_open_ended_llm_optimize]]）。
 3. **录播自动剪辑方向**（下一大功能候选）：source 加录播 → ASR → AI 全自动剪裁/章节/切废段/过渡；per-品类插件。见 memory [[project_recorded_autoedit]]。
 
 **⚠️ winCodeSign 坑（CI 必读）**：electron-builder 在 Windows eager 解压 winCodeSign（含 macOS 符号链接），非 admin/无 Developer Mode 建符号链接失败 → build 挂；现用 `win.signAndEditExecutable:false` 绕过（代价：exe 默认图标 + 不签名；窗口/安装包图标已是品牌图标）。CI runner 有符号链接权限可去掉这个 flag。
