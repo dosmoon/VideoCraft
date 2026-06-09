@@ -12,18 +12,19 @@
 
 ---
 
-## ▶ 下一任务（新对话先读）= P3 收尾（CI/签名）+ 一轮干净打包态终验
+## ▶ 下一任务（新对话先读）= 录播自动剪辑方向（CI/签名已收口）
 
-> **权威方案 = [`packaging-design.md`](draft/packaging-design.md)**（§8 步骤、§9 待决、§10 发布 checklist）。P3 steps 1-7（seam + 冻结 sidecar + NSIS + 嵌入 AI/GPU opt-in）+ step 8（ffmpeg 随包 ✅、品牌图标 ✅ 窗口/安装包、env 页 bundled 呈现 ✅）实质完成。
+> **权威方案 = [`packaging-design.md`](draft/packaging-design.md)**（§8 步骤、§9 待决、§10 发布 checklist）。P3 steps 1-8 实质完成（含 CI，见下）。
 
-**▶ 进行中 = CI（GitHub Windows runner）**：
-- ✅ 已搭 `.github/workflows/build-windows.yml`：`workflow_dispatch` + `v*` tag 触发 → uv 冻结 sidecar（`build_sidecar.ps1`）→ 拉 ffmpeg（`fetch_ffmpeg.ps1`）→ pnpm `electron-vite build` + `electron-builder --win`，**CI 就地把 yml 的 `signAndEditExecutable: false` flip 成 true**（本机 yml 默认仍关，CI 才开；不用 `-c.` CLI override——那个点号短形式被 yargs 当 config 文件路径 ENOENT）→ rcedit 嵌品牌图标 → installer 传 artifact，`--publish never`。
-- ⏳ **待做（下一步）**：push 到 main（workflow_dispatch 要求文件在默认分支才能触发；该 workflow 不在 push-to-main 上自动跑，安全）→ `gh workflow run` 首次验证跑 → 拿 artifact 确认 exe 真带图标。
-- ⏸ **真签名（Authenticode）仍 deferred**：需要证书（用户选「先只要图标，暂不签名」）。exe 当前 unsigned，SmartScreen 会警告。拿证书后再接（方案见 packaging-design §10）。
+**✅ CI（GitHub Windows runner）已落地 + 验证绿（2026-06-09）**：
+- `.github/workflows/build-windows.yml`：`workflow_dispatch` + `v*` tag 触发 → setup-uv 冻结 sidecar（`build_sidecar.ps1`）→ 拉 ffmpeg（`fetch_ffmpeg.ps1`）→ pnpm `electron-vite build` + `electron-builder --win`，**CI 就地把 yml 的 `signAndEditExecutable: false` flip 成 true**（本机 yml 默认仍关，CI 才开；**不能用 `-c.win...=true` CLI override**——点号短形式被 yargs 当 config 文件路径 ENOENT，首跑就栽这）→ rcedit 嵌品牌图标 → installer 传 artifact，`--publish never`。
+- **首验结果**：run `27191231392` 全绿 4m3s；winCodeSign 被拉下、edit/sign 管线对 `VideoCraft.exe` 跑过（图标内嵌确认生效）；artifact `VideoCraft-0.3.5-setup.exe`（183MB）下载验过 = `NotSigned`（符合预期，无证书）。
+- ⏸ **真签名（Authenticode）deferred**：用户选「先只要图标，暂不签名」。exe 当前 unsigned，SmartScreen 会警告。拿证书后接（方案见 packaging-design §10）。
+- ⚠️ **小尾巴（不阻塞）**：CI annotation 警告 checkout@v4 / setup-node@v4 / upload-artifact@v4 / setup-uv@v5 / pnpm/action-setup@v4 跑在 Node 20 上，**2026-06-16 起强制 Node 24、2026-09-16 移除 Node 20**。届时升 action 大版本（v5/v6 系跑 Node 24）即可，现在不动以免打破刚转绿的 build。
 
-**▶ CI 完事后的下一大功能候选 = 录播自动剪辑方向**：source 加录播 → ASR → AI 全自动剪裁/章节/切废段/过渡；per-品类插件。见 memory [[project_recorded_autoedit]]。（注：crop-on-Clip 已落地多段裁剪的 IR 地基，见 [ADR-0011](adr/0011-spatial-crop-clip-transform.md)）
+**▶ 下一大功能候选 = 录播自动剪辑方向**：source 加录播 → ASR → AI 全自动剪裁/章节/切废段/过渡；per-品类插件。见 memory [[project_recorded_autoedit]]。（注：crop-on-Clip 已落地多段裁剪的 IR 地基，见 [ADR-0011](adr/0011-spatial-crop-clip-transform.md)）
 
-**⚠️ winCodeSign 坑（CI 必读）**：electron-builder 在 Windows eager 解压 winCodeSign（含 macOS 符号链接），非 admin/无 Developer Mode 建符号链接失败 → build 挂；现用 `win.signAndEditExecutable:false` 绕过（代价：exe 默认图标 + 不签名；窗口/安装包图标已是品牌图标）。CI runner 有符号链接权限可去掉这个 flag。
+**⚠️ winCodeSign 坑（历史背景）**：electron-builder 在 Windows eager 解压 winCodeSign（含 macOS 符号链接），非 admin/无 Developer Mode 建符号链接失败 → 本机 build 挂；本机 yml `win.signAndEditExecutable:false` 绕过（代价：exe 默认图标 + 不签名；窗口/安装包图标已是品牌图标）。**CI runner 有符号链接权限 → 已就地 flip 回 true 拿到 exe 内嵌图标（见上）。**
 
 **纪律**：[[feedback_pre_alpha_no_legacy]] 不留兼容层；改 Python 整重启 sidecar；每步 build-green（pytest + desktop typecheck/vitest/build）；**冻结态 bug 不能只在 dev 验**（用驱动真 `core_rpc.exe` 的冻结 E2E 复现，见 [[feedback_frozen_bug_repro]]）；**renderer 性能/卡顿 bug 先装探针拿数据再改，整秒级的"慢"先比对代码里的 timeout/budget 常量，renderer 改动必 `dev.ps1` 整重启**（[[feedback_measure_dont_guess_renderer]]）；**Tk→新壳"缺口"恢复前先 grep docs 查是否故意删的**（[[feedback_parity_gap_not_bug]]）；**外部/远端写操作前先只读核对**（[[feedback_external_actions]]）。
 
