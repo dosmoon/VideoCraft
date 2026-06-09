@@ -6,8 +6,9 @@
 # dev box — has the SeCreateSymbolicLinkPrivilege that electron-builder's
 # winCodeSign tool needs to extract (its archive carries macOS symlinks). So the
 # local electron-builder.yml keeps `win.signAndEditExecutable: false` (to build at
-# all on the dev box, at the cost of the default Electron icon), and CI overrides
-# it back to `true` so rcedit embeds the real icon. See packaging-design.md §3.
+# all on the dev box, at the cost of the default Electron icon), and the build step
+# below flips it back to `true` in the checkout so rcedit embeds the real icon. See
+# packaging-design.md §3.
 #
 # The exe is still UNSIGNED — no Authenticode certificate is configured. Real
 # signing is a later step (needs a cert; packaging-design.md §10).
@@ -67,16 +68,20 @@ jobs:
         working-directory: desktop
         run: pnpm install --frozen-lockfile
 
-      # Re-enable signAndEditExecutable (off in electron-builder.yml for local
-      # non-admin builds) so rcedit embeds the brand icon into the exe. Split from
-      # the build:win script so the override lands only on electron-builder.
-      # `--publish never` guards against an accidental GitHub Release.
       - name: Build installer (NSIS, brand icon embedded)
         working-directory: desktop
         shell: pwsh
+        # This runner has the symlink privilege winCodeSign needs, so flip the
+        # local workaround (signAndEditExecutable: false) to true in the
+        # checked-out config — rcedit then embeds the brand icon into the exe.
+        # An in-place line edit, NOT a `-c.win.signAndEditExecutable=true` CLI flag:
+        # that dotted short-form is parsed as a config *file path* by yargs across
+        # pwsh/pnpm and the build fails with ENOENT. `--publish never` guards
+        # against an accidental GitHub Release. The exe stays unsigned (no cert).
         run: |
+          (Get-Content electron-builder.yml -Raw) -replace 'signAndEditExecutable: false', 'signAndEditExecutable: true' | Set-Content electron-builder.yml -NoNewline
           pnpm exec electron-vite build
-          pnpm exec electron-builder --win -c.win.signAndEditExecutable=true --publish never
+          pnpm exec electron-builder --win --publish never
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4

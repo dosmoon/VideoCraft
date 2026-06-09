@@ -17,7 +17,7 @@
 > **权威方案 = [`packaging-design.md`](draft/packaging-design.md)**（§8 步骤、§9 待决、§10 发布 checklist）。P3 steps 1-7（seam + 冻结 sidecar + NSIS + 嵌入 AI/GPU opt-in）+ step 8（ffmpeg 随包 ✅、品牌图标 ✅ 窗口/安装包、env 页 bundled 呈现 ✅）实质完成。
 
 **▶ 进行中 = CI（GitHub Windows runner）**：
-- ✅ 已搭 `.github/workflows/build-windows.yml`：`workflow_dispatch` + `v*` tag 触发 → uv 冻结 sidecar（`build_sidecar.ps1`）→ 拉 ffmpeg（`fetch_ffmpeg.ps1`）→ pnpm `electron-vite build` + `electron-builder --win`，**CLI override `-c.win.signAndEditExecutable=true`**（本机 yml 默认仍关，CI 才开）→ rcedit 嵌品牌图标 → installer 传 artifact，`--publish never`。本地 YAML 已校验。
+- ✅ 已搭 `.github/workflows/build-windows.yml`：`workflow_dispatch` + `v*` tag 触发 → uv 冻结 sidecar（`build_sidecar.ps1`）→ 拉 ffmpeg（`fetch_ffmpeg.ps1`）→ pnpm `electron-vite build` + `electron-builder --win`，**CI 就地把 yml 的 `signAndEditExecutable: false` flip 成 true**（本机 yml 默认仍关，CI 才开；不用 `-c.` CLI override——那个点号短形式被 yargs 当 config 文件路径 ENOENT）→ rcedit 嵌品牌图标 → installer 传 artifact，`--publish never`。
 - ⏳ **待做（下一步）**：push 到 main（workflow_dispatch 要求文件在默认分支才能触发；该 workflow 不在 push-to-main 上自动跑，安全）→ `gh workflow run` 首次验证跑 → 拿 artifact 确认 exe 真带图标。
 - ⏸ **真签名（Authenticode）仍 deferred**：需要证书（用户选「先只要图标，暂不签名」）。exe 当前 unsigned，SmartScreen 会警告。拿证书后再接（方案见 packaging-design §10）。
 

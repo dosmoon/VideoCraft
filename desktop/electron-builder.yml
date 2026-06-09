@@ -55,10 +55,11 @@ win:
   # on a non-admin / non-Developer-Mode Windows box. Off → no winCodeSign needed
   # (the exe keeps the default Electron icon on a local build).
   #
-  # CI (.github/workflows/build-windows.yml) overrides this back to `true` via
-  # `-c.win.signAndEditExecutable=true`: a GitHub windows runner has the symlink
-  # privilege winCodeSign needs, so rcedit embeds the real brand icon there. The
-  # exe is still unsigned until an Authenticode cert is configured (design §3/§10).
+  # CI (.github/workflows/build-windows.yml) flips this back to `true` in its
+  # checkout (an in-place edit, not a CLI override — the `-c.` dotted form is parsed
+  # as a config file path by yargs and fails): a GitHub windows runner has the
+  # symlink privilege winCodeSign needs, so rcedit embeds the real brand icon there.
+  # The exe is still unsigned until an Authenticode cert is configured (§3/§10).
   signAndEditExecutable: false
 
 nsis:
