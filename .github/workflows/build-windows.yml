@@ -1,0 +1,86 @@
+# Build the VideoCraft Windows installer on a GitHub-hosted runner.
+#
+# Why CI exists for this: the full packaging chain (PyInstaller sidecar +
+# bundled ffmpeg + electron-builder NSIS) is reproduced here so the exe gets its
+# brand icon embedded. A GitHub windows runner — unlike a non-admin / non-Dev-Mode
+# dev box — has the SeCreateSymbolicLinkPrivilege that electron-builder's
+# winCodeSign tool needs to extract (its archive carries macOS symlinks). So the
+# local electron-builder.yml keeps `win.signAndEditExecutable: false` (to build at
+# all on the dev box, at the cost of the default Electron icon), and CI overrides
+# it back to `true` so rcedit embeds the real icon. See packaging-design.md §3.
+#
+# The exe is still UNSIGNED — no Authenticode certificate is configured. Real
+# signing is a later step (needs a cert; packaging-design.md §10).
+#
+# Triggers: manual dispatch + version tags (v*). The build is heavy (~10-20 min:
+# it downloads ffmpeg, runs PyInstaller, and pulls Electron + builder tools), so
+# it is NOT run on every push. It uploads the installer as a build artifact and
+# does NOT publish a GitHub Release (--publish never).
+
+name: Build Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # uv drives the sidecar freeze (build_sidecar.ps1: `uv venv --python 3.12`
+      # auto-fetches a managed Python 3.12, then `uv sync --frozen` from uv.lock).
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # PyInstaller onedir -> desktop/resources/sidecar/core_rpc.exe (+ _internal/).
+      # The script smoke-tests the frozen exe over its HTTP transport before exiting.
+      - name: Build sidecar (PyInstaller onedir)
+        shell: pwsh
+        run: ./packaging/build_sidecar.ps1
+
+      # Pinned static ffmpeg/ffprobe -> desktop/resources/ (bundled into the app).
+      - name: Fetch bundled ffmpeg + ffprobe
+        shell: pwsh
+        run: ./packaging/fetch_ffmpeg.ps1
+
+      # pnpm before setup-node so the latter's `cache: pnpm` can find the store.
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - name: Install desktop deps
+        working-directory: desktop
+        run: pnpm install --frozen-lockfile
+
+      # Re-enable signAndEditExecutable (off in electron-builder.yml for local
+      # non-admin builds) so rcedit embeds the brand icon into the exe. Split from
+      # the build:win script so the override lands only on electron-builder.
+      # `--publish never` guards against an accidental GitHub Release.
+      - name: Build installer (NSIS, brand icon embedded)
+        working-directory: desktop
+        shell: pwsh
+        run: |
+          pnpm exec electron-vite build
+          pnpm exec electron-builder --win -c.win.signAndEditExecutable=true --publish never
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VideoCraft-windows-installer
+          path: desktop/release/*-setup.exe
+          if-no-files-found: error

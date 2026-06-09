@@ -42,8 +42,8 @@ asar: true
 
 win:
   # Brand icon from the logo (desktop/build/icon.ico). Used for the NSIS
-  # installer + Start-Menu shortcut now; the exe-embedded icon also needs
-  # rcedit/winCodeSign (see signAndEditExecutable below) — that lands in CI.
+  # installer + Start-Menu shortcut here; the exe-EMBEDDED icon additionally needs
+  # rcedit/winCodeSign (see signAndEditExecutable below) — CI does that.
   icon: build/icon.ico
   target:
     - target: nsis
@@ -53,7 +53,12 @@ win:
   # Skip signing + rcedit exe-resource editing. Editing pulls electron-builder's
   # winCodeSign tool, whose archive contains macOS symlinks that fail to extract
   # on a non-admin / non-Developer-Mode Windows box. Off → no winCodeSign needed
-  # (the exe keeps the default Electron icon until we sign properly in step 8/CI).
+  # (the exe keeps the default Electron icon on a local build).
+  #
+  # CI (.github/workflows/build-windows.yml) overrides this back to `true` via
+  # `-c.win.signAndEditExecutable=true`: a GitHub windows runner has the symlink
+  # privilege winCodeSign needs, so rcedit embeds the real brand icon there. The
+  # exe is still unsigned until an Authenticode cert is configured (design §3/§10).
   signAndEditExecutable: false
 
 nsis:
