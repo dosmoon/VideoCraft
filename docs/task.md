@@ -5,7 +5,7 @@
 
 ---
 
-## ✅ 当前状态(2026-06-10）= docs/ 治理完毕；v0.3.5 草稿 Release 待 publish
+## ✅ 当前状态(2026-06-10）= docs/ 治理完毕；v0.3.5 已发布
 
 > 本轮(2026-06-10 晚)落地 **docs/ 全面 archive + 重写**（上轮拍板的任务）：
 > ① **21 篇过期文档移 [`docs/_archive/`](_archive/README.md)**（design/ 6 篇 Tk 时代：01/03/05/07/10/11；draft/ 13 篇已落地或已废弃：electron-migration-plan / adr-0008-migration-tasks / project-restructure / clip-component-migration / ai-clip-redesign / composition-style / architecture-vision / news-desk-derivative / news_desk-ux-v0.3 / publish-sidecar / chapter-verify-edit / substrate-spike-findings / tech-selection-embedded-ai；原 draft/archive/ 2 篇并入），`_archive/README.md` 给了逐篇归档原因 + 现行替代指引。
@@ -13,7 +13,7 @@
 > ③ 修断链：BACKLOG.md、derivative-snapshot-principle、composition-otio-foundation、electron-migration-design、06-core-layer（顺带清掉其 Tk 残留模块表）+ 3 处代码注释路径。ADR 全部核过：0001~0011 状态准确，0004 已自带 Superseded 注记，无需动。
 > 保留现行：design/ 02/06/08/09 + aistack-integration + composition-timeline-v0；draft/ packaging-design / electron-migration-design / composition-otio-foundation / derivative-snapshot-principle + 两篇未做草稿（media-segment-composer=P1 PPT2Video、buffer-publishing）。
 > ~~遗留小尾巴：`src/hub_layout.py`~~ 已删（2026-06-10 同日，pytest baseline 对照过）。
-> ⏳ **v0.3.5 草稿 Release 仍待用户审 notes 后手点 publish**。⏸ 真签名 deferred(需证书)。
+> ✅ **v0.3.5 Release 已发布**（2026-06-10 20:07 UTC，notes 重写为双语用户向后 publish，<https://github.com/dosmoon/VideoCraft/releases/tag/v0.3.5>）。⏸ 真签名 deferred(需证书)。
 > 旧会话记录见下「📦 已归档历史」。
 
 ---
