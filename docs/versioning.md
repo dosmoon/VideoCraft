@@ -1,7 +1,7 @@
 # 版本号规则 (Versioning)
 
 > 本项目发布版本号的约定，**后续遵从**。这是「发布/流程」约定，不是架构决策，故不进 `adr/`。
-> 配套：发布动作的完整 checklist 见 [`draft/packaging-design.md`](draft/packaging-design.md) §10。
+> 配套：发布动作的完整 checklist 见 [`design/packaging-design.md`](design/packaging-design.md) §10。
 
 ---
 

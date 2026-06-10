@@ -5,7 +5,7 @@
 
 ## 决定
 
-空间裁剪 / 取景（reframe）是 OTIO IR `Clip` 上的一等可选字段 **`Clip.crop: CropRect`**（归一化源矩形 `{x,y,w,h}∈[0,1]`，仅媒体 clip，缺省 = 整源）。共享 compositor 逐 clip 读取它。**退役**原先把 crop 当全局渲染旁路的 `DrawDeps.cropRect`。clip 与 news_desk 用同一字段表达，新增 IR 不变量 #7 钉死其取值（见 [composition-otio-foundation §2.5](../draft/composition-otio-foundation.md)）。
+空间裁剪 / 取景（reframe）是 OTIO IR `Clip` 上的一等可选字段 **`Clip.crop: CropRect`**（归一化源矩形 `{x,y,w,h}∈[0,1]`，仅媒体 clip，缺省 = 整源）。共享 compositor 逐 clip 读取它。**退役**原先把 crop 当全局渲染旁路的 `DrawDeps.cropRect`。clip 与 news_desk 用同一字段表达，新增 IR 不变量 #7 钉死其取值（见 [composition-otio-foundation §2.5](../design/composition-otio-foundation.md)）。
 
 ## 为什么
 

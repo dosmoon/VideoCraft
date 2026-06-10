@@ -5,7 +5,7 @@
  * §2.5). It replaces the transient, overlay-only Python IR in
  * src/core/composition/timeline.py with a *persistent, full multi-track* model:
  * N video + N audio + N overlay tracks, all uniform Tracks (anti-CapCut — no
- * bespoke track types). See docs/draft/composition-otio-foundation.md.
+ * bespoke track types). See docs/design/composition-otio-foundation.md.
  *
  * Two orthogonal axes (kept deliberately separate):
  *   1. Structural type   — clip | gap | transition  (A2: three OTIO structural

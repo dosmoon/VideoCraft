@@ -17,7 +17,7 @@
 
 | 文件 | 原主题 | 现行替代 |
 |------|--------|----------|
-| [01-architecture.md](01-architecture.md) | 单进程 + Tk Tab 嵌入 / 无需 IPC | ADR-0008 / ADR-0010 + [electron-migration-design](../draft/electron-migration-design.md)（仍在 `draft/`） |
+| [01-architecture.md](01-architecture.md) | 单进程 + Tk Tab 嵌入 / 无需 IPC | ADR-0008 / ADR-0010 + [design/00-overview](../design/00-overview.md) |
 | [03-ui-hub.md](03-ui-hub.md) | Tk Hub（PanedWindow + Notebook + ToolFrame） | Electron renderer hub / workbenches |
 | [05-use-cases.md](05-use-cases.md) | Tk 时代用例集（Toplevel 工具流） | — |
 | [07-operations-registry.md](07-operations-registry.md) | 文件类型 → 右键操作注册表（`operations.py`，已删） | — |
@@ -28,12 +28,13 @@
 
 | 文件 | 性质 | 归档原因 |
 |------|------|----------|
-| [electron-migration-plan.md](electron-migration-plan.md) | 迁移启动稿 | 被 `draft/electron-migration-design.md` 取代 |
+| [electron-migration-plan.md](electron-migration-plan.md) | 迁移启动稿 | 被 [electron-migration-design.md](electron-migration-design.md) 取代 |
+| [electron-migration-design.md](electron-migration-design.md) | Electron 迁移正式方案 + 实现进度日志 | 迁移已完成（2026-06）；架构正文由 ADR-0008/0010 + [design/00-overview](../design/00-overview.md) 承载；迁移期实现细节/坑的考古入口 |
 | [adr-0008-migration-tasks.md](adr-0008-migration-tasks.md) | 迁移勾选清单 | 迁移已完成（Phase A6/B5 交付） |
 | [project-restructure.md](project-restructure.md) | 项目模型重塑设计 | 已全量落地（source/素材/创作目录 = 现状） |
 | [clip-component-migration.md](clip-component-migration.md) | clip component 化方案 | 已落地；clip 其后又整体迁 TS |
 | [ai-clip-redesign.md](ai-clip-redesign.md) | AI 切片重构设计（P1~P4） | 已落地于 Tk 时代；clip 现为 TS 插件 |
-| [composition-style.md](composition-style.md) | Python CompositionStyle 渲染设计 | 引擎已重写为 TS composition（ADR-0006/0011 + `draft/composition-otio-foundation.md`） |
+| [composition-style.md](composition-style.md) | Python CompositionStyle 渲染设计 | 引擎已重写为 TS composition（ADR-0006/0011 + [design/composition-otio-foundation.md](../design/composition-otio-foundation.md)） |
 | [architecture-vision.md](architecture-vision.md) | 2026-05 下一阶段愿景 | 路线已走完/转向 Electron；5 形态规划见 design/00 + 08 |
 | [news-desk-derivative.md](news-desk-derivative.md) | news_desk v0.1 设计 | 已落地并迁新架构（2026-05-31） |
 | [news_desk-ux-v0.3.md](news_desk-ux-v0.3.md) | news_desk UX v0.3 | 已落地 |

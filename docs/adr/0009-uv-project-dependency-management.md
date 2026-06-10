@@ -4,7 +4,7 @@
 - **决定日期**: 2026-06-04
 
 > 实施细节（档模型、build_sidecar 流程、dev 重建命令、发布 checklist）在
-> [`docs/draft/packaging-design.md`](../draft/packaging-design.md) §2.1 / §5.3 / §10。
+> [`docs/design/packaging-design.md`](../design/packaging-design.md) §2.1 / §5.3 / §10。
 > 本 ADR 只钉决策的 why + 边界 + 不变量 + 保留的 gotchas。
 
 ## 决定

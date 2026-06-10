@@ -2,7 +2,7 @@
 
 This is where the **composition core** lives: the OTIO-style multi-track IR, the
 shared video component library, and the GPU compositor (WebGPU/WebCodecs +
-libass-wasm). Per [`docs/draft/composition-otio-foundation.md`](../docs/draft/composition-otio-foundation.md),
+libass-wasm). Per [`docs/design/composition-otio-foundation.md`](../docs/design/composition-otio-foundation.md),
 composition is a TypeScript / renderer concern — the Python side keeps only
 project / material / analysis / AI and drops out of the render path.
 

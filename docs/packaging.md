@@ -1,7 +1,7 @@
 # 打包 & 发布说明 (Packaging & Release)
 
 > **操作手册（runbook）**：怎么把 VideoCraft 打成 Windows 安装包、怎么切发布。
-> 设计与取舍（为什么 onedir / 瘦包 / bundle ffmpeg 等）见 [`draft/packaging-design.md`](draft/packaging-design.md)；
+> 设计与取舍（为什么 onedir / 瘦包 / bundle ffmpeg 等）见 [`design/packaging-design.md`](design/packaging-design.md)；
 > 版本号怎么涨见 [`versioning.md`](versioning.md)。本文只讲**怎么做**。
 
 ---

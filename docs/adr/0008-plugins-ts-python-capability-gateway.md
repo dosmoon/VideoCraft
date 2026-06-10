@@ -4,7 +4,7 @@
 - **决定日期**: 2026-06-01
 
 > 实施细节(跨阶段地基 C1–C7、Phase A/B 分步、Cutover、风险、必读文件)在
-> [`docs/draft/electron-migration-design.md`](../draft/electron-migration-design.md)
+> [`docs/_archive/electron-migration-design.md`](../_archive/electron-migration-design.md)（迁移完成后归档）
 > 顶部「🚩 架构转向」节。本 ADR 只钉决策的 why + 边界 + 不变量。
 
 ## 决定

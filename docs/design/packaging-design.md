@@ -1,6 +1,6 @@
 # P3 打包 / 分发设计
 
-> **状态**:草案 / 2026-06-03 · 承接 [`electron-migration-design.md`](electron-migration-design.md)「剩余工作计划」P3 + §3.2 + §7.3
+> **状态**:已实施(P3 收口 2026-06-10,v0.3.5 已发布;原草案 2026-06-03)· 承接 [`electron-migration-design.md`](../_archive/electron-migration-design.md)「剩余工作计划」P3 + §3.2 + §7.3 · 真签名(§10)deferred 待证书
 > **前置**:ADR-0008 终态(三插件零插件专属 Python)已达成;P0~P2 + P6 全完成。**当前 = 纯 dev 模式,零分发产物。**
 > **决策已锁(2026-06-03 用户拍板)**:① sidecar = **PyInstaller onedir**(非 onefile)② **瘦装包 + 引导下载**。
 > **纪律**:Windows-first([architecture-vision §3]);用户数据全部 install-local,绝不 %APPDATA%([[feedback_portable_data]]);非 AI 功能不被下载门槛堵死([[feedback_no_forced_downloads]]);早期=严谨锁定可演化基础([[feedback_early_stage_foundation]]);每步 build-green。

@@ -311,7 +311,7 @@ def keys_dir() -> str:
     callers of core.ai.config.keys_dir keep working. Both the writer (here) and
     the reader (core.paths) MUST resolve through that one function so they can't
     drift; they did once, silently breaking the packaged models-dir override.
-    See core.user_data.keys_dir + docs/draft/packaging-design.md §4.
+    See core.user_data.keys_dir + docs/design/packaging-design.md §4.
     """
     from core.user_data import keys_dir as _keys_dir
 

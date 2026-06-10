@@ -38,10 +38,10 @@
 | composition = 统一多轨 timeline IR（OTIO 式，纯函数 compile） | [ADR-0006](../adr/0006-composition-timeline-ir.md) |
 | 空间裁剪 = `Clip.crop` 一等字段（preview ≡ render） | [ADR-0011](../adr/0011-spatial-crop-clip-transform.md) |
 | 项目数据 = materials/creations 组件化目录 | [ADR-0005](../adr/0005-componentized-data-layer.md) |
-| 创作与素材解耦 + 快照原则 | [ADR-0003](../adr/0003-editor-modules-decoupling.md) + [快照原则](../draft/derivative-snapshot-principle.md) |
+| 创作与素材解耦 + 快照原则 | [ADR-0003](../adr/0003-editor-modules-decoupling.md) + [快照原则](derivative-snapshot-principle.md) |
 | Python 依赖管理 = uv（pyproject.toml + uv.lock 唯一权威） | [ADR-0009](../adr/0009-uv-project-dependency-management.md) |
 
-渲染引擎与数据模型的设计正文：[composition-otio-foundation.md](../draft/composition-otio-foundation.md)；迁移期完整设计（含实现进度，历史背景）：[electron-migration-design.md](../draft/electron-migration-design.md)。
+渲染引擎与数据模型的设计正文：[composition-otio-foundation.md](composition-otio-foundation.md)；迁移期完整设计（含实现进度，纯历史背景）：[electron-migration-design.md](../_archive/electron-migration-design.md)（已归档）。
 
 ---
 
@@ -65,7 +65,7 @@
 ## 打包 / 发布
 
 electron-builder NSIS 安装包 + PyInstaller onedir 冻结 sidecar + 瘦装包引导下载；GitHub Actions CI 出包。
-操作手册 = [`docs/packaging.md`](../packaging.md)，版本规则 = [`docs/versioning.md`](../versioning.md)，设计 = [packaging-design.md](../draft/packaging-design.md)。
+操作手册 = [`docs/packaging.md`](../packaging.md)，版本规则 = [`docs/versioning.md`](../versioning.md)，设计 = [packaging-design.md](packaging-design.md)。
 
 ---
 
@@ -121,6 +121,9 @@ docs/                     # 本文档树；BACKLOG.md = 计划权威；docs/task
 | [09-file-naming-convention.md](09-file-naming-convention.md) | 文件命名规范 | 现行 |
 | [12-i18n.md](12-i18n.md) | 本地化（i18n） | 现行 |
 | [aistack-integration.md](aistack-integration.md) | aistack 消费端集成笔记 | 现行 |
+| [composition-otio-foundation.md](composition-otio-foundation.md) | composition 数据模型 + 渲染引擎 + AI 生成管线（地基正文） | 现行 |
+| [derivative-snapshot-principle.md](derivative-snapshot-principle.md) | 派生层快照原则（横切约定） | 现行 |
+| [packaging-design.md](packaging-design.md) | P3 打包 / 分发设计（§10 签名方案待证书） | 已实施 |
 | [composition-timeline-v0.md](composition-timeline-v0.md) | ADR-0006 的详细设计参考 | 参考 |
 
 Tk 时代旧文档（01-architecture / 03-ui-hub / 05-use-cases / 07-operations-registry / 10-media-format-modules / 11-hub-layout-persistence 等）见 [`docs/_archive/`](../_archive/README.md)。
