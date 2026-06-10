@@ -28,17 +28,20 @@ on:
 
 jobs:
   build:
-    runs-on: windows-latest
+    # Pinned (not windows-latest): windows-latest migrates to this image by
+    # 2026-06-15 anyway — pinning keeps the build reproducible and surprise-free.
+    runs-on: windows-2025
     timeout-minutes: 45
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       # uv drives the sidecar freeze (build_sidecar.ps1: `uv venv --python 3.12`
       # auto-fetches a managed Python 3.12, then `uv sync --frozen` from uv.lock).
       - name: Install uv
-        uses: astral-sh/setup-uv@v5
+        # setup-uv publishes no floating major tag — pin the exact latest.
+        uses: astral-sh/setup-uv@v8.2.0
 
       # PyInstaller onedir -> desktop/resources/sidecar/core_rpc.exe (+ _internal/).
       # The script smoke-tests the frozen exe over its HTTP transport before exiting.
@@ -62,12 +65,12 @@ jobs:
 
       # pnpm before setup-node so the latter's `cache: pnpm` can find the store.
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
         with:
           version: 9.15.9
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: pnpm
@@ -98,7 +101,7 @@ jobs:
           pnpm exec electron-builder --win --publish never
 
       - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: VideoCraft-windows-installer
           path: desktop/release/*-setup.exe
