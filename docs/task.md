@@ -19,8 +19,9 @@
 **✅ CI（GitHub Windows runner）已落地 + 验证绿（2026-06-09）**：
 - `.github/workflows/build-windows.yml`：`workflow_dispatch` + `v*` tag 触发 → setup-uv 冻结 sidecar（`build_sidecar.ps1`）→ 拉 ffmpeg（`fetch_ffmpeg.ps1`）→ pnpm `electron-vite build` + `electron-builder --win`，**CI 就地把 yml 的 `signAndEditExecutable: false` flip 成 true**（本机 yml 默认仍关，CI 才开；**不能用 `-c.win...=true` CLI override**——点号短形式被 yargs 当 config 文件路径 ENOENT，首跑就栽这）→ rcedit 嵌品牌图标 → installer 传 artifact，`--publish never`。
 - **首验结果**：run `27191231392` 全绿 4m3s；winCodeSign 被拉下、edit/sign 管线对 `VideoCraft.exe` 跑过（图标内嵌确认生效）；artifact `VideoCraft-0.3.5-setup.exe`（183MB）下载验过 = `NotSigned`（符合预期，无证书）。
+- ✅ **build 标识 + CI 端到端验过（2026-06-10, run #3 sha 4c7930c）**：`generate_build_info.ps1` → `build-info.json` 随包（实测包内 `{"build":"3","commit":"4c7930c",…}`）+ Windows FileVersion `0.3.5.3`（BUILD_NUMBER=run_number，经 signAndEditExecutable flip 生效）+ exe 版权 `© 2025-2026 OldApeTalk`。版本号规则见 [`../versioning.md`](../versioning.md)。
+- ✅ **Node 20 弃用尾巴已清（run #4）**：action 全升 node24 大版本（checkout@v6 / setup-node@v6 / upload-artifact@v7 / pnpm@v6 / setup-uv@v8.2.0——后者无浮动 major tag 故钉精确）+ `runs-on: windows-2025`（脱离 `windows-latest`）。Node 20 公告消失。**残留 windows 公告**（`windows-2025`→`-vs2026` 镜像 6/15 刷新）纯信息性、任何标签都躲不掉、构建照常绿，不管。
 - ⏸ **真签名（Authenticode）deferred**：用户选「先只要图标，暂不签名」。exe 当前 unsigned，SmartScreen 会警告。拿证书后接（方案见 packaging-design §10）。
-- ⚠️ **小尾巴（不阻塞）**：CI annotation 警告 checkout@v4 / setup-node@v4 / upload-artifact@v4 / setup-uv@v5 / pnpm/action-setup@v4 跑在 Node 20 上，**2026-06-16 起强制 Node 24、2026-09-16 移除 Node 20**。届时升 action 大版本（v5/v6 系跑 Node 24）即可，现在不动以免打破刚转绿的 build。
 
 **▶ 下一大功能候选 = 录播自动剪辑方向**：source 加录播 → ASR → AI 全自动剪裁/章节/切废段/过渡；per-品类插件。见 memory [[project_recorded_autoedit]]。（注：crop-on-Clip 已落地多段裁剪的 IR 地基，见 [ADR-0011](adr/0011-spatial-crop-clip-transform.md)）
 
