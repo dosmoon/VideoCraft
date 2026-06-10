@@ -65,7 +65,7 @@ export interface FfmpegProbe {
  * ffmpeg+NVENC path is transport-bound (GPU→CPU readback + 8 MB/frame IPC) and
  * slower than in-renderer WebCodecs for this GPU-compositing architecture, so
  * ffmpeg is an explicit opt-in until the readback/IPC pipeline is optimized
- * (see docs/draft/adr-0008-migration-tasks.md「⚡ 导出速度」). `_probe` kept for
+ * (see docs/_archive/adr-0008-migration-tasks.md「⚡ 导出速度」). `_probe` kept for
  * when that lands.
  */
 export function defaultEngine(_probe: FfmpegProbe | null): "chromium" | "ffmpeg" {

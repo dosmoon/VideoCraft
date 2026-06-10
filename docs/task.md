@@ -5,27 +5,22 @@
 
 ---
 
-## ✅ 当前状态(2026-06-10）= v0.3.5 已切发布（草稿待 publish）；P3 打包/CI 收口；working tree 干净
+## ✅ 当前状态(2026-06-10）= docs/ 治理完毕；v0.3.5 草稿 Release 待 publish
 
-> HEAD `f6aea6d`，全部 commit+push origin/main。本轮(2026-06-10)落地：① **P3 CI 收口**——出包 + 内嵌图标(CI flip signAndEditExecutable) + build 标识(`build-info.json` 进包 + FileVersion `0.3.5.<run#>`)；action 升 node24 大版本 + 钉 `windows-2025`；端到端打包态实测过。② **关于卡片身份统一**(作者 OldApeTalk / 组织 dosmoon / © 2025-2026 / MIT) + **精简定制菜单**(File/View/Help，标签随语言热切换)。③ **v0.3.5 发布**：tag `v0.3.5` → CI 建**草稿 Release**(挂 installer)，⏳ **待用户审 notes 后手点 publish**。④ **README 重写**(双语 / 面向用户 / 照当前 Electron 如实)。⏸ 真签名 deferred(需证书)。
-> 旧会话记录见下「📦 已归档历史」（三轮 dogfood → archive-02；i18n/env/crop → archive-03）。
+> 本轮(2026-06-10 晚)落地 **docs/ 全面 archive + 重写**（上轮拍板的任务）：
+> ① **21 篇过期文档移 [`docs/_archive/`](_archive/README.md)**（design/ 6 篇 Tk 时代：01/03/05/07/10/11；draft/ 13 篇已落地或已废弃：electron-migration-plan / adr-0008-migration-tasks / project-restructure / clip-component-migration / ai-clip-redesign / composition-style / architecture-vision / news-desk-derivative / news_desk-ux-v0.3 / publish-sidecar / chapter-verify-edit / substrate-spike-findings / tech-selection-embedded-ai；原 draft/archive/ 2 篇并入），`_archive/README.md` 给了逐篇归档原因 + 现行替代指引。
+> ② **3 篇重写到 Electron 现实**：[`design/00-overview.md`](design/00-overview.md)（入口路标：当前架构图 + ADR 索引 + 文件结构）、[`design/04-ai-router.md`](design/04-ai-router.md)（三档 provider 池 / 6-tab Electron 控制台 / prompt hub 已退役）、[`design/12-i18n.md`](design/12-i18n.md)（renderer tr.ts 530 keys 热切换 + Python 侧 28 keys）。
+> ③ 修断链：BACKLOG.md、derivative-snapshot-principle、composition-otio-foundation、electron-migration-design、06-core-layer（顺带清掉其 Tk 残留模块表）+ 3 处代码注释路径。ADR 全部核过：0001~0011 状态准确，0004 已自带 Superseded 注记，无需动。
+> 保留现行：design/ 02/06/08/09 + aistack-integration + composition-timeline-v0；draft/ packaging-design / electron-migration-design / composition-otio-foundation / derivative-snapshot-principle + 两篇未做草稿（media-segment-composer=P1 PPT2Video、buffer-publishing）。
+> 遗留小尾巴：`src/hub_layout.py` 是零引用 Tk 残留（仅 user_data.py 注释提及），下次顺手删（删前 pytest baseline 对照）。
+> ⏳ **v0.3.5 草稿 Release 仍待用户审 notes 后手点 publish**。⏸ 真签名 deferred(需证书)。
+> 旧会话记录见下「📦 已归档历史」。
 
 ---
 
-## ▶ 下一任务（新对话先读）= docs/ 全面 archive + 重写（过期严重）
+## ▶ 下一任务（新对话先读）= 录播自动剪辑方向（大功能）
 
-> **2026-06-10 用户拍板**：docs/ 大部分文档过期严重（多为 Tk 时代 / pre-Electron / pre-OTIO），要系统性 archive 旧的 + 重写成当前版本。**单开新对话做。**
-
-**起因 / 信号**：刚重写 README 时发现它整篇在描述**已退役的 Tk 版**（文件浏览器 UI / portable zip / `VideoCraft.bat` / 手动装 ffmpeg / `keys\` 文本文件 / `pip install` / 十余个右键工具——全在 Electron 版砍掉）。docs/ 里很可能有同源陈旧。
-
-**新对话开工建议**：
-1. **审计 docs/** 逐篇标新鲜度：`design/`、`draft/`、`integration-tests/`、`research-notes/`、`adr/`、`_archive/` + 根级三件。
-2. **已最新、别动**：[`versioning.md`](versioning.md)、[`packaging.md`](packaging.md)（本轮新建）、本文件 `task.md`。
-3. **ADR 走自己的归档政策**（[`adr/README.md`](adr/README.md)）：退役 / 被取代的 ADR **不删**，只改顶部状态为 `Superseded by …` / `Retired`，别当普通文档删。
-4. **过期设计 / 研究文档** → 移 `docs/_archive/` 或重写到当前现实（Electron 壳 + 项目 / 素材 / 创作模型 + FastAPI sidecar + OTIO composition + P3 打包）。
-5. 重写参照当前事实源：README（用户视角）、ADR-0008~0011、packaging-design.md、记忆里的 `project_*` 状态。
-
-**▶ 更后面的大功能候选 = 录播自动剪辑方向**（见文末）。
+> source 加录播 → ASR → AI 全自动剪裁/章节/切废段/过渡；per-品类插件；= OTIO 多段装配的真实需求来源（crop-on-Clip 已落地多段裁剪 IR 地基，见 [ADR-0011](adr/0011-spatial-crop-clip-transform.md)）。记忆锚点 [[project_recorded_autoedit]]。从设计稿起步（放 `docs/draft/`）。
 
 ---
 

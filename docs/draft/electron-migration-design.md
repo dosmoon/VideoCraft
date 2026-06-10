@@ -1,7 +1,7 @@
 # Electron 迁移正式方案
 
-> **状态**:草案 / 2026-05-29 · 承接 [`electron-migration-plan.md`](electron-migration-plan.md)(启动稿)
-> **性质**:正式迁移方案。成熟后升级为 ADR(预定 **ADR-0008**;0007 已用于组件编辑 UI 元数据),并正式 supersede [`docs/design/01-architecture.md`](../design/01-architecture.md) 的"单进程 + Tab 嵌入 / 无需 IPC"决策。
+> **状态**:草案 / 2026-05-29 · 承接 [`electron-migration-plan.md`](../_archive/electron-migration-plan.md)(启动稿,已归档)
+> **性质**:正式迁移方案。成熟后升级为 ADR(预定 **ADR-0008**;0007 已用于组件编辑 UI 元数据),并正式 supersede [`docs/design/01-architecture.md`](../_archive/01-architecture.md)(已归档)的"单进程 + Tab 嵌入 / 无需 IPC"决策。
 > **读者**:接手迁移实施的后续会话 / 作者本人。
 > **前置**:已读 ADR-0003/0005/0006、design 01/02/04/06、architecture-vision.md、project-restructure.md(对齐结论见 §0)。
 
@@ -21,7 +21,7 @@
 
 ### 🚩 架构转向(2026-06-01):插件全 TS,Python = 能力网关 —— 权威,ADR-0008
 
-> **▶ 持久任务追踪(勾选进度、跨会话防遗忘)= [`adr-0008-migration-tasks.md`](adr-0008-migration-tasks.md)。** 本节是设计正文(why + C1~C7 + Phase A/B 步骤);那个文件追踪每步勾选状态。已落:Phase A1(`vc.fs.*` 地基)。
+> **▶ 持久任务追踪(勾选进度、跨会话防遗忘)= [`adr-0008-migration-tasks.md`](../_archive/adr-0008-migration-tasks.md)(迁移完成,已归档)。** 本节是设计正文(why + C1~C7 + Phase A/B 步骤);那个文件追踪每步勾选状态。已落:Phase A1(`vc.fs.*` 地基)。
 
 > **问题**:迁移把三个本体(clip / news_desk 创作 + news_video 素材)做成了**双语插件**——每个横跨 Electron renderer(TS,≈1900 行/插件) 和 Python sidecar(per-plugin 业务面 ≈1200 行/插件),读懂一个插件要翻两种语言。**长期跨 Python+TS 的功能模块不可维护**(用户结论 2026-06-01)。这一节取代下面各「Python 业务面」节、§2-3 的 provider 口径、§0.5 的"Python 留 project/material/analysis/AI"口径。
 
@@ -205,7 +205,7 @@ TS:`pnpm typecheck` + `pnpm test`(132,含 ir/timemap/components/clip/news_desk/c
 - 测试裁剪:删 `tests/composition/`(含 composition golden-CRLF 两个 pre-existing)+ clip-component/composer/render_queue/subtitle 测 + `test_arch_clip.py`;`test_arch_{materials,news_desk}`/`test_registration`/`test_clip_presets` 裁到存活的 headless/sidecar 不变量。
 - 验证:sidecar 三插件 import 干净;`pytest tests/` 仅剩 1 个 pre-existing(`test_clip_config::test_load_full_roundtrip` stale-id)。**未碰 desktop TS。**
 - **dogfood 真机修复(commit `5585f2b`,已 push)**:① 属性面板缺行——`ComponentEditor` 改为按 kind 完整 FieldSpec schema 渲染(旧未归一化 image_watermark 缺 `image_path` key 时该行不再消失;扁平字段恒显示、缺值给空默认,嵌套仍按存在性过滤)② 输入框点不进焦点——`main.ts` DevTools 改 `activate:false`(自动开的 detached DevTools 抢键盘焦点的 Electron 怪癖)。
-- ⇒ **A6/B5 解锁**(keep 的 sidecar 业务文件不再有 Tk 兄弟 import;详见 [`adr-0008-migration-tasks.md`](adr-0008-migration-tasks.md) Phase A/B + 顶部「🚩 架构转向」节)。
+- ⇒ **A6/B5 解锁**(keep 的 sidecar 业务文件不再有 Tk 兄弟 import;详见 [`adr-0008-migration-tasks.md`](../_archive/adr-0008-migration-tasks.md) Phase A/B + 顶部「🚩 架构转向」节)。
 
 **P2.5 — 插件全 TS / Python = 能力网关**(权威细节见顶部「🚩 架构转向」节;前提 = P2 已退役 Tk,因 clip Tk 仍依赖 `clip/config.py`):
 - **Phase A**:clip+news_desk 创作的 per-plugin Python(config/presets/component_defs/preview/export/import/publish)全 port 成 TS;新增 `vc.fs.*` 主进程持久化;退役 `core_rpc/methods/creation.py` provider dispatch + `Session.creation_owner`。

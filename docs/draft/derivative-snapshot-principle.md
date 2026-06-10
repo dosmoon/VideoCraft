@@ -2,7 +2,7 @@
 
 > 状态:活文档 v1.0 / 2026-05-13
 > 范围:`derivatives/*` 所有派生类型的上游依赖处理约定
-> 关联:`composition-style.md`(阶段一/二 composition 设计)、`project-restructure.md`(项目模型基础)
+> 关联:`../_archive/composition-style.md`(阶段一/二 composition 设计,已归档)、`../_archive/project-restructure.md`(项目模型基础,已归档)
 
 ---
 
@@ -115,6 +115,6 @@ VideoCraft 的项目模型:
 
 ## 相关文档
 
-- `composition-style.md` — composition core 设计,阶段一/二的样式 + 渲染层
-- `ai-clip-redesign.md` — 切片两层架构(分析层 + 派生层)
-- `project-restructure.md` — 项目模型基础
+- `../_archive/composition-style.md` — composition core 设计,阶段一/二的样式 + 渲染层(已归档,现行权威 = ADR-0006 + composition-otio-foundation.md)
+- `../_archive/ai-clip-redesign.md` — 切片两层架构(分析层 + 派生层)(已归档)
+- `../_archive/project-restructure.md` — 项目模型基础(已归档)

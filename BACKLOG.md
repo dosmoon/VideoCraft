@@ -34,7 +34,7 @@
 ## 🧠 内嵌 AI（Embedded AI Tier）
 
 > 让 VideoCraft 自身进程内置 ASR / TTS / 翻译，普通用户点开 exe 不配置任何外部服务即可端到端跑通。
-> aistack 网关、云 API 是另外两条平行产品线。详细设计：[docs/draft/tech-selection-embedded-ai.md](docs/draft/tech-selection-embedded-ai.md)
+> aistack 网关、云 API 是另外两条平行产品线。详细设计：[docs/_archive/tech-selection-embedded-ai.md](docs/_archive/tech-selection-embedded-ai.md)（已归档）
 
 | 优先级 | 状态 | 子任务 | 说明 |
 |--------|------|------|------|
@@ -89,8 +89,8 @@
 历史完成项请查 `git log -- BACKLOG.md` 或对应设计文档：
 - AI 架构 / 路由 / 取消 / 错误契约 → [docs/design/04-ai-router.md](docs/design/04-ai-router.md)
 - 文件命名 / unit 目录 → [docs/design/09-file-naming-convention.md](docs/design/09-file-naming-convention.md)
-- 媒体格式模块 → [docs/design/10-media-format-modules.md](docs/design/10-media-format-modules.md)
-- 项目工作台 / Hub → [docs/design/02-project-model.md](docs/design/02-project-model.md) + [03-ui-hub.md](docs/design/03-ui-hub.md)
+- 媒体格式模块 → [docs/_archive/10-media-format-modules.md](docs/_archive/10-media-format-modules.md)（Tk 时代，已归档）
+- 项目工作台 / Hub → [docs/design/02-project-model.md](docs/design/02-project-model.md) + [docs/_archive/03-ui-hub.md](docs/_archive/03-ui-hub.md)（Tk Hub，已归档）
 - 产品战略 → [docs/design/08-product-strategy.md](docs/design/08-product-strategy.md)
 
 ---

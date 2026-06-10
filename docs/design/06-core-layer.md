@@ -97,13 +97,12 @@ def _work():
 
 ## 与 core/ 并列的共享基础设施
 
-以下模块住在 `src/` 根下（不进 `core/`，因为它们要么依赖 tkinter，要么面向进程级状态）：
+以下模块住在 `src/` 根下（不进 `core/`，因为它们面向进程级状态）：
 
 | 文件 | 职责 |
 |------|------|
-| [hub_logger.py](../../src/hub_logger.py) | 线程安全全局 logger 单例，Hub 启动时注册底部日志面板回调 |
-| [hub_layout.py](../../src/hub_layout.py) | Hub 主窗口布局持久化（`<repo>/user_data/layout.json`，便携迁移后落 user_data/），见 [11-hub-layout-persistence.md](11-hub-layout-persistence.md) |
-| [i18n.py](../../src/i18n.py) | 本地化入口，`tr(key, **kwargs)` 带 fallback 链，见 [12-i18n.md](12-i18n.md) |
+| [hub_logger.py](../../src/hub_logger.py) | 线程安全全局 logger 单例（API 契约：只有 `info/warning/error`，用 f-string 不接 stdlib `%s` 格式化） |
+| [i18n.py](../../src/i18n.py) | Python 侧本地化入口，`tr(key, **kwargs)` 带 fallback 链，见 [12-i18n.md](12-i18n.md)（UI 主体字符串在 Electron renderer 侧） |
 | [project.py](../../src/project.py) | Project 模型 + recent.json 管理 |
-| [operations.py](../../src/operations.py) | Operation Registry（Sidebar 右键菜单） |
-| [tools/base.py](../../src/tools/base.py) | `ToolBase` mixin：`set_busy/done/error/warning` 统一入口 |
+
+> Tk 时代的 `operations.py` / `tools/base.py` / Hub 布局持久化已随 Tk 退役删除（见 [ADR-0008](../adr/0008-plugins-ts-python-capability-gateway.md)；`hub_layout.py` 为无调用方残留待清）。

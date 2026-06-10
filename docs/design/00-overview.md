@@ -1,135 +1,126 @@
 # VideoCraft 设计总览
 
+> 重写于 2026-06-10（v0.3.5）。Tk 时代的旧版总览及配套设计文档已移入 [`docs/_archive/`](../_archive/README.md)。
+> 本文是 `docs/design/` 的入口路标：只概述当前形态 + 指路，决策正文在 [`docs/adr/`](../adr/README.md)，实现细节在各专题文档。
+
 ## 项目定位
 
-面向内容创作者的视频生产工具集，核心流程：
-**YouTube 下载 → 语音转字幕 → 翻译 → 字幕烧录**
+面向内容创作者的**节目生成器**：从源视频（YouTube / 本地 / 录播）出发，经 ASR、翻译、AI 分析，生成多种节目形态的成片（AI 切片、新闻编导等，规划 5 种形态）。Windows-first 桌面应用，中英双语。
 
-技术栈：Python + Tkinter GUI + FFmpeg + AI（Gemini / DeepSeek / Custom OpenAI-兼容 / 本地 Claude Code CLI）
-
----
-
-## 三阶段重构路线
-
-### Phase 1：AI Router ✅ 已完成
-统一 AI 调用层，支持多 Provider 按档位路由。
-详见 [04-ai-router.md](04-ai-router.md)
-
-### Phase 2：VS Code 风格主界面 ✅ 已完成
-Menu + Sidebar + Tab 嵌入式工具架构；底部可拖拽日志面板；5 色 Tab 状态指示；窗口布局跨会话持久化。
-详见 [03-ui-hub.md](03-ui-hub.md)、[11-hub-layout-persistence.md](11-hub-layout-persistence.md)
-
-### Phase 2.5：原子化重构 ✅ 基本完成
-纯逻辑抽到 `src/core/`，工具统一用 `ToolBase` 提供的 `set_busy/set_done/set_error/set_warning` 接入 Hub 状态系统；文件结构按工具类别分包（`src/tools/{download,speech,translate,subtitle,video,text2video,publish,preferences}/`）。
-详见 [06-core-layer.md](06-core-layer.md)、[07-operations-registry.md](07-operations-registry.md)
-
-### Phase 3：国际化 & 产品化 ✅ 主体完成
-- ✅ i18n 框架（`src/i18n.py` + zh/en locale 表，1126 keys 双语对称）、File > Preferences 语言切换
-- ✅ 全工具字符串抽取（Phases 1-7 已上线，覆盖 Hub + 全部工具；Phase 8 en.json 翻译质量打磨已 backlog）
-- ✅ 跨工具 Pipeline 自动化：项目工作台 7-step 调度器（download → select → asr → translate → burn → pack → split），manifest 驱动一键流转。详见 BACKLOG「项目工作台 M1+」
+与并行产品线 Phase（通用 NLE 视频编辑器）互不替代。产品战略见 [08-product-strategy.md](08-product-strategy.md)。
 
 ---
 
-## 架构决策记录
+## 当前架构（2026-06）
 
-跨模块契约、数据 schema 决议、重大重构/退役记录在 [`docs/adr/`](../adr/README.md)。改架构层代码前先扫一遍，确认不要违背已有决策。
+```
+┌─ Electron 壳（desktop/）─────────────────────────────┐
+│  main（desktop/electron/）   窗口 / 菜单 / vc:* IPC   │
+│  renderer（desktop/src/）    全部 UI + 全部插件逻辑    │
+│   ├─ hub / workbenches      项目浏览 + 创作工作台      │
+│   ├─ composition            OTIO 式多轨 timeline IR    │
+│   │                         + GPU 合成器 + WebCodecs   │
+│   └─ creations / materials  纯 TS 插件（零插件专属 Py）│
+└──────────────┬───────────────────────────────────────┘
+               │ HTTP + SSE（localhost，握手 VC_RPC_PORT）
+┌─ Python sidecar（core_rpc/ + src/core/）──────────────┐
+│  plugin-agnostic 能力网关：ASR / 翻译 / AI 分析 /      │
+│  源获取(yt-dlp) / ffmpeg 类任务 / 模型与环境管理       │
+└───────────────────────────────────────────────────────┘
+```
+
+关键决策（详见对应 ADR，改架构层代码前先扫 [`docs/adr/`](../adr/README.md)）：
+
+| 决策 | ADR |
+|------|-----|
+| 插件全 TS，Python = 能力网关，文件 I/O 归 Electron | [ADR-0008](../adr/0008-plugins-ts-python-capability-gateway.md) |
+| sidecar 传输 = FastAPI HTTP + SSE（替代 stdio JSON-RPC） | [ADR-0010](../adr/0010-sidecar-http-transport.md) |
+| composition = 统一多轨 timeline IR（OTIO 式，纯函数 compile） | [ADR-0006](../adr/0006-composition-timeline-ir.md) |
+| 空间裁剪 = `Clip.crop` 一等字段（preview ≡ render） | [ADR-0011](../adr/0011-spatial-crop-clip-transform.md) |
+| 项目数据 = materials/creations 组件化目录 | [ADR-0005](../adr/0005-componentized-data-layer.md) |
+| 创作与素材解耦 + 快照原则 | [ADR-0003](../adr/0003-editor-modules-decoupling.md) + [快照原则](../draft/derivative-snapshot-principle.md) |
+| Python 依赖管理 = uv（pyproject.toml + uv.lock 唯一权威） | [ADR-0009](../adr/0009-uv-project-dependency-management.md) |
+
+渲染引擎与数据模型的设计正文：[composition-otio-foundation.md](../draft/composition-otio-foundation.md)；迁移期完整设计（含实现进度，历史背景）：[electron-migration-design.md](../draft/electron-migration-design.md)。
+
+---
+
+## 数据模型
+
+- **项目 = 文件夹**，`.videocraft/project.json` 标识，任意文件夹可打开。见 [02-project-model.md](02-project-model.md)。
+- **一项目 = 一源视频 + N 个创作**：素材（material，如 news_video）做数据准备；创作（creation，如 clip / news_desk）各自独立工作台。
+- **快照原则**：创作建立时快照上游产物（字幕 / 章节 / hotclips），创作只对自己负责，不反向同步。
+- 插件访问素材数据必须经 Material Model，不直戳路径 / schema。
+
+## AI 三层
+
+`core.ai` 统一门面（文本 LLM / ASR / TTS），三档 = 用户旅程三阶段，缺一不可：
+
+1. **内置**：faster-whisper + edge-tts + llama.cpp（开箱即用，零配置）
+2. **aistack**：独立本地网关服务（[github.com/dosmoon/aistack](https://github.com/dosmoon/aistack)，端口 11500，高性价比）
+3. **云 API**：质量天花板
+
+设计见 [04-ai-router.md](04-ai-router.md)；aistack 消费端笔记见 [aistack-integration.md](aistack-integration.md)。
+
+## 打包 / 发布
+
+electron-builder NSIS 安装包 + PyInstaller onedir 冻结 sidecar + 瘦装包引导下载；GitHub Actions CI 出包。
+操作手册 = [`docs/packaging.md`](../packaging.md)，版本规则 = [`docs/versioning.md`](../versioning.md)，设计 = [packaging-design.md](../draft/packaging-design.md)。
 
 ---
 
 ## 核心设计原则
 
-1. **Project = 文件夹**，任意文件夹均可打开，自动生成 `.videocraft/project.json` 作为标识（旧版本根级 `videocraft.json` 在 open 时一次性迁入）
-2. **功能原子独立**，每个工具仍可单独运行（双模式：嵌入 Hub Tab / 独立 Tk）
-3. **单进程 + 嵌入 Tab**，工具以 Tab 形式嵌入 Hub 内容区，共享 AI Router 统计和状态
-4. **增量演进**，不做大爆炸重构，每步完成即可验证
-5. **足够简单**，避免过度工程化
-6. **中英双语一键切换**，面向中文创作者和国际开源用户。所有 UI 字符串走 `tr('key')`，locale 表在 [src/i18n/](../../src/i18n/)，用户偏好持久化到 `<repo>/user_data/settings.json`。详见 [12-i18n.md](12-i18n.md)
-7. **绿色便携**，所有用户数据落 `<repo>/user_data/`，无 `~/.videocraft/` 写入；老安装首次启动自动 copy 迁移（详见 `core/user_data.py`）
+1. **Project = 文件夹**，自动生成 `.videocraft/project.json` 标识
+2. **插件语言边界**：创作 / 素材插件 = 纯 TS；Python 只做 plugin-agnostic 能力，不认识任何插件类型
+3. **preview ≡ render**：预览和导出走同一 composition 引擎，禁止两套绘制逻辑
+4. **快照决策性上游**：创作自治，不被上游变化牵连
+5. **增量演进 + 足够简单**，pre-alpha 不留兼容层、不做大爆炸重构
+6. **中英双语热切换**：UI 字符串走 renderer 侧 `tr(key)`，zh/en 对称。见 [12-i18n.md](12-i18n.md)
+7. **绿色便携**：所有用户数据落 `<repo>/user_data/`（打包态 = 安装目录内），绝不写 `%APPDATA%`
+8. **任何下载 / 配置不强制**：AI 模型、云 key 强引导可跳过，非 AI 功能不被 AI gate 堵死
 
 ---
 
-## 文件结构
+## 文件结构（顶层）
 
 ```
+desktop/                  # Electron 应用
+├── electron/             # main 进程 + preload（窗口/菜单/vc:* IPC/sidecar 拉起）
+├── src/
+│   ├── renderer/         # UI：hub / workbenches / aiconsole / models / settings / i18n / ipc
+│   ├── composition/      # timeline IR + 组件库 + GPU 合成 + crop
+│   ├── creations/        # 创作插件（clip / news_desk）+ 导出设置
+│   └── materials/        # 素材插件（news_video）
+├── electron-builder.yml  # 打包配置
+└── dev.ps1               # 开发启动（renderer 改动必整重启）
+
+core_rpc/                 # sidecar 服务端（FastAPI server / dispatch / jobs / methods）
 src/
-├── VideoCraftHub.py              # 主入口（Menu + Sidebar + Tab + 底部日志 + 双 tab 侧栏）
-├── project.py                    # Project 模型，文件夹 + .videocraft/project.json
-├── hub_layout.py                 # Hub 布局持久化（geometry/sash/zoom/sidebar_tab）
-├── hub_logger.py                 # 线程安全全局 logger（底部日志面板消费者）
-├── i18n.py                       # tr(key) 本地化入口
-├── i18n/
-│   ├── zh.json                   # 中文 locale（1126 keys）
-│   └── en.json                   # 英文 locale（factory default，1126 keys）
-├── ai_router.py                  # 兼容 shim — 真正实现在 core/ai/ 子包
-├── operations.py                 # Operation Registry（文件类型 → 右键操作）
-│
-├── core/                         # 纯逻辑层（无 tkinter 依赖）— 详见 06-core-layer.md
-│   ├── ai/                       # AI Router 子包（router/providers/errors/cancellation/facade）
-│   ├── env/                      # Environment Component Registry（ffmpeg/node/yt-dlp 等）
-│   ├── prompts.py                # Prompt 集中管理
-│   ├── user_data.py              # <repo>/user_data/ 入口 + 老 ~/.videocraft 一次性迁移
-│   ├── youtube_download.py       # yt-dlp 唯一封口
-│   ├── srt_ops.py / srt_quality.py / srt_from_text.py / subtitle_ops.py
-│   ├── lang_names.py             # BCP47 → (中, 英) 映射
-│   ├── burn_subs.py / burn_presets.py
-│   ├── video_split.py / video_concat.py / video_compose.py / video_ops.py
-│   ├── segment_model.py / composer_model.py
-│   └── translate.py / asr.py / tts.py
-│
-├── ui/                           # 可复用 UI 组件（跨工具共享）
-│   └── vlc_player.py             # 嵌入式 VLC 播放器 Frame（缺失时优雅降级）
-│
-└── tools/                        # UI 层，按类别分包
-    ├── base.py                   # ToolBase mixin：set_busy/done/error/warning
-    ├── download/    yt_dlp_tool.py
-    ├── speech/      speech2text.py
-    ├── translate/   translate_srt.py
-    ├── subtitle/    subtitle_tool.py, word_subtitle.py, srt_tools.py,
-    │                split_subtitles.py, presets.py
-    ├── video/       video_tools.py, split_workbench.py
-    ├── text2video/  text2video.py            # TTS/SRT/AudioVideo/DailyNews
-    ├── publish/     youtube_publish.py, tiktok_publish.py
-    ├── project/     project_workbench.py     # 7-step manifest 调度器
-    ├── router/      ai_console.py            # AI 控制台（Routing + Keys + Prompts tab）
-    └── preferences/ preferences.py           # 首选项面板（Tab 工具）
+├── core/                 # 纯逻辑能力层：ai/ env/ models/ + asr/translate/字幕/视频 ops
+├── i18n.py + i18n/       # Python 侧少量本地化（UI 主体字符串在 renderer）
+└── project.py            # Project 模型 + recent.json
 
-keys/                             # repo-rooted（不进 user_data/）
-├── providers.json                # AI Provider 配置 + task routing
-└── *.key                         # 各 Provider API Key
-
-prompts/                          # repo-rooted prompt 模板
-└── *.md
-
-user_data/                        # 用户配置 + 持久化数据（绿色便携）
-├── recent.json                   # 最近打开的工程
-├── layout.json                   # Hub 窗口布局
-├── settings.json                 # 用户偏好（language / sidebar_tab 等）
-├── presets/
-│   └── subtitle_burn.json        # 字幕烧录工具预设
-├── runtimes/
-│   └── node/                     # Settings 一键安装的 managed Node.js
-└── ai_cache/                     # AI 响应缓存（X4 待实施时启用）
-
-docs/design/                      # 本设计文档
-docs/draft/                       # 草案（buffer-publishing-integration / media-segment-composer）
-BACKLOG.md                        # 开发计划看板（权威）
+packaging/                # build_sidecar.ps1 / fetch_ffmpeg.ps1 / generate_build_info.ps1
+.github/workflows/        # build-windows.yml（tag 触发出包 + 草稿 Release）
+user_data/                # 用户数据（绿色便携，含 models/ keys/ settings/ 日志）
+prompts/                  # prompt 模板
+docs/                     # 本文档树；BACKLOG.md = 计划权威；docs/task.md = 当前任务接力
 ```
 
 ---
 
 ## 文档导航
 
-| 文件 | 内容 |
-|------|------|
-| [01-architecture.md](01-architecture.md) | 架构决策与约束 |
-| [02-project-model.md](02-project-model.md) | Project 模型与 JSON 版本策略 |
-| [03-ui-hub.md](03-ui-hub.md) | 主界面 Hub 设计（Menu + Sidebar + Tab + 日志面板） |
-| [04-ai-router.md](04-ai-router.md) | AI Router 设计（Phase 1） |
-| [05-use-cases.md](05-use-cases.md) | 用例集 |
-| [06-core-layer.md](06-core-layer.md) | core 层设计：逻辑/UI 分离 |
-| [07-operations-registry.md](07-operations-registry.md) | Operation Registry：文件类型→右键操作映射 |
-| [08-product-strategy.md](08-product-strategy.md) | 产品战略与用户画像 |
-| [09-file-naming-convention.md](09-file-naming-convention.md) | 文件命名规范 |
-| [10-media-format-modules.md](10-media-format-modules.md) | 自媒体节目形态模块规范 |
-| [11-hub-layout-persistence.md](11-hub-layout-persistence.md) | Hub 窗口布局持久化 |
-| [12-i18n.md](12-i18n.md) | 本地化（i18n）架构与 phase 计划 |
+| 文件 | 内容 | 状态 |
+|------|------|------|
+| [02-project-model.md](02-project-model.md) | Project 模型与 JSON 版本策略 | 现行 |
+| [04-ai-router.md](04-ai-router.md) | AI 架构：core.ai 门面 + 路由 + AI 控制台 | 现行 |
+| [06-core-layer.md](06-core-layer.md) | core 能力层：模块清单与约定 | 现行 |
+| [08-product-strategy.md](08-product-strategy.md) | 产品战略与用户画像 | 现行 |
+| [09-file-naming-convention.md](09-file-naming-convention.md) | 文件命名规范 | 现行 |
+| [12-i18n.md](12-i18n.md) | 本地化（i18n） | 现行 |
+| [aistack-integration.md](aistack-integration.md) | aistack 消费端集成笔记 | 现行 |
+| [composition-timeline-v0.md](composition-timeline-v0.md) | ADR-0006 的详细设计参考 | 参考 |
+
+Tk 时代旧文档（01-architecture / 03-ui-hub / 05-use-cases / 07-operations-registry / 10-media-format-modules / 11-hub-layout-persistence 等）见 [`docs/_archive/`](../_archive/README.md)。

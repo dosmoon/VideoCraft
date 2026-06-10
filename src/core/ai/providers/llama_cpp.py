@@ -1,7 +1,7 @@
 """llama-cpp-python provider — in-process GGUF LLM (translation, JSON tasks).
 
 Part of VideoCraft's "embedded AI" tier (see
-docs/draft/tech-selection-embedded-ai.md). Loads a Qwen3 (or any chat-tuned
+docs/_archive/tech-selection-embedded-ai.md). Loads a Qwen3 (or any chat-tuned
 GGUF) model fully in-process. No Docker, no network, no API key. Model
 files live under `<repo>/user_data/models/llama/<file>.gguf` via core.paths.
 

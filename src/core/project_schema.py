@@ -2,7 +2,7 @@
 
 Single source of truth for `.videocraft/project.json` shape. Used by the
 Project class and any UI that needs to construct or inspect project
-metadata. See docs/draft/project-restructure.md for the full design.
+metadata. See docs/_archive/project-restructure.md for the full design.
 
 Layout under a project folder:
     <project>/
