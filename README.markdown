@@ -11,7 +11,7 @@
 
 **[中文](#中文) · [English](#english)**
 
-<!-- TODO: add a main-window screenshot here -->
+![VideoCraft main window / 主窗口](docs/public/screenshot-hub.png)
 
 > ⚠️ 早期阶段 / Early stage — `0.x`，功能持续演进，欢迎试用与反馈。
 

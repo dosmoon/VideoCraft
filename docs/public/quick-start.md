@@ -20,6 +20,26 @@ The VideoCraft workflow is:
    - **News Desk Video** — a full video with bilingual subtitles, lower-third name plates, and a chapter strip.
 6. Configure styling (subtitles / text & image watermarks / hook & outro cards / chapter strip) → **render**.
 
+## What it looks like
+
+*(Screenshots show the Chinese UI — the app ships with both English and Chinese, hot-switchable.)*
+
+![Material tree: source video, news context, bilingual subtitles, chapters and hotclips](./screenshot-material-tree.png)
+
+*The material tree of a project — one source video, bilingual subtitles, chapters and hotclips.*
+
+![Clip workbench with hotclip candidates on the left and a styled preview on the right](./screenshot-clip-workbench.png)
+
+*Clip workbench — pick hotclip candidates on the left, preview the styled short video on the right.*
+
+![News Desk workbench with bilingual subtitles, name plate and chapter strip in the live preview](./screenshot-news-desk-style.png)
+
+*News Desk workbench — bilingual subtitles, lower-third name plate and chapter strip, styled live in the preview.*
+
+![Render and export panel with engine, resolution, fps and bitrate options](./screenshot-render-export.png)
+
+*Render & export — pick engine / resolution / fps / bitrate, optionally split the output by chapter.*
+
 ## About AI (optional, never forced)
 
 The core video features need no AI. When you want ASR / translation / analysis, enable it from the **AI** and **Models** panels — three tiers, pick any, mix freely:
@@ -29,3 +49,7 @@ The core video features need no AI. When you want ASR / translation / analysis, 
 - **Cloud API** — bring your own key (Gemini / DeepSeek / Groq / LemonFox …), pay the provider directly — VideoCraft takes no cut.
 
 Optional **GPU acceleration** is available in the Model Manager (CUDA runtime). Every download and config step is strongly guided but **skippable**.
+
+![Model Manager listing the embedded AI runtime, GPU acceleration and local ASR / LLM models](./screenshot-model-manager.png)
+
+*The Model Manager — embedded AI runtime, GPU acceleration and local models, each a one-click install.*
