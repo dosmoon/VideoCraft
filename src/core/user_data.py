@@ -107,6 +107,6 @@ def _migrate_legacy_home() -> None:
             pass
 
 
-# Run once at import. user_data is imported transitively by i18n/hub_layout/
-# burn_presets/project/composer, all before any of them read state.
+# Run once at import. user_data is imported transitively by i18n/project and
+# the core modules, all before any of them read state.
 _migrate_legacy_home()

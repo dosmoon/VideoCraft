@@ -12,7 +12,7 @@
 > ② **3 篇重写到 Electron 现实**：[`design/00-overview.md`](design/00-overview.md)（入口路标：当前架构图 + ADR 索引 + 文件结构）、[`design/04-ai-router.md`](design/04-ai-router.md)（三档 provider 池 / 6-tab Electron 控制台 / prompt hub 已退役）、[`design/12-i18n.md`](design/12-i18n.md)（renderer tr.ts 530 keys 热切换 + Python 侧 28 keys）。
 > ③ 修断链：BACKLOG.md、derivative-snapshot-principle、composition-otio-foundation、electron-migration-design、06-core-layer（顺带清掉其 Tk 残留模块表）+ 3 处代码注释路径。ADR 全部核过：0001~0011 状态准确，0004 已自带 Superseded 注记，无需动。
 > 保留现行：design/ 02/06/08/09 + aistack-integration + composition-timeline-v0；draft/ packaging-design / electron-migration-design / composition-otio-foundation / derivative-snapshot-principle + 两篇未做草稿（media-segment-composer=P1 PPT2Video、buffer-publishing）。
-> 遗留小尾巴：`src/hub_layout.py` 是零引用 Tk 残留（仅 user_data.py 注释提及），下次顺手删（删前 pytest baseline 对照）。
+> ~~遗留小尾巴：`src/hub_layout.py`~~ 已删（2026-06-10 同日，pytest baseline 对照过）。
 > ⏳ **v0.3.5 草稿 Release 仍待用户审 notes 后手点 publish**。⏸ 真签名 deferred(需证书)。
 > 旧会话记录见下「📦 已归档历史」。
 

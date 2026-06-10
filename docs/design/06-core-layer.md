@@ -105,4 +105,4 @@ def _work():
 | [i18n.py](../../src/i18n.py) | Python 侧本地化入口，`tr(key, **kwargs)` 带 fallback 链，见 [12-i18n.md](12-i18n.md)（UI 主体字符串在 Electron renderer 侧） |
 | [project.py](../../src/project.py) | Project 模型 + recent.json 管理 |
 
-> Tk 时代的 `operations.py` / `tools/base.py` / Hub 布局持久化已随 Tk 退役删除（见 [ADR-0008](../adr/0008-plugins-ts-python-capability-gateway.md)；`hub_layout.py` 为无调用方残留待清）。
+> Tk 时代的 `operations.py` / `tools/base.py` / Hub 布局持久化已随 Tk 退役删除（见 [ADR-0008](../adr/0008-plugins-ts-python-capability-gateway.md)）。
