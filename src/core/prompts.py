@@ -16,9 +16,10 @@ target in the AI Console UI).
 Phase 1 limitations (intentional):
   - Single prompt per task. Per-(task, provider) variants are
     deferred (Phase 2; see design doc).
-  - Storage path is `<repo>/prompts/`; user override layer in
-    `<repo>/user_data/prompts/` will land with BACKLOG L17 portable
-    refactor. For now, edits write directly to the shipped path.
+  - Storage path is `<repo>/prompts/`; a user override layer in
+    `<repo>/user_data/prompts/` was never implemented (the central
+    prompt hub is being dismantled in favor of per-plugin prompts).
+    Edits write directly to the shipped path.
 """
 
 from __future__ import annotations

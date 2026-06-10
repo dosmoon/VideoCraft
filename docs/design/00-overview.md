@@ -105,7 +105,7 @@ packaging/                # build_sidecar.ps1 / fetch_ffmpeg.ps1 / generate_buil
 .github/workflows/        # build-windows.yml（tag 触发出包 + 草稿 Release）
 user_data/                # 用户数据（绿色便携，含 models/ keys/ settings/ 日志）
 prompts/                  # prompt 模板
-docs/                     # 本文档树；BACKLOG.md = 计划权威；docs/task.md = 当前任务接力
+docs/                     # 本文档树；docs/BACKLOG.md = 计划权威；docs/task.md = 当前任务接力
 ```
 
 ---

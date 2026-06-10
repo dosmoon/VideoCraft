@@ -13,6 +13,7 @@
 > ③ 修断链：BACKLOG.md、derivative-snapshot-principle、composition-otio-foundation、electron-migration-design、06-core-layer（顺带清掉其 Tk 残留模块表）+ 3 处代码注释路径。ADR 全部核过：0001~0011 状态准确，0004 已自带 Superseded 注记，无需动。
 > 保留现行：design/ 02/06/08/09 + aistack-integration + composition-timeline-v0。
 > ④ **draft/ 二次收口（同日晚）**：3 篇现行权威升入 design/（[composition-otio-foundation](design/composition-otio-foundation.md) / [derivative-snapshot-principle](design/derivative-snapshot-principle.md) / [packaging-design](design/packaging-design.md)，后者状态改「已实施」）；electron-migration-design 归档（迁移完成，正文已由 ADR-0008/0010 + 00-overview 承载）。**draft/ 现在只剩 2 篇真草稿**（media-segment-composer=P1 PPT2Video、buffer-publishing）。入站链接（versioning/BACKLOG/desktop README/ir.ts/core_rpc）已同步改。
+> ⑤ **BACKLOG 治理（同日晚）**：`BACKLOG.md` 移入 [`docs/BACKLOG.md`](BACKLOG.md) 并大幅精简——已完成项 / 随 Tk 退役失效项（项目工作台 UX、video_tools 下沉、窗口风格、Tab 滚动等）/ 已被现实解决的观察（自建渲染引擎已落地）/ 旧 core/program 节目生成规划 / 暂缓裁决全文，全部拆到 [`_archive/backlog-archive-01_2026-04_2026-06.md`](_archive/backlog-archive-01_2026-04_2026-06.md)（参考 task.md 分卷做法）。顺带修正 06-core-layer 模块表残留死行（burn_subs/burn_presets/tts.py 已删、env 组件实数 8+1）+ prompts.py 过期注释。
 > ~~遗留小尾巴：`src/hub_layout.py`~~ 已删（2026-06-10 同日，pytest baseline 对照过）。
 > ✅ **v0.3.5 Release 已发布**（2026-06-10 20:07 UTC，notes 重写为双语用户向后 publish，<https://github.com/dosmoon/VideoCraft/releases/tag/v0.3.5>）。⏸ 真签名 deferred(需证书)。
 > 旧会话记录见下「📦 已归档历史」。

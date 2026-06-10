@@ -84,15 +84,14 @@ def _work():
 | `core/srt_quality.py` | ✅ 2026-04-30 新增。SRT 结构性指纹（cue 数 / 平均时长 / 字符宽 / cps / 标点 % / ALL-CAPS % / speaker tags / sound fx / 晚开场标记）。无评分、零依赖。yt-dlp 工具下载完调用 `format_fingerprint(fp)` 写一行日志 |
 | `core/lang_names.py` | ✅ 2026-04-30 新增。~50 条 BCP47 → (中, 英) 表 + `friendly_name` / `display_label` / `matches_search`（支持 code/中/英三路匹配）。避免引 `langcodes` 依赖 |
 | `core/subtitle_ops.py` | ✅ `split_srt_to_file`、`build_subtitle_style`、`escape_ffmpeg_path`、`hex_color_to_ass` 等 |
-| `core/burn_subs.py` / `core/burn_presets.py` | ✅ 烧录主流程 + preset 持久化（落 `<repo>/user_data/presets/subtitle_burn.json`）|
 | `core/video_split.py` | ✅ `SplitMode` 枚举（fast / keyframe_snap / accurate）+ `probe_keyframes()` 带 (path, mtime) 缓存 + `split_one()` 统一入口 |
 | `core/video_concat.py` | ✅ `concat_videos` = ffmpeg concat demuxer；`split_segments` = stream copy 切片（支持 `mode` 参数，默认 KEYFRAME_SNAP）；`merge_segments` = 重编码 + concat 支持跨段跳跃合并 |
-| `core/video_ops.py` | ⚠️ 部分抽取——主要 ffmpeg utilities 仍在 [tools/video/video_tools.py](../../src/tools/video/video_tools.py) 顶部（`extract_audio_to_mp3` 等），与 UI 类同文件但已是无 tkinter 依赖的纯函数。BACKLOG P2 跟进迁移 |
-| `core/segment_model.py` | ✅ `Segment` dataclass、parse/format timestamp、load/save subs.txt、validate、safe_filename。为分段综合工作台服务 |
-| `core/translate.py` / `core/asr.py` / `core/tts.py` | ✅ 各自走 `core.ai` facade，UI 不直接 import provider |
-| `core/prompts.py` | ✅ get/set/reset/is_overridden + DEFAULTS 兜底；4 个 prompt 文件落 `prompts/*.md` |
-| `core/user_data.py` | ✅ `user_data_dir()` / `path(*parts)` 统一入口，import 时跑一次幂等的 `~/.videocraft → <repo>/user_data/` 迁移（不删旧目录，平行安装/回滚仍可用）|
-| `core/env/` | ✅ EnvComponent 注册表 + 9 个可见组件（ffmpeg/ffprobe/node/vlc/claude_cli/yt-dlp/fish-audio-sdk/openai/Pillow）+ 1 隐藏（google-genai）。Node 走 user_data/runtimes/node/ managed 模式 |
+| `core/video_ops.py` | ✅ ffmpeg utilities（`extract_mp3` / `extract_clip` 等纯函数；Tk 工具层退役后即此独立模块）|
+| `core/segment_model.py` | ✅ `Segment` dataclass、parse/format timestamp、load/save subs.txt、validate、safe_filename |
+| `core/translate.py` / `core/asr.py` | ✅ 各自走 `core.ai` facade，上层不直接 import provider（Tk 时代的 `core/tts.py`、`core/burn_subs.py`、`core/burn_presets.py` 已删——TTS 经 `ai.tts` 直达，字幕烧录走 renderer composition 引擎）|
+| `core/prompts.py` | ✅ get/set/reset/is_overridden + DEFAULTS 兜底；prompt 文件落 `prompts/*.md`（中央编辑 UI 已退役，见 [04-ai-router.md](04-ai-router.md) 原则 5）|
+| `core/user_data.py` | ✅ `user_data_dir()` / `path(*parts)` 统一入口，import 时跑一次幂等的 `~/.videocraft → <repo>/user_data/` 迁移（不删旧目录，平行安装/回滚仍可用）；`keys_dir()` 等路径解析唯一经此模块 |
+| `core/env/` | ✅ EnvComponent 注册表 + 8 个可见组件（ffmpeg/ffprobe/node/claude_cli/yt-dlp/fish-audio-sdk/openai/Pillow）+ 1 隐藏（google-genai）。Node 走 user_data/runtimes/node/ managed 模式 |
 | `core/ai/` | ✅ Router + providers + errors + facade，详见 [04-ai-router.md](04-ai-router.md) |
 
 ## 与 core/ 并列的共享基础设施

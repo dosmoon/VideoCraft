@@ -10,6 +10,7 @@
 | [task-archive-01](task-archive-01_2026-05-19_2026-06-05.md) | FastAPI 传输重构、P3 打包/Tk 退役、OTIO/Electron 迁移史（续 6~37） |
 | [task-archive-02](task-archive-02_2026-06-05_2026-06-08.md) | 三轮 dogfood（source 崩 / 60fps 死锁 / clip·news_desk 修复） |
 | [task-archive-03](task-archive-03_2026-06-08_2026-06-09.md) | i18n 孤儿清扫 / env-screen / crop-on-Clip 重构（ADR-0011） |
+| [backlog-archive-01](backlog-archive-01_2026-04_2026-06.md) | BACKLOG 拆卷：已完成项 / 随 Tk 退役失效项 / 旧 core/program 规划 / 暂缓裁决全文 |
 
 ## Tk 时代设计文档（2026-06-10 自 docs/design/ 移入）
 
