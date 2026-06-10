@@ -3,6 +3,13 @@
   "version": "0.3.5",
   "private": true,
   "description": "VideoCraft Electron renderer — home of the OTIO composition core, video component library, and GPU compositor. See docs/draft/composition-otio-foundation.md.",
+  "author": "OldApeTalk",
+  "license": "MIT",
+  "homepage": "https://github.com/dosmoon/VideoCraft",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dosmoon/VideoCraft.git"
+  },
   "type": "module",
   "main": "out/main/index.cjs",
   "scripts": {

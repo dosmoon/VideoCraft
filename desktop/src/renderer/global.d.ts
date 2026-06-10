@@ -43,6 +43,31 @@ interface BuildInfo {
   builtAt: string;
 }
 
+interface AppInfo {
+  name: string;
+  author: string;
+  org: string;
+  license: string;
+  homepage: string;
+  copyright: string;
+}
+
+interface MenuLabels {
+  file: string;
+  quit: string;
+  view: string;
+  reload: string;
+  devtools: string;
+  zoomReset: string;
+  zoomIn: string;
+  zoomOut: string;
+  fullscreen: string;
+  help: string;
+  about: string;
+  github: string;
+  reportIssue: string;
+}
+
 interface VcApi {
   mediaUrl(absPath: string): string;
   writeFile(absPath: string, bytes: Uint8Array): Promise<string>;
@@ -66,6 +91,8 @@ interface VcApi {
   fs: VcFsApi;
   rpc: VcRpcApi;
   buildInfo(): Promise<BuildInfo>;
+  appInfo(): Promise<AppInfo>;
+  setMenu(labels: MenuLabels): Promise<void>;
   platform: string;
 }
 

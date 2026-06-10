@@ -6,6 +6,8 @@
 
 import { contextBridge, ipcRenderer } from "electron";
 import type { BuildInfo } from "./buildInfo";
+import type { AppInfo } from "./appInfo";
+import type { MenuLabels } from "./menu";
 
 const api = {
   /** Build a fetchable vc-media:// URL for an absolute local file path. */
@@ -146,6 +148,15 @@ const api = {
    *  About card. Resolved by main from package.json + build-info.json. */
   buildInfo(): Promise<BuildInfo> {
     return ipcRenderer.invoke("vc:buildInfo");
+  },
+  /** Brand identity (author / org / license / homepage) for the About card. */
+  appInfo(): Promise<AppInfo> {
+    return ipcRenderer.invoke("vc:appInfo");
+  },
+  /** Install the app menu with renderer-localised labels (Shell calls this on
+   *  mount and on every language switch). */
+  setMenu(labels: MenuLabels): Promise<void> {
+    return ipcRenderer.invoke("vc:setMenu", labels);
   },
   platform: process.platform,
 };

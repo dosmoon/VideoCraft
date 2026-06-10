@@ -5,19 +5,40 @@
  * the AI console or settings; the lighter framework views mount on demand.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Hub } from "./hub/Hub";
 import { ActivityBar, type AppView } from "./app/ActivityBar";
 import { AiConsole } from "./aiconsole/AiConsole";
 import { ModelManager } from "./models/ModelManager";
 import { Settings } from "./settings/Settings";
-import { useLang } from "./i18n/tr";
+import { tr, useLang } from "./i18n/tr";
 
 export function Shell() {
   // Subscribe the whole tree to language changes so a hot switch re-renders
   // every tr() call below (no React.memo boundaries gate the views).
-  useLang();
+  const lang = useLang();
   const [view, setView] = useState<AppView>("project");
+
+  // The native app menu lives in the main process but its labels are i18n —
+  // re-send the translated set on mount and on every language switch (keyed on
+  // `lang`), so the menu tracks the in-app language without restart.
+  useEffect(() => {
+    void window.vc.setMenu({
+      file: tr("menu.file"),
+      quit: tr("menu.quit"),
+      view: tr("menu.view"),
+      reload: tr("menu.reload"),
+      devtools: tr("menu.devtools"),
+      zoomReset: tr("menu.zoom_reset"),
+      zoomIn: tr("menu.zoom_in"),
+      zoomOut: tr("menu.zoom_out"),
+      fullscreen: tr("menu.fullscreen"),
+      help: tr("menu.help"),
+      about: tr("menu.about"),
+      github: tr("menu.github"),
+      reportIssue: tr("menu.report_issue"),
+    });
+  }, [lang]);
 
   return (
     <div style={{ display: "flex", height: "100vh" }}>

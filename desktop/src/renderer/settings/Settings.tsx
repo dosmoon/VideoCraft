@@ -56,15 +56,17 @@ export function Settings() {
 
 function AboutSection() {
   const [bi, setBi] = useState<BuildInfo | null>(null);
+  const [ai, setAi] = useState<AppInfo | null>(null);
   useEffect(() => {
-    // Static, host-side metadata (not the sidecar) — one roundtrip, no spinner.
+    // Static, host-side metadata (not the sidecar) — one roundtrip each, no spinner.
     void window.vc.buildInfo().then(setBi).catch(() => {});
+    void window.vc.appInfo().then(setAi).catch(() => {});
   }, []);
   return (
     <>
       <h3 style={H3}>{tr("settings.section_about")}</h3>
       <div style={CARD}>
-        <div style={{ fontWeight: 600 }}>VideoCraft</div>
+        <div style={{ fontWeight: 600 }}>{ai?.name ?? "VideoCraft"}</div>
         <div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>{tr("settings.about_blurb")}</div>
         {bi && (
           <div
@@ -72,6 +74,22 @@ function AboutSection() {
             title={bi.builtAt || undefined}
           >
             {tr("settings.build_line", { version: bi.version, build: bi.build, commit: bi.commit || "—" })}
+          </div>
+        )}
+        {ai && (
+          <div style={{ fontSize: 11, color: "#888", marginTop: 8, lineHeight: 1.6 }}>
+            <div>{tr("settings.about_by", { author: ai.author, org: ai.org })}</div>
+            <div style={{ color: "#666" }}>
+              {tr("settings.about_copyright", { copyright: ai.copyright, license: ai.license })}
+            </div>
+            {ai.homepage && (
+              <span
+                onClick={() => void window.vc.openExternal(ai.homepage)}
+                style={{ color: "#6aa6ff", cursor: "pointer" }}
+              >
+                {ai.homepage.replace(/^https?:\/\//, "")}
+              </span>
+            )}
           </div>
         )}
       </div>

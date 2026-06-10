@@ -3,7 +3,7 @@ name = "VideoCraft"
 version = "0.3.5"
 description = "AI-powered video creation and processing tool"
 authors = [
-    { name = "dosmoon" },
+    { name = "OldApeTalk" },
 ]
 license = { file = "LICENSE" }
 readme = "README.markdown"

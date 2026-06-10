@@ -29,6 +29,8 @@ import { Readable } from "node:stream";
 import { Sidecar, SidecarError } from "./sidecar";
 import { resolveAppPaths } from "./paths";
 import { readBuildInfo, type BuildInfo } from "./buildInfo";
+import { readAppInfo, type AppInfo } from "./appInfo";
+import { applyAppMenu, DEFAULT_MENU_LABELS, type MenuLabels } from "./menu";
 import * as ffmpeg from "./ffmpeg";
 
 // Extension → MIME for the vc-media:// server (video for <video>/mp4box, images
@@ -78,6 +80,38 @@ async function getBuildInfo(): Promise<BuildInfo> {
   return buildInfoCache;
 }
 ipcMain.handle("vc:buildInfo", () => getBuildInfo());
+
+// App brand identity (author / org / license / homepage), read from package.json
+// once. Feeds the About card + the native Help → About dialog. See appInfo.ts.
+let appInfoCache: AppInfo | null = null;
+function appInfo(): AppInfo {
+  return (appInfoCache ??= readAppInfo());
+}
+ipcMain.handle("vc:appInfo", () => appInfo());
+
+// Native Help → About dialog: brand identity (appInfo) + build identity (buildInfo).
+function showAboutDialog(): void {
+  const ai = appInfo();
+  void getBuildInfo().then((bi) => {
+    const detail = [
+      `v${bi.version} · build ${bi.build}${bi.commit ? ` · ${bi.commit}` : ""}`,
+      ai.org ? `${ai.author} · ${ai.org}` : ai.author,
+      [ai.copyright, ai.license].filter(Boolean).join(" · "),
+      ai.homepage,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    void dialog.showMessageBox({ type: "info", title: ai.name, message: ai.name, detail, buttons: ["OK"], noLink: true });
+  });
+}
+
+// Install the app menu. Labels arrive localised from the renderer (vc:setMenu);
+// DEFAULT_MENU_LABELS (English) is the pre-renderer fallback. See menu.ts.
+function applyMenu(labels: MenuLabels): void {
+  const repoUrl = appInfo().homepage || "https://github.com/dosmoon/VideoCraft";
+  applyAppMenu(labels, { onAbout: showAboutDialog, repoUrl, issuesUrl: `${repoUrl}/issues` });
+}
+ipcMain.handle("vc:setMenu", (_e, labels: MenuLabels) => applyMenu(labels));
 
 // ── Generic file I/O for the renderer (ADR-0008 architecture pivot) ──────────
 // Plugins are moving to pure TS: their config/preset/data files are read+written
@@ -555,6 +589,7 @@ sidecar.onNotification((method, params) => {
 
 void app.whenReady().then(() => {
   registerMediaProtocol();
+  applyMenu(DEFAULT_MENU_LABELS); // English fallback; Shell re-sends localised labels on mount
   sidecar.start();
   createMainWindow();
 
