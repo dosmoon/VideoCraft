@@ -7,6 +7,8 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-lightgrey)](https://github.com/dosmoon/VideoCraft/releases/latest)
 
+📖 **Docs / 文档**: [dosmoon.com/VideoCraft](https://dosmoon.com/VideoCraft/) · [中文站](https://dosmoon.com/VideoCraft/zh-cn/)
+
 **[中文](#中文) · [English](#english)**
 
 <!-- TODO: add a main-window screenshot here -->

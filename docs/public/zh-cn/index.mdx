@@ -1,0 +1,59 @@
+---
+title: VideoCraft
+description: 一台「剪辑师是 AI」的节目生成器 —— 把一条源视频，做成成片或一批短视频。核心功能免费，Windows 桌面应用。
+template: splash
+hero:
+  tagline: 一台「剪辑师是 AI」的节目生成器 —— 把一条源视频，做成成片或一批短视频。
+  image:
+    file: ../logo.png
+    alt: VideoCraft logo
+  actions:
+    - text: 下载 Windows 版
+      link: https://github.com/dosmoon/VideoCraft/releases/latest
+      icon: right-arrow
+      variant: primary
+    - text: 快速上手
+      link: /VideoCraft/zh-cn/quick-start/
+      icon: open-book
+      variant: secondary
+    - text: GitHub
+      link: https://github.com/dosmoon/VideoCraft
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+{/* TODO: add a main-window screenshot here once one is available */}
+
+## 能做什么
+
+<CardGrid>
+  <Card title="切片 Clip" icon="seti:video">
+    基于字幕热点片段，批量切出短视频 —— 选好片段，一次拿到一批可直接发布的短视频。
+  </Card>
+  <Card title="新闻编导视频" icon="document">
+    把新闻 / 演讲 / 发布会素材做成完整成片：双语字幕 + 名牌 + 章节条。
+  </Card>
+  <Card title="字幕全链路" icon="pencil">
+    语音转字幕（ASR）、导入 SRT、翻译、质检自动修复、烧录（可配字体 / 颜色 / 大小 / 位置 / 描边 / 底色）。
+  </Card>
+  <Card title="开箱即用" icon="rocket">
+    ffmpeg 已随包。核心出片功能**无需任何账号或 API Key**。
+  </Card>
+  <Card title="AI 可选 · 三档任选" icon="setting">
+    内置本地模型（离线、无需 Key）、自建 [aistack](https://github.com/dosmoon/aistack) 网关、或你自己的云端 API Key。三档任选、可混用、也可以全部跳过。
+  </Card>
+  <Card title="绿色便携安装" icon="laptop">
+    免管理员权限，安装到当前用户目录，数据就放在程序旁边 —— 整个文件夹可自由搬走。
+  </Card>
+</CardGrid>
+
+## 开始使用
+
+1. [下载与安装](download/) —— Windows 10 / 11，64 位。
+2. [快速上手](quick-start/) —— 从一条视频链接到成片，只要六步。
+
+> ⚠️ **早期阶段**（`0.x`）—— 功能持续演进，欢迎通过 [GitHub Issues](https://github.com/dosmoon/VideoCraft/issues) 反馈。
+
+VideoCraft 以 [MIT License](https://github.com/dosmoon/VideoCraft/blob/main/LICENSE) 开源，由 [dosmoon](https://dosmoon.com/zh-cn/) 维护。
