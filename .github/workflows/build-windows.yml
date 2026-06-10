@@ -51,6 +51,15 @@ jobs:
         shell: pwsh
         run: ./packaging/fetch_ffmpeg.ps1
 
+      # Per-build identity (build = this run, git SHA, timestamp) -> build-info.json
+      # shipped beside the app + shown in the About card. Must precede the build:
+      # electron-builder's extraResources requires resources/build-info.json.
+      - name: Generate build-info
+        shell: pwsh
+        env:
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: ./packaging/generate_build_info.ps1
+
       # pnpm before setup-node so the latter's `cache: pnpm` can find the store.
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -71,6 +80,11 @@ jobs:
       - name: Build installer (NSIS, brand icon embedded)
         working-directory: desktop
         shell: pwsh
+        env:
+          # electron-builder folds BUILD_NUMBER into the Windows FileVersion
+          # (-> <version>.<run_number>) — effective only because the flip below
+          # turns signAndEditExecutable on (rcedit runs). See docs/versioning.md.
+          BUILD_NUMBER: ${{ github.run_number }}
         # This runner has the symlink privilege winCodeSign needs, so flip the
         # local workaround (signAndEditExecutable: false) to true in the
         # checked-out config — rcedit then embeds the brand icon into the exe.

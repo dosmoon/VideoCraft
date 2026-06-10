@@ -36,6 +36,13 @@ interface VcFfmpegEncodeApi {
   abort(id: number): Promise<void>;
 }
 
+interface BuildInfo {
+  version: string;
+  build: string;
+  commit: string;
+  builtAt: string;
+}
+
 interface VcApi {
   mediaUrl(absPath: string): string;
   writeFile(absPath: string, bytes: Uint8Array): Promise<string>;
@@ -58,6 +65,7 @@ interface VcApi {
   pickSubtitle(): Promise<string | null>;
   fs: VcFsApi;
   rpc: VcRpcApi;
+  buildInfo(): Promise<BuildInfo>;
   platform: string;
 }
 

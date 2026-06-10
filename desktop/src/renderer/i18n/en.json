@@ -413,6 +413,7 @@
   "settings.guide": "Guide",
   "settings.section_about": "About",
   "settings.about_blurb": "A program generator where the editor is AI.",
+  "settings.build_line": "v{version} · build {build} · {commit}",
   "env.component.ffmpeg": "FFmpeg",
   "env.component.ffprobe": "FFprobe",
   "env.component.node": "Node.js",

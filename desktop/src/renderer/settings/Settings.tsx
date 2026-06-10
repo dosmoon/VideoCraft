@@ -49,12 +49,33 @@ export function Settings() {
 
       <EnvSection />
 
+      <AboutSection />
+    </div>
+  );
+}
+
+function AboutSection() {
+  const [bi, setBi] = useState<BuildInfo | null>(null);
+  useEffect(() => {
+    // Static, host-side metadata (not the sidecar) — one roundtrip, no spinner.
+    void window.vc.buildInfo().then(setBi).catch(() => {});
+  }, []);
+  return (
+    <>
       <h3 style={H3}>{tr("settings.section_about")}</h3>
       <div style={CARD}>
         <div style={{ fontWeight: 600 }}>VideoCraft</div>
         <div style={{ fontSize: 12, color: "#888", marginTop: 4 }}>{tr("settings.about_blurb")}</div>
+        {bi && (
+          <div
+            style={{ fontSize: 11, color: "#666", marginTop: 6, fontFamily: "monospace" }}
+            title={bi.builtAt || undefined}
+          >
+            {tr("settings.build_line", { version: bi.version, build: bi.build, commit: bi.commit || "—" })}
+          </div>
+        )}
       </div>
-    </div>
+    </>
   );
 }
 

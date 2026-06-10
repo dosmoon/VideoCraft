@@ -28,6 +28,7 @@ import { release } from "node:os";
 import { Readable } from "node:stream";
 import { Sidecar, SidecarError } from "./sidecar";
 import { resolveAppPaths } from "./paths";
+import { readBuildInfo, type BuildInfo } from "./buildInfo";
 import * as ffmpeg from "./ffmpeg";
 
 // Extension → MIME for the vc-media:// server (video for <video>/mp4box, images
@@ -58,6 +59,25 @@ const appPaths = resolveAppPaths(here);
 // Single Python sidecar for the whole app (migration doc §2.3: one in-memory
 // owner of project/material state; disk is the source of truth).
 const sidecar = new Sidecar(appPaths.sidecar);
+
+// Build identity for the About card. The release `version` is the single source
+// in package.json (app.getVersion()); build number / git SHA / timestamp come
+// from the build-time build-info.json (paths.ts), with a "dev" fallback when it
+// is absent (e.g. `pnpm dev`). Cached on first read. See docs/versioning.md.
+let buildInfoCache: BuildInfo | null = null;
+async function getBuildInfo(): Promise<BuildInfo> {
+  if (!buildInfoCache) {
+    const gen = await readBuildInfo(appPaths.buildInfoPath);
+    buildInfoCache = {
+      version: app.getVersion(),
+      build: gen?.build ?? "dev",
+      commit: gen?.commit ?? "",
+      builtAt: gen?.builtAt ?? "",
+    };
+  }
+  return buildInfoCache;
+}
+ipcMain.handle("vc:buildInfo", () => getBuildInfo());
 
 // ── Generic file I/O for the renderer (ADR-0008 architecture pivot) ──────────
 // Plugins are moving to pure TS: their config/preset/data files are read+written

@@ -413,6 +413,7 @@
   "settings.guide": "安装指引",
   "settings.section_about": "关于",
   "settings.about_blurb": "一台「剪辑师是 AI」的节目生成器。",
+  "settings.build_line": "v{version} · 构建 {build} · {commit}",
   "env.component.ffmpeg": "FFmpeg",
   "env.component.ffprobe": "FFprobe",
   "env.component.node": "Node.js",

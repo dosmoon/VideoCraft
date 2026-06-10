@@ -5,6 +5,7 @@
  */
 
 import { contextBridge, ipcRenderer } from "electron";
+import type { BuildInfo } from "./buildInfo";
 
 const api = {
   /** Build a fetchable vc-media:// URL for an absolute local file path. */
@@ -140,6 +141,11 @@ const api = {
       ipcRenderer.on("vc:rpc:notification", listener);
       return () => ipcRenderer.removeListener("vc:rpc:notification", listener);
     },
+  },
+  /** Build identity (version + build number + git SHA + timestamp) for the
+   *  About card. Resolved by main from package.json + build-info.json. */
+  buildInfo(): Promise<BuildInfo> {
+    return ipcRenderer.invoke("vc:buildInfo");
   },
   platform: process.platform,
 };

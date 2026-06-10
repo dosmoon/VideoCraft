@@ -3,3 +3,6 @@ dist/
 out/
 user_data/
 *.tsbuildinfo
+# Generated per-build by packaging/generate_build_info.ps1 (resources/ copy is
+# already ignored via the repo-root .gitignore desktop/resources/ rule).
+build/build-info.json

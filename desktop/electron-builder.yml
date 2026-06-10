@@ -37,6 +37,11 @@ extraResources:
   # electron-builder for the NSIS installer UI.
   - from: build/icon.ico
     to: icon.ico
+  # Per-build identity (build number / git SHA / timestamp) from
+  # packaging/generate_build_info.ps1 — read by paths.ts, shown in the About
+  # card. Must exist at build time (run generate_build_info.ps1 first).
+  - from: resources/build-info.json
+    to: build-info.json
 
 asar: true
 
