@@ -32,6 +32,10 @@ jobs:
     # 2026-06-15 anyway — pinning keeps the build reproducible and surprise-free.
     runs-on: windows-2025
     timeout-minutes: 45
+    # Needed by the draft-Release step (gh release create/upload). Explicit so a
+    # read-only org default token policy can't silently break it.
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -106,3 +110,33 @@ jobs:
           name: VideoCraft-windows-installer
           path: desktop/release/*-setup.exe
           if-no-files-found: error
+
+      # On a version tag (v*) ONLY, attach the installer to a DRAFT GitHub Release
+      # — never auto-published; you review notes and click Publish (docs/packaging.md).
+      # Guards so this can't distort future ops:
+      #   - tag-only `if`: the manual workflow_dispatch flow above is byte-unchanged.
+      #   - version match: the installer version comes from desktop/package.json, NOT
+      #     the tag, so a tag/package.json mismatch would ship a wrong-versioned binary
+      #     — fail fast instead (docs/versioning.md).
+      #   - idempotent: a re-run reuses the existing draft and clobbers its assets,
+      #     so re-tagging / re-dispatching never errors on "release already exists".
+      - name: Draft GitHub Release (version tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: desktop
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $tagVer = $tag.TrimStart("v")
+          $pkgVer = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($tagVer -ne $pkgVer) {
+            throw "Tag $tag (=$tagVer) != desktop/package.json version $pkgVer. Bump package.json to match before tagging (docs/versioning.md)."
+          }
+          $repo = "${{ github.repository }}"
+          gh release view $tag -R $repo *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag -R $repo --draft --title "VideoCraft $tag" --generate-notes
+          }
+          $assets = Get-ChildItem release/*-setup.exe* | ForEach-Object { $_.FullName }
+          gh release upload $tag -R $repo $assets --clobber
