@@ -1,0 +1,25 @@
+---
+// Header link back to the dosmoon portal, rendered as TEXT before the
+// social icons — a bare ↗ icon carries no meaning ("which site?"), while
+// the wordmark is self-explanatory. The GitHub icon stays an icon (it is
+// universally recognizable).
+import Default from '@astrojs/starlight/components/SocialIcons.astro';
+---
+
+<a href="https://dosmoon.com/" class="portal-link">dosmoon.com</a>
+<Default />
+
+<style>
+  .portal-link {
+    color: var(--sl-color-text-accent);
+    font-size: var(--sl-text-sm);
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    padding-inline-end: 0.25rem;
+  }
+  .portal-link:hover {
+    color: var(--sl-color-white);
+    text-decoration: underline;
+  }
+</style>

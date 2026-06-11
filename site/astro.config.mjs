@@ -14,7 +14,6 @@ export default defineConfig({
       },
       favicon: '/favicon.png',
       social: [
-        { icon: 'external', label: 'dosmoon.com', href: 'https://dosmoon.com/' },
         { icon: 'github', label: 'GitHub', href: 'https://github.com/dosmoon/VideoCraft' },
       ],
       sidebar: [
@@ -30,6 +29,8 @@ export default defineConfig({
       components: {
         // Append a site footer (portal link) on every page — see the component.
         Footer: './src/components/Footer.astro',
+        // Text "dosmoon.com" link in the header (an icon alone is unreadable).
+        SocialIcons: './src/components/SocialIcons.astro',
       },
     }),
   ],
