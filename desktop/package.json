@@ -1,6 +1,6 @@
 {
   "name": "videocraft-desktop",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "private": true,
   "description": "VideoCraft Electron renderer — home of the OTIO composition core, video component library, and GPU compositor. See docs/design/composition-otio-foundation.md.",
   "author": "OldApeTalk",
