@@ -27,6 +27,10 @@ export default defineConfig({
         baseUrl: 'https://github.com/dosmoon/VideoCraft/edit/main/docs/public/',
       },
       lastUpdated: true,
+      components: {
+        // Append a site footer (portal link) on every page — see the component.
+        Footer: './src/components/Footer.astro',
+      },
     }),
   ],
 });

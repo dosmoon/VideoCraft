@@ -1,0 +1,33 @@
+---
+// Site footer appended below Starlight's default footer (pagination /
+// edit-link / last-updated). The splash landing page renders no sidebar
+// and the default footer is nearly empty there, so this is the one
+// navigation element guaranteed on EVERY page — it carries the way back
+// to the dosmoon portal.
+import Default from '@astrojs/starlight/components/Footer.astro';
+---
+
+<Default />
+<div class="site-footer">
+  <a href="https://dosmoon.com/">dosmoon.com</a>
+  <span aria-hidden="true">·</span>
+  <a href="https://github.com/dosmoon/VideoCraft">GitHub</a>
+  <span aria-hidden="true">·</span>
+  <span>© 2025–2026 dosmoon</span>
+</div>
+
+<style>
+  .site-footer {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--sl-color-hairline);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    font-size: var(--sl-text-xs);
+    color: var(--sl-color-gray-3);
+  }
+  .site-footer a {
+    color: var(--sl-color-gray-2);
+  }
+</style>
