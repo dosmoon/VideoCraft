@@ -5,7 +5,16 @@
 
 ---
 
-## ✅ 当前状态(2026-06-10）= docs/ 治理完毕；v0.3.5 已发布
+## ✅ 当前状态(2026-06-11）= v0.3.6 已发布（多语言生成修复）
+
+> 本轮(2026-06-11)：① **文档站上线** <https://dosmoon.com/VideoCraft/>（中英双语 + 双套 UI 截图；发布源=docs/public/，规范见主站 docs-system-plan.md，主站卡片已挂链接）。
+> ② **修复章节/热点片段生成语言**（81ba75e）：prompt 加 {output_language} 硬性指令 + lang_iso 穿透 + 陈旧 prompts/ 覆盖文件追加兜底——此前非中文字幕一律生成中文。
+> ③ **clip 候选语言改人工决定**（5d224cd + 104dbcb）：样式 tab 绑定行下新增「候选来源」下拉（模仿 news_desk 章节来源）；切换显式确认并清空勾选/覆盖（`clips_overrides_clear`）；快照在先的老实例钉住不漂移。
+> ④ **v0.3.6 已发布**（2026-06-11 20:49 UTC，双语 notes，<https://github.com/dosmoon/VideoCraft/releases/tag/v0.3.6>）。⏸ 真签名 deferred(需证书)。
+
+---
+
+## 📦 上轮（2026-06-10）= docs/ 治理完毕；v0.3.5 已发布
 
 > 本轮(2026-06-10 晚)落地 **docs/ 全面 archive + 重写**（上轮拍板的任务）：
 > ① **21 篇过期文档移 [`docs/_archive/`](_archive/README.md)**（design/ 6 篇 Tk 时代：01/03/05/07/10/11；draft/ 13 篇已落地或已废弃：electron-migration-plan / adr-0008-migration-tasks / project-restructure / clip-component-migration / ai-clip-redesign / composition-style / architecture-vision / news-desk-derivative / news_desk-ux-v0.3 / publish-sidecar / chapter-verify-edit / substrate-spike-findings / tech-selection-embedded-ai；原 draft/archive/ 2 篇并入），`_archive/README.md` 给了逐篇归档原因 + 现行替代指引。
