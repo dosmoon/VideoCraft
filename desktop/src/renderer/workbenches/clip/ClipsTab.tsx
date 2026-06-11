@@ -37,12 +37,12 @@ export function ClipsTab(props: {
   active: boolean;
   /** Shared binding refresh key — reload source/candidates when (re-)bound. */
   refreshKey: number;
+  /** Bump the shared refresh key — the one-time language pick changes the
+   *  candidate set, so every tab must fully reload (like a re-bind). */
+  onLangChosen: () => void;
 }) {
-  const { type, instance, components, active, refreshKey } = props;
-  // Bumped after the one-time candidate-language pick — forces a full preview
-  // reload (candidates change), which the lightweight reload() can't do.
-  const [langBump, setLangBump] = useState(0);
-  const { status, message, data, reload } = useClipPreview(type, instance, refreshKey + langBump);
+  const { type, instance, components, active, refreshKey, onLangChosen } = props;
+  const { status, message, data, reload } = useClipPreview(type, instance, refreshKey);
 
   // Output config (mode / aspect) is edited in the Style tab while this one stays
   // mounted-but-hidden, so its preview data goes stale. Re-read config on
@@ -122,7 +122,7 @@ export function ClipsTab(props: {
       setSelError("");
       try {
         await rpc.updateConfig(type, instance, { source_subtitle: l });
-        setLangBump((b) => b + 1);
+        onLangChosen();
       } catch (err) {
         setSelError(err instanceof RpcError ? `[${err.code}] ${err.message}` : String(err));
       }

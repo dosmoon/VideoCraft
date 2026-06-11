@@ -21,6 +21,7 @@ import { tr } from "../../i18n/tr";
 import type { Component, PresetList } from "../../ipc/client";
 import { rpc, RpcError } from "../../ipc/client";
 import { MaterialBindingBar } from "../shared/MaterialBindingBar";
+import { HotclipsSourceBar } from "./HotclipsSourceBar";
 import { ComponentEditor } from "../shared/ComponentEditor";
 import { CropPreview } from "./CropPreview";
 import { useClipPreview } from "./useClipPreview";
@@ -451,6 +452,20 @@ export function StyleTab(props: {
         refreshKey={refreshKey}
         onBound={onMaterialBound}
       />
+
+      {/* Hotclips source — which language's candidates this instance cuts from
+          (mirrors the news_desk chapter-source row). Reuses the binding refresh
+          callback: a switch changes the candidate set, so every tab reloads. */}
+      {status === "ready" && data && (
+        <HotclipsSourceBar
+          type={type}
+          instance={instance}
+          lang={data.needsLangChoice ? "" : data.lang}
+          availableLangs={data.availableLangs}
+          hasCandidateState={data.selectedIndices.length > 0 || Object.keys(data.overrides).length > 0}
+          onChanged={onMaterialBound}
+        />
+      )}
 
       <div style={{ display: "flex", gap: 16, padding: 16, alignItems: "flex-start", flex: 1, overflow: "auto" }}>
         {/* Left: source preview + staging crop + component checkbox list */}

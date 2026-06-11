@@ -131,6 +131,21 @@ describe("ClipConfigOwner — applyPatch", () => {
     o.applyPatch({ clips_overrides_merge: { 2: { hook_text: null } } });
     expect(o.clipsOverrides["2"]).toBeUndefined(); // emptied → dropped
   });
+
+  it("clips_overrides_clear wipes all overrides (hotclips source switch)", async () => {
+    const fs = makeFs();
+    const o = await ClipConfigOwner.load(fs, CONFIG);
+    o.applyPatch({ clips_overrides_merge: { 0: { title: "A" }, 3: { title: "B" } } });
+    expect(Object.keys(o.clipsOverrides)).toHaveLength(2);
+    o.applyPatch({
+      source_subtitle: "en",
+      selected_clip_indices: [],
+      clips_overrides_clear: true,
+    });
+    expect(o.clipsOverrides).toEqual({});
+    expect(o.selectedClipIndices).toEqual([]);
+    expect(o.sourceSubtitle).toBe("en");
+  });
 });
 
 describe("ClipConfigOwner — components", () => {

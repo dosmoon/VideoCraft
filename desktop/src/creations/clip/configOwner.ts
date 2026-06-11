@@ -156,6 +156,10 @@ export class ClipConfigOwner {
         (i): i is number => Number.isInteger(i),
       );
     }
+    // Full reset of per-candidate state — used when the hotclips source
+    // language is switched: selections/overrides are keyed by candidate index
+    // and would mis-apply to the other language's candidate list.
+    if (patch["clips_overrides_clear"] === true) this.clipsOverrides = {};
     const merge = patch["clips_overrides_merge"];
     if (merge && typeof merge === "object") {
       for (const [rawIdx, fields] of Object.entries(merge as Record<string, unknown>)) {
