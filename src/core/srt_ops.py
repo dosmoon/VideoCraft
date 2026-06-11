@@ -119,11 +119,17 @@ def extract_all_subtitles(srt_path: str) -> str:
 
 
 def generate_subtitle_pack(srt_path, prompt=None, tier=None,
-                            cancel_token=None) -> dict:
+                            cancel_token=None, output_language="") -> dict:
     """One-shot AI call: SRT -> {titles, segments[time_str/title/refined]}.
 
     Returns the parsed JSON dict directly; downstream callers decide
     how to write it to disk (see core.chapters_io.save_analysis).
+
+    `output_language` fills the prompt's {output_language} directive so
+    titles/refined/key_points come back in the subtitle's own language —
+    the template itself is Chinese and would otherwise pull the model
+    toward Chinese output. Empty value degrades to a generic
+    "same language as the subtitles" instruction.
     """
     if not os.path.exists(srt_path):
         raise FileNotFoundError(f"SRT文件 '{srt_path}' 不存在")
@@ -140,6 +146,7 @@ def generate_subtitle_pack(srt_path, prompt=None, tier=None,
 
     template = prompt if prompt is not None else _prompts.get("subtitle.pack")
     final_prompt = template.replace("{subtitle_content}", subtitle_content)
+    final_prompt = _prompts.apply_output_language(final_prompt, output_language)
 
     _tier = tier or TIER_PREMIUM
     try:

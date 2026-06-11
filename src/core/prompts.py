@@ -128,6 +128,10 @@ DEFAULTS: dict[str, str] = {
     "subtitle.pack": (
         "# 一次性生成视频标题、时间戳分段、精炼描述与核心要点\n"
         "\n"
+        "**输出语言硬性要求：titles、以及每个 segment 的 title / refined / "
+        "key_points，全部必须使用 {output_language}，即输入字幕本身的语言。"
+        "本提示词和附带的背景资料即使是中文，也不改变这一要求。**\n"
+        "\n"
         "请基于以下SRT字幕内容，一次性产出三类结果：\n"
         "\n"
         "1. titles：为该视频拟 1–3 个候选标题。要求新闻性十足、"
@@ -137,13 +141,14 @@ DEFAULTS: dict[str, str] = {
         "   - 每段给出简短标题；如有记者提问，优先以记者提问内容作为标题。\n"
         "   - 切分粒度参考视频自然话题转折，不要过细也不要过粗。\n"
         "3. 每个 segment 的 refined 字段：对该段内容做精炼总结，"
-        "不超过 128 个汉字。\n"
+        "不超过 128 个汉字（非中文输出 ≤80 词）。\n"
         "   - 对于问答段落，保留精炼后的问题与回答，并保持问答说话人的"
         "视角，不要改写为第三方转述。\n"
         "   - 不要复述原文，给出信息密度高的概括。\n"
         "\n"
         "4. 每个 segment 的 key_points 字段：该段中具体的事实 / 数据 / "
-        "结论 / 决定（每条 ≤25 汉字），按它们在 SRT 中出现的顺序列出。"
+        "结论 / 决定（每条 ≤25 汉字 / 非中文 ≤12 词），按它们在 SRT 中"
+        "出现的顺序列出。"
         "字符串数组，无具体事实可标（如纯仪式性问候 / 静默 / 纯过场）"
         "则返回 []。\n"
         "\n"
@@ -254,6 +259,11 @@ DEFAULTS: dict[str, str] = {
     "subtitle.hotclips": (
         "# 热点片段挖掘\n"
         "\n"
+        "**输出语言硬性要求：hook / outro / why_viral / suggested_title / "
+        "suggested_hashtags，全部必须使用 {output_language}，即输入字幕"
+        "本身的语言。本提示词和附带的背景资料即使是中文，也不改变这一"
+        "要求。**\n"
+        "\n"
         "请基于以下 SRT 字幕内容，挖掘最多 {desired_count} 条"
         "具有传播潜力的短视频候选片段。每条片段应满足：\n"
         "\n"
@@ -274,8 +284,7 @@ DEFAULTS: dict[str, str] = {
         "- suggested_title：完整短视频标题（≤30 字 / ≤15 词）\n"
         "- suggested_hashtags：3~5 个相关标签（带 # 前缀）\n"
         "\n"
-        "输出语言 = 输入字幕语言。返回严格符合调用方提供的 JSON Schema，"
-        "不要附加解释文字。\n"
+        "返回严格符合调用方提供的 JSON Schema，不要附加解释文字。\n"
         "\n"
         "以下是 SRT 字幕内容：\n"
         "\n"
@@ -292,9 +301,10 @@ PLACEHOLDERS: dict[str, list[str]] = {
     "subtitle.segments": ["{subtitle_content}"],
     "subtitle.refine":   ["{all_segments_content}"],
     "subtitle.titles":   [],
-    "subtitle.pack":     ["{subtitle_content}"],
+    "subtitle.pack":     ["{subtitle_content}", "{output_language}"],
     "subtitle.hotclips": ["{subtitle_content}", "{desired_count}",
-                          "{target_min_sec}", "{target_max_sec}"],
+                          "{target_min_sec}", "{target_max_sec}",
+                          "{output_language}"],
     "news.source_context": ["{url}", "{uploader}", "{description}",
                             "{tags}", "{existing_filled}"],
 }
@@ -335,6 +345,28 @@ def reset(task_id: str) -> str:
     default = DEFAULTS[task_id]
     set(task_id, default)
     return default
+
+
+def apply_output_language(prompt: str, output_language: str) -> str:
+    """Resolve the {output_language} directive in a built prompt.
+
+    Replaces the placeholder when present. Prompt override files
+    (prompts_dir) may predate the placeholder — in that case a full
+    directive block is appended so stale overrides still get the
+    output-language fix. Empty `output_language` degrades to a generic
+    same-language instruction; the literal placeholder never reaches
+    the model.
+    """
+    if "{output_language}" in prompt:
+        name = (output_language
+                or "与输入字幕相同的语言 (the same language as the input subtitles)")
+        return prompt.replace("{output_language}", name)
+    if output_language:
+        return (prompt
+                + "\n\n**输出语言硬性要求：所有输出文本必须使用 "
+                + output_language
+                + "，即输入字幕本身的语言。**\n")
+    return prompt
 
 
 def is_overridden(task_id: str) -> bool:

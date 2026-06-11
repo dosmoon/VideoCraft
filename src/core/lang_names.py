@@ -273,3 +273,29 @@ def _build_whisper_picker():
 WHISPER_LANG_CHOICES: list[tuple[str, str]] = _build_whisper_picker()
 WHISPER_DISPLAY_TO_ISO: dict[str, str] = {disp: iso for iso, disp in WHISPER_LANG_CHOICES}
 WHISPER_ISO_TO_DISPLAY: dict[str, str] = {iso: disp for iso, disp in WHISPER_LANG_CHOICES}
+
+
+def prompt_language_name(code: str) -> str:
+    """Bilingual language name for AI prompt injection, e.g. 'English（英语）'.
+
+    Output-language directives in core prompts (subtitle.pack /
+    subtitle.hotclips) must name the target language explicitly: those
+    prompts are written in Chinese, so without an explicit name the model
+    drifts to Chinese output regardless of the subtitle language. The
+    bilingual form reads naturally inside a Chinese prompt while staying
+    unambiguous to the model. Unknown codes fall back to the code itself
+    (still an unambiguous directive); empty input returns "".
+    """
+    bare = (code or "").strip()
+    if not bare:
+        return ""
+    entry = WHISPER_LANGUAGES.get(bare.lower())
+    if entry is not None:
+        en, zh = entry
+        return f"{en}（{zh}）"
+    # BCP47 region/script tags not in the Whisper catalog (e.g. pt-BR).
+    entry2 = _NAMES.get(bare) or _NAMES.get(bare.split("-")[0])
+    if entry2 is not None:
+        zh, en = entry2
+        return f"{en}（{zh}）"
+    return bare

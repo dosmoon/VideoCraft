@@ -88,22 +88,32 @@ def _derive_chapters(pack_segments: list[dict], srt_path: str,
 # split into titles.json + chapters.json + chapter_refined.md is gone.
 
 def _run_pack(srt_path: str, subtitles_dir: str,
-              progress_cb, cancel_token, context_block: str = "") -> dict:
+              progress_cb, cancel_token, context_block: str = "",
+              lang_iso: str = "") -> dict:
     """Call generate_subtitle_pack with progress + cancel plumbing.
 
     Prepends the caller-supplied source context block (if any) to the prompt so
     the AI has situational signal (topic, host, audience) when picking titles and
     chapter boundaries. The block is built plugin-side (ADR-0008) and passed in.
+
+    `lang_iso` resolves the prompt's {output_language} directive — the
+    template (and usually the context block) is Chinese, so without an
+    explicit language name the model answers in Chinese even for
+    non-Chinese subtitles.
     """
     from core import prompts as _prompts
+    from core.lang_names import prompt_language_name
     from core.srt_ops import generate_subtitle_pack
     _say(progress_cb, "transcribing", "正在调用 AI 生成结构化分析...", None)
+    output_language = prompt_language_name(lang_iso)
     if context_block:
         base = _prompts.get("subtitle.pack")
         prompt = context_block + "\n\n" + base
         return generate_subtitle_pack(srt_path, prompt=prompt,
-                                      cancel_token=cancel_token)
-    return generate_subtitle_pack(srt_path, cancel_token=cancel_token)
+                                      cancel_token=cancel_token,
+                                      output_language=output_language)
+    return generate_subtitle_pack(srt_path, cancel_token=cancel_token,
+                                  output_language=output_language)
 
 
 def run_pack_analysis(srt_path: str, subtitles_dir: str, lang_iso: str,
@@ -112,7 +122,8 @@ def run_pack_analysis(srt_path: str, subtitles_dir: str, lang_iso: str,
     (titles + chapters with refined + key_points). One AI call, one file."""
     from core.subtitle_analysis import analysis_path
 
-    pack = _run_pack(srt_path, subtitles_dir, progress_cb, cancel_token, context_block)
+    pack = _run_pack(srt_path, subtitles_dir, progress_cb, cancel_token,
+                     context_block, lang_iso)
     _say(progress_cb, "transcribing", "正在写入产物...", 95)
 
     titles = pack.get("titles") or []
@@ -340,7 +351,7 @@ def _slice_transcript(subs: list, t_start_sec: float, t_end_sec: float) -> str:
 
 def _call_hotclips_ai(slice_text: str, ctx_block: str,
                       desired_count: int, target_min_sec: int, target_max_sec: int,
-                      cancel_token) -> list[dict]:
+                      cancel_token, output_language: str = "") -> list[dict]:
     """One AI call for one slice. Returns raw clip dicts (may include
     bogus entries — caller validates)."""
     from core import ai as _ai, prompts as _prompts
@@ -352,6 +363,7 @@ def _call_hotclips_ai(slice_text: str, ctx_block: str,
                .replace("{desired_count}", str(desired_count)) \
                .replace("{target_min_sec}", str(target_min_sec)) \
                .replace("{target_max_sec}", str(target_max_sec))
+    body = _prompts.apply_output_language(body, output_language)
     prompt = (ctx_block + "\n\n" + body) if ctx_block else body
     try:
         result = _ai.complete_json(
@@ -379,9 +391,13 @@ def run_hotclips(srt_path: str, subtitles_dir: str, lang_iso: str,
     """Generate hotclip candidates. See module docstring for strategy semantics."""
     from core.subtitle_analysis import analysis_path
 
+    from core.lang_names import prompt_language_name
+
     subs = list(srt.parse(read_srt(srt_path)))
     if not subs:
         raise ValueError("SRT 为空，无法生成热点片段")
+
+    output_language = prompt_language_name(lang_iso)
 
     analysis_pth = analysis_path(subtitles_dir, lang_iso, "analysis")
     has_chapters = os.path.isfile(analysis_pth)
@@ -429,7 +445,7 @@ def run_hotclips(srt_path: str, subtitles_dir: str, lang_iso: str,
         clips = _call_hotclips_ai(
             slice_text, ctx_block,
             per_slice, target_min_sec, target_max_sec,
-            cancel_token,
+            cancel_token, output_language,
         )
         all_clips.extend(clips)
 
