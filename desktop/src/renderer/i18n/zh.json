@@ -148,6 +148,8 @@
   "clip.candidates.select_all": "全选",
   "clip.candidates.select_none": "全不选",
   "clip.candidates.empty": "素材无 hotclips 候选",
+  "clip.candidates.pick_lang": "选择候选语言",
+  "clip.candidates.pick_lang_hint": "素材里有多种语言的热点片段。本切片实例使用哪种语言的候选？选择后即锁定；要做另一种语言的切片，请新建一个切片实例。",
   "clip.candidates.pick_to_edit": "选择左侧候选以编辑",
   "clip.detail.time_legend": "时间",
   "clip.detail.start_label": "开始",

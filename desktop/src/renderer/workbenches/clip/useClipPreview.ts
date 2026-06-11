@@ -47,6 +47,11 @@ export interface ClipPreviewData {
   presetName: string;
   /** Subtitle (SRT) languages — the subtitle component's language dropdown. */
   subtitleLangs: string[];
+  /** Hotclips languages available upstream/snapshotted (candidate sources). */
+  availableLangs: string[];
+  /** True when several hotclips languages exist and none was picked yet —
+   *  the Candidates tab must ask the user to choose (one-time, then locked). */
+  needsLangChoice: boolean;
 }
 
 /** Shape returned by the clip preview_provider (Python). */
@@ -60,6 +65,7 @@ interface RawPreviewData {
   override: ClipOverride | null;
   availableLangs?: string[];
   subtitleLangs?: string[];
+  needsLangChoice?: boolean;
 }
 
 function fmtErr(err: unknown): string {
@@ -176,6 +182,8 @@ export function useClipPreview(type: string, instance: string, refreshKey = 0) {
           encodePreset: String(cfg["encode_preset"] ?? "medium"),
           presetName: String(cfg["preset_name"] ?? ""),
           subtitleLangs: Array.isArray(pd.subtitleLangs) ? pd.subtitleLangs : [],
+          availableLangs: Array.isArray(pd.availableLangs) ? pd.availableLangs : [],
+          needsLangChoice: pd.needsLangChoice === true,
         });
         setStatus("ready");
       } catch (err) {

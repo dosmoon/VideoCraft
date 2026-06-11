@@ -25,6 +25,10 @@ export interface ClipPreviewResult {
   override: ComponentDict | null;
   availableLangs: string[];
   subtitleLangs: string[];
+  /** True when several hotclips languages exist and the instance hasn't picked
+   *  one yet — the workbench must ask the user (candidate language is a
+   *  one-time human decision; it is never inferred from the source language). */
+  needsLangChoice: boolean;
 }
 
 export function emptyClipPreview(lang: string): ClipPreviewResult {
@@ -37,6 +41,7 @@ export function emptyClipPreview(lang: string): ClipPreviewResult {
     override: null,
     availableLangs: [],
     subtitleLangs: [],
+    needsLangChoice: false,
   };
 }
 
@@ -47,13 +52,32 @@ export async function buildClipPreview(
   repo: HotclipsRepo,
 ): Promise<ClipPreviewResult> {
   const avail = await repo.listAvailableLangs();
-  const lang = owner.sourceSubtitle || (avail[0] ?? "");
 
-  const data = (await repo.loadHotclips(lang)) ?? {};
-  const rawClips = (data as { clips?: unknown }).clips;
-  const candidates = Array.isArray(rawClips)
-    ? rawClips.filter((c): c is Record<string, unknown> => !!c && typeof c === "object")
-    : [];
+  // Candidate-language resolution. The language is a one-time HUMAN decision —
+  // never derived from the source language (translated subtitles exist exactly
+  // to produce clips in another language):
+  //   1. config source_subtitle set → use it (locked)
+  //   2. an instance snapshot exists → that language was already decided; pin it
+  //      so new upstream languages can't silently flip this instance
+  //   3. exactly one hotclips language upstream → nothing to choose; take it
+  //   4. several languages, none decided → ask the user (needsLangChoice)
+  let lang = owner.sourceSubtitle;
+  let needsLangChoice = false;
+  if (!lang) {
+    const snaps = await repo.listSnapshotLangs();
+    if (snaps.length === 1) lang = snaps[0]!;
+    else if (snaps.length === 0 && avail.length <= 1) lang = avail[0] ?? "";
+    else needsLangChoice = true;
+  }
+
+  let candidates: Record<string, unknown>[] = [];
+  if (!needsLangChoice && lang) {
+    const data = (await repo.loadHotclips(lang)) ?? {};
+    const rawClips = (data as { clips?: unknown }).clips;
+    candidates = Array.isArray(rawClips)
+      ? rawClips.filter((c): c is Record<string, unknown> => !!c && typeof c === "object")
+      : [];
+  }
 
   let sel = owner.selectedClipIndices[0] ?? 0;
   if (sel < 0 || sel >= candidates.length) sel = 0;
@@ -77,5 +101,6 @@ export async function buildClipPreview(
     override: owner.clipsOverrides[String(sel)] ?? null,
     availableLangs: avail,
     subtitleLangs: subLangs,
+    needsLangChoice,
   };
 }

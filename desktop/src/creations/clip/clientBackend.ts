@@ -44,7 +44,15 @@ async function loadPreview(instance: string): Promise<ClipPreviewResult> {
     if (!owner.boundMaterial) return emptyClipPreview(owner.sourceSubtitle);
     const model = await loadNewsVideoModel(owner.boundMaterial.instance_name);
     const repo = new HotclipsRepo(realFs, dir, { subtitlesDir: async () => model.subtitlesDir });
-    return buildClipPreview(owner, repo);
+    const result = await buildClipPreview(owner, repo);
+    // Lock in the resolved candidate language on first resolution so this
+    // instance never drifts when new upstream hotclips languages appear.
+    // (needsLangChoice resolutions go through update_config when the user picks.)
+    if (result.lang && !owner.sourceSubtitle) {
+      owner.sourceSubtitle = result.lang;
+      await owner.save();
+    }
+    return result;
   });
 }
 

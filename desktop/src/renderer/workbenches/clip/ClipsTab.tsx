@@ -39,7 +39,10 @@ export function ClipsTab(props: {
   refreshKey: number;
 }) {
   const { type, instance, components, active, refreshKey } = props;
-  const { status, message, data, reload } = useClipPreview(type, instance, refreshKey);
+  // Bumped after the one-time candidate-language pick — forces a full preview
+  // reload (candidates change), which the lightweight reload() can't do.
+  const [langBump, setLangBump] = useState(0);
+  const { status, message, data, reload } = useClipPreview(type, instance, refreshKey + langBump);
 
   // Output config (mode / aspect) is edited in the Style tab while this one stays
   // mounted-but-hidden, so its preview data goes stale. Re-read config on
@@ -110,6 +113,41 @@ export function ClipsTab(props: {
   if (status === "nosrc") return <Centered>{tr("clip.no_source_video")}</Centered>;
   if (status === "error") return <Centered>✗ {message}</Centered>;
   if (!data) return <Centered>{tr("clip.candidates.no_data")}</Centered>;
+
+  // Several hotclips languages exist and this instance hasn't picked one:
+  // a one-time human decision, persisted to source_subtitle and then locked
+  // (changing language mid-flight would mis-key selections/overrides).
+  if (data.needsLangChoice) {
+    const pickLang = async (l: string) => {
+      setSelError("");
+      try {
+        await rpc.updateConfig(type, instance, { source_subtitle: l });
+        setLangBump((b) => b + 1);
+      } catch (err) {
+        setSelError(err instanceof RpcError ? `[${err.code}] ${err.message}` : String(err));
+      }
+    };
+    return (
+      <Centered>
+        <div style={{ textAlign: "center", maxWidth: 460 }}>
+          <div style={{ color: "#ddd", fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+            {tr("clip.candidates.pick_lang")}
+          </div>
+          <div style={{ color: "#888", fontSize: 12, marginBottom: 16 }}>
+            {tr("clip.candidates.pick_lang_hint")}
+          </div>
+          <div style={{ display: "flex", gap: 10, justifyContent: "center" }}>
+            {data.availableLangs.map((l) => (
+              <button key={l} onClick={() => void pickLang(l)} style={langBtn}>
+                {l.toUpperCase()}
+              </button>
+            ))}
+          </div>
+          {selError && <p style={{ color: "#ff6b6b", fontSize: 12, marginTop: 12 }}>✗ {selError}</p>}
+        </div>
+      </Centered>
+    );
+  }
 
   return (
     <div style={{ display: "flex", height: "100%" }}>
@@ -239,5 +277,16 @@ const hdrBtn: React.CSSProperties = {
   borderRadius: 4,
   padding: "2px 8px",
   fontSize: 12,
+  cursor: "pointer",
+};
+
+const langBtn: React.CSSProperties = {
+  background: "#172033",
+  color: "#cfe0ff",
+  border: "1px solid #2d6cdf",
+  borderRadius: 6,
+  padding: "8px 22px",
+  fontSize: 14,
+  fontWeight: 700,
   cursor: "pointer",
 };

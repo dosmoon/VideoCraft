@@ -148,6 +148,8 @@
   "clip.candidates.select_all": "Select all",
   "clip.candidates.select_none": "Select none",
   "clip.candidates.empty": "No hotclip candidates for this material",
+  "clip.candidates.pick_lang": "Choose the candidate language",
+  "clip.candidates.pick_lang_hint": "This material has hot clips in several languages. Which language should this clip instance cut from? The choice is locked once made — create another clip instance to cut in a different language.",
   "clip.candidates.pick_to_edit": "Select a candidate on the left to edit",
   "clip.detail.time_legend": "Time",
   "clip.detail.start_label": "Start",

@@ -103,7 +103,7 @@ describe("buildClipPreview", () => {
     expect(pd.override).toBeNull();
   });
 
-  it("falls back to the first available language when source_subtitle is unset", async () => {
+  it("auto-picks the language when source_subtitle is unset and only one exists", async () => {
     const fs = makeFs();
     fs.files.set(`${SUBS}/zh.hotclips.json`, JSON.stringify({ clips: [] }));
     const owner = await loadOwner(fs, {
@@ -111,7 +111,54 @@ describe("buildClipPreview", () => {
     });
     const pd = await buildClipPreview(owner, new HotclipsRepo(fs, INSTANCE, bridge));
     expect(pd.lang).toBe("zh");
+    expect(pd.needsLangChoice).toBe(false);
     expect(pd.candidates).toEqual([]);
+  });
+
+  it("requires a human choice when several hotclips languages exist and none is set", async () => {
+    const fs = makeFs();
+    fs.files.set(`${SUBS}/en.hotclips.json`, JSON.stringify({ clips: [{ hook: "e" }] }));
+    fs.files.set(`${SUBS}/zh.hotclips.json`, JSON.stringify({ clips: [{ hook: "z" }] }));
+    const owner = await loadOwner(fs, {
+      bound_material: { type_name: "news_video", instance_name: "default" },
+    });
+    const pd = await buildClipPreview(owner, new HotclipsRepo(fs, INSTANCE, bridge));
+    expect(pd.needsLangChoice).toBe(true);
+    expect(pd.lang).toBe("");
+    expect(pd.candidates).toEqual([]);          // nothing loaded, nothing snapshotted
+    expect(pd.availableLangs).toEqual(["en", "zh"]);
+    // No hotclips snapshot may be created before the user decides.
+    expect((fs as ReturnType<typeof makeFs>).files.has(`${INSTANCE}/source-hotclips.en.json`)).toBe(false);
+  });
+
+  it("pins an instance to its existing snapshot language when new upstream languages appear", async () => {
+    const fs = makeFs();
+    // Instance already snapshotted zh (its candidates were decided long ago)…
+    fs.files.set(`${INSTANCE}/source-hotclips.zh.json`, JSON.stringify({ clips: [{ hook: "z" }] }));
+    // …and the user has since generated en hotclips upstream.
+    fs.files.set(`${SUBS}/en.hotclips.json`, JSON.stringify({ clips: [{ hook: "e" }] }));
+    fs.files.set(`${SUBS}/zh.hotclips.json`, JSON.stringify({ clips: [{ hook: "z" }] }));
+    const owner = await loadOwner(fs, {
+      bound_material: { type_name: "news_video", instance_name: "default" },
+    });
+    const pd = await buildClipPreview(owner, new HotclipsRepo(fs, INSTANCE, bridge));
+    expect(pd.needsLangChoice).toBe(false);
+    expect(pd.lang).toBe("zh");
+    expect(pd.candidates).toEqual([{ hook: "z" }]);
+  });
+
+  it("a set source_subtitle always wins regardless of available languages", async () => {
+    const fs = makeFs();
+    fs.files.set(`${SUBS}/en.hotclips.json`, JSON.stringify({ clips: [{ hook: "e" }] }));
+    fs.files.set(`${SUBS}/zh.hotclips.json`, JSON.stringify({ clips: [{ hook: "z" }] }));
+    const owner = await loadOwner(fs, {
+      source_subtitle: "zh",
+      bound_material: { type_name: "news_video", instance_name: "default" },
+    });
+    const pd = await buildClipPreview(owner, new HotclipsRepo(fs, INSTANCE, bridge));
+    expect(pd.needsLangChoice).toBe(false);
+    expect(pd.lang).toBe("zh");
+    expect(pd.candidates).toEqual([{ hook: "z" }]);
   });
 
   it("emptyClipPreview carries the language and is otherwise empty", () => {
@@ -124,6 +171,7 @@ describe("buildClipPreview", () => {
       override: null,
       availableLangs: [],
       subtitleLangs: [],
+      needsLangChoice: false,
     });
   });
 });

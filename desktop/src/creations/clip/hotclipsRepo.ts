@@ -62,6 +62,19 @@ export class HotclipsRepo {
     return hotSnap;
   }
 
+  /** Languages already snapshotted into THIS instance (`source-hotclips.<lang>.json`),
+   *  sorted. A snapshot's presence means the instance's candidate language was
+   *  already decided — used to keep existing instances pinned when new upstream
+   *  languages appear. */
+  async listSnapshotLangs(): Promise<string[]> {
+    const langs = new Set<string>();
+    for (const e of await this.safeList(this.instanceDir)) {
+      const m = SNAPSHOT_RE.exec(e.name);
+      if (m) langs.add(m[1]!);
+    }
+    return [...langs].sort();
+  }
+
   /** Languages with hotclips — union of instance snapshots and upstream
    *  `<lang>.hotclips.json`, sorted. */
   async listAvailableLangs(): Promise<string[]> {
