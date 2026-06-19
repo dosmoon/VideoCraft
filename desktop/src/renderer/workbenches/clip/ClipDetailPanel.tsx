@@ -19,6 +19,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { tr } from "../../i18n/tr";
+import { confirmDialog } from "../../ui/confirm";
 import { rpc, RpcError, type Component } from "../../ipc/client";
 import type { ClipOverride, HotclipCandidate } from "@creations/clip/types.js";
 import type { SourceCue } from "@composition/components/index.js";
@@ -194,8 +195,8 @@ export function ClipDetailPanel(props: ClipDetailPanelProps) {
   }, [writeOverride]);
 
   // ── restore AI text (deletes the four text overrides together) ──────────────
-  const onRestoreAiText = useCallback(() => {
-    if (!window.confirm(tr("clip.detail.restore_ai_confirm"))) return;
+  const onRestoreAiText = useCallback(async () => {
+    if (!(await confirmDialog(tr("clip.detail.restore_ai_confirm")))) return;
     void writeOverride({ hook_text: null, outro_text: null, title: null, hashtags: null });
   }, [writeOverride]);
 
@@ -312,7 +313,7 @@ export function ClipDetailPanel(props: ClipDetailPanelProps) {
             {tr("clip.detail.reset_crop")}
           </button>
         )}
-        <button onClick={onRestoreAiText} style={actionBtn}>
+        <button onClick={() => void onRestoreAiText()} style={actionBtn}>
           {tr("clip.detail.restore_ai_text")}
         </button>
       </div>

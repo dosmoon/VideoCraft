@@ -12,6 +12,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { tr } from "../../i18n/tr";
+import { confirmDialog } from "../../ui/confirm";
 import { rpc, RpcError, type Component, type RenderPlan, type RenderedClip } from "../../ipc/client";
 import { buildClipTimeline } from "@creations/clip/assemble.js";
 import type { ClipComponentConfig } from "@creations/clip/types.js";
@@ -354,7 +355,7 @@ export function ExportTab(props: {
     if (p) void window.vc.showInFolder(p);
   };
   const onDelete = async (outIdx: number) => {
-    if (!window.confirm(tr("clip.export.delete_confirm", { outIdx }))) return;
+    if (!(await confirmDialog(tr("clip.export.delete_confirm", { outIdx })))) return;
     try {
       await rpc.deleteRender(type, instance, outIdx);
       reload();

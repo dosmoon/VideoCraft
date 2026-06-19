@@ -11,6 +11,7 @@ import { ActivityBar, type AppView } from "./app/ActivityBar";
 import { AiConsole } from "./aiconsole/AiConsole";
 import { ModelManager } from "./models/ModelManager";
 import { Settings } from "./settings/Settings";
+import { ConfirmHost } from "./ui/confirm";
 import { tr, useLang } from "./i18n/tr";
 
 export function Shell() {
@@ -70,6 +71,10 @@ export function Shell() {
           <Settings />
         </div>
       )}
+      {/* Single host for confirmDialog() — replaces native window.confirm so the
+          OK/Cancel buttons follow the in-app language (Electron's native confirm
+          chrome is locked to the OS locale). */}
+      <ConfirmHost />
     </div>
   );
 }

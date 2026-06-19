@@ -15,6 +15,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Component, PresetList } from "../../ipc/client";
 import { rpc, RpcError } from "../../ipc/client";
 import { tr } from "../../i18n/tr";
+import { confirmDialog } from "../../ui/confirm";
 import type { NewsDeskChapterRow } from "@creations/news_desk/types.js";
 import { MaterialBindingBar } from "../shared/MaterialBindingBar";
 import { NewsDeskPreview, type NewsDeskPreviewHandle } from "./NewsDeskPreview";
@@ -201,7 +202,7 @@ export function StyleTab(props: {
 
   const onApplyPreset = useCallback(async () => {
     if (!selectedPreset) return;
-    if (!window.confirm(tr("news_desk.style.preset_apply_confirm", { name: selectedPreset }))) return;
+    if (!(await confirmDialog(tr("news_desk.style.preset_apply_confirm", { name: selectedPreset })))) return;
     setPresetErr("");
     try {
       const cfg = await rpc.applyPreset(type, instance, selectedPreset);
@@ -236,7 +237,7 @@ export function StyleTab(props: {
 
   const onOverwritePreset = useCallback(async () => {
     if (!selectedPreset) return;
-    if (!window.confirm(tr("news_desk.style.preset_overwrite_confirm", { name: selectedPreset }))) return;
+    if (!(await confirmDialog(tr("news_desk.style.preset_overwrite_confirm", { name: selectedPreset })))) return;
     setPresetErr("");
     try {
       const list = await rpc.savePreset(type, instance, selectedPreset);
@@ -248,7 +249,7 @@ export function StyleTab(props: {
 
   const onDeletePreset = useCallback(async () => {
     if (!selectedPreset) return;
-    if (!window.confirm(tr("news_desk.style.preset_delete_confirm", { name: selectedPreset }))) return;
+    if (!(await confirmDialog(tr("news_desk.style.preset_delete_confirm", { name: selectedPreset })))) return;
     setPresetErr("");
     try {
       const list = await rpc.deletePreset(type, instance, selectedPreset);
@@ -276,7 +277,7 @@ export function StyleTab(props: {
 
   const onRemove = useCallback(async () => {
     if (!selectedId) return;
-    if (!window.confirm(tr("news_desk.style.component_delete_confirm"))) return;
+    if (!(await confirmDialog(tr("news_desk.style.component_delete_confirm")))) return;
     setCompErr("");
     try {
       const list = await rpc.removeComponent(type, instance, selectedId);

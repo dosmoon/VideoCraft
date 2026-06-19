@@ -19,6 +19,7 @@ import {
 } from "../ipc/client";
 import { runJob } from "../ipc/runJob";
 import { tr } from "../i18n/tr";
+import { confirmDialog } from "../ui/confirm";
 
 function fmtBytes(n: number): string {
   if (n <= 0) return "0";
@@ -114,8 +115,8 @@ export function ModelManager() {
     setError("");
     return rpc.modelsCancel(jobId).catch((e) => setError(fmtErr(e)));
   };
-  const remove = (m: ModelCatalogEntry) => {
-    if (!window.confirm(tr("models.remove_confirm", { name: m.name }))) return;
+  const remove = async (m: ModelCatalogEntry) => {
+    if (!(await confirmDialog(tr("models.remove_confirm", { name: m.name })))) return;
     setError("");
     rpc
       .modelsRemove(m.id)

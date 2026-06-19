@@ -9,7 +9,7 @@
  * Switching is an explicit action and clears the per-candidate state
  * (selections + overrides are keyed by candidate index and would mis-apply to
  * the other language's list), so a non-empty instance asks for confirmation
- * inline first (window.confirm is unavailable in the Electron renderer).
+ * inline first (a two-button bar within this row, not a modal).
  */
 
 import { useState } from "react";

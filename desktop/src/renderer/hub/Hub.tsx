@@ -18,6 +18,7 @@ import {
   type ProjectBrief,
 } from "../ipc/client";
 import { CreationWorkbench } from "../workbenches";
+import { confirmDialog } from "../ui/confirm";
 import { MaterialSidebar } from "../workbenches/material/MaterialSidebar";
 import { MaterialDetail } from "../workbenches/material/MaterialDetail";
 import { tr, getLang } from "../i18n/tr";
@@ -201,7 +202,7 @@ export function Hub() {
 
   const deleteInst = useCallback(
     async (kind: "material" | "creation", type: string, instance: string) => {
-      if (!window.confirm(tr("hub.delete_confirm", { name: instance }))) return;
+      if (!(await confirmDialog(tr("hub.delete_confirm", { name: instance })))) return;
       setError("");
       try {
         await rpc.deleteInstance(kind, type, instance);

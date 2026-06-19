@@ -17,6 +17,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { tr } from "../../i18n/tr";
+import { confirmDialog } from "../../ui/confirm";
 import { rpc, RpcError, type Component } from "../../ipc/client";
 import { buildNewsDeskTimeline } from "@creations/news_desk/assemble.js";
 import { chapterSegments } from "@creations/news_desk/render.js";
@@ -354,7 +355,7 @@ export function ExportTab(props: {
   };
   const onDelete = async () => {
     if (!plan) return;
-    if (!window.confirm(tr("news_desk.export.delete_confirm"))) return;
+    if (!(await confirmDialog(tr("news_desk.export.delete_confirm")))) return;
     try {
       await rpc.deleteRender(type, instance, plan.outIdx);
       setRendered([]);

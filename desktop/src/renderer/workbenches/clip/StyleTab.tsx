@@ -18,6 +18,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { tr } from "../../i18n/tr";
+import { confirmDialog } from "../../ui/confirm";
 import type { Component, PresetList } from "../../ipc/client";
 import { rpc, RpcError } from "../../ipc/client";
 import { MaterialBindingBar } from "../shared/MaterialBindingBar";
@@ -134,7 +135,7 @@ export function StyleTab(props: {
 
   const onRemove = useCallback(async () => {
     if (!selectedId) return;
-    if (!window.confirm(tr("clip.style.remove_component_confirm"))) return;
+    if (!(await confirmDialog(tr("clip.style.remove_component_confirm")))) return;
     setCompErr("");
     try {
       const list = await rpc.removeComponent(type, instance, selectedId);
@@ -242,7 +243,7 @@ export function StyleTab(props: {
 
   const onOverwritePreset = useCallback(async () => {
     if (!selectedPreset) return;
-    if (!window.confirm(tr("clip.style.overwrite_preset_confirm", { name: selectedPreset }))) return;
+    if (!(await confirmDialog(tr("clip.style.overwrite_preset_confirm", { name: selectedPreset })))) return;
     setToolbarErr("");
     try {
       const list = await rpc.savePreset(type, instance, selectedPreset);
@@ -255,7 +256,7 @@ export function StyleTab(props: {
 
   const onDeletePreset = useCallback(async () => {
     if (!selectedPreset) return;
-    if (!window.confirm(tr("clip.style.delete_preset_confirm", { name: selectedPreset }))) return;
+    if (!(await confirmDialog(tr("clip.style.delete_preset_confirm", { name: selectedPreset })))) return;
     setToolbarErr("");
     try {
       const list = await rpc.deletePreset(type, instance, selectedPreset);
@@ -286,7 +287,7 @@ export function StyleTab(props: {
       setNote(tr("clip.style.no_candidates_for_crop"));
       return;
     }
-    if (!window.confirm(tr("clip.style.apply_crop_confirm", { n }))) return;
+    if (!(await confirmDialog(tr("clip.style.apply_crop_confirm", { n })))) return;
     const merge: Record<string, { crop_rect: CropRect }> = {};
     for (let i = 0; i < n; i++) merge[String(i)] = { crop_rect: rect };
     try {
