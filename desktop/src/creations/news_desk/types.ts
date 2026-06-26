@@ -96,6 +96,10 @@ export interface NewsDeskDubbingConfig {
   /** Snapshot-relative path to the dubbing audio (e.g. "audio/<id>.mp3"). */
   audio_path: string;
   gain_db: number; // dB applied to the dub track
+  /** dB applied to the original source audio — only used in `mix` mode (in
+   *  `replace` the original is dropped). Lets the user duck the original under
+   *  the dub to set the mix balance. */
+  source_gain_db: number;
   offset_sec: number; // shift the dub later on the timeline
   mode: DubbingMode;
 }

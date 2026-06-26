@@ -16,7 +16,16 @@ import type {
 } from "./types.js";
 
 function dubbingConfig(over: Partial<NewsDeskDubbingConfig> = {}): NewsDeskDubbingConfig {
-  return { kind: "dubbing", enabled: true, audio_path: "audio/d1.mp3", gain_db: 0, offset_sec: 0, mode: "replace", ...over };
+  return {
+    kind: "dubbing",
+    enabled: true,
+    audio_path: "audio/d1.mp3",
+    gain_db: 0,
+    source_gain_db: 0,
+    offset_sec: 0,
+    mode: "replace",
+    ...over,
+  };
 }
 
 function clipsOf(track: Track): Clip[] {
@@ -197,9 +206,9 @@ describe("buildNewsDeskTimeline", () => {
     expect(validateTimeline(timeline, { sourceDurations: { "source.mp4": 120, "audio/d1.mp3": 120 } })).toEqual([]);
   });
 
-  it("dub mix: keeps the source audio and adds the dub track at gain_db", () => {
+  it("dub mix: ducks the original (source_gain_db) and adds the dub at gain_db", () => {
     const timeline = buildNewsDeskTimeline({
-      components: [dubbingConfig({ mode: "mix", gain_db: -6 })],
+      components: [dubbingConfig({ mode: "mix", gain_db: -3, source_gain_db: -10 })],
       durationSec: 120,
       cuesBySrtPath,
       mediaRef: "source.mp4",
@@ -207,8 +216,8 @@ describe("buildNewsDeskTimeline", () => {
     });
     const segments = resolveAudioSegments(timeline);
     expect(segments.map((s) => s.mediaRef)).toEqual(["source.mp4", "audio/d1.mp3"]);
-    expect(segments[0]!.gain).toBeCloseTo(1);
-    expect(segments[1]!.gain).toBeCloseTo(Math.pow(10, -6 / 20)); // -6 dB
+    expect(segments[0]!.gain).toBeCloseTo(Math.pow(10, -10 / 20)); // original ducked -10 dB
+    expect(segments[1]!.gain).toBeCloseTo(Math.pow(10, -3 / 20)); // dub -3 dB
   });
 
   it("dub offset: delays the dub via a leading gap; total stays durationSec", () => {

@@ -71,12 +71,13 @@ export function buildNewsDeskTimeline(input: BuildNewsDeskTimelineInput): Timeli
     ],
   };
   // Audio track(s). Default = the full source audio at unity gain. An enabled
-  // dubbing component swaps it (replace) or adds a second track under it (mix).
-  const sourceAudioTrack = (): Track => ({
+  // dubbing component swaps it (replace) or adds a second track under it (mix,
+  // with the original ducked to `source_gain_db`).
+  const sourceAudioTrack = (gainDb = 0): Track => ({
     kind: "audio",
     z: 0,
     enabled: true,
-    children: [clip({ kind: "audio", durationSec, sourceStart: 0, mediaRef, style: { gainDb: 0 }, data: {} })],
+    children: [clip({ kind: "audio", durationSec, sourceStart: 0, mediaRef, style: { gainDb }, data: {} })],
   });
   const audioTracks = buildAudioTracks(components, durationSec, dubbingAudioRef, sourceAudioTrack);
   const timeMap = identityTimeMap(durationSec, mediaRef);
@@ -133,7 +134,7 @@ function buildAudioTracks(
   components: readonly NewsDeskComponentConfig[],
   durationSec: number,
   dubbingAudioRef: string | undefined,
-  sourceAudioTrack: () => Track,
+  sourceAudioTrack: (gainDb?: number) => Track,
 ): Track[] {
   const dub = components.find(
     (c): c is NewsDeskDubbingConfig => c.kind === "dubbing" && c.enabled === true,
@@ -157,5 +158,6 @@ function buildAudioTracks(
     );
   }
   const dubTrack: Track = { kind: "audio", z: 0, enabled: true, children };
-  return dub.mode === "mix" ? [sourceAudioTrack(), dubTrack] : [dubTrack];
+  // mix: keep the original (ducked to source_gain_db) under the dub; replace: drop it.
+  return dub.mode === "mix" ? [sourceAudioTrack(Number(dub.source_gain_db) || 0), dubTrack] : [dubTrack];
 }

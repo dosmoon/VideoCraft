@@ -89,6 +89,7 @@ function dubbing(): ComponentDict {
     enabled: true,
     audio_path: "",
     gain_db: 0,
+    source_gain_db: 0,
     offset_sec: 0,
     mode: "replace",
   };

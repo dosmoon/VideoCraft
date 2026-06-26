@@ -27,6 +27,15 @@ export const dubbingFields: readonly FieldSpec[] = [
     display: { factor: 1, step: 1, decimals: 0, suffix: "dB" },
   },
   {
+    // Original-audio level — only meaningful in `mix` (replace drops the original).
+    key: "source_gain_db",
+    control: "number",
+    labelKey: "news_desk.dub.field_source_gain",
+    step: 1,
+    display: { factor: 1, step: 1, decimals: 0, suffix: "dB" },
+    visibleWhen: (c) => c.mode === "mix",
+  },
+  {
     key: "offset_sec",
     control: "number",
     labelKey: "news_desk.dub.field_offset",
