@@ -33,6 +33,7 @@ function kindLabel(kind: string): string {
     text_watermark: tr("news_desk.kind.text_watermark"),
     image_watermark: tr("news_desk.kind.image_watermark"),
     chapter: tr("news_desk.kind.chapter"),
+    dubbing: tr("news_desk.kind.dubbing"),
   };
   return map[kind] ?? kind;
 }

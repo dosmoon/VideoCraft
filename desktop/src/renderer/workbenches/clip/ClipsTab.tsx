@@ -252,6 +252,7 @@ export function ClipsTab(props: {
             lang={data.lang}
             mode={data.mode}
             aspect={data.aspect}
+            dubbingAudioPath={data.dubbingAudioPath}
             onChanged={reload}
           />
         ) : (

@@ -52,6 +52,8 @@ export interface ClipDetailPanelProps {
   lang: string;
   mode: ClipMode;
   aspect: { aw: number; ah: number };
+  /** Absolute path of the enabled dubbing track's audio (null = none). */
+  dubbingAudioPath: string | null;
   /** Called after any write so the host reloads config (refreshes overrides). */
   onChanged: () => void;
 }
@@ -84,6 +86,7 @@ export function ClipDetailPanel(props: ClipDetailPanelProps) {
     lang,
     mode,
     aspect,
+    dubbingAudioPath,
     onChanged,
   } = props;
 
@@ -219,6 +222,7 @@ export function ClipDetailPanel(props: ClipDetailPanelProps) {
         showCards
         cropRect={cropRect}
         onCropChange={onCropChange}
+        dubbingAudioPath={dubbingAudioPath}
       />
 
       {error && <p style={{ color: "#ff6b6b", fontSize: 12, margin: 0 }}>✗ {error}</p>}
