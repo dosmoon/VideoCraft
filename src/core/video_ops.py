@@ -4,10 +4,12 @@ core/video_ops.py - 视频/音频 FFmpeg 纯逻辑操作
 无任何 UI 依赖，失败 raise RuntimeError，进度通过 callback 传出。
 """
 
+import json
 import os
 import re
+import shutil
 import subprocess
-from typing import Callable, Optional
+from typing import Callable, Optional, Sequence
 
 
 def _run_ffmpeg(cmd: list, progress_callback: Optional[Callable] = None) -> None:
@@ -72,6 +74,154 @@ def _hms_to_seconds(s: str) -> float:
     if len(parts) == 2:
         return int(parts[0]) * 60 + float(parts[1])
     return float(parts[0]) if parts and parts[0] else 0.0
+
+
+# ── Audio probing / time-stretch / placed-mix (TTS dubbing) ──────────────────
+
+def probe_duration_sec(path: str) -> float:
+    """Return a media file's duration in seconds via ffprobe (0.0 on failure).
+
+    ffprobe ships with ffmpeg; the repo already assumes it on PATH (see
+    source_acquire._ffprobe). Used by the dubbing pipeline to measure each
+    synthesized cue's natural length before fitting it to its subtitle slot.
+    """
+    cmd = [
+        "ffprobe", "-v", "error", "-print_format", "json",
+        "-show_format", path,
+    ]
+    try:
+        result = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", check=False,
+        )
+    except FileNotFoundError as e:
+        raise RuntimeError("ffprobe not on PATH; cannot measure audio duration") from e
+    if result.returncode != 0:
+        return 0.0
+    try:
+        fmt = (json.loads(result.stdout) or {}).get("format") or {}
+        return float(fmt.get("duration") or 0.0)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return 0.0
+
+
+def atempo_chain(factor: float) -> str:
+    """Build an ffmpeg `atempo` filter string for an arbitrary speed factor.
+
+    A single `atempo` only accepts 0.5–2.0, so factors outside that range are
+    decomposed into a chain of in-range steps (e.g. 2.5 → atempo=2.0,atempo=1.25).
+    Returns "" for a no-op factor (≈1.0). Used as the time-stretch fallback for
+    providers without native rate control (aistack / fish_audio).
+    """
+    if factor <= 0:
+        raise ValueError(f"atempo factor must be > 0, got {factor}")
+    if abs(factor - 1.0) < 1e-3:
+        return ""
+    steps: list[float] = []
+    remaining = factor
+    # Speed-ups: peel off ×2.0 steps until within range.
+    while remaining > 2.0:
+        steps.append(2.0)
+        remaining /= 2.0
+    # Slow-downs: peel off ×0.5 steps until within range.
+    while remaining < 0.5:
+        steps.append(0.5)
+        remaining /= 0.5
+    steps.append(remaining)
+    return ",".join(f"atempo={s:.6f}" for s in steps)
+
+
+def time_stretch_audio(in_path: str, out_path: str, factor: float,
+                       *, bitrate: str = "192k") -> str:
+    """Re-time an audio file by `factor` (>1 = faster/shorter) via ffmpeg atempo.
+
+    The time-stretch fallback for TTS providers without native rate control:
+    we synthesize at normal speed, then speed the result up to fit its slot.
+    A no-op factor copies the input. Returns `out_path`.
+    """
+    chain = atempo_chain(factor)
+    if not chain:
+        shutil.copyfile(in_path, out_path)
+        return out_path
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error", "-i", in_path,
+        "-filter:a", chain, "-b:a", bitrate, "-acodec", "libmp3lame",
+        out_path,
+    ]
+    _run_ffmpeg(cmd)
+    return out_path
+
+
+def assemble_delayed_mix(
+    inputs: Sequence[dict],
+    total_sec: float,
+    out_path: str,
+    *,
+    sample_rate: int = 44100,
+    bitrate: str = "192k",
+    progress_callback: Optional[Callable] = None,
+) -> str:
+    """Mix a set of audio clips onto one fixed-length track at absolute offsets.
+
+    `inputs` = [{"path": str, "delay_sec": float}, ...]. Each clip is resampled
+    to a common rate/layout, delayed to its `delay_sec` offset, then summed onto
+    a full-length silent base (`anullsrc`) so gaps are silence and overlapping
+    clips add (no amix volume normalization). The output is trimmed/padded to
+    exactly `total_sec`. This is the dubbing assembler: clips = synthesized cues,
+    base = the source-video timeline.
+
+    Returns `out_path`. Raises RuntimeError on ffmpeg failure.
+    """
+    total = max(0.0, float(total_sec))
+    cmd: list[str] = ["ffmpeg", "-y", "-loglevel", "error"]
+    # Input 0: silent base spanning the whole timeline.
+    cmd += [
+        "-f", "lavfi", "-t", f"{total:.3f}",
+        "-i", f"anullsrc=channel_layout=stereo:sample_rate={sample_rate}",
+    ]
+    clips = [c for c in inputs if c.get("path")]
+    for c in clips:
+        cmd += ["-i", c["path"]]
+
+    filters: list[str] = []
+    labels: list[str] = ["[0:a]"]  # base track
+    for i, c in enumerate(clips, start=1):
+        delay_ms = max(0, int(round(float(c.get("delay_sec", 0.0)) * 1000)))
+        # Normalize each cue to the base rate/layout, then delay to its offset.
+        filters.append(
+            f"[{i}:a]aresample={sample_rate},"
+            f"aformat=sample_fmts=fltp:channel_layouts=stereo,"
+            f"adelay={delay_ms}:all=1[a{i}]"
+        )
+        labels.append(f"[a{i}]")
+    # Sum base + all delayed cues without amix's per-input volume division.
+    filters.append(
+        "".join(labels) + f"amix=inputs={len(labels)}:normalize=0:dropout_transition=0[mix]"
+    )
+    filter_complex = ";".join(filters)
+
+    # Hand the (potentially huge) filtergraph to ffmpeg via a script file so we
+    # never hit the Windows command-line length limit with many cues.
+    script_path = out_path + ".filter.txt"
+    with open(script_path, "w", encoding="utf-8") as f:
+        f.write(filter_complex)
+
+    cmd += [
+        "-filter_complex_script", script_path,
+        "-map", "[mix]",
+        "-t", f"{total:.3f}",
+        "-ar", str(sample_rate), "-ac", "2",
+        "-b:a", bitrate, "-acodec", "libmp3lame",
+        out_path,
+    ]
+    try:
+        _run_ffmpeg(cmd, progress_callback)
+    finally:
+        try:
+            os.remove(script_path)
+        except OSError:
+            pass
+    return out_path
 
 
 def extract_clip(video_path: str, start: str, end: str,

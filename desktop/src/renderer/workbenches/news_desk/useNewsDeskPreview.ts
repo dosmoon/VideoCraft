@@ -33,14 +33,18 @@ export interface NewsDeskPreviewData {
   cuesBySrtPath: Record<string, readonly SourceCue[]>;
   /** Output framing — passthrough (whole source) unless the user set a reframe. */
   framing: NewsDeskFraming;
+  /** Absolute path of the enabled dubbing track's audio (null when none). */
+  dubbingAudioPath: string | null;
 }
 
-/** Shape returned by the news_desk preview_provider (Python preview.py). */
+/** Shape returned by the news_desk preview_provider (TS clientBackend preview). */
 interface RawPreviewData {
   mediaRef: string | null;
   durationSec: number;
   /** Absolute snapshot SRT path per subtitle component, keyed by its srt_path. */
   subtitlePaths: Record<string, string>;
+  /** Absolute snapshot path of the enabled dubbing track's audio (or null). */
+  dubbingAudioPath: string | null;
 }
 
 function fmtErr(err: unknown): string {
@@ -107,7 +111,13 @@ export function useNewsDeskPreview(type: string, instance: string) {
         };
 
         if (disposed) return;
-        setData({ srcPath, durationSec: pd.durationSec || 0, cuesBySrtPath, framing });
+        setData({
+          srcPath,
+          durationSec: pd.durationSec || 0,
+          cuesBySrtPath,
+          framing,
+          dubbingAudioPath: pd.dubbingAudioPath ?? null,
+        });
         setStatus("ready");
       } catch (err) {
         if (!disposed) {

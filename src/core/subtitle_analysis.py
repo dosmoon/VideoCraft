@@ -27,6 +27,7 @@ AnalysisKind = Literal[
     "transcript",
     "chapter_transcript",
     "hotclips",
+    "dub",
 ]
 
 
@@ -51,6 +52,10 @@ ANALYSIS_TYPES: tuple[AnalysisType, ...] = (
     AnalysisType("transcript",         "transcript.md",           "md",   "📄", "全文文字稿",   "Transcript"),
     AnalysisType("chapter_transcript", "chapter_transcript.md",   "md",   "📜", "分章节全文",   "Chapter Transcript"),
     AnalysisType("hotclips",           "hotclips.json",           "json", "🔥", "热点片段",     "Hot Clips"),
+    # Dubbing: the manifest (<iso>.dub.json) is the registry artifact; it points
+    # at the sibling audio file (<iso>.dub.mp3). Synthesized via capability.tts_dub
+    # (not the generic analyze runner), so it's not part of the generatable menu.
+    AnalysisType("dub",                "dub.json",                "json", "🎙️", "配音音频",     "Dubbing"),
 )
 
 

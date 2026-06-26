@@ -79,6 +79,31 @@ describe("buildNewsDeskPreview", () => {
   });
 
   it("emptyNewsDeskPreview is the unbound shape", () => {
-    expect(emptyNewsDeskPreview()).toEqual({ mediaRef: null, durationSec: 0, subtitlePaths: {} });
+    expect(emptyNewsDeskPreview()).toEqual({
+      mediaRef: null,
+      durationSec: 0,
+      subtitlePaths: {},
+      dubbingAudioPath: null,
+    });
+  });
+
+  it("resolves the enabled dubbing component's snapshot audio path", async () => {
+    const fs = makeFs();
+    fs.files.set(`${DIR}/audio/d1.mp3`, "x");
+    const comps = [
+      { kind: "dubbing", id: "d1", enabled: true, audio_path: "audio/d1.mp3" },
+    ];
+    const r = await buildNewsDeskPreview(comps, DIR, fs, "/src/v.mp4", 10);
+    expect(r.dubbingAudioPath).toBe(`${DIR}/audio/d1.mp3`);
+  });
+
+  it("ignores a disabled dubbing component", async () => {
+    const fs = makeFs();
+    fs.files.set(`${DIR}/audio/d1.mp3`, "x");
+    const comps = [
+      { kind: "dubbing", id: "d1", enabled: false, audio_path: "audio/d1.mp3" },
+    ];
+    const r = await buildNewsDeskPreview(comps, DIR, fs, "/src/v.mp4", 10);
+    expect(r.dubbingAudioPath).toBeNull();
   });
 });

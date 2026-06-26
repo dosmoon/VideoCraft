@@ -19,6 +19,7 @@ import { SubtitleViewer } from "./SubtitleViewer";
 import { ChapterScheduleEditor } from "./ChapterScheduleEditor";
 import { AnalysisTextViewer } from "./AnalysisTextViewer";
 import { HotclipsViewer } from "./HotclipsViewer";
+import { DubViewer } from "./DubViewer";
 
 function Placeholder({ children }: { children: React.ReactNode }) {
   return <div style={{ padding: 24, color: "#666", fontSize: 13 }}>{children}</div>;
@@ -67,6 +68,9 @@ export function MaterialDetail(props: {
       const title = at ? (getLang() === "zh" ? at.displayZh : at.displayEn) : kind;
       if (kind === "hotclips") {
         return <HotclipsViewer type={type} instance={instance} lang={lang} title={title} onClose={onDeselect} />;
+      }
+      if (kind === "dub") {
+        return <DubViewer type={type} instance={instance} lang={lang} title={title} onClose={onDeselect} />;
       }
       return (
         <AnalysisTextViewer type={type} instance={instance} lang={lang} kind={kind} title={title} onClose={onDeselect} />

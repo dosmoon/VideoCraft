@@ -24,6 +24,7 @@ import { rpc, RpcError, type KnownLanguage, type ProjectBrief, type SourceContex
 import { useJob } from "../../ipc/runJob";
 import { getLang, tr } from "../../i18n/tr";
 import { LanguagePicker } from "./LanguagePicker";
+import { pickVoice } from "../../ui/voicePicker";
 import { color, state as st, font, radius } from "../../ui/tokens";
 import {
   SLOT_ICON,
@@ -34,6 +35,7 @@ import {
   Languages,
   FileUp,
   Plus,
+  Mic,
   ChevronRight,
   ChevronDown,
   Check,
@@ -477,6 +479,20 @@ export function MaterialSidebar(props: {
     [job, type, instance, onChanged],
   );
 
+  // 合成音频 (TTS dub): pick engine + voice, then synthesize a full-length
+  // dubbing track from this language's SRT → <lang>.dub.mp3 + .dub.json.
+  const dub = useCallback(
+    async (lang: string) => {
+      const pick = await pickVoice({ langHint: lang });
+      if (!pick) return; // cancelled
+      const res = await job.run(() =>
+        rpc.startTtsDub(type, instance, lang, pick.provider, pick.voiceId, pick.options),
+      );
+      if (res !== undefined) onChanged();
+    },
+    [job, type, instance, onChanged],
+  );
+
   const tree = readiness ? buildMaterialTree({ readiness, langs, analysesByLang }) : [];
 
   // "+" menu items for the subtitles node (transcribe / import).
@@ -523,6 +539,14 @@ export function MaterialSidebar(props: {
         run: () => void analyze(lang, t.kind),
       }),
     ),
+    // Bespoke (not generatable): opens the voice picker, then runs capability.tts_dub.
+    {
+      id: "dub",
+      label: tr("material.sidebar.menu_dub"),
+      icon: Mic,
+      kind: "run",
+      run: () => void dub(lang),
+    },
   ];
 
   const renderNode = (node: MaterialNode, depth: number): React.ReactNode => {

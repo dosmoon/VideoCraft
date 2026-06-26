@@ -149,9 +149,9 @@ export const newsDeskBackend = {
   // import_resource SNAPSHOTS one into a component (snapshot principle, ADR-0003):
   // a subtitle copies the chosen language's SRT into the instance and points its
   // srt_path at it; a chapter fills its schedule from an analysis.json envelope.
-  listImports: (instance: string): Promise<{ subtitleLangs: string[]; analyses: string[] }> =>
+  listImports: (instance: string): Promise<{ subtitleLangs: string[]; analyses: string[]; dubLangs: string[] }> =>
     withOwner(instance, async (o) => {
-      if (!o.boundMaterial) return { subtitleLangs: [], analyses: [] };
+      if (!o.boundMaterial) return { subtitleLangs: [], analyses: [], dubLangs: [] };
       return listNewsDeskImports(await loadNewsVideoModel(o.boundMaterial.instance_name));
     }),
 

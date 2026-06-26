@@ -55,6 +55,12 @@ const model: ImportMaterial = {
   subtitlePath(lang: string) {
     return `${SUBS}/${lang}.srt`;
   },
+  async listAnalysisArtifacts(lang: string) {
+    return lang === "en" ? [{ kind: "analysis" }, { kind: "dub" }] : [];
+  },
+  analysisPath(lang: string, kind: string) {
+    return `${SUBS}/${lang}.${kind === "dub" ? "dub.json" : `${kind}.json`}`;
+  },
   async readAnalysis() {
     return {
       titles: ["Title A", "  Title B  ", ""], // trimmed + blank entries dropped
@@ -72,16 +78,18 @@ async function loadOwner(fs: Fs): Promise<NewsDeskConfigOwner> {
     components: [
       { kind: "subtitle", id: "s1" },
       { kind: "chapter", id: "c1" },
+      { kind: "dubbing", id: "d1", enabled: true, audio_path: "", mode: "replace" },
     ],
   });
   return NewsDeskConfigOwner.load(fs, `${DIR}/config.json`);
 }
 
 describe("listNewsDeskImports", () => {
-  it("returns the material's subtitle languages + analysis filenames", async () => {
+  it("returns the material's subtitle languages + analysis filenames + dub langs", async () => {
     expect(await listNewsDeskImports(model)).toEqual({
       subtitleLangs: ["en", "zh"],
       analyses: ["en.analysis.json"],
+      dubLangs: ["en"], // only "en" has a <lang>.dub.json artifact
     });
   });
 });
@@ -119,6 +127,27 @@ describe("importNewsDeskResource", () => {
     const reloaded = await NewsDeskConfigOwner.load(fs, `${DIR}/config.json`);
     const c1 = reloaded.components.find((c) => c["id"] === "c1");
     expect(c1?.["titles"]).toEqual(["Title A", "Title B"]);
+  });
+
+  it("snapshots the dubbing audio (<lang>.dub.mp3) and persists audio_path", async () => {
+    const fs = makeFs();
+    fs.files.set(`${SUBS}/en.dub.mp3`, "MP3");
+    const owner = await loadOwner(fs);
+
+    const updated = await importNewsDeskResource(owner, fs, DIR, model, "d1", { kind: "dubbing", lang: "en" });
+    expect(updated["audio_path"]).toBe("audio/d1.mp3");
+    expect(fs.files.get(`${DIR}/audio/d1.mp3`)).toBe("MP3");
+
+    const reloaded = await NewsDeskConfigOwner.load(fs, `${DIR}/config.json`);
+    expect(reloaded.components.find((c) => c["id"] === "d1")?.["audio_path"]).toBe("audio/d1.mp3");
+  });
+
+  it("rejects a dubbing import when the language has no dub audio", async () => {
+    const fs = makeFs();
+    const owner = await loadOwner(fs);
+    await expect(importNewsDeskResource(owner, fs, DIR, model, "d1", { kind: "dubbing", lang: "en" })).rejects.toThrow(
+      /dubbing audio not found/,
+    );
   });
 
   it("rejects unknown component, wrong kind, missing SRT, and unknown import kind", async () => {

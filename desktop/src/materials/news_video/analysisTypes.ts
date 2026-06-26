@@ -26,6 +26,11 @@ export const ANALYSIS_TYPES: readonly AnalysisType[] = [
   { kind: "transcript", suffix: "transcript.md", format: "md", icon: "📄", displayZh: "全文文字稿", displayEn: "Transcript", generatable: false },
   { kind: "chapter_transcript", suffix: "chapter_transcript.md", format: "md", icon: "📜", displayZh: "分章节全文", displayEn: "Chapter Transcript", generatable: false },
   { kind: "hotclips", suffix: "hotclips.json", format: "json", icon: "🔥", displayZh: "热点片段", displayEn: "Hot Clips", generatable: true },
+  // Dubbing: the manifest (<iso>.dub.json) is the registry artifact and points at
+  // the sibling audio file (<iso>.dub.mp3). generatable=false — it's produced by a
+  // bespoke "合成音频" menu item (voice picker → capability.tts_dub), not the generic
+  // analyze runner, but still listed as a child node whenever the manifest exists.
+  { kind: "dub", suffix: "dub.json", format: "json", icon: "🎙️", displayZh: "配音音频", displayEn: "Dubbing", generatable: false },
 ];
 
 const BY_KIND = new Map(ANALYSIS_TYPES.map((t) => [t.kind, t]));

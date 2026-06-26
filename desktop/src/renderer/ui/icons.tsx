@@ -20,6 +20,7 @@ import {
   FileText,
   ListOrdered,
   Scissors,
+  Mic,
   type LucideIcon,
 } from "lucide-react";
 
@@ -41,6 +42,7 @@ export {
   Folder,
   MoreHorizontal,
   Diamond,
+  Mic,
   X,
 } from "lucide-react";
 export type { LucideIcon };
@@ -60,6 +62,7 @@ const ANALYSIS_ICON: Record<string, LucideIcon> = {
   transcript: FileText, // full transcript
   chapter_transcript: ListOrdered, // per-chapter transcript
   hotclips: Scissors, // hot clips
+  dub: Mic, // synthesized dubbing audio
 };
 
 /** Icon for an analysis kind; falls back to a generic document icon. */

@@ -10,7 +10,7 @@
  * (strip + hero card), exercising the multi-track-per-component path.
  */
 
-import { clip, type CropRect, type Timeline, type Track } from "../../composition/ir.js";
+import { clip, gap, type CropRect, type Timeline, type Track, type TrackChild } from "../../composition/ir.js";
 import { identityTimeMap } from "../../composition/timemap.js";
 import type { CompileContext, SourceCue } from "../../composition/components/index.js";
 import { chapter, imageWatermark, subtitle, textWatermark } from "../../composition/components/index.js";
@@ -20,7 +20,7 @@ import {
   newsDeskSubtitleToInstance,
   newsDeskTextWatermarkToInstance,
 } from "./mapping.js";
-import type { NewsDeskComponentConfig } from "./types.js";
+import type { NewsDeskComponentConfig, NewsDeskDubbingConfig } from "./types.js";
 
 export interface BuildNewsDeskTimelineInput {
   /** Ordered component config (list order = z-order, top = topmost layer). */
@@ -40,10 +40,16 @@ export interface BuildNewsDeskTimelineInput {
    * video clip. Omit for passthrough/letterbox (whole source); present = reframe.
    */
   cropRect?: CropRect;
+  /**
+   * Media id/path for the enabled dubbing component's audio (resolved upstream,
+   * like cuesBySrtPath). When present and a dubbing component is enabled, it
+   * drives the audio track (replace original, or mix under it). Omit = no dub.
+   */
+  dubbingAudioRef?: string;
 }
 
 export function buildNewsDeskTimeline(input: BuildNewsDeskTimelineInput): Timeline {
-  const { components, durationSec, cuesBySrtPath, mediaRef, frameAspect, cropRect } = input;
+  const { components, durationSec, cuesBySrtPath, mediaRef, frameAspect, cropRect, dubbingAudioRef } = input;
 
   // Full-video track → identity TimeMap (no cut, source time === output time).
   // crop (when set) is the per-clip spatial reframe carried on the IR Clip; a
@@ -64,15 +70,15 @@ export function buildNewsDeskTimeline(input: BuildNewsDeskTimelineInput): Timeli
       }),
     ],
   };
-  // Audio track: the full source audio (no cut), unity gain.
-  const audioTrack: Track = {
+  // Audio track(s). Default = the full source audio at unity gain. An enabled
+  // dubbing component swaps it (replace) or adds a second track under it (mix).
+  const sourceAudioTrack = (): Track => ({
     kind: "audio",
     z: 0,
     enabled: true,
-    children: [
-      clip({ kind: "audio", durationSec, sourceStart: 0, mediaRef, style: { gainDb: 0 }, data: {} }),
-    ],
-  };
+    children: [clip({ kind: "audio", durationSec, sourceStart: 0, mediaRef, style: { gainDb: 0 }, data: {} })],
+  });
+  const audioTracks = buildAudioTracks(components, durationSec, dubbingAudioRef, sourceAudioTrack);
   const timeMap = identityTimeMap(durationSec, mediaRef);
   const baseCtx: CompileContext = {
     durationSec,
@@ -112,5 +118,44 @@ export function buildNewsDeskTimeline(input: BuildNewsDeskTimelineInput): Timeli
   const n = overlayTracks.length;
   overlayTracks.forEach((track, i) => (track.z = n - i));
 
-  return { durationSec, tracks: [videoTrack, audioTrack, ...overlayTracks] };
+  return { durationSec, tracks: [videoTrack, ...audioTracks, ...overlayTracks] };
+}
+
+/**
+ * Resolve the timeline's audio tracks from the dubbing component (if any).
+ *   - no enabled dubbing / no resolved audio → [source audio] (unchanged).
+ *   - replace → [dub] only (original audio dropped).
+ *   - mix     → [source audio, dub] (both summed by the mixer; dub at gain_db).
+ * `offset_sec` delays the dub via a leading gap and trims its tail so the track
+ * total stays `durationSec` (the dub audio file is already full-length).
+ */
+function buildAudioTracks(
+  components: readonly NewsDeskComponentConfig[],
+  durationSec: number,
+  dubbingAudioRef: string | undefined,
+  sourceAudioTrack: () => Track,
+): Track[] {
+  const dub = components.find(
+    (c): c is NewsDeskDubbingConfig => c.kind === "dubbing" && c.enabled === true,
+  );
+  if (!dub || !dubbingAudioRef) return [sourceAudioTrack()];
+
+  const offset = Math.max(0, Math.min(Number(dub.offset_sec) || 0, durationSec));
+  const dubDur = Math.max(0, durationSec - offset);
+  const children: TrackChild[] = [];
+  if (offset > 0) children.push(gap(offset));
+  if (dubDur > 0) {
+    children.push(
+      clip({
+        kind: "audio",
+        durationSec: dubDur,
+        sourceStart: 0,
+        mediaRef: dubbingAudioRef,
+        style: { gainDb: Number(dub.gain_db) || 0 },
+        data: {},
+      }),
+    );
+  }
+  const dubTrack: Track = { kind: "audio", z: 0, enabled: true, children };
+  return dub.mode === "mix" ? [sourceAudioTrack(), dubTrack] : [dubTrack];
 }

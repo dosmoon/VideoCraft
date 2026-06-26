@@ -82,11 +82,24 @@ function chapter(): ComponentDict {
   };
 }
 
+function dubbing(): ComponentDict {
+  return {
+    kind: "dubbing",
+    name: "配音",
+    enabled: true,
+    audio_path: "",
+    gain_db: 0,
+    offset_sec: 0,
+    mode: "replace",
+  };
+}
+
 const FACTORIES: Record<string, () => ComponentDict> = {
   chapter,
   subtitle,
   text_watermark: textWatermark,
   image_watermark: imageWatermark,
+  dubbing,
 };
 
 export interface AddableKind {
@@ -100,6 +113,7 @@ export const ADDABLE: AddableKind[] = [
   { kind: "subtitle", multi_instance: true },
   { kind: "text_watermark", multi_instance: true },
   { kind: "image_watermark", multi_instance: true },
+  { kind: "dubbing", multi_instance: false },
 ];
 
 export function defaultInstance(kind: string): ComponentDict {

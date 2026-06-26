@@ -21,10 +21,14 @@ export interface NewsDeskPreviewResult {
   durationSec: number;
   /** Absolute snapshot SRT path per subtitle component, keyed by its srt_path. */
   subtitlePaths: Record<string, string>;
+  /** Absolute path of the enabled dubbing component's snapshot audio (null when
+   *  none / not imported / missing on disk). Used as the dub audio track's
+   *  mediaRef and its decode source. */
+  dubbingAudioPath: string | null;
 }
 
 export function emptyNewsDeskPreview(): NewsDeskPreviewResult {
-  return { mediaRef: null, durationSec: 0, subtitlePaths: {} };
+  return { mediaRef: null, durationSec: 0, subtitlePaths: {}, dubbingAudioPath: null };
 }
 
 /** True for an absolute path (POSIX `/…` or Windows `X:\…` / `X:/…` / UNC). */
@@ -42,12 +46,19 @@ export async function buildNewsDeskPreview(
   durationSec: number,
 ): Promise<NewsDeskPreviewResult> {
   const subtitlePaths: Record<string, string> = {};
+  let dubbingAudioPath: string | null = null;
   for (const c of components) {
-    if (c["kind"] !== "subtitle") continue;
-    const rel = String(c["srt_path"] ?? "").trim();
-    if (!rel) continue;
-    const abs = isAbsPath(rel) ? rel : `${instanceDir}/${rel}`;
-    if ((await fs.stat(abs)).exists) subtitlePaths[rel] = abs;
+    if (c["kind"] === "subtitle") {
+      const rel = String(c["srt_path"] ?? "").trim();
+      if (!rel) continue;
+      const abs = isAbsPath(rel) ? rel : `${instanceDir}/${rel}`;
+      if ((await fs.stat(abs)).exists) subtitlePaths[rel] = abs;
+    } else if (c["kind"] === "dubbing" && c["enabled"] !== false && !dubbingAudioPath) {
+      const rel = String(c["audio_path"] ?? "").trim();
+      if (!rel) continue;
+      const abs = isAbsPath(rel) ? rel : `${instanceDir}/${rel}`;
+      if ((await fs.stat(abs)).exists) dubbingAudioPath = abs;
+    }
   }
-  return { mediaRef, durationSec, subtitlePaths };
+  return { mediaRef, durationSec, subtitlePaths, dubbingAudioPath };
 }

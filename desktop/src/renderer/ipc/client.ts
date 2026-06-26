@@ -181,6 +181,24 @@ export interface AiSnapshot {
   };
 }
 
+/** One TTS voice from a provider's catalog (ai.tts_voices → VoicePickerDialog). */
+export interface TtsVoice {
+  provider: string;
+  voice_id: string;
+  display_name: string;
+  language: string; // BCP-47, e.g. "zh-CN"
+  gender: string; // "F" | "M" | ""
+  tags: string[];
+  description: string;
+}
+
+/** Catalog freshness metadata (ai.tts_voices). */
+export interface TtsVoiceMeta {
+  count: number;
+  last_refresh_ts: number;
+  has_cache: boolean;
+}
+
 /** Per-provider call counters (ai.stats / Stats tab). */
 export interface AiStatsEntry {
   calls: number;
@@ -378,6 +396,10 @@ export const rpc = {
   // Read: full console state + per-provider call stats (refreshed separately).
   aiSnapshot: () => rpcCall<AiSnapshot>("ai.snapshot"),
   aiStats: () => rpcCall<Record<string, AiStatsEntry>>("ai.stats"),
+  // Voice catalog for the VoicePickerDialog. refresh=true forces a network
+  // re-fetch (else cached, auto-fetched once when no cache exists).
+  ttsVoices: (provider: string, refresh = false) =>
+    rpcCall<{ voices: TtsVoice[]; meta: TtsVoiceMeta }>("ai.tts_voices", { provider, refresh }),
   // Writes: each persists (sidecar) and returns a fresh snapshot to re-sync.
   aiSetKey: (provider: string, category: AiCategory, key: string) =>
     rpcCall<AiSnapshot>("ai.set_key", { provider, category, key }),
@@ -689,6 +711,10 @@ export const rpc = {
     type === "news_video" ? materialBackend.listAnalyses(instance) : unsupportedMaterial(type),
   analysisSummary: (type: string, instance: string, filename: string) =>
     type === "news_video" ? materialBackend.analysisSummary(instance, filename) : unsupportedMaterial(type),
+  // Absolute path of a dubbing track's audio file (news_video only) — feed to
+  // window.vc.mediaUrl() to play it in the dub detail view.
+  dubAudioPath: (type: string, instance: string, lang: string) =>
+    type === "news_video" ? materialBackend.dubAudioPath(instance, lang) : unsupportedMaterial(type),
   readAnalysis: (type: string, instance: string, filename: string) =>
     type === "news_video" ? materialBackend.readAnalysis(instance, filename) : unsupportedMaterial(type),
   // Re-save an analysis.json after editing the chapter schedule; server
@@ -737,6 +763,19 @@ export const rpc = {
   startRunAnalysis: (type: string, instance: string, lang: string, analysisKind: string) =>
     type === "news_video"
       ? materialBackend.startRunAnalysis(instance, lang, analysisKind)
+      : unsupportedMaterial(type),
+  // Synthesize a dubbing track from a subtitle (news_video only). provider/voiceId
+  // come from the VoicePickerDialog; options carries tuning (max_speed, …).
+  startTtsDub: (
+    type: string,
+    instance: string,
+    lang: string,
+    provider: string,
+    voiceId: string,
+    options?: Record<string, unknown>,
+  ) =>
+    type === "news_video"
+      ? materialBackend.startTtsDub(instance, lang, provider, voiceId, options)
       : unsupportedMaterial(type),
   // news_video → generic capability.llm_extract (plugin builds the prompt); the
   // job result is the raw 15-field dict, which the caller persists via writeContext

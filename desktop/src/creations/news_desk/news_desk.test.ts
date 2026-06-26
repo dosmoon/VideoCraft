@@ -10,9 +10,14 @@ import {
 import { buildNewsDeskTimeline } from "./assemble.js";
 import type {
   NewsDeskChapterConfig,
+  NewsDeskDubbingConfig,
   NewsDeskImageWatermarkConfig,
   NewsDeskSubtitleConfig,
 } from "./types.js";
+
+function dubbingConfig(over: Partial<NewsDeskDubbingConfig> = {}): NewsDeskDubbingConfig {
+  return { kind: "dubbing", enabled: true, audio_path: "audio/d1.mp3", gain_db: 0, offset_sec: 0, mode: "replace", ...over };
+}
 
 function clipsOf(track: Track): Clip[] {
   return track.children.filter((c): c is Clip => c.type === "clip");
@@ -174,6 +179,68 @@ describe("buildNewsDeskTimeline", () => {
       sourceStartSec: 0, // full source, no cut
       gain: 1,
     });
+  });
+
+  // --- dubbing audio track (replace / mix / offset / gain) ------------------
+
+  it("dub replace: swaps the source audio for the dub track only", () => {
+    const timeline = buildNewsDeskTimeline({
+      components: [subtitleConfig(), dubbingConfig({ mode: "replace" })],
+      durationSec: 120,
+      cuesBySrtPath,
+      mediaRef: "source.mp4",
+      dubbingAudioRef: "audio/d1.mp3",
+    });
+    const segments = resolveAudioSegments(timeline);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toMatchObject({ mediaRef: "audio/d1.mp3", outStartSec: 0, outEndSec: 120, gain: 1 });
+    expect(validateTimeline(timeline, { sourceDurations: { "source.mp4": 120, "audio/d1.mp3": 120 } })).toEqual([]);
+  });
+
+  it("dub mix: keeps the source audio and adds the dub track at gain_db", () => {
+    const timeline = buildNewsDeskTimeline({
+      components: [dubbingConfig({ mode: "mix", gain_db: -6 })],
+      durationSec: 120,
+      cuesBySrtPath,
+      mediaRef: "source.mp4",
+      dubbingAudioRef: "audio/d1.mp3",
+    });
+    const segments = resolveAudioSegments(timeline);
+    expect(segments.map((s) => s.mediaRef)).toEqual(["source.mp4", "audio/d1.mp3"]);
+    expect(segments[0]!.gain).toBeCloseTo(1);
+    expect(segments[1]!.gain).toBeCloseTo(Math.pow(10, -6 / 20)); // -6 dB
+  });
+
+  it("dub offset: delays the dub via a leading gap; total stays durationSec", () => {
+    const timeline = buildNewsDeskTimeline({
+      components: [dubbingConfig({ mode: "replace", offset_sec: 10 })],
+      durationSec: 120,
+      cuesBySrtPath,
+      mediaRef: "source.mp4",
+      dubbingAudioRef: "audio/d1.mp3",
+    });
+    expect(timeline.durationSec).toBe(120);
+    const seg = resolveAudioSegments(timeline)[0]!;
+    expect(seg).toMatchObject({ mediaRef: "audio/d1.mp3", outStartSec: 10, outEndSec: 120 });
+  });
+
+  it("disabled or unresolved dub falls back to the source audio", () => {
+    const disabled = buildNewsDeskTimeline({
+      components: [dubbingConfig({ enabled: false })],
+      durationSec: 120,
+      cuesBySrtPath,
+      mediaRef: "source.mp4",
+      dubbingAudioRef: "audio/d1.mp3",
+    });
+    expect(resolveAudioSegments(disabled)[0]!.mediaRef).toBe("source.mp4");
+
+    const noRef = buildNewsDeskTimeline({
+      components: [dubbingConfig()],
+      durationSec: 120,
+      cuesBySrtPath,
+      mediaRef: "source.mp4",
+    });
+    expect(resolveAudioSegments(noRef)[0]!.mediaRef).toBe("source.mp4");
   });
 
   it("under identity TimeMap, source-anchored times are output times", () => {

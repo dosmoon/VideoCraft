@@ -24,15 +24,27 @@ export interface ImportMaterial {
   listAnalyses(): Promise<string[]>;
   subtitlePath(lang: string): string;
   readAnalysis(filename: string): Promise<Record<string, unknown>>;
+  /** Existing analysis artifacts for a language (used to find dub tracks). */
+  listAnalysisArtifacts(lang: string): Promise<{ kind: string }[]>;
+  /** Canonical path for an analysis artifact (e.g. <lang>.dub.json). */
+  analysisPath(lang: string, kind: string): string | null;
 }
 
 export async function listNewsDeskImports(
   model: ImportMaterial,
-): Promise<{ subtitleLangs: string[]; analyses: string[] }> {
-  return {
-    subtitleLangs: await model.listSubtitleLanguages(),
-    analyses: await model.listAnalyses(),
-  };
+): Promise<{ subtitleLangs: string[]; analyses: string[]; dubLangs: string[] }> {
+  const subtitleLangs = await model.listSubtitleLanguages();
+  // Languages that have a synthesized dubbing track (a <lang>.dub.json manifest).
+  const dubLangs: string[] = [];
+  for (const lang of subtitleLangs) {
+    try {
+      const arts = await model.listAnalysisArtifacts(lang);
+      if (arts.some((a) => a.kind === "dub")) dubLangs.push(lang);
+    } catch {
+      /* skip a language whose artifacts can't be listed */
+    }
+  }
+  return { subtitleLangs, analyses: await model.listAnalyses(), dubLangs };
 }
 
 /** Perform one import into a component and return the updated component dict.
@@ -59,6 +71,19 @@ export async function importNewsDeskResource(
     const rel = `subtitles/${componentId}.srt`;
     await fs.copy(src, `${instanceDir}/${rel}`);
     comp["srt_path"] = rel;
+    await owner.save();
+    return comp;
+  }
+
+  if (kind === "dubbing") {
+    if (comp["kind"] !== "dubbing") throw new Error("import dubbing: component is not a dubbing track");
+    const lang = String(params["lang"] ?? "");
+    const jsonPath = model.analysisPath(lang, "dub");
+    const src = jsonPath ? jsonPath.replace(/\.json$/, ".mp3") : "";
+    if (!src || !(await fs.stat(src)).exists) throw new Error(`dubbing audio not found for language ${lang}`);
+    const rel = `audio/${componentId}.mp3`;
+    await fs.copy(src, `${instanceDir}/${rel}`);
+    comp["audio_path"] = rel;
     await owner.save();
     return comp;
   }

@@ -62,6 +62,7 @@ import { imageWatermarkFields, textWatermarkFields } from "./watermark.js";
 import { subtitleFields } from "./subtitle.js";
 import { cardFields } from "./card.js";
 import { chapterFields } from "./chapter.js";
+import { dubbingFields } from "./dubbing.js";
 
 /**
  * canonical-kind → FieldSpec[]. Keyed by the bare engine kind; both plugin
@@ -76,6 +77,7 @@ const FIELD_REGISTRY: Record<string, readonly FieldSpec[]> = {
   hook_card: cardFields,
   outro_card: cardFields,
   chapter: chapterFields,
+  dubbing: dubbingFields,
 };
 
 /** Strip a creation's kind prefix to the bare engine kind. */

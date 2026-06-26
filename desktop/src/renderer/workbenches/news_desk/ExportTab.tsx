@@ -27,6 +27,7 @@ import { Backend } from "../../engine/gpu/Backend";
 import { MediaSource } from "../../engine/source/MediaSource";
 import { ClipReader } from "../../engine/source/ClipReader";
 import { AudioReader } from "../../engine/source/AudioReader";
+import type { DecodedAudio } from "../../engine/source/sample-types";
 import { preloadImageOverlay } from "../../engine/overlay/canvas2d";
 import { exportTimelineToMp4, exportTimelineViaFfmpeg, ExportCancelled } from "../../engine/export/encode";
 import { resolveBitrate } from "../../engine/export/types";
@@ -229,13 +230,32 @@ export function ExportTab(props: {
 
       const engine = effectiveEngine(cfg.engine, probeRef.current);
 
-      // WebCodecs mixes audio in the renderer; ffmpeg pulls it from the source
-      // file, so only decode the source audio for the WebCodecs path.
-      const decodedAudio =
-        engine === "chromium"
-          ? await new AudioReader(window.vc.mediaUrl(data.srcPath)).decodeAll()
-          : null;
-      const audioSources = decodedAudio ? new Map([[SOURCE_REF, decodedAudio]]) : undefined;
+      // The enabled dubbing track (if any) — drives both the WebCodecs audio map
+      // and the ffmpeg audio source below.
+      const dubComp = ((components ?? []) as unknown as NewsDeskComponentConfig[]).find(
+        (c): c is Extract<NewsDeskComponentConfig, { kind: "dubbing" }> =>
+          c.kind === "dubbing" && c.enabled === true,
+      );
+      const dubRef = dubComp && data.dubbingAudioPath ? data.dubbingAudioPath : undefined;
+
+      // WebCodecs mixes audio in the renderer; ffmpeg pulls it from a single
+      // source file (handled below). For WebCodecs, decode the source audio plus
+      // the dub track so replace/mix resolve from the timeline.
+      let audioSources: Map<string, DecodedAudio> | undefined;
+      if (engine === "chromium") {
+        audioSources = new Map();
+        const srcAudio = await new AudioReader(window.vc.mediaUrl(data.srcPath)).decodeAll();
+        if (srcAudio) audioSources.set(SOURCE_REF, srcAudio);
+        if (dubRef) {
+          try {
+            const dubAudio = await new AudioReader(window.vc.mediaUrl(dubRef)).decodeAll();
+            if (dubAudio) audioSources.set(dubRef, dubAudio);
+          } catch (e) {
+            console.warn("[news_desk export] dub audio decode failed:", e);
+          }
+        }
+        if (audioSources.size === 0) audioSources = undefined;
+      }
 
       // Preload any image-watermark assets once.
       for (const c of components ?? []) {
@@ -258,6 +278,7 @@ export function ExportTab(props: {
         mediaRef: SOURCE_REF,
         frameAspect: outW / outH,
         ...(cropRect ? { cropRect } : {}),
+        ...(dubRef ? { dubbingAudioRef: dubRef } : {}),
       });
 
       const base = {
@@ -278,8 +299,20 @@ export function ExportTab(props: {
       };
 
       if (engine === "ffmpeg") {
-        // ffmpeg writes the mp4 directly and pulls full-source audio.
-        await exportTimelineViaFfmpeg(base, { outputPath: p.outputPath, sourcePath: data.srcPath });
+        // ffmpeg writes the mp4 directly and muxes audio from a single source
+        // file. With a dub, mux the dub (full-length, aligned) instead of the
+        // original — that realizes "replace". The ffmpeg engine can't mix two
+        // tracks, so "mix" degrades to the dub-only result here (use WebCodecs to
+        // hear the dub UNDER the original).
+        if (dubRef && dubComp?.mode === "mix") {
+          console.warn(
+            "[news_desk export] ffmpeg engine can't mix the dub under the original; muxing the dub track only. Use the WebCodecs engine for mixing.",
+          );
+        }
+        await exportTimelineViaFfmpeg(base, {
+          outputPath: p.outputPath,
+          sourcePath: dubRef ?? data.srcPath,
+        });
       } else {
         // WebCodecs → stream the muxed mp4 to disk (too large to buffer/IPC whole).
         const streamId = await window.vc.openWriteStream(p.outputPath);

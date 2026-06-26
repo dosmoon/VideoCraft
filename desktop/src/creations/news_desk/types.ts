@@ -85,8 +85,24 @@ export interface NewsDeskChapterConfig {
   schedule: NewsDeskChapterRow[];
 }
 
+export type DubbingMode = "replace" | "mix";
+
+/** Dubbing audio track: a synthesized voiceover (material `<lang>.dub.mp3`,
+ *  snapshotted into the instance) laid over the full source. `replace` swaps the
+ *  original audio; `mix` plays it under the original at `gain_db`. */
+export interface NewsDeskDubbingConfig {
+  kind: "dubbing";
+  enabled: boolean;
+  /** Snapshot-relative path to the dubbing audio (e.g. "audio/<id>.mp3"). */
+  audio_path: string;
+  gain_db: number; // dB applied to the dub track
+  offset_sec: number; // shift the dub later on the timeline
+  mode: DubbingMode;
+}
+
 export type NewsDeskComponentConfig =
   | NewsDeskSubtitleConfig
   | NewsDeskTextWatermarkConfig
   | NewsDeskImageWatermarkConfig
-  | NewsDeskChapterConfig;
+  | NewsDeskChapterConfig
+  | NewsDeskDubbingConfig;

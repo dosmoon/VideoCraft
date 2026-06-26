@@ -91,6 +91,15 @@ export const materialBackend = {
   readAnalysis: async (instance: string, filename: string): Promise<Record<string, unknown>> =>
     (await loadModel(instance)).readAnalysis(filename),
 
+  // Absolute path of a dubbing track's audio (sibling of the <lang>.dub.json
+  // manifest). The path convention stays in the model; the viewer feeds this to
+  // window.vc.mediaUrl() to play it.
+  dubAudioPath: async (instance: string, lang: string): Promise<string | null> => {
+    const m = await loadModel(instance);
+    const p = m.analysisPath(lang, "dub");
+    return p ? p.replace(/\.json$/, ".mp3") : null;
+  },
+
   readAnalysisText: async (instance: string, lang: string, kind: string): Promise<{ text: string }> => {
     const m = await loadModel(instance);
     const path = m.analysisPath(lang, kind);
@@ -240,6 +249,30 @@ export const materialBackend = {
       subtitles_dir: m.subtitlesDir,
       lang,
       context_block: contextBlock,
+    });
+  },
+
+  // Synthesize a dubbing track from <lang>.srt → <lang>.dub.mp3 + <lang>.dub.json.
+  // The full-length target is the source video duration (project meta source);
+  // 0 falls back server-side to the last cue's end.
+  startTtsDub: async (
+    instance: string,
+    lang: string,
+    provider: string,
+    voiceId: string,
+    options?: Record<string, unknown>,
+  ): Promise<{ job_id: string }> => {
+    const m = await loadModel(instance);
+    const cur = await rpcCall<ProjectBrief | null>("project.current");
+    const s = ((cur?.meta as { source?: SourceMeta } | undefined)?.source ?? {}) as SourceMeta;
+    return rpcCall<{ job_id: string }>("capability.tts_dub", {
+      srt_path: m.subtitlePath(lang),
+      subtitles_dir: m.subtitlesDir,
+      lang,
+      provider,
+      voice_id: voiceId,
+      video_duration_sec: s.duration_sec ?? 0,
+      ...(options ? { options } : {}),
     });
   },
 

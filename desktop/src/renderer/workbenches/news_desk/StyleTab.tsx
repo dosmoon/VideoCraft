@@ -77,9 +77,10 @@ export function StyleTab(props: {
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [compErr, setCompErr] = useState("");
   // Importable material artifacts (subtitle languages + analysis files).
-  const [imports, setImports] = useState<{ subtitleLangs: string[]; analyses: string[] }>({
+  const [imports, setImports] = useState<{ subtitleLangs: string[]; analyses: string[]; dubLangs: string[] }>({
     subtitleLangs: [],
     analyses: [],
+    dubLangs: [],
   });
   const [importBusy, setImportBusy] = useState(false);
   const [importErr, setImportErr] = useState("");
@@ -101,7 +102,7 @@ export function StyleTab(props: {
     void rpc
       .listImports(type, instance)
       .then((i) => alive && setImports(i))
-      .catch(() => alive && setImports({ subtitleLangs: [], analyses: [] }));
+      .catch(() => alive && setImports({ subtitleLangs: [], analyses: [], dubLangs: [] }));
     return () => {
       alive = false;
     };
@@ -486,6 +487,7 @@ export function StyleTab(props: {
               aspect={parseAspect(preview.data.framing.aspect)}
               cropRect={preview.data.framing.cropRect}
               onCropChange={onCropChange}
+              dubbingAudioPath={preview.data.dubbingAudioPath}
             />
           )}
         </div>
@@ -650,6 +652,21 @@ export function StyleTab(props: {
                 }
                 busy={importBusy}
                 onPick={(filename) => void onImport(selected.id, { kind: "chapters", filename })}
+              />
+            )}
+            {selected.kind === "dubbing" && (
+              <ImportRow
+                key={selected.id}
+                label={tr("news_desk.style.dub_source")}
+                options={imports.dubLangs}
+                emptyHint={tr("news_desk.style.dub_empty_hint")}
+                current={
+                  typeof selected["audio_path"] === "string" && selected["audio_path"]
+                    ? tr("news_desk.style.imported")
+                    : tr("news_desk.style.not_imported")
+                }
+                busy={importBusy}
+                onPick={(lang) => void onImport(selected.id, { kind: "dubbing", lang })}
               />
             )}
             {importErr && <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {importErr}</p>}

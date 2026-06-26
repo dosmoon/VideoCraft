@@ -100,6 +100,7 @@ def tts(text: str, output_path: str, *,
         voice_id: str,
         task: str = "",
         audio_format: str = "mp3",
+        speed: float | None = None,
         should_cancel=None,
         on_chunk=None,
         cancel_token=None) -> None:
@@ -113,6 +114,11 @@ def tts(text: str, output_path: str, *,
     `task` is now optional (no default) since tts.synthesize was removed
     from TASKS; pass an empty string when there's no task tag to record.
 
+    `speed` is an optional per-call rate override (1.0 = normal). Only
+    providers with native rate control honor it (edge_tts today); others
+    ignore it. None falls back to the provider's configured default. The
+    dubbing pipeline drives it per cue to fit subtitle slots.
+
     `should_cancel` is the legacy predicate API (kept for back-compat);
     `cancel_token` is the canonical CancellationToken integration. Either
     or both work; both signals stop the stream.
@@ -123,6 +129,7 @@ def tts(text: str, output_path: str, *,
         provider=provider,
         voice_id=voice_id,
         audio_format=audio_format,
+        speed=speed,
         should_cancel=should_cancel,
         on_chunk=on_chunk,
         cancel_token=cancel_token,

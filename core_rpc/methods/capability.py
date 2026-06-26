@@ -197,6 +197,40 @@ def analyze(
     return {"job_id": ctx.jobs.start("capability.analyze", work)}
 
 
+# ── TTS dubbing (long job) ────────────────────────────────────────────────────
+
+@rpc_method("capability.tts_dub")
+def tts_dub(
+    ctx: Context, srt_path: str, subtitles_dir: str, lang: str,
+    provider: str, voice_id: str, video_duration_sec: float,
+    options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Synthesize a full-length dubbing track from subtitles_dir/<lang>.srt →
+    subtitles_dir/<lang>.dub.mp3 + <lang>.dub.json (long job). Each cue is spoken
+    by `provider`/`voice_id`, fitted to its timestamp slot (engine speed, capped),
+    then laid onto a silent track as long as `video_duration_sec` so it drops onto
+    the source video as a dubbing audio track. The .dub.json manifest is the
+    registry artifact (mirrors a subtitle analysis); it points at the .mp3."""
+    if not provider or not voice_id:
+        raise RpcError(-32602, "provider and voice_id are required")
+    srt_path, subtitles_dir = _in_project(ctx, srt_path, subtitles_dir)
+    opts = options if isinstance(options, dict) else {}
+
+    def work(job: Any) -> Any:
+        from core import tts_dubbing
+        from ._jobs_util import AiCancelBridge, pipeline_progress_to_job
+
+        return tts_dubbing.run_tts_dub(
+            srt_path=srt_path, subtitles_dir=subtitles_dir, lang_iso=lang,
+            video_duration_sec=float(video_duration_sec or 0.0),
+            provider=provider, voice_id=voice_id, options=opts,
+            progress_cb=pipeline_progress_to_job(job),
+            cancel_token=AiCancelBridge(job),
+        )
+
+    return {"job_id": ctx.jobs.start("capability.tts_dub", work)}
+
+
 # ── Generic structured-LLM extraction (long job) ─────────────────────────────
 
 @rpc_method("capability.llm_extract")

@@ -493,6 +493,7 @@ class AIRouter:
             voice_id: str,
             task: str = "",
             audio_format: str = "mp3",
+            speed: float | None = None,
             should_cancel=None,
             on_chunk=None,
             cancel_token=None) -> None:
@@ -507,6 +508,11 @@ class AIRouter:
             task:          Optional task tag for telemetry / per-task
                            model override (empty string = no override).
             audio_format:  'mp3' | 'wav' | 'opus'.
+            speed:         Optional per-call rate override (1.0 = normal).
+                           Only providers with native rate control honor it
+                           (edge_tts today); None falls back to the
+                           provider's configured `speed`. The dubbing
+                           pipeline drives this per cue to fit slots.
             should_cancel: Optional predicate for cooperative cancel;
                            provider raises InterruptedError mid-stream
                            when it returns True.
@@ -573,7 +579,7 @@ class AIRouter:
                 _edge_tts.synthesize(
                     text, output_path,
                     voice_id=voice_id or cfg.get("voice", _edge_tts.DEFAULT_VOICE),
-                    speed=float(cfg.get("speed", 1.0)),
+                    speed=float(speed if speed is not None else cfg.get("speed", 1.0)),
                     audio_format=audio_format,
                     pitch=str(cfg.get("pitch", "+0Hz")),
                     volume=str(cfg.get("volume", "+0%")),

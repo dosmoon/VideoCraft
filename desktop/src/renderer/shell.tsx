@@ -12,6 +12,7 @@ import { AiConsole } from "./aiconsole/AiConsole";
 import { ModelManager } from "./models/ModelManager";
 import { Settings } from "./settings/Settings";
 import { ConfirmHost } from "./ui/confirm";
+import { VoicePickerHost } from "./ui/voicePicker";
 import { tr, useLang } from "./i18n/tr";
 
 export function Shell() {
@@ -75,6 +76,8 @@ export function Shell() {
           OK/Cancel buttons follow the in-app language (Electron's native confirm
           chrome is locked to the OS locale). */}
       <ConfirmHost />
+      {/* Single host for pickVoice() — the subtitle 合成音频 (TTS dub) action. */}
+      <VoicePickerHost />
     </div>
   );
 }

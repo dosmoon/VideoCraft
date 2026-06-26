@@ -35,6 +35,26 @@ def stats(ctx: Context) -> dict[str, Any]:
     return console_view.stats()
 
 
+@rpc_method("ai.tts_voices")
+def tts_voices(ctx: Context, provider: str, refresh: bool = False) -> dict[str, Any]:
+    """Voice catalog for a TTS provider, for the VoicePickerDialog. Returns
+    {voices: [TTSVoice...], meta: {count, last_refresh_ts, has_cache}}.
+
+    refresh=False reads the on-disk cache, auto-fetching once when none exists;
+    refresh=True forces a re-fetch from the provider. The fetch is a single HTTP
+    GET (edge_tts ~322 voices) so it's kept synchronous for picker simplicity —
+    revisit as a job if it noticeably blocks the dispatch thread."""
+    if not provider:
+        raise RpcError(INVALID_PARAMS, "provider is required")
+    from core.ai import tts_voice
+
+    voices = tts_voice.get_catalog(provider, refresh=bool(refresh))
+    return {
+        "voices": [v.to_dict() for v in voices],
+        "meta": tts_voice.get_catalog_meta(provider),
+    }
+
+
 # ── Write ops ─────────────────────────────────────────────────────────────────
 # Each persists via the router and returns a fresh snapshot so the renderer
 # re-syncs the whole console from one source (cheap; config is small). Network
