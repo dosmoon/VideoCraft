@@ -439,6 +439,11 @@ export const rpc = {
 
   recentList: () => rpcCall<ProjectBrief[]>("project.recent_list"),
   openProject: (folder: string) => rpcCall<ProjectBrief>("project.open", { folder }),
+  // Create a fresh project under parent_dir/name (scaffolds the skeleton + makes
+  // it current). A duplicate folder / bad name throws RpcError with
+  // data.reason ∈ {exists, invalid_name} so the launcher can localize.
+  newProject: (parentDir: string, name: string) =>
+    rpcCall<ProjectBrief>("project.new", { parent_dir: parentDir, name }),
   closeProject: () => rpcCall<{ closed: boolean }>("project.close"),
   currentProject: () => rpcCall<ProjectBrief | null>("project.current"),
   listMaterials: () => rpcCall<Record<string, string[]>>("project.list_materials"),

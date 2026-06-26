@@ -49,6 +49,15 @@ function fmt(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+// Parent directory of an absolute path (handles both \ and / separators). Used to
+// default the New Project location to where the most-recent project lives, so the
+// date-folder workflow (…\<日期>\<主题>) lands the next project beside the last.
+function dirnameOf(p: string): string {
+  const norm = p.replace(/[\\/]+$/, "");
+  const idx = Math.max(norm.lastIndexOf("\\"), norm.lastIndexOf("/"));
+  return idx > 0 ? norm.slice(0, idx) : norm;
+}
+
 export function Hub() {
   const [recents, setRecents] = useState<ProjectBrief[] | null>(null);
   const [current, setCurrent] = useState<ProjectBrief | null>(null);
@@ -132,6 +141,23 @@ export function Hub() {
     const folder = await window.vc.pickFolder();
     if (folder) await open(folder);
   }, [open]);
+
+  // Create a fresh project (scaffolds parent/name) and open it. Throws on failure
+  // so the New Project dialog can show a localized error; on success loadTree sets
+  // `current`, which swaps the launcher (and the dialog) for the project view.
+  const createProject = useCallback(
+    async (parent: string, name: string) => {
+      setBusy(true);
+      try {
+        const brief = await rpc.newProject(parent, name);
+        await loadTree(brief);
+        setRecents(await rpc.recentList());
+      } finally {
+        setBusy(false);
+      }
+    },
+    [loadTree],
+  );
 
   const close = useCallback(async () => {
     await rpc.closeProject();
@@ -220,7 +246,14 @@ export function Hub() {
 
   if (!current) {
     return (
-      <Launcher recents={recents} busy={busy} error={error} onOpen={open} onPick={pickAndOpen} />
+      <Launcher
+        recents={recents}
+        busy={busy}
+        error={error}
+        onOpen={open}
+        onPick={pickAndOpen}
+        onCreate={createProject}
+      />
     );
   }
   return (
@@ -325,28 +358,57 @@ function Launcher(props: {
   error: string;
   onOpen: (folder: string) => void;
   onPick: () => void;
+  onCreate: (parent: string, name: string) => Promise<void>;
 }) {
-  const { recents, busy, error, onOpen, onPick } = props;
+  const { recents, busy, error, onOpen, onPick, onCreate } = props;
+  const [showNew, setShowNew] = useState(false);
+  // New Project defaults its location to where the most-recent project lives.
+  const defaultParent = recents && recents.length > 0 ? dirnameOf(recents[0]!.folder) : "";
   return (
     <div style={{ maxWidth: 560, margin: "0 auto", padding: "40px 24px" }}>
       <h2 style={{ fontWeight: 600, margin: "0 0 4px" }}>VideoCraft</h2>
       <p style={{ color: "#888", margin: "0 0 24px", fontSize: 13 }}>{tr("hub.launcher.subtitle")}</p>
 
-      <button
-        onClick={onPick}
-        disabled={busy}
-        style={{
-          padding: "8px 16px",
-          background: "#2d6cdf",
-          color: "#fff",
-          border: "none",
-          borderRadius: 5,
-          fontSize: 14,
-          cursor: "pointer",
-        }}
-      >
-        {tr("hub.launcher.open_folder")}
-      </button>
+      <div style={{ display: "flex", gap: 10 }}>
+        <button
+          onClick={() => setShowNew(true)}
+          disabled={busy}
+          style={{
+            padding: "8px 16px",
+            background: color.accent,
+            color: "#fff",
+            border: "none",
+            borderRadius: 5,
+            fontSize: 14,
+            cursor: "pointer",
+          }}
+        >
+          {tr("hub.launcher.new_project")}
+        </button>
+        <button
+          onClick={onPick}
+          disabled={busy}
+          style={{
+            padding: "8px 16px",
+            background: "#2a2a2e",
+            color: "#ddd",
+            border: "1px solid #3a3a40",
+            borderRadius: 5,
+            fontSize: 14,
+            cursor: "pointer",
+          }}
+        >
+          {tr("hub.launcher.open_project")}
+        </button>
+      </div>
+
+      {showNew && (
+        <NewProjectDialog
+          defaultParent={defaultParent}
+          onCancel={() => setShowNew(false)}
+          onCreate={onCreate}
+        />
+      )}
 
       {error && <p style={{ color: "#ff6b6b", marginTop: 16 }}>✗ {error}</p>}
 
@@ -396,6 +458,181 @@ function Launcher(props: {
           ))}
         </ul>
       )}
+    </div>
+  );
+}
+
+// ── New Project dialog ────────────────────────────────────────────────────────
+
+// In-app modal for creating a project (location + name). Built like confirm.tsx
+// (overlay + centered card, Enter = create, Escape = cancel) rather than a native
+// prompt, so the chrome follows the in-app language ([[confirm.tsx]] / tr). The
+// folder skeleton is built by project.new; name-format errors are caught here for
+// a fast localized message, with the sidecar as the final guard (duplicate folder).
+function NewProjectDialog(props: {
+  defaultParent: string;
+  onCancel: () => void;
+  onCreate: (parent: string, name: string) => Promise<void>;
+}) {
+  const { defaultParent, onCancel, onCreate } = props;
+  const [parent, setParent] = useState(defaultParent);
+  const [name, setName] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const browse = useCallback(async () => {
+    const picked = await window.vc.pickFolder(parent || undefined);
+    if (picked) setParent(picked);
+  }, [parent]);
+
+  const submit = useCallback(async () => {
+    const trimmed = name.trim();
+    if (!parent) return setErr(tr("hub.new_project.err_no_location"));
+    if (!trimmed) return setErr(tr("hub.new_project.err_no_name"));
+    if (/[\\/:*?"<>|]/.test(trimmed)) return setErr(tr("hub.new_project.err_bad_name"));
+    setErr("");
+    setBusy(true);
+    try {
+      await onCreate(parent, trimmed); // success → Hub swaps to the project view; this unmounts
+    } catch (e) {
+      const reason =
+        e instanceof RpcError ? (e.data as { reason?: string } | undefined)?.reason : undefined;
+      setErr(
+        reason === "exists"
+          ? tr("hub.new_project.err_exists", { name: trimmed })
+          : reason === "invalid_name"
+            ? tr("hub.new_project.err_bad_name")
+            : fmt(e),
+      );
+      setBusy(false);
+    }
+  }, [name, parent, onCreate]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onCancel();
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        void submit();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [submit, onCancel]);
+
+  const label: React.CSSProperties = { fontSize: 12, color: "#aaa", margin: "0 0 4px" };
+  const input: React.CSSProperties = {
+    width: "100%",
+    boxSizing: "border-box",
+    padding: "6px 8px",
+    background: "#1a1a1e",
+    color: "#ddd",
+    border: "1px solid #3a3a40",
+    borderRadius: 4,
+    fontSize: 13,
+  };
+
+  return (
+    <div
+      onClick={onCancel}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        background: "rgba(0,0,0,0.5)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        style={{
+          background: color.bgRaised,
+          border: `1px solid ${color.border}`,
+          borderRadius: radius.md,
+          padding: 20,
+          width: 440,
+          maxWidth: "90vw",
+          boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+        }}
+      >
+        <h3 style={{ margin: "0 0 16px", fontSize: 15, color: color.textPrimary }}>
+          {tr("hub.new_project.title")}
+        </h3>
+
+        <p style={label}>{tr("hub.new_project.location")}</p>
+        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+          <input
+            style={input}
+            value={parent}
+            onChange={(e) => setParent(e.target.value)}
+            placeholder={tr("hub.new_project.location_placeholder")}
+          />
+          <button
+            onClick={() => void browse()}
+            style={{
+              flexShrink: 0,
+              padding: "0 12px",
+              background: "#2a2a2e",
+              color: "#ddd",
+              border: "1px solid #3a3a40",
+              borderRadius: 4,
+              fontSize: 13,
+              cursor: "pointer",
+            }}
+          >
+            {tr("hub.new_project.browse")}
+          </button>
+        </div>
+
+        <p style={label}>{tr("hub.new_project.name")}</p>
+        <input
+          autoFocus
+          style={{ ...input, marginBottom: 14 }}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder={tr("hub.new_project.name_placeholder")}
+        />
+
+        {err && <p style={{ color: "#ff6b6b", margin: "0 0 12px", fontSize: 12 }}>✗ {err}</p>}
+
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+          <button
+            onClick={onCancel}
+            style={{
+              background: color.bgHover,
+              color: color.textPrimary,
+              border: `1px solid ${color.border}`,
+              borderRadius: radius.sm,
+              padding: "6px 16px",
+              fontSize: font.md,
+              cursor: "pointer",
+            }}
+          >
+            {tr("common.cancel")}
+          </button>
+          <button
+            onClick={() => void submit()}
+            disabled={busy}
+            style={{
+              background: color.accent,
+              color: "#fff",
+              border: "none",
+              borderRadius: radius.sm,
+              padding: "6px 16px",
+              fontSize: font.md,
+              cursor: "pointer",
+            }}
+          >
+            {tr("hub.new_project.create")}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

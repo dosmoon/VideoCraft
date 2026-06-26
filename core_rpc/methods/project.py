@@ -46,6 +46,33 @@ def open_project(ctx: Context, folder: str) -> dict[str, Any]:
     return _current_payload(proj)
 
 
+@rpc_method("project.new")
+def new_project(ctx: Context, parent_dir: str, name: str) -> dict[str, Any]:
+    """Create a fresh project folder (parent_dir/name) with the canonical
+    skeleton, make it the session's current project, and record it in the recent
+    list — the post-create wiring mirrors project.open. Name validation (illegal
+    chars / empty) lives in Project.new; a duplicate folder and a bad name surface
+    as -32602 with a `reason` so the renderer can show a localized message."""
+    if not isinstance(parent_dir, str) or not parent_dir:
+        raise RpcError(-32602, "parent_dir must be a non-empty string")
+    if not isinstance(name, str) or not name.strip():
+        raise RpcError(-32602, "name must be a non-empty string", {"reason": "invalid_name"})
+    if not os.path.isdir(parent_dir):
+        raise RpcError(-32602, f"not a directory: {parent_dir}")
+    try:
+        proj = _project.Project.new(parent_dir, name.strip())
+    except FileExistsError as exc:
+        raise RpcError(-32602, str(exc), {"reason": "exists"}) from exc
+    except ValueError as exc:
+        raise RpcError(-32602, str(exc), {"reason": "invalid_name"}) from exc
+    except Exception as exc:  # noqa: BLE001 — surface as a clean RPC error
+        raise RpcError(-32001, f"failed to create project: {exc}") from exc
+    ctx.session.set_project(proj)
+    _project.add_recent_project(proj.folder)
+    ctx.notify("event.project.opened", {"folder": proj.folder})
+    return _current_payload(proj)
+
+
 @rpc_method("project.close")
 def close_project(ctx: Context) -> dict[str, Any]:
     ctx.session.close_project()

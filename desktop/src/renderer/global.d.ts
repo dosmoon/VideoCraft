@@ -86,7 +86,7 @@ interface VcApi {
   openExternal(url: string): Promise<void>;
   pickVideo(): Promise<string | null>;
   pickImage(): Promise<string | null>;
-  pickFolder(): Promise<string | null>;
+  pickFolder(defaultPath?: string): Promise<string | null>;
   pickSubtitle(): Promise<string | null>;
   fs: VcFsApi;
   rpc: VcRpcApi;

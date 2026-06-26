@@ -376,8 +376,13 @@ ipcMain.handle("vc:pickImage", async () => {
 });
 
 // Hub launcher: pick a project folder to open (project.open takes a folder path).
-ipcMain.handle("vc:pickFolder", async () => {
-  const r = await dialog.showOpenDialog({ properties: ["openDirectory"] });
+// defaultPath (optional) starts the dialog at a location — used by New Project to
+// land in the parent of the most-recent project.
+ipcMain.handle("vc:pickFolder", async (_e, defaultPath?: string) => {
+  const r = await dialog.showOpenDialog({
+    properties: ["openDirectory"],
+    ...(defaultPath ? { defaultPath } : {}),
+  });
   return r.canceled ? null : (r.filePaths[0] ?? null);
 });
 

@@ -90,9 +90,11 @@ const api = {
   pickImage(): Promise<string | null> {
     return ipcRenderer.invoke("vc:pickImage");
   },
-  /** Open a folder dialog to pick a project directory; returns its path or null. */
-  pickFolder(): Promise<string | null> {
-    return ipcRenderer.invoke("vc:pickFolder");
+  /** Open a folder dialog to pick a project directory; returns its path or null.
+   *  Pass defaultPath to open the native dialog at a starting location (e.g. the
+   *  parent of the most-recent project for the New Project flow). */
+  pickFolder(defaultPath?: string): Promise<string | null> {
+    return ipcRenderer.invoke("vc:pickFolder", defaultPath);
   },
   /** Open a file dialog to pick a local .srt; returns its absolute path or null. */
   pickSubtitle(): Promise<string | null> {
