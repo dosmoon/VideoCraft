@@ -25,6 +25,11 @@ export interface ClipPreviewResult {
   override: ComponentDict | null;
   availableLangs: string[];
   subtitleLangs: string[];
+  /** Languages that have a synthesized dubbing track (for the dub picker). */
+  dubLangs: string[];
+  /** Absolute path of the enabled dubbing component's snapshot audio (null when
+   *  none / not imported / missing). Drives the dub audio track + its decode. */
+  dubbingAudioPath: string | null;
   /** True when several hotclips languages exist and the instance hasn't picked
    *  one yet — the workbench must ask the user (candidate language is a
    *  one-time human decision; it is never inferred from the source language). */
@@ -41,6 +46,8 @@ export function emptyClipPreview(lang: string): ClipPreviewResult {
     override: null,
     availableLangs: [],
     subtitleLangs: [],
+    dubLangs: [],
+    dubbingAudioPath: null,
     needsLangChoice: false,
   };
 }
@@ -92,6 +99,14 @@ export async function buildClipPreview(
     if (p) subPaths[l] = p;
   }
 
+  // Dubbing: the languages offering a dub track, and the enabled dub component's
+  // resolved snapshot audio (the assembler windows it per candidate).
+  const dubLangs = await repo.listDubLangs();
+  const dubComp = owner.components.find(
+    (c) => c["kind"] === "clip_dubbing" && c["enabled"] !== false,
+  );
+  const dubbingAudioPath = dubComp ? await repo.resolveDub(String(dubComp["audio_path"] ?? "")) : null;
+
   return {
     lang,
     candidates,
@@ -101,6 +116,8 @@ export async function buildClipPreview(
     override: owner.clipsOverrides[String(sel)] ?? null,
     availableLangs: avail,
     subtitleLangs: subLangs,
+    dubLangs,
+    dubbingAudioPath,
     needsLangChoice,
   };
 }

@@ -49,6 +49,10 @@ export interface ClipPreviewData {
   subtitleLangs: string[];
   /** Hotclips languages available upstream/snapshotted (candidate sources). */
   availableLangs: string[];
+  /** Languages with a synthesized dubbing track (the dub picker's options). */
+  dubLangs: string[];
+  /** Absolute path of the enabled dubbing track's snapshot audio (null = none). */
+  dubbingAudioPath: string | null;
   /** True when several hotclips languages exist and none was picked yet —
    *  the Candidates tab must ask the user to choose (one-time, then locked). */
   needsLangChoice: boolean;
@@ -65,6 +69,8 @@ interface RawPreviewData {
   override: ClipOverride | null;
   availableLangs?: string[];
   subtitleLangs?: string[];
+  dubLangs?: string[];
+  dubbingAudioPath?: string | null;
   needsLangChoice?: boolean;
 }
 
@@ -183,6 +189,8 @@ export function useClipPreview(type: string, instance: string, refreshKey = 0) {
           presetName: String(cfg["preset_name"] ?? ""),
           subtitleLangs: Array.isArray(pd.subtitleLangs) ? pd.subtitleLangs : [],
           availableLangs: Array.isArray(pd.availableLangs) ? pd.availableLangs : [],
+          dubLangs: Array.isArray(pd.dubLangs) ? pd.dubLangs : [],
+          dubbingAudioPath: pd.dubbingAudioPath ?? null,
           needsLangChoice: pd.needsLangChoice === true,
         });
         setStatus("ready");

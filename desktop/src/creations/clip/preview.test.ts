@@ -171,6 +171,8 @@ describe("buildClipPreview", () => {
       override: null,
       availableLangs: [],
       subtitleLangs: [],
+      dubLangs: [],
+      dubbingAudioPath: null,
       needsLangChoice: false,
     });
   });

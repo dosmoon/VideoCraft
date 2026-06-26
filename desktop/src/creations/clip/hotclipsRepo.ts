@@ -38,6 +38,38 @@ export class HotclipsRepo {
   srtSnapshotPath(lang: string): string {
     return `${this.instanceDir}/source-subtitles.${lang}.srt`;
   }
+  dubSnapshotPath(lang: string): string {
+    return `${this.instanceDir}/source-dub.${lang}.mp3`;
+  }
+
+  /** Snapshot a language's dubbing audio (`<lang>.dub.mp3`) into the instance.
+   *  Returns the snapshot path, or null when no dub exists upstream. */
+  async ensureDubSnapshot(lang: string): Promise<string | null> {
+    const snap = this.dubSnapshotPath(lang);
+    if (!(await this.fs.stat(snap)).exists) {
+      const subsDir = await this.bridge.subtitlesDir();
+      const upstream = `${subsDir}/${lang}.dub.mp3`;
+      if (!(await this.fs.stat(upstream)).exists) return null;
+      await this.fs.copy(upstream, snap);
+    }
+    return snap;
+  }
+
+  /** Languages with a dubbing track — union of instance snapshots
+   *  (`source-dub.<lang>.mp3`) and upstream `<lang>.dub.mp3`, sorted. */
+  async listDubLangs(): Promise<string[]> {
+    const langs = new Set<string>();
+    for (const e of await this.safeList(this.instanceDir)) {
+      if (e.name.startsWith("source-dub.") && e.name.endsWith(".mp3")) {
+        langs.add(e.name.slice("source-dub.".length, -".mp3".length));
+      }
+    }
+    const subsDir = await this.bridge.subtitlesDir();
+    for (const e of await this.safeList(subsDir)) {
+      if (e.name.endsWith(".dub.mp3")) langs.add(e.name.slice(0, -".dub.mp3".length));
+    }
+    return [...langs].sort();
+  }
 
   /** Snapshot upstream hotclips + SRT into the instance dir if not yet present.
    *  Returns the hotclips snapshot path, or null when upstream hotclips is
@@ -123,6 +155,14 @@ export class HotclipsRepo {
     const subsDir = await this.bridge.subtitlesDir();
     const upstream = `${subsDir}/${lang}.srt`;
     return (await this.fs.stat(upstream)).exists ? upstream : null;
+  }
+
+  /** Resolve a dubbing component's stored audio_path (instance-relative unless
+   *  already absolute) to an on-disk absolute path, or null when missing. */
+  async resolveDub(audioPath: string): Promise<string | null> {
+    if (!audioPath) return null;
+    const abs = /^([a-zA-Z]:[\\/]|[\\/])/.test(audioPath) ? audioPath : `${this.instanceDir}/${audioPath}`;
+    return (await this.fs.stat(abs)).exists ? abs : null;
   }
 
   private async safeList(dir: string): Promise<{ name: string; isDir: boolean }[]> {

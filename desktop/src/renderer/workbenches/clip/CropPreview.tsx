@@ -90,6 +90,9 @@ export interface CropPreviewProps {
   cropRect: CropRect | null;
   /** Fired on drag release with the new crop window (host persists/stages it). */
   onCropChange: (rect: CropRect) => void;
+  /** Absolute path of the enabled dubbing track's audio (null = none). Decoded
+   *  alongside the source so the dub plays/replaces in preview. */
+  dubbingAudioPath?: string | null;
   /** Reports source geometry once the engine opens (host computes the center). */
   onReady?: (info: { durationSec: number; srcW: number; srcH: number }) => void;
 }
@@ -115,6 +118,7 @@ export function CropPreview(props: CropPreviewProps) {
     showCards,
     cropRect,
     onCropChange,
+    dubbingAudioPath,
     onReady,
   } = props;
 
@@ -320,7 +324,17 @@ export function CropPreview(props: CropPreviewProps) {
         let audio: Map<string, DecodedAudio> | null = null;
         const decoded = await new AudioReader(window.vc.mediaUrl(srcPath)).decodeAll();
         if (decoded) audio = new Map([[SOURCE_REF, decoded]]);
-        if (!disposed) setAudioOn(decoded != null);
+        // Decode the dubbing track too (keyed by its path = the assembler's ref).
+        // Isolated: a dub failure must not blank the preview.
+        if (dubbingAudioPath) {
+          try {
+            const dub = await new AudioReader(window.vc.mediaUrl(dubbingAudioPath)).decodeAll();
+            if (dub) (audio ??= new Map()).set(dubbingAudioPath, dub);
+          } catch (e) {
+            console.warn("[CropPreview] dub audio decode failed:", e);
+          }
+        }
+        if (!disposed) setAudioOn((audio?.size ?? 0) > 0);
         if (disposed) {
           reader.dispose();
           backend.dispose();
@@ -348,8 +362,9 @@ export function CropPreview(props: CropPreviewProps) {
       engineRef.current = null;
       timelineRef.current = null;
     };
+    // dubbingAudioPath: re-open so a newly-imported/cleared dub track is decoded.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [srcPath]);
+  }, [srcPath, dubbingAudioPath]);
 
   // Sync the live crop rect from the controlled prop (default = centered).
   // Only reframe carries a crop; letterbox/passthrough use the full frame.
@@ -431,6 +446,7 @@ export function CropPreview(props: CropPreviewProps) {
           mediaRef: SOURCE_REF,
           frameAspect,
           ...(fullSource ? {} : override ? { override } : {}),
+          ...(dubbingAudioPath ? { dubbingAudioRef: dubbingAudioPath } : {}),
         });
         timelineRef.current = tl;
         setDuration(tl.durationSec);
@@ -471,7 +487,7 @@ export function CropPreview(props: CropPreviewProps) {
     return () => {
       cancelled = true;
     };
-  }, [status, candidate, override, components, srtByLang, fullSource, showCards, renderAt]);
+  }, [status, candidate, override, components, srtByLang, fullSource, showCards, dubbingAudioPath, renderAt]);
 
   // ── crop box drag (move-only; box is the max-fit output-aspect window) ──────
   const pointInBox = (nx: number, ny: number): boolean => {

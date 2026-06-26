@@ -16,6 +16,7 @@ import { confirmDialog } from "../../ui/confirm";
 import { rpc, RpcError, type Component, type RenderPlan, type RenderedClip } from "../../ipc/client";
 import { buildClipTimeline } from "@creations/clip/assemble.js";
 import type { ClipComponentConfig } from "@creations/clip/types.js";
+import type { DecodedAudio } from "../../engine/source/sample-types";
 import { Backend } from "../../engine/gpu/Backend";
 import { MediaSource } from "../../engine/source/MediaSource";
 import { ClipReader } from "../../engine/source/ClipReader";
@@ -232,15 +233,33 @@ export function ExportTab(props: {
 
         const engine = effectiveEngine(settingsRef.current.engine, probeRef.current);
 
-        // WebCodecs mixes the source audio per candidate window; ffmpeg pulls it
-        // from the source file (-ss per clip), so only decode it for WebCodecs.
-        // decodeAll() self-detects audio and returns null for a silent source —
-        // do NOT gate on ms.audio (the fragile mp4box probe we route around).
-        const decodedAudio =
-          engine === "chromium"
-            ? await new AudioReader(window.vc.mediaUrl(data.srcPath)).decodeAll()
-            : null;
-        const audioSources = decodedAudio ? new Map([[SOURCE_REF, decodedAudio]]) : undefined;
+        // The enabled dubbing track (if any) — drives both the WebCodecs audio
+        // map and the ffmpeg audio source below. The dub file is full-source
+        // aligned, so each candidate slices the same [startSec..] window.
+        const dubComp = ((components ?? []) as unknown as ClipComponentConfig[]).find(
+          (c): c is Extract<ClipComponentConfig, { kind: "clip_dubbing" }> =>
+            c.kind === "clip_dubbing" && c.enabled === true,
+        );
+        const dubRef = dubComp && data.dubbingAudioPath ? data.dubbingAudioPath : undefined;
+
+        // WebCodecs mixes audio per candidate window; ffmpeg pulls it from a
+        // single source file (-ss per clip, handled below). For WebCodecs, decode
+        // the source audio plus the dub track so replace/mix resolve.
+        let audioSources: Map<string, DecodedAudio> | undefined;
+        if (engine === "chromium") {
+          audioSources = new Map();
+          const srcAudio = await new AudioReader(window.vc.mediaUrl(data.srcPath)).decodeAll();
+          if (srcAudio) audioSources.set(SOURCE_REF, srcAudio);
+          if (dubRef) {
+            try {
+              const dubAudio = await new AudioReader(window.vc.mediaUrl(dubRef)).decodeAll();
+              if (dubAudio) audioSources.set(dubRef, dubAudio);
+            } catch (e) {
+              console.warn("[clip export] dub audio decode failed:", e);
+            }
+          }
+          if (audioSources.size === 0) audioSources = undefined;
+        }
 
         // Preload any image-watermark assets once.
         for (const c of components ?? []) {
@@ -279,6 +298,7 @@ export function ExportTab(props: {
               frameAspect: target.width / target.height,
               ...(override ? { override } : {}),
               ...(cropRect ? { cropRect } : {}),
+              ...(dubRef ? { dubbingAudioRef: dubRef } : {}),
             });
             const cfg = settingsRef.current;
             const base = {
@@ -297,10 +317,18 @@ export function ExportTab(props: {
               cancelCheck: () => cancelRef.current,
             };
             if (engine === "ffmpeg") {
-              // ffmpeg writes the mp4 directly; audio = source[startSec..] (clip window).
+              // ffmpeg writes the mp4 directly; audio = file[startSec..] (clip
+              // window). With a dub, pull from the dub file (full-source aligned)
+              // to realize "replace". ffmpeg can't mix, so "mix" degrades to the
+              // dub-only result here (use WebCodecs to hear the dub under source).
+              if (dubRef && dubComp?.mode === "mix") {
+                console.warn(
+                  "[clip export] ffmpeg engine can't mix the dub under the original; muxing the dub only. Use WebCodecs for mixing.",
+                );
+              }
               await exportTimelineViaFfmpeg(base, {
                 outputPath: clip.outputPath,
-                sourcePath: data.srcPath,
+                sourcePath: dubRef ?? data.srcPath,
                 audioStartSec: clip.startSec,
               });
             } else {

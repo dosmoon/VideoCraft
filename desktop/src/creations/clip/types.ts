@@ -71,11 +71,31 @@ export interface ClipCardConfig {
   duration_sec: number;
 }
 
+export type DubbingMode = "replace" | "mix";
+
+/** Dubbing audio track for a clip: a synthesized voiceover (material
+ *  `<lang>.dub.mp3`, snapshotted into the instance) laid over the candidate's
+ *  cut window. The dub file is aligned to the FULL source timeline, so each
+ *  candidate slices its own [start, end] window (mirrors the source audio).
+ *  `replace` swaps the original audio; `mix` plays it under at `gain_db` with
+ *  the original ducked to `source_gain_db`. */
+export interface ClipDubbingConfig {
+  kind: "clip_dubbing";
+  enabled: boolean;
+  /** Snapshot-relative path to the dubbing audio (e.g. "source-dub.en.mp3"). */
+  audio_path: string;
+  gain_db: number;
+  source_gain_db: number;
+  offset_sec: number;
+  mode: DubbingMode;
+}
+
 export type ClipComponentConfig =
   | ClipSubtitleConfig
   | ClipTextWatermarkConfig
   | ClipImageWatermarkConfig
-  | ClipCardConfig;
+  | ClipCardConfig
+  | ClipDubbingConfig;
 
 /** One entry in <lang>.hotclips.json. Times are "HH:MM:SS.mmm" strings. */
 export interface HotclipCandidate {

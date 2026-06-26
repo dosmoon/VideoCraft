@@ -10,7 +10,7 @@
  * OTIO Timeline instead of the old overlay-only CompositionTimeline.
  */
 
-import { clip, type CropRect, type Timeline, type Track } from "../../composition/ir.js";
+import { clip, gap, type CropRect, type Timeline, type Track, type TrackChild } from "../../composition/ir.js";
 import { buildTimeMap } from "../../composition/timemap.js";
 import type { CompileContext, SourceCue, SubtitleInstance } from "../../composition/components/index.js";
 import {
@@ -30,7 +30,7 @@ import {
   resolveStartEnd,
   stackSubtitleMargins,
 } from "./mapping.js";
-import type { ClipComponentConfig, ClipOverride, HotclipCandidate } from "./types.js";
+import type { ClipComponentConfig, ClipDubbingConfig, ClipOverride, HotclipCandidate } from "./types.js";
 
 export interface BuildClipTimelineInput {
   /** Ordered component config (list order = z-order, top = topmost layer). */
@@ -48,10 +48,16 @@ export interface BuildClipTimelineInput {
    * passthrough/letterbox (whole source); present = reframe (cover the crop).
    */
   cropRect?: CropRect;
+  /**
+   * Media id/path for the enabled dubbing component's audio (resolved upstream).
+   * The dub file is aligned to the full source timeline, so the dub clip slices
+   * the SAME candidate window as the source audio. Omit = no dub.
+   */
+  dubbingAudioRef?: string;
 }
 
 export function buildClipTimeline(input: BuildClipTimelineInput): Timeline {
-  const { components, candidate, override, srtByLang, mediaRef, frameAspect, cropRect } = input;
+  const { components, candidate, override, srtByLang, mediaRef, frameAspect, cropRect, dubbingAudioRef } = input;
 
   const [start, end] = resolveStartEnd(candidate, override);
   const durationSec = Math.max(0, end - start);
@@ -74,16 +80,16 @@ export function buildClipTimeline(input: BuildClipTimelineInput): Timeline {
       }),
     ],
   };
-  // Audio track: the source audio over the same window (synced 1:1 with video).
-  // gainDb 0 = unity; preview/export read this via resolveAudioSegments.
-  const audioTrack: Track = {
+  // Audio track(s) over the candidate window (synced 1:1 with video). Default =
+  // source audio at unity gain. An enabled dubbing component swaps it (replace)
+  // or adds a second track under it (mix, original ducked to source_gain_db).
+  const sourceAudioTrack = (gainDb = 0): Track => ({
     kind: "audio",
     z: 0,
     enabled: true,
-    children: [
-      clip({ kind: "audio", durationSec, sourceStart: start, mediaRef, style: { gainDb: 0 }, data: {} }),
-    ],
-  };
+    children: [clip({ kind: "audio", durationSec, sourceStart: start, mediaRef, style: { gainDb }, data: {} })],
+  });
+  const audioTracks = buildAudioTracks(components, durationSec, start, dubbingAudioRef, sourceAudioTrack);
   const timeMap = buildTimeMap(videoTrack);
   const baseCtx: CompileContext = {
     durationSec,
@@ -135,5 +141,47 @@ export function buildClipTimeline(input: BuildClipTimelineInput): Timeline {
   const n = overlayTracks.length;
   overlayTracks.forEach((track, i) => (track.z = n - i));
 
-  return { durationSec, tracks: [videoTrack, audioTrack, ...overlayTracks] };
+  return { durationSec, tracks: [videoTrack, ...audioTracks, ...overlayTracks] };
+}
+
+/**
+ * Resolve the candidate's audio tracks from the dubbing component (if any).
+ *   - no enabled dub / no resolved audio → [source audio] (unchanged).
+ *   - replace → [dub] only (original dropped).
+ *   - mix     → [source (ducked to source_gain_db), dub (at gain_db)].
+ * The dub file is full-source-aligned, so the dub clip slices the SAME window
+ * (sourceStart = the candidate's cut start) as the source audio; `offset_sec`
+ * delays it via a leading gap, trimming the tail so the track total stays
+ * `durationSec`.
+ */
+function buildAudioTracks(
+  components: readonly ClipComponentConfig[],
+  durationSec: number,
+  start: number,
+  dubbingAudioRef: string | undefined,
+  sourceAudioTrack: (gainDb?: number) => Track,
+): Track[] {
+  const dub = components.find(
+    (c): c is ClipDubbingConfig => c.kind === "clip_dubbing" && c.enabled === true,
+  );
+  if (!dub || !dubbingAudioRef) return [sourceAudioTrack()];
+
+  const offset = Math.max(0, Math.min(Number(dub.offset_sec) || 0, durationSec));
+  const dubDur = Math.max(0, durationSec - offset);
+  const children: TrackChild[] = [];
+  if (offset > 0) children.push(gap(offset));
+  if (dubDur > 0) {
+    children.push(
+      clip({
+        kind: "audio",
+        durationSec: dubDur,
+        sourceStart: start,
+        mediaRef: dubbingAudioRef,
+        style: { gainDb: Number(dub.gain_db) || 0 },
+        data: {},
+      }),
+    );
+  }
+  const dubTrack: Track = { kind: "audio", z: 0, enabled: true, children };
+  return dub.mode === "mix" ? [sourceAudioTrack(Number(dub.source_gain_db) || 0), dubTrack] : [dubTrack];
 }

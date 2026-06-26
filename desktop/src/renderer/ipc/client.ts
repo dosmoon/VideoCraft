@@ -602,7 +602,9 @@ export const rpc = {
   ) =>
     type === "news_desk"
       ? newsDeskBackend.importResource(instance, componentId, params)
-      : unsupportedCreation(type),
+      : type === "clip"
+        ? clipBackend.importResource(instance, componentId, params)
+        : unsupportedCreation(type),
 
   // Render orchestration. plan_render returns output paths + geometry for the
   // selected candidates; the renderer encodes each to outputPath, writes it via

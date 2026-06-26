@@ -37,6 +37,7 @@ const KIND_LABEL_KEYS: Record<string, string> = {
   clip_image_watermark: "clip.kind.image_watermark",
   clip_hook_card: "clip.kind.hook_card",
   clip_outro_card: "clip.kind.outro_card",
+  clip_dubbing: "clip.kind.dubbing",
 };
 function kindLabel(kind: string): string {
   const key = KIND_LABEL_KEYS[kind];
@@ -100,6 +101,26 @@ export function StyleTab(props: {
   const [addable, setAddable] = useState<{ kind: string; multi_instance: boolean }[]>([]);
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [compErr, setCompErr] = useState("");
+  const [dubBusy, setDubBusy] = useState(false);
+  const [dubErr, setDubErr] = useState("");
+
+  // Snapshot a material dubbing track into the selected clip_dubbing component,
+  // then force a full preview reload so dubbingAudioPath (preview_data) refreshes.
+  const importDub = useCallback(
+    async (componentId: string, lang: string) => {
+      setDubBusy(true);
+      setDubErr("");
+      try {
+        await rpc.importResource(type, instance, componentId, { kind: "dubbing", lang });
+        onMaterialBound();
+      } catch (e) {
+        setDubErr(e instanceof RpcError ? `[${e.code}] ${e.message}` : String(e));
+      } finally {
+        setDubBusy(false);
+      }
+    },
+    [type, instance, onMaterialBound],
+  );
 
   useEffect(() => {
     let alive = true;
@@ -517,6 +538,7 @@ export function StyleTab(props: {
               showCards={data.candidates.length > 0}
               cropRect={stagedCrop}
               onCropChange={setStagedCrop}
+              dubbingAudioPath={data.dubbingAudioPath}
               onReady={onReady}
             />
           </>
@@ -647,17 +669,76 @@ export function StyleTab(props: {
           {tr("clip.style.properties_label")}
         </div>
         {selected ? (
-          <ComponentEditor
-            component={selected}
-            disabled={false}
-            onPatch={(fields) => onPatch(selected, fields)}
-            enums={{ language: data?.subtitleLangs ?? [] }}
-          />
+          <>
+            {selected.kind === "clip_dubbing" && (
+              <DubImportRow
+                key={selected.id}
+                options={data?.dubLangs ?? []}
+                imported={typeof selected["audio_path"] === "string" && !!selected["audio_path"]}
+                busy={dubBusy}
+                onPick={(lang) => void importDub(selected.id, lang)}
+              />
+            )}
+            {dubErr && <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {dubErr}</p>}
+            <ComponentEditor
+              component={selected}
+              disabled={false}
+              onPatch={(fields) => onPatch(selected, fields)}
+              enums={{ language: data?.subtitleLangs ?? [] }}
+            />
+          </>
         ) : (
           <p style={{ color: "#666", fontSize: 12 }}>{tr("clip.style.no_component_selected")}</p>
         )}
       </div>
       </div>
+    </div>
+  );
+}
+
+/** Pick a material dubbing language and snapshot it into the dubbing component. */
+function DubImportRow(props: {
+  options: string[];
+  imported: boolean;
+  busy: boolean;
+  onPick: (lang: string) => void;
+}) {
+  const { options, imported, busy, onPick } = props;
+  const [choice, setChoice] = useState("");
+  const sel = choice || options[0] || "";
+  return (
+    <div style={{ marginBottom: 12, padding: "8px 10px", background: "#1a1a1e", border: "1px solid #2a2a2e", borderRadius: 6 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "#ccc" }}>{tr("clip.style.dub_source")}</span>
+        <span style={{ fontSize: 11, color: "#777" }}>
+          {imported ? tr("clip.style.dub_imported") : tr("clip.style.dub_not_imported")}
+        </span>
+      </div>
+      {options.length === 0 ? (
+        <p style={{ color: "#888", fontSize: 11, margin: 0 }}>{tr("clip.style.dub_empty_hint")}</p>
+      ) : (
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <select
+            value={sel}
+            onChange={(e) => setChoice(e.target.value)}
+            disabled={busy}
+            style={{ flex: 1, background: "#0e0e10", color: "#ddd", border: "1px solid #333", borderRadius: 4, padding: "4px 6px", fontSize: 12 }}
+          >
+            {options.map((o) => (
+              <option key={o} value={o}>
+                {o.toUpperCase()}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => sel && onPick(sel)}
+            disabled={busy || !sel}
+            style={{ background: "#2a2a2e", color: "#ccc", border: "1px solid #3a3a40", borderRadius: 4, padding: "4px 12px", fontSize: 12, cursor: busy ? "default" : "pointer" }}
+          >
+            {tr("clip.style.dub_import_btn")}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

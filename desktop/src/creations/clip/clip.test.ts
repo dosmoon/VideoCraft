@@ -11,10 +11,24 @@ import {
 import { buildClipTimeline } from "./assemble.js";
 import type {
   ClipCardConfig,
+  ClipDubbingConfig,
   ClipSubtitleConfig,
   ClipTextWatermarkConfig,
   HotclipCandidate,
 } from "./types.js";
+
+function dubbingConfig(over: Partial<ClipDubbingConfig> = {}): ClipDubbingConfig {
+  return {
+    kind: "clip_dubbing",
+    enabled: true,
+    audio_path: "source-dub.en.mp3",
+    gain_db: 0,
+    source_gain_db: 0,
+    offset_sec: 0,
+    mode: "replace",
+    ...over,
+  };
+}
 
 function subtitleConfig(over: Partial<ClipSubtitleConfig> = {}): ClipSubtitleConfig {
   return {
@@ -195,6 +209,75 @@ describe("buildClipTimeline", () => {
       sourceStartSec: 60, // candidate starts at 00:01:00
       gain: 1, // 0 dB = unity
     });
+  });
+
+  // Dubbing: the dub file is full-source aligned, so each candidate slices the
+  // SAME window (sourceStart = the candidate's cut start) as the source audio.
+  it("dub replace: swaps the source audio for the dub track, windowed to the candidate", () => {
+    const timeline = buildClipTimeline({
+      components: [subtitleConfig(), dubbingConfig({ mode: "replace" })],
+      candidate,
+      srtByLang,
+      mediaRef: "source.mp4",
+      dubbingAudioRef: "dub.mp3",
+    });
+    const segments = resolveAudioSegments(timeline);
+    expect(segments).toHaveLength(1);
+    expect(segments[0]).toMatchObject({
+      mediaRef: "dub.mp3",
+      outStartSec: 0,
+      outEndSec: 30,
+      sourceStartSec: 60, // same candidate window as the source audio
+      gain: 1,
+    });
+    expect(validateTimeline(timeline, { sourceDurations: { "source.mp4": 600, "dub.mp3": 600 } })).toEqual([]);
+  });
+
+  it("dub mix: keeps the ducked source + adds the dub track, both windowed", () => {
+    const timeline = buildClipTimeline({
+      components: [dubbingConfig({ mode: "mix", gain_db: -3, source_gain_db: -10 })],
+      candidate,
+      srtByLang,
+      mediaRef: "source.mp4",
+      dubbingAudioRef: "dub.mp3",
+    });
+    const segments = resolveAudioSegments(timeline);
+    expect(segments.map((s) => s.mediaRef)).toEqual(["source.mp4", "dub.mp3"]);
+    expect(segments.every((s) => s.sourceStartSec === 60)).toBe(true);
+    expect(segments[0]!.gain).toBeCloseTo(Math.pow(10, -10 / 20));
+    expect(segments[1]!.gain).toBeCloseTo(Math.pow(10, -3 / 20));
+  });
+
+  it("dub offset: delays the dub via a leading gap; track total stays the window", () => {
+    const timeline = buildClipTimeline({
+      components: [dubbingConfig({ mode: "replace", offset_sec: 5 })],
+      candidate,
+      srtByLang,
+      mediaRef: "source.mp4",
+      dubbingAudioRef: "dub.mp3",
+    });
+    expect(timeline.durationSec).toBe(30);
+    const seg = resolveAudioSegments(timeline)[0]!;
+    expect(seg).toMatchObject({ mediaRef: "dub.mp3", outStartSec: 5, outEndSec: 30, sourceStartSec: 60 });
+  });
+
+  it("disabled or unresolved dub falls back to the source audio", () => {
+    const disabled = buildClipTimeline({
+      components: [dubbingConfig({ enabled: false })],
+      candidate,
+      srtByLang,
+      mediaRef: "source.mp4",
+      dubbingAudioRef: "dub.mp3",
+    });
+    expect(resolveAudioSegments(disabled)[0]!.mediaRef).toBe("source.mp4");
+
+    const noRef = buildClipTimeline({
+      components: [dubbingConfig()],
+      candidate,
+      srtByLang,
+      mediaRef: "source.mp4",
+    });
+    expect(resolveAudioSegments(noRef)[0]!.mediaRef).toBe("source.mp4");
   });
 
   it("ripples the in-window SRT cue and drops the out-of-window one", () => {

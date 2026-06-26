@@ -96,6 +96,26 @@ export const clipBackend = {
       return o.toJSON();
     }),
 
+  // Snapshot a material dubbing track into a clip_dubbing component (snapshot
+  // principle): copy <lang>.dub.mp3 into the instance and point audio_path at it.
+  // dub languages for the picker ride on preview_data.dubLangs (no list_imports).
+  importResource: (instance: string, componentId: string, params: Record<string, unknown>): Promise<Component> =>
+    withOwner(instance, async (o, dir) => {
+      if (!o.boundMaterial) throw new Error("creation is not bound to a material");
+      if (params["kind"] !== "dubbing") throw new Error(`unknown import kind: ${String(params["kind"])}`);
+      const comp = o.components.find((c) => c["id"] === componentId);
+      if (!comp) throw new Error(`no component with id ${componentId}`);
+      if (comp["kind"] !== "clip_dubbing") throw new Error("import dubbing: component is not a dubbing track");
+      const lang = String(params["lang"] ?? "");
+      const model = await loadNewsVideoModel(o.boundMaterial.instance_name);
+      const repo = new HotclipsRepo(realFs, dir, { subtitlesDir: async () => model.subtitlesDir });
+      const snap = await repo.ensureDubSnapshot(lang);
+      if (!snap) throw new Error(`dubbing audio not found for language ${lang}`);
+      const c = o.updateComponent(componentId, { audio_path: `source-dub.${lang}.mp3` });
+      await o.save();
+      return (c ?? {}) as unknown as Component;
+    }),
+
   listAddableComponents: () => Promise.resolve(ClipConfigOwner.addableKinds()),
 
   addComponent: (instance: string, kind: string) =>

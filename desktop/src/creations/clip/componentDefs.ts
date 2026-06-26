@@ -107,12 +107,27 @@ function outroCard(): ComponentDict {
   };
 }
 
+function dubbing(): ComponentDict {
+  return {
+    kind: "clip_dubbing",
+    id: "dub",
+    name: "dubbing",
+    enabled: true,
+    audio_path: "",
+    gain_db: 0,
+    source_gain_db: 0,
+    offset_sec: 0,
+    mode: "replace",
+  };
+}
+
 const FACTORIES: Record<string, () => ComponentDict> = {
   clip_subtitle: subtitle,
   clip_text_watermark: textWatermark,
   clip_image_watermark: imageWatermark,
   clip_hook_card: hookCard,
   clip_outro_card: outroCard,
+  clip_dubbing: dubbing,
 };
 
 export interface AddableKind {
@@ -127,6 +142,7 @@ export const ADDABLE: AddableKind[] = [
   { kind: "clip_image_watermark", multi_instance: true },
   { kind: "clip_hook_card", multi_instance: false },
   { kind: "clip_outro_card", multi_instance: false },
+  { kind: "clip_dubbing", multi_instance: false },
 ];
 
 /** A fresh default instance dict for `kind`. Throws on an unknown kind. */
