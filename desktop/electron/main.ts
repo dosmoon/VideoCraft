@@ -568,10 +568,16 @@ ipcMain.handle(
   async (_e, method: string, params?: Record<string, unknown>): Promise<RpcReply> => {
     try {
       const result = await sidecar.call(method, params);
-      // Snoop project lifecycle so assertInProject knows the active root
-      // (single source of truth — the renderer already drives these).
-      if (method === "project.open" && typeof params?.["folder"] === "string") {
-        currentProjectRoot = resolve(params["folder"] as string);
+      // Snoop project lifecycle so assertInProject knows the active root (single
+      // source of truth — the renderer already drives these). Snoop here, not on
+      // the event.project.opened SSE notification: notifications arrive on a
+      // separate stream and would race the renderer's follow-up fs calls. Both
+      // project.open and project.new (create-then-open) return the canonical
+      // folder in their result payload — read it from there so a freshly-created
+      // project's files are reachable too (project.new carries no folder param).
+      if (method === "project.open" || method === "project.new") {
+        const folder = (result as { folder?: unknown } | null)?.folder;
+        if (typeof folder === "string") currentProjectRoot = resolve(folder);
       } else if (method === "project.close") {
         currentProjectRoot = null;
       }
