@@ -57,6 +57,8 @@ CI 在 GitHub Windows runner 上：跑 §2 的四步 → **就地把 `signAndEdi
 
 ## 4. 正式发布（tag → 草稿 Release → 人工 publish）
 
+> 逐项勾的完整发布单见 [`release-checklist.md`](release-checklist.md)（含版本号 + 依赖刷新 + 验证 + tag + publish 全链）；本节是其中「正式发布」段的展开说明。
+
 **构建与发布解耦**：打 tag 只出包进草稿，公开是另一个人工动作。
 
 1. **bump 版本**（[`versioning.md`](versioning.md)）：改 `desktop/package.json` 的 `version`，同步 `pyproject.toml`。⚠️ **tag 必须等于 package.json 版本**——installer 版本号取自 package.json 非 tag，对不上 CI 会 fail fast。
