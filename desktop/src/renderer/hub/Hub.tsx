@@ -78,6 +78,13 @@ export function Hub() {
   // fetches its own slot readiness via materialBackend.slotReadinessStructured.)
   const loadTree = useCallback(async (brief: ProjectBrief) => {
     setCurrent(brief);
+    // A project just became active (open / new / mount) — drop any selection
+    // carried over from a previously-open project. Its material/creation
+    // instances don't exist here, so a stale `material` would render the wrong
+    // instance's detail (e.g. a source-import panel) in an empty project.
+    setMaterial(null);
+    setWorkbench(null);
+    setError("");
     const [mats, creas] = await Promise.all([rpc.listMaterials(), rpc.listCreations()]);
     setMaterials(mats);
     setCreations(creas);
@@ -165,6 +172,7 @@ export function Hub() {
     setMaterials({});
     setCreations({});
     setWorkbench(null);
+    setMaterial(null);
   }, []);
 
   // Create a new creation instance, refresh the tree, and open its workbench.
