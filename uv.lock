@@ -1989,7 +1989,7 @@ wheels = [
 
 [[package]]
 name = "videocraft"
-version = "0.3.6"
+version = "0.3.7"
 source = { virtual = "." }
 dependencies = [
     { name = "edge-tts" },
