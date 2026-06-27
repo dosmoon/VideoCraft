@@ -231,6 +231,19 @@ def tts_dub(
     return {"job_id": ctx.jobs.start("capability.tts_dub", work)}
 
 
+@rpc_method("capability.dub_remove_version")
+def dub_remove_version(
+    ctx: Context, subtitles_dir: str, lang: str, version_id: int
+) -> dict[str, Any]:
+    """Delete one dubbing version (its audio + manifest entry) under
+    subtitles_dir/<lang>.dub.json. Sync (a small file op, not a job). Removes the
+    manifest entirely when no versions remain. Returns {removed, remaining}."""
+    (subtitles_dir,) = _in_project(ctx, subtitles_dir)
+    from core import tts_dubbing
+
+    return tts_dubbing.remove_dub_version(subtitles_dir, lang, int(version_id))
+
+
 # ── Generic structured-LLM extraction (long job) ─────────────────────────────
 
 @rpc_method("capability.llm_extract")

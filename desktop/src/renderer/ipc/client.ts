@@ -199,6 +199,18 @@ export interface TtsVoiceMeta {
   has_cache: boolean;
 }
 
+/** One synthesized dubbing version (a voice) for a subtitle language. */
+export interface DubVersion {
+  id: number;
+  name: string;
+  voice_id: string;
+  provider: string;
+  total_sec: number;
+  overflow_count: number;
+  /** Absolute audio path → window.vc.mediaUrl() plays it. */
+  audio_path: string;
+}
+
 /** Per-provider call counters (ai.stats / Stats tab). */
 export interface AiStatsEntry {
   calls: number;
@@ -713,10 +725,16 @@ export const rpc = {
     type === "news_video" ? materialBackend.listAnalyses(instance) : unsupportedMaterial(type),
   analysisSummary: (type: string, instance: string, filename: string) =>
     type === "news_video" ? materialBackend.analysisSummary(instance, filename) : unsupportedMaterial(type),
-  // Absolute path of a dubbing track's audio file (news_video only) — feed to
-  // window.vc.mediaUrl() to play it in the dub detail view.
-  dubAudioPath: (type: string, instance: string, lang: string) =>
-    type === "news_video" ? materialBackend.dubAudioPath(instance, lang) : unsupportedMaterial(type),
+  // Synthesized dubbing versions for a language (news_video only); each version
+  // is a voice with its own audio. Used by the dub detail view + creation import.
+  listDubVersions: (type: string, instance: string, lang: string) =>
+    type === "news_video"
+      ? materialBackend.listDubVersions(instance, lang)
+      : unsupportedMaterial(type),
+  removeDubVersion: (type: string, instance: string, lang: string, versionId: number) =>
+    type === "news_video"
+      ? materialBackend.removeDubVersion(instance, lang, versionId)
+      : unsupportedMaterial(type),
   readAnalysis: (type: string, instance: string, filename: string) =>
     type === "news_video" ? materialBackend.readAnalysis(instance, filename) : unsupportedMaterial(type),
   // Re-save an analysis.json after editing the chapter schedule; server

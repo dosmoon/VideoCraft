@@ -19,6 +19,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { SourceCue } from "@composition/components/index.js";
 import type { ClipOverride, HotclipCandidate } from "@creations/clip/types.js";
+import type { DubVersionImport } from "@creations/clip/preview";
 import { rpc, RpcError, type RenderedClip } from "../../ipc/client";
 import { parseSrt } from "./srt";
 import { parseAspect, parseClipMode, type ClipMode } from "@composition/crop.js";
@@ -49,8 +50,8 @@ export interface ClipPreviewData {
   subtitleLangs: string[];
   /** Hotclips languages available upstream/snapshotted (candidate sources). */
   availableLangs: string[];
-  /** Languages with a synthesized dubbing track (the dub picker's options). */
-  dubLangs: string[];
+  /** Dubbing versions (a voice each) available to import, across languages. */
+  dubVersions: DubVersionImport[];
   /** Absolute path of the enabled dubbing track's snapshot audio (null = none). */
   dubbingAudioPath: string | null;
   /** True when several hotclips languages exist and none was picked yet —
@@ -69,7 +70,7 @@ interface RawPreviewData {
   override: ClipOverride | null;
   availableLangs?: string[];
   subtitleLangs?: string[];
-  dubLangs?: string[];
+  dubVersions?: DubVersionImport[];
   dubbingAudioPath?: string | null;
   needsLangChoice?: boolean;
 }
@@ -189,7 +190,7 @@ export function useClipPreview(type: string, instance: string, refreshKey = 0) {
           presetName: String(cfg["preset_name"] ?? ""),
           subtitleLangs: Array.isArray(pd.subtitleLangs) ? pd.subtitleLangs : [],
           availableLangs: Array.isArray(pd.availableLangs) ? pd.availableLangs : [],
-          dubLangs: Array.isArray(pd.dubLangs) ? pd.dubLangs : [],
+          dubVersions: Array.isArray(pd.dubVersions) ? pd.dubVersions : [],
           dubbingAudioPath: pd.dubbingAudioPath ?? null,
           needsLangChoice: pd.needsLangChoice === true,
         });

@@ -107,11 +107,12 @@ export const clipBackend = {
       if (!comp) throw new Error(`no component with id ${componentId}`);
       if (comp["kind"] !== "clip_dubbing") throw new Error("import dubbing: component is not a dubbing track");
       const lang = String(params["lang"] ?? "");
+      const versionId = Number(params["version_id"] ?? -1);
       const model = await loadNewsVideoModel(o.boundMaterial.instance_name);
       const repo = new HotclipsRepo(realFs, dir, { subtitlesDir: async () => model.subtitlesDir });
-      const snap = await repo.ensureDubSnapshot(lang);
-      if (!snap) throw new Error(`dubbing audio not found for language ${lang}`);
-      const c = o.updateComponent(componentId, { audio_path: `source-dub.${lang}.mp3` });
+      const snap = await repo.ensureDubSnapshot(lang, versionId);
+      if (!snap) throw new Error(`dubbing version not found: ${lang} #${versionId}`);
+      const c = o.updateComponent(componentId, { audio_path: `source-dub.${lang}.${versionId}.mp3` });
       await o.save();
       return (c ?? {}) as unknown as Component;
     }),

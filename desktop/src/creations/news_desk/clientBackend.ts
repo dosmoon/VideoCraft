@@ -11,7 +11,7 @@ import { rpcCall } from "../../renderer/ipc/client";
 import type { Component, PresetList, ProjectBrief, RenderPlan, RenderedClip } from "../../renderer/ipc/client";
 import { NewsDeskConfigOwner } from "./configOwner";
 import { buildNewsDeskPreview, emptyNewsDeskPreview, type NewsDeskPreviewResult } from "./preview";
-import { importNewsDeskResource, listNewsDeskImports } from "./imports";
+import { importNewsDeskResource, listNewsDeskImports, type DubImport } from "./imports";
 import { loadNewsVideoModel } from "../../materials/news_video/resolve";
 import * as render from "./render";
 
@@ -149,9 +149,11 @@ export const newsDeskBackend = {
   // import_resource SNAPSHOTS one into a component (snapshot principle, ADR-0003):
   // a subtitle copies the chosen language's SRT into the instance and points its
   // srt_path at it; a chapter fills its schedule from an analysis.json envelope.
-  listImports: (instance: string): Promise<{ subtitleLangs: string[]; analyses: string[]; dubLangs: string[] }> =>
+  listImports: (
+    instance: string,
+  ): Promise<{ subtitleLangs: string[]; analyses: string[]; dubVersions: DubImport[] }> =>
     withOwner(instance, async (o) => {
-      if (!o.boundMaterial) return { subtitleLangs: [], analyses: [], dubLangs: [] };
+      if (!o.boundMaterial) return { subtitleLangs: [], analyses: [], dubVersions: [] };
       return listNewsDeskImports(await loadNewsVideoModel(o.boundMaterial.instance_name));
     }),
 

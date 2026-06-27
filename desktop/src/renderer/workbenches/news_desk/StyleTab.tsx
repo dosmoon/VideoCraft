@@ -17,6 +17,7 @@ import { rpc, RpcError } from "../../ipc/client";
 import { tr } from "../../i18n/tr";
 import { confirmDialog } from "../../ui/confirm";
 import type { NewsDeskChapterRow } from "@creations/news_desk/types.js";
+import type { DubImport } from "@creations/news_desk/imports";
 import { MaterialBindingBar } from "../shared/MaterialBindingBar";
 import { NewsDeskPreview, type NewsDeskPreviewHandle } from "./NewsDeskPreview";
 import { useNewsDeskPreview } from "./useNewsDeskPreview";
@@ -78,10 +79,10 @@ export function StyleTab(props: {
   const [addMenuOpen, setAddMenuOpen] = useState(false);
   const [compErr, setCompErr] = useState("");
   // Importable material artifacts (subtitle languages + analysis files).
-  const [imports, setImports] = useState<{ subtitleLangs: string[]; analyses: string[]; dubLangs: string[] }>({
+  const [imports, setImports] = useState<{ subtitleLangs: string[]; analyses: string[]; dubVersions: DubImport[] }>({
     subtitleLangs: [],
     analyses: [],
-    dubLangs: [],
+    dubVersions: [],
   });
   const [importBusy, setImportBusy] = useState(false);
   const [importErr, setImportErr] = useState("");
@@ -103,7 +104,7 @@ export function StyleTab(props: {
     void rpc
       .listImports(type, instance)
       .then((i) => alive && setImports(i))
-      .catch(() => alive && setImports({ subtitleLangs: [], analyses: [], dubLangs: [] }));
+      .catch(() => alive && setImports({ subtitleLangs: [], analyses: [], dubVersions: [] }));
     return () => {
       alive = false;
     };
@@ -656,18 +657,12 @@ export function StyleTab(props: {
               />
             )}
             {selected.kind === "dubbing" && (
-              <ImportRow
+              <DubVersionRow
                 key={selected.id}
-                label={tr("news_desk.style.dub_source")}
-                options={imports.dubLangs}
-                emptyHint={tr("news_desk.style.dub_empty_hint")}
-                current={
-                  typeof selected["audio_path"] === "string" && selected["audio_path"]
-                    ? tr("news_desk.style.imported")
-                    : tr("news_desk.style.not_imported")
-                }
+                versions={imports.dubVersions}
+                imported={typeof selected["audio_path"] === "string" && !!selected["audio_path"]}
                 busy={importBusy}
-                onPick={(lang) => void onImport(selected.id, { kind: "dubbing", lang })}
+                onPick={(lang, id) => void onImport(selected.id, { kind: "dubbing", lang, version_id: id })}
               />
             )}
             {importErr && <p style={{ color: "#ff6b6b", fontSize: 12 }}>✗ {importErr}</p>}
@@ -706,6 +701,55 @@ export function StyleTab(props: {
 
 // Import-from-material row: a dropdown of options (subtitle langs / analysis
 // files) + an import button. Picking one snapshots it into the component.
+/** Pick a dubbing version (a voice) to snapshot into the dubbing component. */
+function DubVersionRow(props: {
+  versions: DubImport[];
+  imported: boolean;
+  busy: boolean;
+  onPick: (lang: string, id: number) => void;
+}) {
+  const { versions, imported, busy, onPick } = props;
+  const [choice, setChoice] = useState("");
+  const keyOf = (v: DubImport) => `${v.lang}#${v.id}`;
+  const sel = choice || (versions[0] ? keyOf(versions[0]) : "");
+  const picked = versions.find((v) => keyOf(v) === sel);
+  return (
+    <div style={{ marginBottom: 12, padding: "8px 10px", background: "#1a1a1e", border: "1px solid #2a2a2e", borderRadius: 6 }}>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 6 }}>
+        <span style={{ fontSize: 12, fontWeight: 600, color: "#ccc" }}>{tr("news_desk.style.dub_source")}</span>
+        <span style={{ fontSize: 11, color: "#777" }}>
+          {imported ? tr("news_desk.style.imported") : tr("news_desk.style.not_imported")}
+        </span>
+      </div>
+      {versions.length === 0 ? (
+        <p style={{ color: "#888", fontSize: 11, margin: 0 }}>{tr("news_desk.style.dub_empty_hint")}</p>
+      ) : (
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <select
+            value={sel}
+            onChange={(e) => setChoice(e.target.value)}
+            disabled={busy}
+            style={{ flex: 1, background: "#0e0e10", color: "#ddd", border: "1px solid #333", borderRadius: 4, padding: "4px 6px", fontSize: 12 }}
+          >
+            {versions.map((v) => (
+              <option key={keyOf(v)} value={keyOf(v)}>
+                {v.lang.toUpperCase()} · {v.name}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => picked && onPick(picked.lang, picked.id)}
+            disabled={busy || !picked}
+            style={{ background: "#2a2a2e", color: "#ccc", border: "1px solid #3a3a40", borderRadius: 4, padding: "4px 12px", fontSize: 12, cursor: busy ? "default" : "pointer" }}
+          >
+            {tr("news_desk.style.import_btn")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ImportRow(props: {
   label: string;
   options: string[];

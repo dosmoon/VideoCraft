@@ -112,30 +112,38 @@ describe("HotclipsRepo", () => {
     expect(await repo.resolveSourceSrt("en")).toBe(`${INSTANCE}/source-subtitles.en.srt`);
   });
 
-  it("ensureDubSnapshot copies <lang>.dub.mp3 into the instance; null when absent", async () => {
+  it("ensureDubSnapshot copies <lang>.dub.<id>.mp3 into the instance; null when absent", async () => {
     const fs = makeFs();
-    fs.files.set(`${SUBS}/en.dub.mp3`, "MP3");
+    fs.files.set(`${SUBS}/en.dub.1.mp3`, "MP3");
     const repo = new HotclipsRepo(fs, INSTANCE, bridge);
-    expect(await repo.ensureDubSnapshot("en")).toBe(`${INSTANCE}/source-dub.en.mp3`);
-    expect(fs.files.get(`${INSTANCE}/source-dub.en.mp3`)).toBe("MP3");
-    expect(await repo.ensureDubSnapshot("zh")).toBeNull(); // no upstream dub
+    expect(await repo.ensureDubSnapshot("en", 1)).toBe(`${INSTANCE}/source-dub.en.1.mp3`);
+    expect(fs.files.get(`${INSTANCE}/source-dub.en.1.mp3`)).toBe("MP3");
+    expect(await repo.ensureDubSnapshot("en", 2)).toBeNull(); // no upstream version 2
   });
 
-  it("listDubLangs unions instance snapshots + upstream <lang>.dub.mp3", async () => {
+  it("listDubVersions reads each language's dub manifest", async () => {
     const fs = makeFs();
-    fs.files.set(`${INSTANCE}/source-dub.zh.mp3`, "x"); // already snapshotted
-    fs.files.set(`${SUBS}/en.dub.mp3`, "x"); // upstream only
-    fs.files.set(`${SUBS}/en.dub.json`, "x"); // manifest must NOT count as a lang
+    fs.files.set(`${SUBS}/en.srt`, "x");
+    fs.files.set(`${SUBS}/zh.srt`, "x");
+    fs.files.set(
+      `${SUBS}/en.dub.json`,
+      JSON.stringify({ version: 2, versions: [{ id: 1, name: "Aria" }, { id: 2, name: "Guy" }] }),
+    );
+    fs.files.set(`${SUBS}/zh.dub.json`, JSON.stringify({ version: 2, versions: [{ id: 1, name: "Yunxi" }] }));
     const repo = new HotclipsRepo(fs, INSTANCE, bridge);
-    expect(await repo.listDubLangs()).toEqual(["en", "zh"]);
+    expect(await repo.listDubVersions()).toEqual([
+      { lang: "en", id: 1, name: "Aria" },
+      { lang: "en", id: 2, name: "Guy" },
+      { lang: "zh", id: 1, name: "Yunxi" },
+    ]);
   });
 
   it("resolveDub resolves an instance-relative audio_path, null when missing", async () => {
     const fs = makeFs();
     const repo = new HotclipsRepo(fs, INSTANCE, bridge);
-    expect(await repo.resolveDub("source-dub.en.mp3")).toBeNull();
-    fs.files.set(`${INSTANCE}/source-dub.en.mp3`, "x");
-    expect(await repo.resolveDub("source-dub.en.mp3")).toBe(`${INSTANCE}/source-dub.en.mp3`);
+    expect(await repo.resolveDub("source-dub.en.1.mp3")).toBeNull();
+    fs.files.set(`${INSTANCE}/source-dub.en.1.mp3`, "x");
+    expect(await repo.resolveDub("source-dub.en.1.mp3")).toBe(`${INSTANCE}/source-dub.en.1.mp3`);
     expect(await repo.resolveDub("")).toBeNull();
   });
 });

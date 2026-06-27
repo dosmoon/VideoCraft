@@ -18,33 +18,44 @@ import type { Fs } from "../../renderer/ipc/fs";
 import type { ComponentDict } from "./componentDefs";
 import type { NewsDeskConfigOwner } from "./configOwner";
 
+/** One importable dubbing version (a voice under a language). */
+export interface DubImport {
+  lang: string;
+  id: number;
+  name: string;
+}
+
+/** One dub version with its resolved source audio (model.dubVersions shape). */
+interface DubVersionLite {
+  id: number;
+  name: string;
+  audioPath: string;
+}
+
 /** The subset of NewsVideoModel imports needs (structural — lets vitest fake it). */
 export interface ImportMaterial {
   listSubtitleLanguages(): Promise<string[]>;
   listAnalyses(): Promise<string[]>;
   subtitlePath(lang: string): string;
   readAnalysis(filename: string): Promise<Record<string, unknown>>;
-  /** Existing analysis artifacts for a language (used to find dub tracks). */
-  listAnalysisArtifacts(lang: string): Promise<{ kind: string }[]>;
-  /** Canonical path for an analysis artifact (e.g. <lang>.dub.json). */
-  analysisPath(lang: string, kind: string): string | null;
+  /** Synthesized dubbing versions (voices) for a language. */
+  dubVersions(lang: string): Promise<DubVersionLite[]>;
 }
 
 export async function listNewsDeskImports(
   model: ImportMaterial,
-): Promise<{ subtitleLangs: string[]; analyses: string[]; dubLangs: string[] }> {
+): Promise<{ subtitleLangs: string[]; analyses: string[]; dubVersions: DubImport[] }> {
   const subtitleLangs = await model.listSubtitleLanguages();
-  // Languages that have a synthesized dubbing track (a <lang>.dub.json manifest).
-  const dubLangs: string[] = [];
+  // Every dub version across all languages — one importable entry per voice.
+  const dubVersions: DubImport[] = [];
   for (const lang of subtitleLangs) {
     try {
-      const arts = await model.listAnalysisArtifacts(lang);
-      if (arts.some((a) => a.kind === "dub")) dubLangs.push(lang);
+      for (const v of await model.dubVersions(lang)) dubVersions.push({ lang, id: v.id, name: v.name });
     } catch {
-      /* skip a language whose artifacts can't be listed */
+      /* skip a language whose dub manifest can't be read */
     }
   }
-  return { subtitleLangs, analyses: await model.listAnalyses(), dubLangs };
+  return { subtitleLangs, analyses: await model.listAnalyses(), dubVersions };
 }
 
 /** Perform one import into a component and return the updated component dict.
@@ -78,11 +89,12 @@ export async function importNewsDeskResource(
   if (kind === "dubbing") {
     if (comp["kind"] !== "dubbing") throw new Error("import dubbing: component is not a dubbing track");
     const lang = String(params["lang"] ?? "");
-    const jsonPath = model.analysisPath(lang, "dub");
-    const src = jsonPath ? jsonPath.replace(/\.json$/, ".mp3") : "";
-    if (!src || !(await fs.stat(src)).exists) throw new Error(`dubbing audio not found for language ${lang}`);
+    const versionId = Number(params["version_id"] ?? -1);
+    const v = (await model.dubVersions(lang)).find((x) => x.id === versionId);
+    if (!v) throw new Error(`dubbing version not found: ${lang} #${versionId}`);
+    if (!(await fs.stat(v.audioPath)).exists) throw new Error(`dubbing audio missing: ${v.audioPath}`);
     const rel = `audio/${componentId}.mp3`;
-    await fs.copy(src, `${instanceDir}/${rel}`);
+    await fs.copy(v.audioPath, `${instanceDir}/${rel}`);
     comp["audio_path"] = rel;
     await owner.save();
     return comp;

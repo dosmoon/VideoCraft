@@ -16,6 +16,13 @@ import type { ComponentDict } from "./componentDefs";
 import type { ClipConfigOwner } from "./configOwner";
 import type { HotclipsRepo } from "./hotclipsRepo";
 
+/** One importable dubbing version (a voice under a language). */
+export interface DubVersionImport {
+  lang: string;
+  id: number;
+  name: string;
+}
+
 export interface ClipPreviewResult {
   lang: string;
   candidates: Record<string, unknown>[];
@@ -25,8 +32,8 @@ export interface ClipPreviewResult {
   override: ComponentDict | null;
   availableLangs: string[];
   subtitleLangs: string[];
-  /** Languages that have a synthesized dubbing track (for the dub picker). */
-  dubLangs: string[];
+  /** Dubbing versions (a voice each) available to import, across languages. */
+  dubVersions: DubVersionImport[];
   /** Absolute path of the enabled dubbing component's snapshot audio (null when
    *  none / not imported / missing). Drives the dub audio track + its decode. */
   dubbingAudioPath: string | null;
@@ -46,7 +53,7 @@ export function emptyClipPreview(lang: string): ClipPreviewResult {
     override: null,
     availableLangs: [],
     subtitleLangs: [],
-    dubLangs: [],
+    dubVersions: [],
     dubbingAudioPath: null,
     needsLangChoice: false,
   };
@@ -99,9 +106,9 @@ export async function buildClipPreview(
     if (p) subPaths[l] = p;
   }
 
-  // Dubbing: the languages offering a dub track, and the enabled dub component's
+  // Dubbing: the versions offered for import, and the enabled dub component's
   // resolved snapshot audio (the assembler windows it per candidate).
-  const dubLangs = await repo.listDubLangs();
+  const dubVersions = await repo.listDubVersions();
   const dubComp = owner.components.find(
     (c) => c["kind"] === "clip_dubbing" && c["enabled"] !== false,
   );
@@ -116,7 +123,7 @@ export async function buildClipPreview(
     override: owner.clipsOverrides[String(sel)] ?? null,
     availableLangs: avail,
     subtitleLangs: subLangs,
-    dubLangs,
+    dubVersions,
     dubbingAudioPath,
     needsLangChoice,
   };

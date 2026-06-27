@@ -23,6 +23,7 @@ import type {
   AcquireSource,
   AnalysisArtifact,
   AnalysisSummary,
+  DubVersion,
   ProjectBrief,
   SourceBasicInfo,
   SourceContext,
@@ -91,13 +92,33 @@ export const materialBackend = {
   readAnalysis: async (instance: string, filename: string): Promise<Record<string, unknown>> =>
     (await loadModel(instance)).readAnalysis(filename),
 
-  // Absolute path of a dubbing track's audio (sibling of the <lang>.dub.json
-  // manifest). The path convention stays in the model; the viewer feeds this to
-  // window.vc.mediaUrl() to play it.
-  dubAudioPath: async (instance: string, lang: string): Promise<string | null> => {
+  // Synthesized dubbing versions for a language (one per voice), each with its
+  // resolved absolute audio path → window.vc.mediaUrl() plays it.
+  listDubVersions: async (instance: string, lang: string): Promise<DubVersion[]> => {
     const m = await loadModel(instance);
-    const p = m.analysisPath(lang, "dub");
-    return p ? p.replace(/\.json$/, ".mp3") : null;
+    return (await m.dubVersions(lang)).map((v) => ({
+      id: v.id,
+      name: v.name,
+      voice_id: v.voiceId,
+      provider: v.provider,
+      total_sec: v.totalSec,
+      overflow_count: v.overflowCount,
+      audio_path: v.audioPath,
+    }));
+  },
+
+  // Delete one dub version (audio + manifest entry) via the capability gateway.
+  removeDubVersion: async (
+    instance: string,
+    lang: string,
+    versionId: number,
+  ): Promise<{ removed: boolean; remaining: number }> => {
+    const m = await loadModel(instance);
+    return rpcCall("capability.dub_remove_version", {
+      subtitles_dir: m.subtitlesDir,
+      lang,
+      version_id: versionId,
+    });
   },
 
   readAnalysisText: async (instance: string, lang: string, kind: string): Promise<{ text: string }> => {

@@ -55,6 +55,18 @@ export interface AnalysisArtifactInfo {
   sizeBytes: number;
 }
 
+/** One synthesized dubbing version (a voice) inside <lang>.dub.json. */
+export interface DubVersionInfo {
+  id: number;
+  name: string;
+  voiceId: string;
+  provider: string;
+  totalSec: number;
+  overflowCount: number;
+  /** Absolute path to this version's audio (resolvable via window.vc.mediaUrl). */
+  audioPath: string;
+}
+
 // ── Slot identifiers (stable strings the sidebar references) ──────────────────
 
 export const SLOT_SOURCE = "source";
@@ -225,6 +237,36 @@ export class NewsVideoModel {
   analysisPath(langIso: string, kind: string): string | null {
     const name = analysisFilename(langIso, kind);
     return name ? `${this.subtitlesDir}/${name}` : null;
+  }
+
+  /** Synthesized dubbing versions for a language (from the <lang>.dub.json
+   *  collection manifest), each with its resolved absolute audio path. Empty
+   *  when there's no dub yet. One version per voice. */
+  async dubVersions(langIso: string): Promise<DubVersionInfo[]> {
+    const manifestPath = this.analysisPath(langIso, "dub");
+    if (!manifestPath) return [];
+    const m = await this.fs.readJson<Record<string, unknown>>(manifestPath);
+    const raw = m && Array.isArray(m["versions"]) ? (m["versions"] as unknown[]) : [];
+    return raw
+      .filter((v): v is Record<string, unknown> => !!v && typeof v === "object")
+      .map((v) => {
+        const id = Number(v["id"] ?? 0);
+        const file = String(v["audio_file"] ?? `${langIso}.dub.${id}.mp3`);
+        return {
+          id,
+          name: String(v["name"] ?? v["voice_id"] ?? ""),
+          voiceId: String(v["voice_id"] ?? ""),
+          provider: String(v["provider"] ?? ""),
+          totalSec: Number(v["total_sec"] ?? 0),
+          overflowCount: Number(v["overflow_count"] ?? 0),
+          audioPath: `${this.subtitlesDir}/${file}`,
+        };
+      });
+  }
+
+  /** Absolute path of a specific dub version's audio file. */
+  dubVersionAudioPath(langIso: string, versionId: number): string {
+    return `${this.subtitlesDir}/${langIso}.dub.${versionId}.mp3`;
   }
 
   /** Existing analysis artifacts for one subtitle language, in registry order

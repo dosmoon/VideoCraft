@@ -171,7 +171,7 @@ describe("buildClipPreview", () => {
       override: null,
       availableLangs: [],
       subtitleLangs: [],
-      dubLangs: [],
+      dubVersions: [],
       dubbingAudioPath: null,
       needsLangChoice: false,
     });

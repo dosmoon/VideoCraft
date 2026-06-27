@@ -55,11 +55,8 @@ const model: ImportMaterial = {
   subtitlePath(lang: string) {
     return `${SUBS}/${lang}.srt`;
   },
-  async listAnalysisArtifacts(lang: string) {
-    return lang === "en" ? [{ kind: "analysis" }, { kind: "dub" }] : [];
-  },
-  analysisPath(lang: string, kind: string) {
-    return `${SUBS}/${lang}.${kind === "dub" ? "dub.json" : `${kind}.json`}`;
+  async dubVersions(lang: string) {
+    return lang === "en" ? [{ id: 1, name: "Yunxi", audioPath: `${SUBS}/en.dub.1.mp3` }] : [];
   },
   async readAnalysis() {
     return {
@@ -85,11 +82,11 @@ async function loadOwner(fs: Fs): Promise<NewsDeskConfigOwner> {
 }
 
 describe("listNewsDeskImports", () => {
-  it("returns the material's subtitle languages + analysis filenames + dub langs", async () => {
+  it("returns the material's subtitle languages + analysis filenames + dub versions", async () => {
     expect(await listNewsDeskImports(model)).toEqual({
       subtitleLangs: ["en", "zh"],
       analyses: ["en.analysis.json"],
-      dubLangs: ["en"], // only "en" has a <lang>.dub.json artifact
+      dubVersions: [{ lang: "en", id: 1, name: "Yunxi" }], // only "en" has a dub version
     });
   });
 });
@@ -129,12 +126,16 @@ describe("importNewsDeskResource", () => {
     expect(c1?.["titles"]).toEqual(["Title A", "Title B"]);
   });
 
-  it("snapshots the dubbing audio (<lang>.dub.mp3) and persists audio_path", async () => {
+  it("snapshots the chosen dubbing version (<lang>.dub.<id>.mp3) and persists audio_path", async () => {
     const fs = makeFs();
-    fs.files.set(`${SUBS}/en.dub.mp3`, "MP3");
+    fs.files.set(`${SUBS}/en.dub.1.mp3`, "MP3");
     const owner = await loadOwner(fs);
 
-    const updated = await importNewsDeskResource(owner, fs, DIR, model, "d1", { kind: "dubbing", lang: "en" });
+    const updated = await importNewsDeskResource(owner, fs, DIR, model, "d1", {
+      kind: "dubbing",
+      lang: "en",
+      version_id: 1,
+    });
     expect(updated["audio_path"]).toBe("audio/d1.mp3");
     expect(fs.files.get(`${DIR}/audio/d1.mp3`)).toBe("MP3");
 
@@ -142,12 +143,12 @@ describe("importNewsDeskResource", () => {
     expect(reloaded.components.find((c) => c["id"] === "d1")?.["audio_path"]).toBe("audio/d1.mp3");
   });
 
-  it("rejects a dubbing import when the language has no dub audio", async () => {
+  it("rejects a dubbing import for an unknown version", async () => {
     const fs = makeFs();
     const owner = await loadOwner(fs);
-    await expect(importNewsDeskResource(owner, fs, DIR, model, "d1", { kind: "dubbing", lang: "en" })).rejects.toThrow(
-      /dubbing audio not found/,
-    );
+    await expect(
+      importNewsDeskResource(owner, fs, DIR, model, "d1", { kind: "dubbing", lang: "en", version_id: 9 }),
+    ).rejects.toThrow(/dubbing version not found/);
   });
 
   it("rejects unknown component, wrong kind, missing SRT, and unknown import kind", async () => {

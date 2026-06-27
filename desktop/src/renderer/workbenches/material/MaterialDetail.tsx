@@ -70,7 +70,16 @@ export function MaterialDetail(props: {
         return <HotclipsViewer type={type} instance={instance} lang={lang} title={title} onClose={onDeselect} />;
       }
       if (kind === "dub") {
-        return <DubViewer type={type} instance={instance} lang={lang} title={title} onClose={onDeselect} />;
+        return (
+          <DubViewer
+            type={type}
+            instance={instance}
+            lang={lang}
+            title={title}
+            onClose={onDeselect}
+            onChanged={onChanged}
+          />
+        );
       }
       return (
         <AnalysisTextViewer type={type} instance={instance} lang={lang} kind={kind} title={title} onClose={onDeselect} />
