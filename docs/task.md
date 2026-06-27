@@ -5,7 +5,15 @@
 
 ---
 
-## ✅ 当前状态(2026-06-11）= v0.3.6 已发布（多语言生成修复）
+## ✅ 当前状态(2026-06-27) = v0.3.7 已发布（TTS 配音）
+
+> 本轮(2026-06-27)：① **切发布 v0.3.7**（PATCH）——版本号三处对齐（`desktop/package.json` 权威 + `pyproject.toml` + `src/__init__.py`，并修了 `__init__.py` 里误导的 "single source of truth" 注释）；yt-dlp 已 latest（2026.6.9）无需 bump；`uv lock` 同步项目版本；pytest 163 全绿。tag `v0.3.7` → CI 绿 → 草稿 Release（双语 notes）→ **已 publish**（2026-06-27 13:31 UTC，<https://github.com/dosmoon/VideoCraft/releases/tag/v0.3.7>）。⏸ 真签名仍 deferred（需证书）。
+> ② **新增统一发布单** [`release-checklist.md`](release-checklist.md)：把散在 versioning / packaging §4 / packaging-design §10 的发布步骤合成一份可勾选驱动单（只列 action + 链回权威源），packaging.md §4 加互链。
+> ③ 发布内容 = 自 v0.3.6 起的 **TTS 配音套件**（字幕→TTS 配音 + news_desk 音轨 + clip 配音轨 + per-语言/音色多版本 + 原声电平控制）+ 应用内「新建项目」入口 + dub/i18n/desktop 修复。
+
+---
+
+## 📦 上轮(2026-06-11) = v0.3.6 已发布（多语言生成修复）
 
 > 本轮(2026-06-11)：① **文档站上线** <https://dosmoon.com/VideoCraft/>（中英双语 + 双套 UI 截图；发布源=docs/public/，规范见主站 docs-system-plan.md，主站卡片已挂链接）。
 > ② **修复章节/热点片段生成语言**（81ba75e）：prompt 加 {output_language} 硬性指令 + lang_iso 穿透 + 陈旧 prompts/ 覆盖文件追加兜底——此前非中文字幕一律生成中文。
@@ -14,7 +22,7 @@
 
 ---
 
-## 📦 上轮（2026-06-10）= docs/ 治理完毕；v0.3.5 已发布
+## 📦 上上轮（2026-06-10）= docs/ 治理完毕；v0.3.5 已发布
 
 > 本轮(2026-06-10 晚)落地 **docs/ 全面 archive + 重写**（上轮拍板的任务）：
 > ① **21 篇过期文档移 [`docs/_archive/`](_archive/README.md)**（design/ 6 篇 Tk 时代：01/03/05/07/10/11；draft/ 13 篇已落地或已废弃：electron-migration-plan / adr-0008-migration-tasks / project-restructure / clip-component-migration / ai-clip-redesign / composition-style / architecture-vision / news-desk-derivative / news_desk-ux-v0.3 / publish-sidecar / chapter-verify-edit / substrate-spike-findings / tech-selection-embedded-ai；原 draft/archive/ 2 篇并入），`_archive/README.md` 给了逐篇归档原因 + 现行替代指引。
